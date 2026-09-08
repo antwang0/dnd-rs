@@ -89732,3 +89732,145 @@ fn a_shaken_loose_creature_takes_its_footprint_with_it_when_it_dies() {
         e.board_inconsistencies()
     );
 }
+
+/// Every player-side spell RAW prints as a Cone or a Line declares one,
+/// and none of them is still a sphere wearing a cone's docstring.
+///
+/// A registry test rather than nine separate ones, because the failure
+/// this guards against is a *reversion*: the shapes are one line each on
+/// nine different spells, and a refactor that flattened any of them back
+/// to a Burst would leave the log line, the name and the damage
+/// untouched. The lengths are RAW's, converted at the grid's 2.5 ft.
+#[test]
+fn the_cone_and_line_spells_declare_their_printed_shape() {
+    use crate::actions::action_template::TargetingSchema as TS;
+    use crate::actions::spells::{
+        AGANAZZARS_SCORCHER, BURNING_HANDS, COLOR_SPRAY, CONE_OF_COLD, CONJURE_BARRAGE, FEAR,
+        GUST_OF_WIND, LIGHTNING_BOLT, PRISMATIC_SPRAY, RIMES_BINDING_ICE,
+    };
+
+    let cones: [(&'static (dyn Action + Send + Sync), isize); 7] = [
+        (&*BURNING_HANDS, 6),      // 15 ft
+        (&*COLOR_SPRAY, 6),        // 15 ft
+        (&*FEAR, 12),              // 30 ft
+        (&*RIMES_BINDING_ICE, 12), // 30 ft
+        (&*CONE_OF_COLD, 24),      // 60 ft
+        (&*PRISMATIC_SPRAY, 24),   // 60 ft
+        (&*CONJURE_BARRAGE, 24),   // 60 ft
+    ];
+    for (spell, length) in cones {
+        assert_eq!(
+            spell.targeting_schema(),
+            TS::Cone { length },
+            "{} should be a {} ft cone",
+            spell.name(),
+            crate::engine::util::feet_from_tiles(length as u32)
+        );
+    }
+
+    let lines: [(&'static (dyn Action + Send + Sync), isize, isize); 3] = [
+        (&*AGANAZZARS_SCORCHER, 12, 1), // 30 ft × 5 ft
+        (&*GUST_OF_WIND, 24, 2),        // 60 ft × 10 ft
+        (&*LIGHTNING_BOLT, 40, 1),      // 100 ft × 5 ft
+    ];
+    for (spell, length, half_width) in lines {
+        assert_eq!(
+            spell.targeting_schema(),
+            TS::Line { length, half_width },
+            "{} should be a {} ft line",
+            spell.name(),
+            crate::engine::util::feet_from_tiles(length as u32)
+        );
+    }
+}
+
+/// Burning Hands out of a wizard's own hands, which is the shape that
+/// makes the spell a decision: the goblin in front burns and the one
+/// behind the wizard does not, at the same distance.
+#[test]
+fn burning_hands_burns_forward_only() {
+    use crate::actions::spells::BURNING_HANDS;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+        .unwrap();
+    let ahead = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(18, 14), 1, 0)
+        .unwrap();
+    let behind = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 14), 1, 1)
+        .unwrap();
+    let (ahead_before, behind_before) = (
+        e.actors[&ahead].hitpoints(),
+        e.actors[&behind].hitpoints(),
+    );
+    let aim = e.actors[&ahead].location();
+    e.pop_prompt();
+    let aei = ActionExecutionInfo::new(&*BURNING_HANDS, wiz, None, Some(vec![aim]), None);
+    assert!(aei.validate(&e), "a 15 ft cone reaches six tiles");
+    e.push_action(aei);
+    e.process_stack();
+    assert!(
+        e.actors[&ahead].hitpoints() < ahead_before,
+        "the goblin the wizard is facing"
+    );
+    assert_eq!(
+        e.actors[&behind].hitpoints(),
+        behind_before,
+        "and not the one behind them"
+    );
+}
+
+/// Lightning Bolt is a corridor. Two goblins standing in a row down the
+/// bolt's path both burn; one standing beside the path, closer to the
+/// wizard than either of them, takes nothing.
+///
+/// This is the assertion the old radius-4 burst could not have passed
+/// in either direction: it would have caught the bystander and, thrown
+/// at the first goblin, missed the second forty feet further on.
+#[test]
+fn lightning_bolt_is_a_corridor_rather_than_a_ball() {
+    use crate::actions::spells::LIGHTNING_BOLT;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 14), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 14), 1, 0)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(34, 14), 1, 1)
+        .unwrap();
+    let aside = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 24), 1, 2)
+        .unwrap();
+    let before: Vec<u32> = [near, far, aside]
+        .iter()
+        .map(|id| e.actors[id].hitpoints())
+        .collect();
+    e.pop_prompt();
+    let aei = ActionExecutionInfo::new(
+        &*LIGHTNING_BOLT,
+        wiz,
+        None,
+        Some(vec![Coordinate::new(40, 14)]),
+        None,
+    );
+    assert!(aei.validate(&e));
+    e.push_action(aei);
+    e.process_stack();
+    let hp = |id| e.actors.get(&id).map(|a: &ActorInstance| a.hitpoints()).unwrap_or(0);
+    assert!(hp(near) < before[0], "the goblin ten feet down the line");
+    assert!(hp(far) < before[1], "and the one eighty feet down it");
+    assert_eq!(
+        hp(aside),
+        before[2],
+        "and not the one standing off to the side, closer than either"
+    );
+}

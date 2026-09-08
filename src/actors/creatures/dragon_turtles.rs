@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 /// - **Dragon Turtle Claw** (standalone) — STR-based 2d8+STR slashing,
 ///   reach 2 (10 ft RAW). Companion swing paired with the bite in the
 ///   multi.
-/// - **Steam Breath** — burst-3 / range-4 cone, recharge 5-6. 12d6 fire,
+/// - **Steam Breath** — RAW's 60-ft cone, recharge 5-6. 12d6 fire,
 ///   DC 18 CON, half on save. CON save (inhaled scalding vapor) rather
 ///   than the DEX save the elemental dragon breaths route through.
 ///

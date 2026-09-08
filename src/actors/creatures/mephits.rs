@@ -25,7 +25,7 @@ use std::sync::LazyLock;
 ///   flat 1-point cold rider. The cold rider routes through the shared
 ///   `add_flat_damage_rider` chokepoint so per-target cold resistance
 ///   applies independently from the slashing base.
-/// - **frost breath** — Recharge-6 15-ft cone (burst-2 / range-3) of
+/// - **frost breath** — Recharge-6 15-ft cone of
 ///   biting cold: 1d8 cold, DC 10 DEX, half on save. Routes through
 ///   the shared `BreathWeapon` chassis and the `"breath_weapon"`
 ///   recharge pool.
@@ -219,7 +219,7 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
 /// - **dust mephit claws** — DEX-based 1d4+DEX slashing melee. No
 ///   typed-rider tail (RAW the dust mephit's scrape is just grit, not
 ///   a typed energy bite).
-/// - **blinding breath** — Recharge-6 15-ft cone (burst-2 / range-3) of
+/// - **blinding breath** — Recharge-6 15-ft cone of
 ///   choking grit. DC 10 CON, **Blinded for 1 round on fail** — the
 ///   breath chassis with `damage: None`, which is the whole stat
 ///   block. Routes through the same

@@ -7449,7 +7449,7 @@ pub struct DeathBurst {
 }
 
 
-/// Behir lightning breath — burst-3 / range-5, 12d10 lightning, DC 16
+/// Behir lightning breath — RAW's 90-foot-long, 5-foot-wide Line. 12d10 lightning, DC 16
 /// DEX, half on save. Recharge 5-6. Behir's signature: a 20 ft line
 /// of lightning that approximates as a small burst here. CR-11
 /// damage with the same recharge-pool key the dragons use so a
@@ -11375,11 +11375,11 @@ impl Action for WinterWolfBite {
 pub static WINTER_WOLF_BITE: LazyLock<WinterWolfBite> =
     LazyLock::new(|| WinterWolfBite {});
 
-/// Winter Wolf cold breath — burst-3 / range-4, 4d8 cold, DC 12 CON,
+/// Winter Wolf cold breath — RAW's 15-foot Cone, 4d8 cold, DC 12 CON,
 /// half on save. Recharge 5-6 via the shared `"breath_weapon"` pool.
-/// RAW: 15-ft cone; we model it as a small burst at moderate range so
-/// the AI can still aim it at clustered targets. CR-3 dice tier — well
-/// below dragon breath, well above the wolf trip.
+/// CR-3 dice tier — well below dragon breath, well above the wolf trip,
+/// and six tiles of cone is short enough that the pack has to be on top
+/// of somebody to use it.
 pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
     display_name: "cold breath",
     aliases: &["wwc", "frost-breath"],
@@ -13383,20 +13383,25 @@ pub static IRON_GOLEM_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     parts: vec![(&IRON_GOLEM_SWORD, 1), (&IRON_GOLEM_SLAM, 1)],
 });
 
-/// Iron Golem Poison Breath — burst-3 / range-4 of noxious green vapor.
-/// 10d8 poison, DC 19 CON, half on save. Recharge 6 (RAW: "Recharge 6"
-/// means the breath only refreshes on a d6 of exactly 6 at start of turn).
-/// Shares the standard `"breath_weapon"` recharge pool with the dragons —
-/// ensures a multi-monster ambush can't double-tap two breath weapons in
-/// the same round. Smaller burst than the dragon's range-6 cone (RAW: 15
-/// ft cone vs 60 ft cone) at the higher per-die count.
+/// Iron Golem Poison Breath — SRD 5.2's 60-foot Cone of noxious green
+/// vapour. 10d8 poison, DC 19 CON, half on save. Recharge 6 (RAW:
+/// "Recharge 6" means the breath only refreshes on a d6 of exactly 6 at
+/// the start of its turn). Shares the standard `"breath_weapon"`
+/// recharge pool with the dragons, so a multi-monster ambush can't
+/// double-tap two breath weapons in the same round.
+///
+/// The same sixty feet an adult dragon breathes, at a heavier
+/// per-die count and a stingier recharge — which is the trade the stat
+/// block is making, and which the old docstring had backwards: it
+/// described the golem's cone as "15 ft" against the dragon's 60 and
+/// gave it the smaller burst to match.
 pub static IRON_GOLEM_BREATH: BreathWeapon = BreathWeapon {
     display_name: "iron poison breath",
     aliases: &["ipb", "iron-breath"],
     damage: Some((Dice::new(10, 8), DamageType::Poison)),
     save_ability: AbilityScoreType::Constitution,
     dc: 19,
-    shape: AreaShape::Cone { length: 6 },
+    shape: AreaShape::Cone { length: 24 },
     recharge_key: "breath_weapon",
     condition: None,
     enemies_only: false,
@@ -13504,7 +13509,7 @@ pub static DRAGON_TURTLE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Comp
     parts: vec![(&DRAGON_TURTLE_BITE, 1), (&DRAGON_TURTLE_CLAW, 2)],
 });
 
-/// Dragon Turtle Steam Breath — burst-3 / range-4 of scalding vapor.
+/// Dragon Turtle Steam Breath — RAW's 60-foot Cone of scalding vapour.
 /// 12d6 fire, DC 18 CON, half on save. Recharge 5-6 via the shared
 /// `"breath_weapon"` pool so the dragon turtle can't double-tap with a
 /// second breath option (it has none, but the shared key keeps the
@@ -15566,7 +15571,7 @@ impl Action for IceMephitClaws {
 
 pub static ICE_MEPHIT_CLAWS: LazyLock<IceMephitClaws> = LazyLock::new(|| IceMephitClaws {});
 
-/// Ice Mephit Frost Breath — a 15-ft cone (burst-2 / range-3 in this
+/// Ice Mephit Frost Breath — a 15-ft cone (six tiles on this
 /// 2.5 ft grid) of biting cold. 1d8 cold, DC 10 DEX, half on save.
 /// Recharge 6 per RAW; we route through the shared `"breath_weapon"`
 /// pool so a mephit ambush can't double-tap with two breaths.
@@ -16806,7 +16811,7 @@ pub static DUST_MEPHIT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-/// Dust Mephit Blinding Breath — a 15-ft cone (burst-2 / range-3) of
+/// Dust Mephit Blinding Breath — a 15-ft cone of
 /// fine choking grit. Save-or-Blinded for 1 round on a failed DC 10
 /// CON save; no damage. Recharge 6.
 ///

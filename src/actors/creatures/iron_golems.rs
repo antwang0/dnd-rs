@@ -26,7 +26,7 @@ use std::sync::LazyLock;
 ///   around its 2×2 Large footprint.
 /// - **Iron Slam** (standalone) — STR-based 3d8+STR bludgeoning melee
 ///   (reach 1). Use when the sword's reach isn't needed.
-/// - **Iron Poison Breath** — burst-3 / range-4 cone, recharge 6.
+/// - **Iron Poison Breath** — RAW's 60-ft cone, recharge 6.
 ///   10d8 poison, DC-19 CON, half on save. Heavier per-die count than
 ///   the dragon breath cone but at a smaller burst radius — matches the
 ///   RAW "15 ft cone, 10d8 poison" stat block.

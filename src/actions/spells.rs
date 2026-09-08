@@ -688,12 +688,12 @@ impl BurstTargets {
         self,
         encounter: &EncounterInstance,
         caster_id: usize,
-        point: Coordinate,
-        radius: isize,
+        shape: crate::engine::areas::AreaShape,
+        aim: Coordinate,
     ) -> Vec<usize> {
         match self {
-            BurstTargets::Enemy => encounter.enemy_burst_targets(caster_id, point, radius),
-            BurstTargets::Neutral => encounter.neutral_burst_targets(caster_id, point, radius),
+            BurstTargets::Enemy => encounter.enemy_area_targets(caster_id, shape, aim),
+            BurstTargets::Neutral => encounter.neutral_area_targets(caster_id, shape, aim),
         }
     }
 }
@@ -743,10 +743,47 @@ fn burst_save_damage(
     targets: BurstTargets,
     outcome: SaveDamagePolicy,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    area_save_damage(
+        encounter,
+        caster_id,
+        crate::engine::areas::AreaShape::Burst { radius },
+        point,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        targets,
+        outcome,
+    )
+}
+
+/// `burst_save_damage` for an area of any shape.
+///
+/// The body moved here whole and the burst entry point above became the
+/// wrapper, for the reason the same swap was made one layer down in
+/// `action_template`: every clause in it — the shared damage roll, the
+/// metamagic chokepoints, the shielded allies, the sorted target list —
+/// is a rule about *areas*, and a cone that skipped any of them would
+/// be a quietly different spell.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn area_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: crate::engine::areas::AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+    targets: BurstTargets,
+    outcome: SaveDamagePolicy,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
     // Caster-aware damage roll: routes through the shared chokepoint so
     // the Sorcerer's Empowered Spell metamagic (reroll low dice) and the
     // Evocation Wizard's Empowered Evocation (+INT mod) both apply to
-    // burst spells.
+    // area spells.
     let raw = encounter.roll_empowered_sum(caster_id, dice.count, dice.faces);
     encounter.log(format!(
         "  {}: {}({}) shared {:?}",
@@ -754,17 +791,19 @@ fn burst_save_damage(
     ));
     // Pre-compute the shielded ally set (Sorcerer Careful Spell,
     // Evocation Wizard Sculpt Spells). Only meaningful for Neutral
-    // bursts — Enemy bursts already exclude allies at the target-list
+    // areas — Enemy ones already exclude allies at the target-list
     // step, so there is nobody left for it to spare.
     let shielded = match targets {
         BurstTargets::Enemy => std::collections::HashSet::new(),
-        BurstTargets::Neutral => encounter.auto_pass_shielded_allies(caster_id, point, radius),
+        BurstTargets::Neutral => {
+            encounter.auto_pass_shielded_allies_in(caster_id, shape, aim)
+        }
     };
-    let target_ids = targets.ids(encounter, caster_id, point, radius);
+    let target_ids = targets.ids(encounter, caster_id, shape, aim);
     crate::actions::action_template::resolve_burst_targets(
         encounter,
         caster_id,
-        point,
+        encounter.area_origin(caster_id, shape, aim),
         &target_ids,
         save_ability,
         dc,
@@ -772,6 +811,64 @@ fn burst_save_damage(
         damage_type,
         outcome,
         &shielded,
+    )
+}
+
+/// Enemy-only, save-for-half, over an area of any shape — the
+/// shape-general twin of `enemy_burst_save_for_half`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn enemy_area_save_for_half(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: crate::engine::areas::AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    area_save_damage(
+        encounter,
+        caster_id,
+        shape,
+        aim,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Enemy,
+        SaveDamagePolicy::HalfOnSave,
+    )
+}
+
+/// Enemy-only, nothing-on-a-save, over an area of any shape — the
+/// shape-general twin of `enemy_burst_save_only`.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn enemy_area_save_only(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: crate::engine::areas::AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    dice: Dice,
+    damage_type: DamageType,
+    action_name: &str,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
+    area_save_damage(
+        encounter,
+        caster_id,
+        shape,
+        aim,
+        save_ability,
+        dc,
+        dice,
+        damage_type,
+        action_name,
+        BurstTargets::Enemy,
+        SaveDamagePolicy::NoneOnSave,
     )
 }
 
@@ -2156,10 +2253,15 @@ impl Action for Bless {
 
 pub static BLESS: LazyLock<Bless> = LazyLock::new(|| Bless {});
 
-/// Burning Hands — 5e level-1 evocation. 15-foot cone (we approximate as
-/// a 3-tile burst centered on the target tile, since cones aren't yet
-/// modeled). Every actor in the burst takes 3d6 fire on a failed DEX
-/// save, half on success. Consumes a level-1 slot.
+/// Burning Hands — 5e level-1 evocation. RAW's 15-foot Cone, thrown from
+/// the caster's own hands in a direction they name. Everyone caught in
+/// it, friend or foe, takes 3d6 fire on a failed DEX save and half on a
+/// success. Consumes a level-1 slot.
+///
+/// A friend-or-foe area at short range out of the caster's own body is
+/// the level-1 evoker's whole problem in one spell: the wizard has to
+/// stand where the fighter is standing to use it, and the cone is
+/// exactly wide enough to catch them both.
 pub struct BurningHands {}
 
 impl Action for BurningHands {
@@ -2179,13 +2281,10 @@ impl Action for BurningHands {
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
-    }
-
-    fn reach_tiles(&self) -> Option<isize> {
-        // 15 ft cone — short range. We treat the burst origin as the
-        // far edge of the cone.
-        Some(6)
+        // RAW: "a 15-foot Cone", which is six tiles on the 2.5 ft grid.
+        // The aim point supplies a direction, not a centre — see
+        // `crate::engine::areas`.
+        TargetingSchema::Cone { length: 6 }
     }
 
     fn requires_los(&self) -> bool {
@@ -2228,20 +2327,19 @@ impl Action for BurningHands {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        let radius: isize = match self.targeting_schema() {
-            TargetingSchema::Burst { radius } => radius,
-            _ => return Vec::new(),
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
         };
 
         // Empowered Spell metamagic — sorcerer can reroll low dice on
         // the burning-hands pool. Same hook as Fireball / Lightning Bolt.
         let raw = encounter.roll_empowered_sum(caster_id, 3, 6);
-        encounter.log(format!("  burning hands: 3d6({}) = {} fire area", raw, raw));
-        crate::actions::action_template::resolve_burst_save_damage(
+        encounter.log(format!("  burning hands: 3d6({}) = {} fire cone", raw, raw));
+        crate::actions::action_template::resolve_area_save_damage(
             encounter,
             caster_id,
+            shape,
             point,
-            radius,
             AbilityScoreType::Dexterity,
             dc,
             raw,
@@ -5469,8 +5567,8 @@ pub static DISPEL_EVIL_AND_GOOD: LazyLock<DispelEvilAndGood> =
     LazyLock::new(|| DispelEvilAndGood {});
 
 /// Color Spray — level-1 illusion. Roll a 6d10 HP pool; sweep enemies in
-/// a 15ft cone (we approximate with a 2-tile burst centered on the target
-/// point) in ascending current-HP order, blinding each one until the end
+/// RAW's 15-foot Cone in ascending current-HP order, blinding each one
+/// until the end
 /// of the caster's next turn until the pool is exhausted. Targets immune
 /// to Blinded (constructs, oozes that don't have eyes) are skipped, and a
 /// target with more current HP than the remaining pool stops the sweep.
@@ -5486,12 +5584,11 @@ impl Action for ColorSpray {
         vec!["cs-spell", "color"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SinglePoint
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 15ft cone — short range, treat the burst origin as the cone's
-        // far edge much like Burning Hands.
-        Some(6)
+        // RAW: "each creature in a 15-foot Cone originating from you",
+        // six tiles on the 2.5 ft grid. Same shape and reach as Burning
+        // Hands, which is the other half of the level-1 evoker's answer
+        // to a doorway.
+        TargetingSchema::Cone { length: 6 }
     }
     fn requires_los(&self) -> bool {
         true
@@ -5520,17 +5617,19 @@ impl Action for ColorSpray {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const BURST_RADIUS: isize = 2;
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
         let pool = encounter.roll(&Dice::new(6, 10));
         encounter.log(format!(
             "  color spray: 6d10({}) = {} HP pool",
             pool, pool
         ));
-        crate::actions::action_template::pool_sweep_targets(
+        crate::actions::action_template::pool_sweep_area_targets(
             encounter,
             caster_id,
+            shape,
             point,
-            BURST_RADIUS,
             pool,
             Condition::Blinded,
         )
@@ -5899,14 +5998,16 @@ impl Action for ScorchingRay {
 
 pub static SCORCHING_RAY: LazyLock<ScorchingRay> = LazyLock::new(|| ScorchingRay {});
 
-/// Lightning Bolt — level-3 evocation. A 100ft line / 5ft wide (RAW); we
-/// approximate as a burst at the target point: every creature in a
-/// 4-tile radius makes a DEX save vs caster's spell save DC for 8d6
-/// lightning. Pass = half, fail = full. Shared damage roll across all
-/// targets. Distinct from Fireball: lightning damage type and same
-/// resource cost — picking between the two is a function of enemy
-/// resistances and party positioning (lightning more linear-flavored
-/// even if our grid approximation is a sphere).
+/// Lightning Bolt — level-3 evocation. RAW's 100-foot-long, 5-foot-wide
+/// Line, blasting out from the caster in a direction they choose. Every
+/// creature caught makes a DEX save vs the caster's spell save DC for
+/// 8d6 lightning off one shared roll; pass is half, fail is full.
+///
+/// Distinct from Fireball in the way that matters, which is not the
+/// damage type: at the same slot level, Fireball wants the enemy
+/// clumped and this wants them lined up. It used to be a radius-4 ball
+/// thrown up to forty tiles — Fireball with a different colour — and
+/// the choice between the two was a resistance table.
 pub struct LightningBolt {}
 
 impl Action for LightningBolt {
@@ -5920,11 +6021,21 @@ impl Action for LightningBolt {
         vec!["lb", "lightning"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 100ft = 40 tiles.
-        Some(40)
+        // RAW: "a 100-foot-long, 5-foot-wide Line blasts out from you in
+        // a direction you choose." Forty tiles long on the 2.5 ft grid;
+        // `half_width: 1` is RAW's five feet, rounded outward to the odd
+        // count a strip through a tile's centre has to have.
+        //
+        // This was a radius-4 ball thrown up to forty tiles, which is
+        // the same spell as Fireball with a different damage type and a
+        // longer arm. What the line buys is a decision: it is the one
+        // area in the arcane list that rewards *lining the enemy up*
+        // rather than catching them in a clump, and it is why a wizard
+        // with both spells has two answers rather than one.
+        TargetingSchema::Line {
+            length: 40,
+            half_width: 1,
+        }
     }
     fn requires_los(&self) -> bool {
         true
@@ -5963,14 +6074,17 @@ impl Action for LightningBolt {
         // primes apply to the lightning bolt's shared damage pool.
         let raw = encounter.roll_empowered_sum(caster_id, dice, 6);
         encounter.log(format!(
-            "  lightning bolt: {}d6({}) = {} lightning area",
+            "  lightning bolt: {}d6({}) = {} lightning down a 100 ft line",
             dice, raw, raw
         ));
-        crate::actions::action_template::resolve_burst_save_damage(
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
+        crate::actions::action_template::resolve_area_save_damage(
             encounter,
             caster_id,
+            shape,
             point,
-            4,
             AbilityScoreType::Dexterity,
             dc,
             raw,
@@ -7038,12 +7152,14 @@ impl Action for Slow {
 
 pub static SLOW: LazyLock<Slow> = LazyLock::new(|| Slow {});
 
-/// Cone of Cold — level-5 evocation. A 60-ft cone of frigid air from
-/// the caster: 8d8 cold damage, CON save for half. We approximate the
-/// cone with a burst of radius 6 centered on the target tile (RAW is a
-/// 60-ft cone — the engine doesn't yet model directional cones, so a
-/// generous radius approximates the area). Damage is rolled once and
-/// shared via `resolve_burst_save_damage`.
+/// Cone of Cold — level-5 evocation. RAW's 60-foot Cone of frigid air
+/// out of the caster: 8d8 cold, CON save for half, rolled once and
+/// shared across everyone it catches.
+///
+/// Twenty-four tiles is the longest area a player-side caster can put
+/// on the board, and a cone that long is a decision about where to
+/// stand rather than where to aim — which is what separates it from
+/// Fireball at the same tier.
 pub struct ConeOfCold {}
 
 impl Action for ConeOfCold {
@@ -7057,12 +7173,10 @@ impl Action for ConeOfCold {
         vec!["coc", "cone"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 6 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // Self-cone, but we cap range at the cone reach (60 ft = 24 tiles)
-        // so the picker doesn't drop pins on the far side of the map.
-        Some(24)
+        // RAW: "each creature in a 60-foot Cone originating from you" —
+        // twenty-four tiles on the 2.5 ft grid, and the aim point is
+        // the direction rather than the centre.
+        TargetingSchema::Cone { length: 24 }
     }
     fn requires_los(&self) -> bool {
         true
@@ -7110,14 +7224,14 @@ impl Action for ConeOfCold {
         // pool the sorcerer's CHA-mod reroll applies to.
         let raw = encounter.roll_empowered_sum(caster_id, 8, 8);
         encounter.log(format!(
-            "  cone of cold: 8d8({}) = {} cold area",
+            "  cone of cold: 8d8({}) = {} cold in a 60 ft cone",
             raw, raw
         ));
-        crate::actions::action_template::resolve_burst_save_damage(
+        crate::actions::action_template::resolve_area_save_damage(
             encounter,
             caster_id,
+            crate::engine::areas::AreaShape::Cone { length: 24 },
             point,
-            6,
             AbilityScoreType::Constitution,
             dc,
             raw,
@@ -12686,11 +12800,10 @@ impl Action for CrownOfStarsSpell {
 
 pub static CROWN_OF_STARS: LazyLock<CrownOfStarsSpell> = LazyLock::new(|| CrownOfStarsSpell {});
 
-/// Fear — level-3 illusion, concentration. 30-foot cone of dread (4-tile
-/// burst). Each enemy in the burst makes a WIS save vs the caster's DC:
-/// fail = Frightened for the spell's duration; pass = no effect. We use
-/// the shared `enemy_burst_targets` partition so allies in the blast are
-/// spared. Concentration so a re-cast / damage drop cleans up the entire
+/// Fear — level-3 illusion, concentration. RAW's 30-foot Cone of dread.
+/// Each enemy in it makes a WIS save vs the caster's DC: fail =
+/// Frightened for the spell's duration; pass = no effect. Routed through
+/// the shared enemy-area partition so allies in the cone are spared. Concentration so a re-cast / damage drop cleans up the entire
 /// Frightened pool in one shot.
 pub struct Fear {}
 
@@ -12709,13 +12822,9 @@ impl Action for Fear {
         vec!["fr", "terror"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // Self-origin cone; the burst point sits right in front of the
-        // caster. Cap the targeting tile to the caster's footprint so
-        // the cone always engulfs them as the cone's origin.
-        Some(6)
+        // RAW: "Each creature in a 30-foot Cone must succeed on a Wisdom
+        // saving throw" — twelve tiles on the 2.5 ft grid.
+        TargetingSchema::Cone { length: 12 }
     }
     fn requires_los(&self) -> bool {
         true
@@ -12748,10 +12857,12 @@ impl Action for Fear {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        const RADIUS: isize = 4;
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+        for tid in encounter.enemy_area_targets(caster_id, shape, point) {
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
@@ -15752,8 +15863,8 @@ impl Action for HolyWord {
 
 pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
 
-/// Prismatic Spray — 5e level-7 evocation. 60ft cone (radius-6 burst on
-/// the target point). Each enemy in the area rolls 1d8 to determine
+/// Prismatic Spray — 5e level-7 evocation. RAW's 60-foot Cone of eight
+/// rays. Each enemy in the area rolls 1d8 to determine
 /// which colored ray strikes them; the ray's damage type is fixed by the
 /// roll. Then they make a DEX save against the caster's INT-based DC:
 /// on fail, take 10d6 of the rolled type; on save, half. The 8th color
@@ -15766,7 +15877,7 @@ pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
 ///     8 → Necrotic (the indigo ray)
 /// Each target gets its own ray roll — RAW lets each pick a different
 /// color, and this matches the chaos of the spell. Enemy-only filter:
-/// the caster controls the cone aim, so allies in the burst are spared.
+/// the caster controls the cone's aim, so allies in it are spared.
 pub struct PrismaticSpray {}
 
 impl Action for PrismaticSpray {
@@ -15780,11 +15891,9 @@ impl Action for PrismaticSpray {
         vec!["ps", "prismatic"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 6 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 60ft cone — the burst origin sits at the cone's far edge.
-        Some(24)
+        // RAW: "Eight rays of light flash from you in a 60-foot Cone" —
+        // twenty-four tiles on the 2.5 ft grid.
+        TargetingSchema::Cone { length: 24 }
     }
     fn requires_los(&self) -> bool {
         true
@@ -15828,8 +15937,11 @@ impl Action for PrismaticSpray {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        encounter.log("  prismatic spray: a rainbow burst erupts");
-        let enemies = encounter.enemy_burst_targets(caster_id, point, 6);
+        encounter.log("  prismatic spray: eight rays flash out in a 60 ft cone");
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
+        let enemies = encounter.enemy_area_targets(caster_id, shape, point);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in enemies {
             let ray = encounter.roll(&Dice::new(1, 8));
@@ -18142,11 +18254,12 @@ impl Action for AganazzarsScorcher {
         vec!["scorcher", "aganazzar"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 3 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 30ft RAW line — origin must be close to caster.
-        Some(12)
+        // RAW: "a line of roaring flame 30 feet long and 5 feet wide" —
+        // twelve tiles on the 2.5 ft grid, one tile of half-width.
+        TargetingSchema::Line {
+            length: 12,
+            half_width: 1,
+        }
     }
     fn requires_los(&self) -> bool {
         true
@@ -18175,15 +18288,18 @@ impl Action for AganazzarsScorcher {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Intelligence);
-        let (effects, _) = enemy_burst_save_for_half(
+        let (effects, _) = enemy_area_save_for_half(
             encounter,
             caster_id,
+            shape,
             point,
-            3,
             AbilityScoreType::Dexterity,
             dc,
             Dice::new(3, 8),
@@ -21986,12 +22102,14 @@ impl Action for GustOfWind {
         vec!["gust", "gow"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SinglePoint
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 60-ft line = 24 tiles. The target tile defines the far end
-        // of the wind path.
-        Some(24)
+        // RAW: "a line of strong wind 60 feet long and 10 feet wide" —
+        // twenty-four tiles long, and `half_width: 2` is RAW's ten feet
+        // rounded outward to the odd count a strip through a tile's
+        // centre has to have.
+        TargetingSchema::Line {
+            length: 24,
+            half_width: 2,
+        }
     }
     fn requires_los(&self) -> bool {
         true
@@ -22041,19 +22159,19 @@ impl Action for GustOfWind {
             AbilityScoreType::Wisdom,
         ]);
         let caster_loc = caster.location();
-        // Approximate the 60-ft line as a 3-tile burst centered on the
-        // midpoint between caster and target. Picks up everyone roughly
-        // in the wind's path without needing a true line-targeting
-        // schema. The push anchor stays at the caster so failed-save
-        // targets are blown outward along the wind direction.
-        let midpoint = Coordinate::new(
-            (caster_loc.x + point.x) / 2,
-            (caster_loc.y + point.y) / 2,
-        );
-        const RADIUS: isize = 3;
+        // The wind is a line now, so the target set is the line's.
+        // It used to be a 3-tile burst centred on the *midpoint*
+        // between caster and target — which caught the creatures
+        // standing beside the halfway mark and missed the ones at
+        // either end, and had no relationship to a corridor of wind at
+        // all. The push anchor stays at the caster so failed-save
+        // targets are blown outward along the wind's direction.
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
         const PUSH_TILES: u32 = tiles_from_feet(15);
         encounter.log(format!(
-            "  gust of wind: line toward {} (DC {})",
+            "  gust of wind: a 60 ft line toward {} (DC {})",
             point, dc
         ));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
@@ -22063,7 +22181,7 @@ impl Action for GustOfWind {
         // StartConcentration call reads symmetric with Fog Cloud and
         // future single-cast concentration spells.
         let conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.neutral_burst_targets(caster_id, midpoint, RADIUS) {
+        for tid in encounter.neutral_area_targets(caster_id, shape, point) {
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
             if save.passed() {
                 continue;
@@ -22639,13 +22757,11 @@ impl Action for ConjureBarrage {
         vec!["barrage", "cb-vol"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // 60ft cone — we collapse to a 2-tile burst placed up to 12 tiles
-        // (30ft) out; the picker can still place the burst at the cone's
-        // far edge.
-        Some(12)
+        // RAW: "each creature in a 60-foot cone" of conjured ammunition,
+        // twenty-four tiles on the 2.5 ft grid. The whole point of the
+        // ranger's third-level slot is that it sprays *outward from the
+        // archer*, which a burst placed twelve tiles away was not.
+        TargetingSchema::Cone { length: 24 }
     }
     fn requires_los(&self) -> bool {
         true
@@ -22678,11 +22794,14 @@ impl Action for ConjureBarrage {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        let (effects, _saves) = enemy_burst_save_for_half(
+        let Some(shape) = self.targeting_schema().area_shape() else {
+            return Vec::new();
+        };
+        let (effects, _saves) = enemy_area_save_for_half(
             encounter,
             caster_id,
+            shape,
             point,
-            2,
             AbilityScoreType::Dexterity,
             dc,
             Dice::new(3, 8),
@@ -32807,11 +32926,9 @@ pub static SCATTER: LazyLock<Scatter> = LazyLock::new(|| Scatter {});
 /// makes a Constitution save. On a failure it takes 3d8 cold and the
 /// ice sheets over it, holding it fast until it breaks free.
 ///
-/// Cones are approximated as bursts aimed just in front of the caster,
-/// the same shape Burning Hands and Cone of Cold already use. The
-/// damage is `NoneOnSave` rather than half — RAW's cone deals nothing
-/// on a successful save, which is what buys the Restrained rider its
-/// place on a level-2 slot.
+/// The damage is `NoneOnSave` rather than half — RAW's cone deals
+/// nothing on a successful save, which is what buys the Restrained
+/// rider its place on a level-2 slot.
 ///
 /// The rider is a plain `Restrained` on a timer rather than RAW's
 /// "until it uses an action to break out with a Strength check". The
@@ -32824,10 +32941,8 @@ pub static SCATTER: LazyLock<Scatter> = LazyLock::new(|| Scatter {});
 pub struct RimesBindingIce {}
 
 impl RimesBindingIce {
-    /// 30 ft of cone, measured the way every other cone in this file
-    /// measures: the burst's radius in tiles, aimed at a point the
-    /// caster can see ahead of them.
-    const RADIUS: isize = 3;
+    /// RAW's 30-foot cone, in tiles on the 2.5 ft grid.
+    const CONE_TILES: isize = 12;
     /// How long the ice holds. See the type docs for why this is a
     /// timer rather than an escape check.
     const HOLD_ROUNDS: u32 = 2;
@@ -32844,14 +32959,9 @@ impl Action for RimesBindingIce {
         vec!["rbi", "binding ice", "rime"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst {
-            radius: Self::RADIUS,
+        TargetingSchema::Cone {
+            length: Self::CONE_TILES,
         }
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        // Self-origin cone: the aiming tile sits within the cone's own
-        // length, so the spray always starts at the caster.
-        Some(Self::RADIUS * 2)
     }
     fn requires_los(&self) -> bool {
         true
@@ -32888,11 +32998,13 @@ impl Action for RimesBindingIce {
             AbilityScoreType::Charisma,
             AbilityScoreType::Wisdom,
         ]);
-        let (mut effects, saves) = enemy_burst_save_only(
+        let (mut effects, saves) = enemy_area_save_only(
             encounter,
             caster_id,
+            crate::engine::areas::AreaShape::Cone {
+                length: Self::CONE_TILES,
+            },
             point,
-            Self::RADIUS,
             AbilityScoreType::Constitution,
             dc,
             Dice::new(3, 8),

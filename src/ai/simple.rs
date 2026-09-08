@@ -13775,16 +13775,17 @@ mod tests {
         let ControllerDecision::Act(aei) = decision else {
             panic!("expected an action");
         };
-        // Any Burst-schema spell satisfies "pick AoE": once the cleric
-        // gained Web alongside Sacred Burst, "name == sacred burst" was
+        // Any *area* spell satisfies "pick AoE": once the cleric gained
+        // Web alongside Sacred Burst, "name == sacred burst" was
         // over-specific — Web on a 2-enemy cluster is just as legitimate
-        // an AoE pick. Assert the schema, not the spell name.
+        // an AoE pick. Assert the schema, not the spell name, and via
+        // `area_shape` rather than the `Burst` variant so a cone or a
+        // line counts too: the cleric's Fear is a 30-foot cone now, and
+        // a cone dropped on a two-enemy cluster is the same decision
+        // this test is about.
         assert!(
-            matches!(
-                aei.action().targeting_schema(),
-                crate::actions::action_template::TargetingSchema::Burst { .. }
-            ),
-            "two-enemy cluster should pull an AoE (Burst) action over single-target, got {}",
+            aei.action().targeting_schema().area_shape().is_some(),
+            "two-enemy cluster should pull an area action over single-target, got {}",
             aei.action().name()
         );
     }

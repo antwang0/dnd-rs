@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 /// Behir — CR 11 huge monstrosity. Lightning-breath serpent: bite +
 /// constrict CompoundAttack on melee (3d10+6 piercing then 2d10+6
 /// bludgeoning + 2d10 slashing on the same target), plus a
-/// recharge-5/6 lightning breath (12d10, burst-3 / range-5,
+/// recharge-5/6 lightning breath (12d10, RAW's 90-ft line,
 /// DC 16 DEX) for the opener. Lightning-immune so a chain-lightning
 /// ally cast can't friendly-fire it; standalone bite + constrict are
 /// also exposed so the AI has a graceful fallback when the breath is

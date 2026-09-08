@@ -537,15 +537,15 @@ pub static DRACONIC_REND_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
 });
 
 /// **Draconic Breath** — the reason to cast this spell instead of Summon
-/// Celestial on the same rung. 4d6 fire in a burst, DEX save for half,
-/// recharge 5–6 off the shared `"breath_weapon"` pool.
+/// Celestial on the same rung. 4d6 fire in RAW's 30-foot Cone, DEX save
+/// for half, recharge 5–6 off the shared `"breath_weapon"` pool.
 ///
 /// RAW picks the damage type from the caster's chosen ancestry at cast
 /// time; the engine has no channel for a cast-time choice (the same
 /// reason the three Storm Herald Barbarians are three templates), so
-/// fire is fixed here and the ancestry is flavour. Burst 2 / range 4 is
-/// the RAW 30 ft cone rendered as the engine's burst envelope, a rung
-/// below the real dragon's burst-4 / range-6.
+/// fire is fixed here and the ancestry is flavour. Thirty feet is
+/// twelve tiles of cone — half an adult dragon's, which is the right
+/// place on the ladder for a conjured one.
 pub static DRACONIC_BREATH: BreathWeapon = BreathWeapon {
     display_name: "draconic breath",
     aliases: &["breath", "db"],

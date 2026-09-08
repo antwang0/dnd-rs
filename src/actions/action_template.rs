@@ -148,20 +148,52 @@ pub fn resolve_burst_save_damage(
     damage: u32,
     damage_type: DamageType,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    // Shielded allies in the burst auto-pass the save AND take 0 damage
+    resolve_area_save_damage(
+        encounter,
+        caster_id,
+        AreaShape::Burst { radius },
+        center,
+        save_ability,
+        dc,
+        damage,
+        damage_type,
+    )
+}
+
+/// `resolve_burst_save_damage` for an area of any shape — the friend-or-
+/// foe lane a cone or a line resolves through.
+///
+/// Every clause the burst version had is a clause about *areas* rather
+/// than about spheres: allies shielded out of the blast, the caster
+/// excluded, cover measured from where the effect came from. So the body
+/// moved here whole and the burst entry point above is the one-line
+/// wrapper, which is the right way round — a Cone of Cold that skipped
+/// Careful Spell would be a bug nobody would think to look for.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_area_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    damage: u32,
+    damage_type: DamageType,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    // Shielded allies in the area auto-pass the save AND take 0 damage
     // (Sorcerer Careful Spell, Evocation Wizard Sculpt Spells). Resolved
     // up-front so the shared per-target loop can skip them cleanly; the
     // Careful Spell prime is consumed inside the helper.
-    let shielded = encounter.auto_pass_shielded_allies(caster_id, center, radius);
-    // `neutral_burst_targets` shares the "caster-excluded, combat-active,
-    // footprint in radius" filter with the rest of the engine — folding it
-    // here keeps the caster-exclusion / footprint-Chebyshev / sorted-ids
+    let shielded = encounter.auto_pass_shielded_allies_in(caster_id, shape, aim);
+    // `neutral_area_targets` shares the "caster-excluded, combat-active,
+    // footprint inside the shape" filter with the rest of the engine —
+    // folding it here keeps the caster-exclusion / geometry / sorted-ids
     // invariant in one place instead of re-inlining the loop.
-    let target_ids = encounter.neutral_burst_targets(caster_id, center, radius);
+    let target_ids = encounter.neutral_area_targets(caster_id, shape, aim);
     resolve_burst_targets(
         encounter,
         caster_id,
-        center,
+        encounter.area_origin(caster_id, shape, aim),
         &target_ids,
         save_ability,
         dc,
@@ -204,15 +236,43 @@ pub fn resolve_enemy_burst_save_damage(
     damage_type: DamageType,
     policy: SaveDamagePolicy,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    // Enemy bursts skip allies at the target-list step, so the
+    resolve_enemy_area_save_damage(
+        encounter,
+        caster_id,
+        AreaShape::Burst { radius },
+        center,
+        save_ability,
+        dc,
+        damage,
+        damage_type,
+        policy,
+    )
+}
+
+/// `resolve_enemy_burst_save_damage` for an area of any shape. See
+/// `resolve_area_save_damage` for why the shape-general version is the
+/// body and the burst one is the wrapper.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_enemy_area_save_damage(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    damage: u32,
+    damage_type: DamageType,
+    policy: SaveDamagePolicy,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    // Enemy areas skip allies at the target-list step, so the
     // ally-shield sweep has nothing left to spare — pass an empty set
     // through instead of re-running the lookup.
     let shielded: HashSet<usize> = HashSet::new();
-    let target_ids = encounter.enemy_burst_targets(caster_id, center, radius);
+    let target_ids = encounter.enemy_area_targets(caster_id, shape, aim);
     resolve_burst_targets(
         encounter,
         caster_id,
-        center,
+        encounter.area_origin(caster_id, shape, aim),
         &target_ids,
         save_ability,
         dc,
@@ -532,8 +592,26 @@ pub fn pool_sweep_targets(
     pool: u32,
     skip_immune_to: crate::conditions::Condition,
 ) -> Vec<usize> {
-    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+    pool_sweep_area_targets(
+        encounter,
+        caster_id,
+        AreaShape::Burst { radius },
+        point,
+        pool,
+        skip_immune_to,
+    )
+}
 
+/// `pool_sweep_targets` for an area of any shape — Color Spray's cone
+/// and Sleep's sphere are the same rule over different ground.
+pub fn pool_sweep_area_targets(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    shape: AreaShape,
+    aim: Coordinate,
+    pool: u32,
+    skip_immune_to: crate::conditions::Condition,
+) -> Vec<usize> {
     let mut candidates: Vec<(u32, usize)> = encounter
         .actors
         .iter()
@@ -549,13 +627,7 @@ pub fn pool_sweep_targets(
             if a.effectively_immune_to_condition(skip_immune_to) {
                 return None;
             }
-            let dist = footprint_chebyshev(
-                a.location(),
-                get_tiles_from_size(a.size()),
-                point,
-                1,
-            );
-            if dist > radius {
+            if !encounter.area_catches(caster_id, shape, aim, *id) {
                 return None;
             }
             Some((a.hitpoints(), *id))
@@ -798,6 +870,11 @@ pub fn reaction_only() -> Vec<Resource> {
     vec![Resource::Reaction]
 }
 
+/// `PartialEq` and `Debug` because a schema is a *fact about an action*
+/// worth asserting on directly: nine spells declare a cone or a line as
+/// one line each, and a test that can only ask "is it an area" cannot
+/// tell a 60-foot cone from a 15-foot one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetingSchema {
     NoArgs,
     SinglePoint,
