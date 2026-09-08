@@ -27168,12 +27168,12 @@ fn couatl_template_has_bite_gaze_and_resistances() {
     assert!(actor.is_immune_to_condition(Condition::Frightened));
 }
 
-/// Pit Fiend template carries fire + poison immunity, the fear-
-/// aura action, and the bite/claw multi pair. Also: immune to
-/// Frightened (so its own aura can't reflect off allied auras).
+/// Pit Fiend template carries fire + poison immunity, the fear aura as
+/// a passive emanation, and the bite/claw multi pair. Also: immune to
+/// Frightened, which is what keeps a pair of them from cowing each
+/// other.
 #[test]
 fn pit_fiend_template_is_fire_poison_immune_with_fear_aura() {
-    use crate::actions::monster_attacks::PIT_FIEND_FEAR_AURA;
     use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
     let mut e = ei_with_terrain(20, 20, &[]);
     let p = e
@@ -27182,51 +27182,106 @@ fn pit_fiend_template_is_fire_poison_immune_with_fear_aura() {
     let actor = &e.actors[&p];
     assert!(actor.is_immune_to(DamageType::Fire));
     assert!(actor.is_immune_to(DamageType::Poison));
-    let names: std::collections::HashSet<_> = actor
-        .actions
-        .iter()
-        .map(|a| a.name().to_string())
-        .collect();
-    assert!(names.contains(PIT_FIEND_FEAR_AURA.name()));
+    let [aura] = actor.emanations() else {
+        panic!("the pit fiend has exactly one emanation");
+    };
+    assert_eq!(aura.name, "fear aura");
+    assert_eq!(aura.dc, 21);
+    assert_eq!(aura.radius_feet, 20);
+    assert!(aura.grants_immunity_on_save);
+    assert!(aura.requires_conscious_source);
+    // And it is not an Action any more — RAW's aura costs the fiend
+    // nothing, which is the whole reason it can keep its multiattack.
+    assert!(actor.find_action("fear aura").is_none());
     assert!(actor.is_immune_to_condition(Condition::Frightened));
     assert!(actor.is_immune_to_condition(Condition::Poisoned));
     assert!(actor.is_immune_to_condition(Condition::Charmed));
 }
 
-/// Pit Fiend Fear Aura: every hostile combat-active actor within
-/// 20ft (8 tiles) makes a WIS save vs the fiend's CHA-DC. Failures
-/// land Frightened. Place a low-WIS goblin and the save should fail
-/// across the seed sweep.
+/// Pit Fiend Fear Aura: anyone who opens a turn within twenty feet
+/// makes a DC 21 Wisdom save or is Frightened until their next turn —
+/// and a creature that makes it once is done with this fiend's aura.
+///
+/// It costs the fiend nothing, which is the difference from the Action
+/// it used to be: the aura bills every round without the pit fiend
+/// spending anything, and the bite and two claws land on top.
 #[test]
-fn pit_fiend_fear_aura_frightens_nearby_enemies() {
-    use crate::actions::monster_attacks::PIT_FIEND_FEAR_AURA;
+fn a_pit_fiends_aura_bills_every_turn_spent_inside_it() {
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
     let mut frightened = false;
-    for seed in 0..30 {
-        let mut e = ei_with_terrain(20, 20, &[]);
-        for _ in 0..seed {
-            let _ = e.roll(&crate::engine::dice::Dice::new(1, 6));
-        }
-        let p = e
+    let mut banked = false;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let fiend = e
             .instantiate_creature(&PIT_FIEND_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
+        // A goblin, whose Wisdom save cannot reach 21 on any die, and a
+        // cleric, whose can. Which is itself the shape of a DC 21 aura:
+        // the rank and file never get out from under it.
         let g = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
             .unwrap();
-        let effects = PIT_FIEND_FEAR_AURA.side_effects(&mut e, p, None, None, None);
-        for ef in effects {
-            ef.apply(&mut e);
-        }
-        if e.actors
-            .get(&g)
-            .is_some_and(|a| a.has_condition(Condition::Frightened))
-        {
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(8, 6), 1, 1)
+            .unwrap();
+        e.start_turn_for(g);
+        if e.actors[&g].has_condition(Condition::Frightened) {
             frightened = true;
+            assert_eq!(
+                e.actors[&g].linked_by(Condition::Frightened),
+                Some(fiend),
+                "and it knows what it is afraid of"
+            );
+        }
+        for _ in 0..8 {
+            e.start_turn_for(cleric);
+            if e.trait_immunity_banked(cleric, fiend, "fear aura") {
+                banked = true;
+                // Done with it: no further save, no further fear.
+                for _ in 0..4 {
+                    e.start_turn_for(cleric);
+                    assert!(!e.actors[&cleric].has_condition(Condition::Frightened));
+                }
+                break;
+            }
+        }
+        if frightened && banked {
             break;
         }
     }
-    assert!(frightened, "fear aura never frightened the goblin");
+    assert!(frightened, "a DC 21 save fails on a goblin");
+    assert!(banked, "and making it once is the end of it");
+}
+
+/// RAW's "while it doesn't have the Incapacitated condition": a stunned
+/// pit fiend is not frightening anybody. The clause that separates a
+/// projected aura from a smell — see `Emanation::requires_conscious_source`.
+#[test]
+fn a_stunned_pit_fiend_projects_nothing() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let fiend = e
+            .instantiate_creature(&PIT_FIEND_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let g = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fiend)
+            .unwrap()
+            .add_condition(Condition::Stunned, ConditionTimer::Rounds(5));
+        e.start_turn_for(g);
+        assert!(!e.actors[&g].has_condition(Condition::Frightened));
+        assert!(
+            !e.trait_immunity_banked(g, fiend, "fear aura"),
+            "and no save was rolled at all, so nothing was banked (seed {seed})"
+        );
+    }
 }
 
 /// Chain Lightning: hits the primary + up to 3 forks within 5 tiles

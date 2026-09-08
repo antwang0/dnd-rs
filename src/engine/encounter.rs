@@ -12794,6 +12794,7 @@ impl EncounterInstance {
             {
                 continue;
             }
+            let emitter_conscious = !emitter.is_incapacitated();
             let gap = footprint_chebyshev(
                 emitter.location(),
                 get_tiles_from_size(emitter.size()),
@@ -12802,6 +12803,13 @@ impl EncounterInstance {
             );
             for emanation in emitter.emanations() {
                 if gap > emanation.radius_tiles() || !emanation.catches_type(victim_type) {
+                    continue;
+                }
+                // RAW's "while it doesn't have the Incapacitated
+                // condition", which the pit fiend's aura carries and the
+                // three body-odour traits do not — see
+                // `Emanation::requires_conscious_source`.
+                if emanation.requires_conscious_source && !emitter_conscious {
                     continue;
                 }
                 // The 24-hour clause, already paid.

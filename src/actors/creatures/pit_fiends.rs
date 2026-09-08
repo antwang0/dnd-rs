@@ -1,7 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{
-    PIT_FIEND_BITE, PIT_FIEND_CLAW, PIT_FIEND_FEAR_AURA, PIT_FIEND_MULTI,
-};
+use crate::actions::monster_attacks::{PIT_FIEND_BITE, PIT_FIEND_CLAW, PIT_FIEND_MULTI};
+use crate::engine::emanations::PIT_FIEND_FEAR_AURA;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
@@ -11,11 +10,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// Pit Fiend — CR 20 archdevil boss. Heavy melee burst (bite + 2 claws
-/// per Action), a fear aura that disables half the party on round 1,
-/// and the standard devil envelope of fire immunity + non-physical
-/// resistance. The marquee end-game boss for an adult party: even with
-/// proper buffs, the fear aura alone neutralizes most of the front
-/// line, and the multi-bite/claw burst is built to one-shot squishies.
+/// per Action) and a **Fear Aura** — RAW's 20-foot emanation, billing a
+/// DC 21 Wisdom save to anyone who starts a turn inside it, once, until
+/// they make one. See `emanations::PIT_FIEND_FEAR_AURA`.
+///
+/// The aura used to be an *Action*: the fiend spent its whole turn to
+/// frighten the room for ten rounds. That had the weight backwards in
+/// both directions — RAW's aura costs the pit fiend nothing, so it
+/// keeps the bite and two claws that are the CR-20 damage the fight is
+/// about, and it lasts one round at a time rather than ten. What makes
+/// it a boss aura is not the duration but the tax.
 ///
 /// Stats target the MM pit fiend: 300 HP, AC 21, STR-primary, immune
 /// to fire / poison damage, immune to Poisoned / Charmed / Frightened.
@@ -24,7 +28,6 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&PIT_FIEND_BITE);
     actions.push(&PIT_FIEND_CLAW);
     actions.push(&*PIT_FIEND_MULTI);
-    actions.push(&*PIT_FIEND_FEAR_AURA);
     CreatureTemplate {
         name: "Pit Fiend",
         // 'F' for Fiend (uppercase to distinguish from 'f' frost-something).
@@ -69,6 +72,11 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Charmed,
             Condition::Frightened,
         ]),
+        // RAW **Fear Aura** — see the template docstring above and
+        // `emanations::PIT_FIEND_FEAR_AURA`. The Frightened immunity two
+        // rows up is what keeps a pair of pit fiends from cowing each
+        // other on the rare board where they end up on opposite sides.
+        emanations: std::slice::from_ref(&PIT_FIEND_FEAR_AURA),
         // 5e Legendary Resistance (3/Day) — RAW per MM. Routine for
         // a CR-20 archdevil boss.
         legendary_resistances: 3,

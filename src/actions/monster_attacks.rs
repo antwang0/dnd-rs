@@ -7897,65 +7897,6 @@ pub static PIT_FIEND_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
     parts: vec![(&PIT_FIEND_BITE, 1), (&PIT_FIEND_CLAW, 2)],
 });
 
-/// Pit Fiend's Fear Aura — Action that radiates dread within 20ft (8
-/// tiles). Every hostile combat-active creature in range makes a WIS
-/// save vs the pit fiend's CHA-based DC; on fail, they're Frightened
-/// for 10 rounds. The aura is gated as an explicit Action rather than
-/// a passive on-arrival check so the AI can pick when to fire it —
-/// usually round 1 when the most allies are still healthy. Mirrors
-/// Banshee Wail's "burst-save → condition" shape, but the on-fail
-/// effect is Frightened instead of damage.
-pub struct PitFiendFearAura {}
-
-impl Action for PitFiendFearAura {
-    fn name(&self) -> &str {
-        "fear aura"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["fa", "aura"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
-        let caster_loc = caster.location();
-        encounter.log(format!(
-            "  fear aura: 20ft burst (DC {} WIS save).",
-            dc
-        ));
-        let candidates = encounter.enemy_burst_targets(caster_id, caster_loc, 8);
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for id in candidates {
-            let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
-            if save.passed() {
-                continue;
-            }
-            effects.extend(crate::engine::side_effects::install_condition_with_link(
-                Condition::Frightened,
-                id,
-                caster_id,
-                ConditionTimer::Rounds(10),
-            ));
-        }
-        effects
-    }
-}
-
-pub static PIT_FIEND_FEAR_AURA: LazyLock<PitFiendFearAura> = LazyLock::new(|| PitFiendFearAura {});
 
 /// Monk's Martial Arts Strike — DEX-based 1d8+DEX bludgeoning unarmed
 /// strike. The signature monk attack: finesse (uses DEX over STR),
