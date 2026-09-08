@@ -12014,9 +12014,16 @@ pub enum MetallicBreathEffect {
     /// Copper's **Slowing Breath**: *"the target can't take Reactions;
     /// its Speed is halved; and it can take either an action or a Bonus
     /// Action on its turn, not both. This effect lasts until the end of
-    /// its next turn."* Which is the `Slowed` condition, clause for
-    /// clause — the engine grew it for the Slow spell, whose second
-    /// paragraph is the same sentence.
+    /// its next turn."*
+    ///
+    /// All three clauses are the `Slowed` condition's, which the engine
+    /// grew for the Slow spell. Slowed carries two the breath does not
+    /// — a −2 to AC and to Dexterity saves — so the copper's version
+    /// lands a little harder than RAW prints it. Named rather than
+    /// worked around: the alternative is a second condition that
+    /// differs from this one by two numbers and duplicates its five
+    /// consumers, and the breath is a one-round effect where the
+    /// overshoot is worth about one point of expected damage.
     Slow,
     /// Gold's **Weakening Breath**: *"the target has Disadvantage on
     /// Strength-based D20 Tests and subtracts 1dN from its damage

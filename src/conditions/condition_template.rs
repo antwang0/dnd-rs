@@ -447,9 +447,10 @@ pub enum Condition {
     /// The spell's own escape hatch ships as well: *"An affected target
     /// repeats the save at the end of each of its turns"*, as a row on
     /// `ROUND_END_SAVES`. Like every row there it is anchored to the
-    /// caster's concentration, so the Stone Golem's Slow and the Scroll
-    /// of Slow — neither of which concentrates — run out their timers
-    /// instead, which is what those printings say.
+    /// caster's concentration, so the Stone Golem's Slow, the Scroll of
+    /// Slow and the copper dragon's Slowing Breath — none of which
+    /// concentrates — run out their timers instead, which is what those
+    /// printings say.
     Slowed,
     /// Warded by Death Ward — the next time the holder would drop to
     /// 0 HP, they instead drop to 1 HP and the condition burns off.

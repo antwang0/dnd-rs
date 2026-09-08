@@ -90455,3 +90455,43 @@ fn the_ai_reaches_for_a_metallic_dragons_second_breath() {
          elemental breath left should reach for its sleep cone"
     );
 }
+
+/// A creature frightened by a sea hag knows it is the sea hag it is
+/// frightened of.
+///
+/// The link is not decoration. Without it a frightened creature reads
+/// as unable to approach *any* enemy rather than as running from one
+/// particular face — so a party's front line, frightened by the hag,
+/// stops being able to fight the goblins beside her. Nothing errors and
+/// nothing logs; the creature simply stands there.
+///
+/// This is the case the source-text scan in
+/// `no_source_of_fear_installs_it_without_a_link` cannot see, because
+/// the condition is a field on a table rather than the literal
+/// `Condition::Frightened` at the install site. Pinned behaviourally
+/// instead.
+#[test]
+fn a_fear_emanation_records_the_creature_that_caused_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::sea_hags::SEA_HAG_TEMPLATE;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let hag = e
+            .instantiate_creature(&SEA_HAG_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+            .unwrap();
+        e.start_turn_for(fighter);
+        if e.actors[&fighter].has_condition(Condition::Frightened) {
+            assert_eq!(
+                e.actors[&fighter].linked_by(Condition::Frightened),
+                Some(hag),
+                "the fear has to name its source (seed {seed})"
+            );
+            return;
+        }
+    }
+    panic!("a DC 11 save fails somewhere in forty seeds");
+}

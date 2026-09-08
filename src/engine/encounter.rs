@@ -12759,7 +12759,7 @@ impl EncounterInstance {
     /// paladin does; a stench is something a hezrou *is*.
     fn apply_hostile_emanations(&mut self, actor_id: usize) {
         use crate::engine::emanations::Emanation;
-        use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
+        use crate::engine::side_effects::install_condition_with_link;
 
         let Some(victim) = self.actors.get(&actor_id) else {
             return;
@@ -12860,12 +12860,28 @@ impl EncounterInstance {
                 "  {}: {} {}.",
                 emanation.name, victim_name, emanation.flavor
             ));
-            ApplyCondition {
+            // Through the linked installer rather than a bare
+            // `ApplyCondition`, because one of the three emanations on
+            // the roster installs `Frightened` and that condition has
+            // to remember *who*: without the link a frightened creature
+            // reads as unable to approach any enemy at all, rather than
+            // as running from the sea hag whose face it just saw.
+            //
+            // The scan in `no_source_of_fear_installs_it_without_a_link`
+            // could not have caught this one — it matches
+            // `condition: Condition::Frightened` as source text, and the
+            // condition here is a field on a table. Which is the
+            // limitation of a text-scan invariant and the reason to
+            // reach for the shared installer by default rather than
+            // when a test complains.
+            for effect in install_condition_with_link(
+                emanation.condition,
                 actor_id,
-                condition: emanation.condition,
-                timer: emanation.timer,
+                emitter_id,
+                emanation.timer,
+            ) {
+                effect.apply(self);
             }
-            .apply(self);
         }
     }
 
