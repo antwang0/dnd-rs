@@ -10823,6 +10823,198 @@ mod tests {
         }
     }
 
+    /// A party carrying the whole magic armoury still finishes its
+    /// fights.
+    ///
+    /// The sibling of the sweep above, aimed at the lanes that sweep
+    /// cannot reliably reach. The armoury arrives through the loot pool
+    /// at a 33% drop chance from a two-hundred-entry table, so a
+    /// sixty-seed sweep will see a Dragon Slayer roughly never and will
+    /// certainly not see a wielder who has one *and* a dragon to swing
+    /// it at. Handing the PC all twenty-one items at the bell puts every
+    /// one of the new lanes on the path of every step: eight on-hit
+    /// riders including two creature-type gates, the critical-negation
+    /// demotion, the reactive missile clamp, the spell-attack ward, the
+    /// kindle rung, and the cleanse rung.
+    ///
+    /// What it is looking for is not a rules question — the per-item
+    /// tests own those — but the class of failure a rules test cannot
+    /// see: a panic, a borrow that was fine until two riders fired on
+    /// one swing, an action the AI queues that fails its own validator,
+    /// a fight that stops being able to end.
+    #[test]
+    fn a_party_carrying_the_whole_armoury_still_finishes_its_fights() {
+        use crate::actors::creatures::pc_template_families;
+        use crate::items::item_template::LOOT_POOL;
+
+        // Every item the armoury batch added, read off the loot pool by
+        // the one thing they have in common that nothing older does:
+        // they are the tail of the table. Taken by name so the list
+        // grows with the file rather than with this test.
+        const ADDED: &[&str] = &[
+            "Dragon Slayer",
+            "Giant Slayer",
+            "Sun Blade",
+            "Mace of Disruption",
+            "Flame Tongue",
+            "Frost Brand",
+            "Vicious Weapon",
+            "Sword of Wounding",
+            "Adamantine Armor",
+            "Spellguard Shield",
+            "Goggles of Night",
+            "Gloves of Missile Snaring",
+            "Cloak of Arachnida",
+            "Ring of Feather Falling",
+            "Weapon of Warning",
+            "Gem of Seeing",
+            "Potion of Vitality",
+            "Potion of Water Breathing",
+        ];
+        let kit: Vec<&'static crate::items::item_template::Item> = ADDED
+            .iter()
+            .map(|name| {
+                *LOOT_POOL
+                    .iter()
+                    .find(|item| item.name == *name)
+                    .unwrap_or_else(|| panic!("{name} has left the loot pool"))
+            })
+            .collect();
+
+        const WATCHED: &[&str] = &[
+            "dragon slayer",
+            "giant slayer",
+            "sun blade",
+            "mace of disruption",
+            "flame tongue",
+            "frost brand",
+            "vicious weapon",
+            "sword of wounding",
+            "adamantine armor",
+            "missile snaring",
+        ];
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        let families = pc_template_families();
+        for seed in 0u64..12 {
+            let cr_target = 2.0 + (seed % 6) as f32;
+            let tp = TerrainGenParams {
+                width: 34,
+                height: 20,
+                branch_depth: (seed % 4) as usize,
+                branch_prob: 0.5,
+            };
+            let fam = &families[(seed as usize) % families.len()].1;
+            let pc = fam[(seed as usize) % fam.len()];
+            let ap = ActorGenParams {
+                cr_target,
+                n_teams: 2,
+                pc_template: Some(pc),
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed))
+                .unwrap_or_else(|err| panic!("seed {seed}: generation failed: {err}"));
+            // Everybody on team 0, not just the PC: the wards and the
+            // clamp are defensive, so a fight where only one creature
+            // carries them exercises far less of them.
+            let armed: Vec<usize> = e
+                .actors
+                .iter()
+                .filter(|(_, a)| a.team() == 0)
+                .map(|(id, _)| *id)
+                .collect();
+            for id in armed {
+                for item in &kit {
+                    e.actors.get_mut(&id).unwrap().pickup_item(item);
+                }
+            }
+            // Dark, so the kindle rung and the goggles are both live.
+            e.set_ambient_light(crate::engine::lighting::AmbientLight::Darkness);
+
+            let ai = SimpleAi;
+            let mut steps = 0usize;
+            let settled = loop {
+                if steps >= 400_000 {
+                    break false;
+                }
+                steps += 1;
+                e.process_stack();
+                if steps.is_multiple_of(100) {
+                    let problems = e.board_inconsistencies();
+                    assert!(
+                        problems.is_empty(),
+                        "seed {seed} ({}), step {steps}: {problems:?}",
+                        pc.name
+                    );
+                }
+                if e.is_complete() {
+                    break true;
+                }
+                let Some(prompt) = e.peek_prompt() else {
+                    break true;
+                };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => {
+                        panic!("seed {seed} ({}): SimpleAi asked for player input", pc.name)
+                    }
+                    ControllerDecision::Act(aei) => {
+                        assert!(
+                            aei.validate(&e),
+                            "seed {seed} ({}): the AI queued '{}', which fails its own validate",
+                            pc.name,
+                            aei.action().name()
+                        );
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            };
+            assert!(
+                settled,
+                "seed {seed} ({}): still going at round {} after {steps} steps",
+                pc.name,
+                e.round()
+            );
+            for line in e.messages() {
+                for label in WATCHED {
+                    if line.contains(label) {
+                        seen.insert(*label);
+                    }
+                }
+            }
+        }
+        // The test would be worth very little if every new lane simply
+        // never fired — a smoke test that smokes nothing passes forever.
+        //
+        // The two ungated riders are required by name. Vicious Weapon
+        // and Frost Brand have no target gate, no save and no
+        // activation, so any swing that lands anywhere carries them;
+        // either one going missing means the item-to-rider wiring has
+        // come apart, and neither depends on what the encounter
+        // generator happened to draw.
+        //
+        // Everything else is a floor rather than a list, because the
+        // rest *do* depend on the draw: Giant Slayer needs a giant in
+        // the room, Mace of Disruption needs a fiend or an undead, and
+        // Adamantine Armor needs somebody to roll a critical. Each has
+        // its own test that arranges its own conditions; what this one
+        // adds is that they fire in a real fight, together, without
+        // anything falling over.
+        for required in ["vicious weapon", "frost brand"] {
+            assert!(
+                seen.contains(required),
+                "the {required} rider never fired across twelve full fights, \
+                 and it has no gate that could have stopped it: {seen:?}"
+            );
+        }
+        assert!(
+            seen.len() >= 6,
+            "only {} of the armoury's {} logged lanes fired in twelve fights: {seen:?}",
+            seen.len(),
+            WATCHED.len()
+        );
+    }
+
     /// The seed is the whole encounter. Two runs of the same seed, in
     /// the same process, must produce the same fight line for line.
     ///

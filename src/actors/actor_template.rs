@@ -44,8 +44,10 @@ const TEMP_HP_BOUND_CONDITIONS: &[Condition] = &[Condition::SymbioticEntity];
 ///   - **Chill Touch** (`ChillTouched`) — "the target can't regain hit
 ///     points until the start of your next turn". A round long, and
 ///     from a cantrip.
-///   - **Sword of Wounding** (`Wounded`) — "unable to regain Hit Points
-///     for 1 hour", from a rare magic weapon, on a failed CON save.
+///   - `Wounded` — the wounds that hold themselves open, from a Sword
+///     of Wounding's "unable to regain Hit Points for 1 hour" and from
+///     a bearded devil's beard. Both on a failed CON save, and both
+///     lasting long enough for a healer to notice.
 ///
 /// Deliberately hit points only: the swarm's own clause covers
 /// temporary hit points as well and is asked separately at
