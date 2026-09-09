@@ -2285,6 +2285,40 @@ pub trait Action {
             target_ids,
         );
         side_effects.append(&mut post_cast_effects);
+        // SRD 5.2 **Boon of Dimensional Travel**, *Blink Steps*:
+        // "immediately after you take the Attack action or the Magic
+        // action, you can teleport up to 30 feet."
+        //
+        // Queued here, at the very end of the tail, because "immediately
+        // after" is a thing only this site can say: an action's own
+        // effects drain one at a time through `process_stack`, so a
+        // teleport built inside `side_effects` would resolve before the
+        // swing rather than after it.
+        //
+        // **An Action slot is the gate**, which is narrower than RAW
+        // rather than wider. The engine does not model "the Attack
+        // action" and "the Magic action" as named things — it models a
+        // longsword swing and a Fireball, each of which bills an Action —
+        // so "spent an Action" is the closest handle there is, and the
+        // actions it lets through that RAW would not (a Dash, a Dodge)
+        // are ones no boon holder takes in place of a swing. Bonus-action
+        // spells and off-hand attacks are excluded, correctly: RAW names
+        // two full actions.
+        //
+        // Pushed before the cost effects rather than after so it reads
+        // in the order it resolves — the step is part of the action, the
+        // billing is the bookkeeping behind it — and because
+        // `BlinkStep::apply` re-derives its destination anyway, so the
+        // ordering of the two is not load-bearing.
+        if costs.contains(&Resource::Action)
+            && encounter.actors.get(&caster_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::feats::BOON_OF_DIMENSIONAL_TRAVEL_TAG)
+            })
+        {
+            side_effects.push(Box::new(crate::engine::side_effects::BlinkStep {
+                actor_id: caster_id,
+            }));
+        }
         for cost in costs {
             // An Action spend is billed through the typed path so
             // Haste's restricted slot is cashed by the actions RAW lets

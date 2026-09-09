@@ -98,14 +98,27 @@ fn spell_attack_with_bonus(
 /// the dealt damage value (e.g. Vampiric Touch's half-as-heal rider)
 /// without re-rolling the damage dice and double-consuming the RNG.
 #[allow(clippy::too_many_arguments)]
-/// Outcome of a spell attack roll: whether it connected, and whether it
-/// was a critical hit.
+/// Outcome of a spell attack roll: whether it connected, whether it was
+/// a critical hit, and what the die itself showed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpellAttackRoll {
     /// `false` on a miss, on a natural 1, on a Sanctuary fizzle, and on
     /// an intercepted swing — in every case the caller applies nothing.
     pub hit: bool,
     pub is_crit: bool,
+    /// Whether the d20 landed on a natural 20.
+    ///
+    /// Reported separately from `is_crit` because in this engine the two
+    /// are different questions: a Champion crits on a 19, a Hexblade's
+    /// Curse widens the range against one creature, and a Paralyzed
+    /// target promotes every close hit. SRD 5.2's **Boon of
+    /// Irresistible Offense** names the *face* — "when you roll a 20 on
+    /// the d20 for an attack roll" — so a caller that only ever saw
+    /// `is_crit` could not answer it.
+    ///
+    /// `false` on every early return, including the natural-1 and
+    /// Sanctuary paths, where no qualifying face was rolled.
+    pub natural_twenty: bool,
 }
 
 /// Roll a spell attack against `target_id` and report whether it landed,
@@ -155,7 +168,7 @@ pub fn spell_attack_roll(
     // gated — attacker rolls a WIS save vs the ward's DC. On fail, the
     // spell silently fizzles against the warded target.
     if encounter.sanctuary_save_blocks(caster_id, target_id) {
-        return SpellAttackRoll { hit: false, is_crit: false };
+        return SpellAttackRoll { hit: false, is_crit: false, natural_twenty: false };
     }
     encounter.break_sanctuary_on_hostile(caster_id);
     // Spell attacks are attack rolls per 5e RAW, so the full rider stack
@@ -274,6 +287,15 @@ pub fn spell_attack_roll(
     } else {
         String::new()
     };
+    // SRD 5.2 **Boon of Combat Prowess**, *Peerless Aim*: "when you miss
+    // with an attack roll, you can hit instead." RAW's trigger is an
+    // attack roll and a spell attack is one, so this lane fires the same
+    // shared helper the weapon chokepoint does, in the same place —
+    // after Bend Luck, so nothing can take the rescue back. There is no
+    // underwater auto-miss on this path (the clause is about ranged
+    // *weapon* attacks), so the boon is the plain last word here.
+    let peerless_aim = !hit && encounter.peerless_aim_rescues(caster_id);
+    hit |= peerless_aim;
     // 5e Paralyzed / Unconscious clause — touch spell attacks honor the
     // "any hit within 5ft becomes a crit" rider too. Mirrors the gate in
     // `resolve_attack_outcome`: only `is_melee` spells trigger.
@@ -284,7 +306,11 @@ pub fn spell_attack_roll(
     // a crit on a Fire Bolt is demoted exactly as a crit on a longsword
     // is. See `crate::engine::criticals`.
     let is_crit = crate::engine::criticals::apply_critical_negation(encounter, target_id, is_crit);
-    let outcome = if is_nat_one {
+    let outcome = if peerless_aim {
+        // Ahead of the natural-1 arm for the reason the weapon
+        // chokepoint puts it there: the boon reaches past the fumble.
+        "hit (peerless aim)"
+    } else if is_nat_one {
         "miss (nat 1)"
     } else if is_crit {
         "CRIT!"
@@ -312,14 +338,14 @@ pub fn spell_attack_roll(
         if was_inspired && let Some(granter) = unfailing {
             encounter.refund_unfailing_inspiration(caster_id, granter);
         }
-        return SpellAttackRoll { hit: false, is_crit: false };
+        return SpellAttackRoll { hit: false, is_crit: false, natural_twenty: false };
     }
     // Post-hit interception (Mirror Image decoys, Illusory Self): spell
     // attack rolls trigger every row of the cohort too (RAW, uniformly:
     // "any attack roll against you"). Shared with weapon swings via the
     // engine's `attack_intercepted` helper.
     if encounter.attack_intercepted(target_id, caster_id, is_crit) {
-        return SpellAttackRoll { hit: false, is_crit: false };
+        return SpellAttackRoll { hit: false, is_crit: false, natural_twenty: false };
     }
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
     // record the connecting spell hit so subsequent spell / weapon
@@ -331,7 +357,11 @@ pub fn spell_attack_roll(
     if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
         attacker.mark_hit_target_this_turn(target_id);
     }
-    SpellAttackRoll { hit: true, is_crit }
+    SpellAttackRoll {
+        hit: true,
+        is_crit,
+        natural_twenty: raw == 20,
+    }
 }
 
 /// The attack-roll-plus-damage half of a spell attack: roll to hit
@@ -478,6 +508,21 @@ fn spell_attack_outcome_exploding(
             String::new()
         }
     ));
+    // SRD 5.2 **Boon of Irresistible Offense**, *Overwhelming Strike*.
+    // RAW's trigger is "the d20 for an attack roll" and a spell attack
+    // rolls one, so the same helper the weapon chokepoint calls fires
+    // here, off the face `spell_attack_roll` reported rather than off
+    // `is_crit`. Folded into the swing's own payload below so it lands
+    // as the spell's damage type, which is what RAW asks for.
+    //
+    // Added *after* the damage line above rather than into the total it
+    // prints, for the same reason the weapon path adds its own late
+    // bumps after its line: that line is the spell's arithmetic — dice
+    // plus modifier equals total — and a number folded in from outside
+    // it would make the sum stop adding up. The boon logs its own
+    // contribution.
+    let total_dmg = total_dmg
+        .saturating_add(encounter.overwhelming_strike_damage(caster_id, roll.natural_twenty));
     // Attacker-scoped reductions (Ancestral Protectors) — before the
     // reactive clamps, matching the weapon path. `is_weapon: false`
     // keeps Enfeebling Arrow out: RAW halves the enfeebled creature's
@@ -576,6 +621,20 @@ fn spell_attack_outcome_exploding(
         caster_id,
         target_id,
     );
+    // SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*.
+    // RAW's clause is about "the Bludgeoning, Piercing, and Slashing
+    // damage you deal" without naming a source, and a handful of spells
+    // deal exactly that — Magic Stone's bludgeoning, Catapult's, an Ice
+    // Knife's piercing — so the lane is walked here as well as at the
+    // weapon chokepoint. Same call, same position: after every rider has
+    // queued its payload, before the vulnerability removals.
+    let total_dmg =
+        total_dmg.saturating_add(crate::engine::attack::restore_resisted_physical_damage(
+            encounter,
+            &mut effects,
+            caster_id,
+            target_id,
+        ));
     // "And then the curse ends" — see the weapon chokepoint's twin
     // call. Last, so every damage instance the spell attack queued is
     // still doubled when it applies.

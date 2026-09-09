@@ -2139,6 +2139,19 @@ pub fn resolve_attack_outcome_with_rider(
         hit = false;
         nat_crit = false;
     }
+    // SRD 5.2 **Boon of Combat Prowess**, *Peerless Aim*: "when you miss
+    // with an attack roll, you can hit instead."
+    //
+    // Genuinely last, and after the block directly above rather than
+    // before it, which is the one ordering decision this clause has.
+    // Everything else that can still un-hit a swing has now spoken, so a
+    // rescue here cannot be taken back — and the water is deliberately
+    // outside the boon's reach: a shot that stopped in the water did not
+    // miss for want of aim. See `peerless_aim_rescues`.
+    let peerless_aim = !hit
+        && underwater != UnderwaterVerdict::AutoMiss
+        && encounter.peerless_aim_rescues(p.caster_id);
+    hit |= peerless_aim;
     // 5e Paralyzed / Unconscious clause: any hit from within 5ft is a
     // crit. The promotion happens after we've decided the swing connected
     // so a flat miss still misses — the rider only upgrades a regular
@@ -2154,7 +2167,12 @@ pub fn resolve_attack_outcome_with_rider(
     // not about the die that produced it. The swing still lands; only
     // the doubled dice go. See `crate::engine::criticals`.
     let is_crit = crate::engine::criticals::apply_critical_negation(encounter, p.target_id, is_crit);
-    let outcome = if is_nat_one {
+    let outcome = if peerless_aim {
+        // Ahead of the natural-1 arm because the boon reaches past it:
+        // a rescued fumble is a hit, and a line reading "miss (nat 1)"
+        // over damage that landed would read as a bug.
+        "hit (peerless aim)"
+    } else if is_nat_one {
         "miss (nat 1)"
     } else if underwater == UnderwaterVerdict::AutoMiss {
         // Named rather than left as a bare "miss", because the total
@@ -2414,6 +2432,17 @@ pub fn resolve_attack_outcome_with_rider(
             encounter.log(format!("  {}: +{} melee damage", label, bump));
         }
     }
+    // SRD 5.2 **Boon of Irresistible Offense**, *Overwhelming Strike*:
+    // a natural 20 adds the holder's Strength or Dexterity score as flat
+    // damage of the swing's own type.
+    //
+    // Outside the `p.is_melee` block directly above because RAW's
+    // trigger is "the d20 for an attack roll" with no melee qualifier —
+    // a longbow's natural 20 carries it too. Read off `raw_attack`
+    // rather than `is_crit`: the boon names the die face, and the two
+    // are different questions here. See `overwhelming_strike_damage`.
+    damage = damage
+        .saturating_add(encounter.overwhelming_strike_damage(p.caster_id, raw_attack == 20));
     // Hunter's Mark rider: attacker concentrating on Hunter's Mark with
     // this target marked deals +1d6 (weapon-typed). Crits double the
     // mark die per RAW — the rider folds into the weapon's damage type.
@@ -2679,8 +2708,119 @@ pub fn resolve_attack_outcome_with_rider(
         p.target_id,
         p.is_spell,
     ));
+    // SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*.
+    // Runs after the source-qualified lane above, so the two bypasses
+    // compose rather than race: whatever that walk left halved, this one
+    // restores. See `restore_resisted_physical_damage`.
+    damage = damage.saturating_add(restore_resisted_physical_damage(
+        encounter,
+        &mut effects,
+        p.caster_id,
+        p.target_id,
+    ));
     push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
     (effects, damage)
+}
+
+/// Every damage type SRD 5.2's **Boon of Irresistible Offense** names:
+/// *"The Bludgeoning, Piercing, and Slashing damage you deal always
+/// ignores Resistance."*
+///
+/// The three physical types and no others. Written out rather than
+/// derived from a `DamageType::is_physical` predicate because there is
+/// no such predicate to derive from and one row of three constants is
+/// not worth inventing a taxonomy for.
+const IRRESISTIBLE_PHYSICAL_TYPES: &[DamageType] = &[
+    DamageType::Bludgeoning,
+    DamageType::Piercing,
+    DamageType::Slashing,
+];
+
+/// SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*: the
+/// holder's physical damage ignores Resistance. Returns how much damage
+/// the bypass put back, so the caller's `damage_dealt` figure stays
+/// honest for riders that chain off it.
+///
+/// **It pre-doubles rather than un-halves**, which is the whole of the
+/// implementation and the reason it belongs at this chokepoint. The
+/// halving itself happens on the *target's* sheet, inside
+/// `ActorInstance::effective_damage`, at a moment when nothing knows who
+/// swung — so an attacker-side bypass cannot reach it. What it can reach
+/// is the payload on its way there: a `2n` handed to a creature that
+/// halves lands as `n`, exactly, for every n, because resistance is a
+/// floored halving and doubling is its exact inverse.
+///
+/// Sibling of `apply_nonmagical_resistance` above and deliberately the
+/// same shape — walk the swing's queued payloads, skip the ones aimed
+/// anywhere but at the target, adjust the amounts in place, report the
+/// delta. That function is the engine's proof that attacker-aware damage
+/// adjustment lives here; this is the second one.
+///
+/// Three narrowings, each RAW:
+///
+///   - **Physical types only.** The boon names three, and the other ten
+///     are untouched — a fire payload riding the same swing is resisted
+///     normally.
+///   - **Resistance only.** Immunity is not resistance and RAW does not
+///     name it, so a creature that takes no piercing damage still takes
+///     none; `halves_damage_of_type` is what keeps the two apart.
+///   - **Payloads aimed at the target.** A swing routinely carries
+///     damage pointed the other way — Fire Shield, Armor of Agathys, a
+///     reflect rider — and the attacker's boon has nothing to say about
+///     what their own resistances do to it.
+pub fn restore_resisted_physical_damage(
+    encounter: &mut EncounterInstance,
+    effects: &mut [Box<dyn ApplicableSideEffect>],
+    attacker_id: usize,
+    target_id: usize,
+) -> u32 {
+    if !encounter.actors.get(&attacker_id).is_some_and(|a| {
+        a.has_passive_feature(crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG)
+    }) {
+        return 0;
+    }
+    let mut restored: u32 = 0;
+    let mut notes: Vec<String> = Vec::new();
+    for effect in effects.iter_mut() {
+        let Some((aimed_at, damage_type, amount)) = effect.damage_payload() else {
+            continue;
+        };
+        if aimed_at != target_id
+            || amount == 0
+            || !IRRESISTIBLE_PHYSICAL_TYPES.contains(&damage_type)
+        {
+            continue;
+        }
+        let halved = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.halves_damage_of_type(damage_type));
+        if !halved {
+            continue;
+        }
+        let doubled = amount.saturating_mul(2);
+        if !effect.set_damage_amount(doubled) {
+            continue;
+        }
+        // What the target will actually feel, which is what the caller's
+        // running total is measured in: `2n` halved is `n`, and the
+        // resistance would have delivered `n / 2`.
+        restored = restored.saturating_add(amount - amount / 2);
+        notes.push(format!("{} {:?}", amount, damage_type));
+    }
+    if !notes.is_empty() {
+        let (attacker, target) = (
+            encounter.actor_name(attacker_id),
+            encounter.actor_name(target_id),
+        );
+        encounter.log(format!(
+            "  overcome defenses: {}'s blow ignores {}'s resistance ({})",
+            attacker,
+            target,
+            notes.join(", ")
+        ));
+    }
+    restored
 }
 
 /// Scale every damage payload this attack aimed at `target_id` by the
@@ -2737,6 +2877,26 @@ pub fn apply_nonmagical_resistance(
     {
         return 0;
     }
+    // SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*, on
+    // this lane. The clause is unqualified — "the Bludgeoning, Piercing,
+    // and Slashing damage you deal **always** ignores Resistance" — so
+    // the source-qualified halving is one of the resistances it ignores,
+    // not a different rule that happens to look like one.
+    //
+    // Read here rather than left to `restore_resisted_physical_damage`,
+    // which runs a moment later and cannot see this lane: the modifier
+    // that would halve the blow lives on `nonmagical_damage_modifiers`,
+    // which `ActorInstance::halves_damage_of_type` deliberately does not
+    // consult (it answers "what does this creature's own sheet do",
+    // which is the question `effective_damage` asks). Each bypass covers
+    // the lane it can reach; between them the boon's "always" holds.
+    //
+    // Resistance only, and physical types only — the two narrowings the
+    // boon's own text imposes. A golem's *immunity* to nonmagical
+    // weapons is untouched.
+    let ignores_physical_resistance = encounter.actors.get(&attacker_id).is_some_and(|a| {
+        a.has_passive_feature(crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG)
+    });
     let mut removed: u32 = 0;
     let mut notes: Vec<String> = Vec::new();
     for effect in effects.iter_mut() {
@@ -2753,6 +2913,12 @@ pub fn apply_nonmagical_resistance(
         else {
             continue;
         };
+        if ignores_physical_resistance
+            && modifier == crate::engine::types::DamageModifier::Resistance
+            && IRRESISTIBLE_PHYSICAL_TYPES.contains(&damage_type)
+        {
+            continue;
+        }
         let scaled = modifier.apply(amount);
         if scaled == amount || !effect.set_damage_amount(scaled) {
             continue;
@@ -4300,6 +4466,28 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
             p.action_name == crate::actions::monster_attacks::LONGBOW.display_name
                 || p.action_name == crate::actions::monster_attacks::SHORTBOW.display_name
         },
+    },
+    // SRD 5.2's **Boon of Fate** — the attack-roll half of *"you can
+    // roll 2d4 and apply the total rolled as a bonus or penalty to the
+    // d20 roll"*. Shares its tag, and therefore its single charge, with
+    // the row on `FAILED_SAVE_ADD_DIE_SOURCES`: RAW gives the holder one
+    // use of one benefit, not one per lane, and one tag spent through
+    // `spend_feature` from either cohort is what enforces that.
+    //
+    // The only row here with no `eligible` gate. Its two siblings each
+    // name a weapon because their RAW does; the boon's does not name so
+    // much as an attack type, so the closure that would have narrowed it
+    // says `true` and the docstring says why.
+    //
+    // Listed last so a holder of a weapon-specific source spends that
+    // one first — a soulknife with both should burn the charge that can
+    // only rescue psychic blades before the one that can rescue
+    // anything.
+    MissedAttackBoost {
+        label: "improve fate",
+        tag: crate::actions::feats::BOON_OF_FATE_TAG,
+        dice: Dice::new(2, 4),
+        eligible: |_| true,
     },
 ];
 

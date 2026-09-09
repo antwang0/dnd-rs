@@ -700,7 +700,22 @@ pub static HORIZON_WALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
     // `FEY_WANDERER_RANGER_TEMPLATE`, `MONSTER_SLAYER_RANGER_TEMPLATE`,
     // `SWARMKEEPER_RANGER_TEMPLATE`.
-    RANGER_TEMPLATE.with_subclass_tag("Horizon Walker Ranger", 'Z', PLANAR_WARRIOR_TAG)
+    let mut horizon =
+        RANGER_TEMPLATE.with_subclass_tag("Horizon Walker Ranger", 'Z', PLANAR_WARRIOR_TAG);
+    // SRD 5.2's **Boon of Dimensional Travel**, and this is the chassis
+    // it belongs to: the Horizon Walker's whole conclave is planar
+    // travel, and its own capstone — Distant Strike — is already a
+    // teleport taken between swings. The boon is that, once a turn,
+    // without spending the subclass's own resources. See
+    // `crate::actions::feats::BOON_OF_DIMENSIONAL_TRAVEL_TAG`.
+    //
+    // Layered by hand rather than through a second `with_subclass_tag`
+    // call because the helper also renames and re-glyphs, and this
+    // template has already picked both.
+    horizon
+        .features
+        .insert(crate::actions::feats::BOON_OF_DIMENSIONAL_TRAVEL_TAG);
+    horizon
 });
 
 /// Monster Slayer Ranger — Ranger Conclave **Monster Slayer** subclass

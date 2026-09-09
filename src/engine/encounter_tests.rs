@@ -14906,6 +14906,507 @@ fn savage_attacker_shifts_the_damage_up() {
     );
 }
 
+/// SRD 5.2's Epic Boon category, whole — every constant on
+/// `feats::EPIC_BOON_TAGS` is also on `feats::FEAT_TAGS`, and the two
+/// lists agree on what a boon is.
+///
+/// `every_feat_is_carried_by_a_playable_chassis` already proves each
+/// boon reaches a player. This proves the *column* is a column: a boon
+/// added to the module and left off `EPIC_BOON_TAGS` is a boon missing
+/// from the category it belongs to, and a flat list of every feat
+/// cannot say that.
+///
+/// The count is asserted outright because it is a fact about the book
+/// rather than about the engine: SRD 5.2 prints seven Epic Boon feats,
+/// and this is the engine claiming to carry all seven.
+#[test]
+fn the_epic_boon_column_is_carried_whole() {
+    use crate::actions::feats::{EPIC_BOON_TAGS, FEAT_TAGS};
+    use crate::actors::creatures::pc_template_families;
+    use std::collections::HashSet;
+
+    assert_eq!(
+        EPIC_BOON_TAGS.len(),
+        7,
+        "SRD 5.2 prints seven Epic Boon feats"
+    );
+    let all: HashSet<&str> = FEAT_TAGS.iter().copied().collect();
+    let boons: HashSet<&str> = EPIC_BOON_TAGS.iter().copied().collect();
+    assert_eq!(boons.len(), EPIC_BOON_TAGS.len(), "a boon is listed twice");
+    for tag in EPIC_BOON_TAGS {
+        assert!(all.contains(tag), "{tag} is a boon nothing else knows about");
+    }
+
+    // No chassis carries two. The placements are by identity — each
+    // boon on the one subclass whose capstone it extends — and a
+    // template that picked up a second would be a copy-paste rather
+    // than a decision.
+    for (_, templates) in pc_template_families() {
+        for template in templates {
+            let held: Vec<&str> = EPIC_BOON_TAGS
+                .iter()
+                .copied()
+                .filter(|t| template.features.contains(t))
+                .collect();
+            assert!(
+                held.len() <= 1,
+                "{} carries {:?} — a level-19 feat apiece is the placement rule",
+                template.name,
+                held
+            );
+        }
+    }
+}
+
+/// **Boon of Combat Prowess**, *Peerless Aim*: *"When you miss with an
+/// attack roll, you can hit instead."*
+///
+/// Driven through the helper rather than through a swing, because the
+/// interesting properties are about the *charge* — one per turn, back
+/// at the top of the next one — and a swing would need a contrived AC
+/// to miss reliably before it could show either.
+#[test]
+fn peerless_aim_rescues_one_miss_a_turn() {
+    use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let champion = e
+        .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    assert!(
+        e.actors[&champion]
+            .has_passive_feature(crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG),
+        "the Champion chassis takes the boon"
+    );
+    assert!(
+        e.peerless_aim_rescues(champion),
+        "the first miss of the turn becomes a hit"
+    );
+    assert!(
+        !e.peerless_aim_rescues(champion),
+        "and the second does not — once per turn"
+    );
+    assert!(
+        !e.peerless_aim_rescues(plain),
+        "a fighter without the boon is never rescued"
+    );
+    e.actors.get_mut(&champion).unwrap().reset_for_new_round();
+    assert!(
+        e.peerless_aim_rescues(champion),
+        "the charge is back at the start of the next turn"
+    );
+}
+
+/// **Boon of Irresistible Offense**, *Overcome Defenses*: *"The
+/// Bludgeoning, Piercing, and Slashing damage you deal always ignores
+/// Resistance."*
+///
+/// Measured on the payload rather than on a hit point total, because
+/// the bypass is a pre-doubling that the target's own sheet then halves
+/// back — the interesting number is the one that survives the round
+/// trip, and `effective_damage` is where the trip ends.
+#[test]
+fn overcome_defenses_lands_a_resisted_blow_whole() {
+    use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::restore_resisted_physical_damage;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageModifier;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let barbarian = e
+        .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    // A creature that halves slashing damage and drinks fire, so the
+    // bypass has something to bypass and something to leave alone.
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    {
+        let t = e.actors.get_mut(&target).unwrap();
+        t.set_damage_modifier(DamageType::Slashing, DamageModifier::Resistance);
+        t.set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+    }
+
+    let payloads = |amount: u32, dt: DamageType| -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(DealDamage {
+            actor_id: target,
+            amount,
+            damage_type: dt,
+        })]
+    };
+
+    let mut slash = payloads(9, DamageType::Slashing);
+    let restored =
+        restore_resisted_physical_damage(&mut e, &mut slash, barbarian, target);
+    assert_eq!(restored, 5, "9 resisted is 4; the boon puts the other 5 back");
+    let (_, _, doubled) = slash[0].damage_payload().unwrap();
+    assert_eq!(
+        e.actors[&target].effective_damage(doubled, DamageType::Slashing),
+        9,
+        "and the halving the sheet applies nets back to the whole number"
+    );
+
+    let mut fire = payloads(9, DamageType::Fire);
+    assert_eq!(
+        restore_resisted_physical_damage(&mut e, &mut fire, barbarian, target),
+        0,
+        "the boon names three physical types and fire is not one of them"
+    );
+
+    let mut other = payloads(9, DamageType::Slashing);
+    assert_eq!(
+        restore_resisted_physical_damage(&mut e, &mut other, plain, target),
+        0,
+        "and a barbarian without the boon still swings into the resistance"
+    );
+}
+
+/// **Boon of Irresistible Offense**, *Overwhelming Strike*: *"When you
+/// roll a 20 on the d20 for an attack roll, you can deal extra damage
+/// to the target equal to the ability score increased by this feat."*
+///
+/// The *score*, not the modifier — that is the whole size of the clause
+/// — and off the die face rather than off the crit, which are different
+/// questions in an engine where a Champion crits on a 19.
+#[test]
+fn overwhelming_strike_pays_out_the_ability_score_on_a_natural_twenty() {
+    use crate::actors::creatures::barbarians::BERSERKER_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let barbarian = e
+        .instantiate_creature(&BERSERKER_BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    let expected = e.actors[&barbarian]
+        .ability_score(AbilityScoreType::Strength)
+        .max(e.actors[&barbarian].ability_score(AbilityScoreType::Dexterity));
+    assert!(expected >= 10, "the chassis has a score worth paying out");
+    assert_eq!(
+        e.overwhelming_strike_damage(barbarian, true),
+        expected,
+        "a natural 20 adds the better of Strength and Dexterity, as a score"
+    );
+    assert_eq!(
+        e.overwhelming_strike_damage(barbarian, false),
+        0,
+        "and anything else adds nothing"
+    );
+    assert_eq!(
+        e.overwhelming_strike_damage(plain, true),
+        0,
+        "a fighter without the boon rolls an ordinary 20"
+    );
+}
+
+/// **Boon of Spell Recall**, *Free Casting*: *"Whenever you cast a spell
+/// with a level 1–4 spell slot, roll 1d4. If the number you roll is the
+/// same as the slot's level, the slot isn't expended."*
+///
+/// Asserted as a rate rather than as one cast, because the clause is a
+/// rate: a quarter of the eligible slots come back, flat across all four
+/// levels, and no single roll says anything.
+#[test]
+fn free_casting_returns_one_slot_in_four_and_only_below_level_five() {
+    use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+
+    fn kept(level: u32, seed: u64) -> u32 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let sorcerer = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        (0..200)
+            .filter(|_| e.free_casting_preserves_slot(sorcerer, level))
+            .count() as u32
+    }
+
+    for level in 1..=4 {
+        let saved = kept(level, level as u64);
+        assert!(
+            (25..=75).contains(&saved),
+            "a level-{level} slot should survive about a quarter of 200 casts, got {saved}"
+        );
+    }
+    assert_eq!(
+        kept(5, 99),
+        0,
+        "RAW stops at level 4 — a level-5 slot is always spent"
+    );
+    assert_eq!(
+        kept(9, 99),
+        0,
+        "and so is the ninth"
+    );
+}
+
+/// **Boon of Spell Recall** belongs to whoever took it. A wizard casting
+/// out of the same slot table keeps nothing.
+#[test]
+fn free_casting_is_the_boon_holders_alone() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    for _ in 0..200 {
+        assert!(
+            !e.free_casting_preserves_slot(wizard, 1),
+            "a caster without the boon spends every slot"
+        );
+    }
+}
+
+/// **Boon of Truesight**: *"You have Truesight with a range of 60
+/// feet."*
+///
+/// Granted into the senses set at instantiation, so every existing
+/// reader of that set — the illusion-piercing gate included — answers
+/// yes without knowing the feat exists.
+#[test]
+fn the_truesight_boon_grants_sixty_feet_of_seeing_through() {
+    use crate::actors::creatures::warlocks::{GREAT_OLD_ONE_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+    use crate::engine::types::SpecialSense;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let seer = e
+        .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    assert!(
+        !GREAT_OLD_ONE_WARLOCK_TEMPLATE
+            .senses
+            .iter()
+            .any(|s| matches!(s, SpecialSense::Truesight(_))),
+        "the template itself carries no truesight — the feat is what grants it"
+    );
+    assert!(
+        e.actors[&seer].senses().contains(&SpecialSense::Truesight(
+            crate::actions::feats::BOON_OF_TRUESIGHT_FEET
+        )),
+        "and the instance carries RAW's sixty feet of it"
+    );
+    assert!(e.actors[&seer].has_truesight());
+    assert!(!e.actors[&plain].has_truesight());
+}
+
+/// **Boon of the Night Spirit**, *Shadowy Form*: *"While within Dim
+/// Light or Darkness, you have Resistance to all damage except Psychic
+/// and Radiant."*
+///
+/// The gate is where the holder is standing when the blow lands, not
+/// where they were when the fight started — so the same monk on the
+/// same tile takes half or full depending only on the sky.
+#[test]
+fn the_night_spirit_resists_all_but_two_and_only_in_the_dark() {
+    use crate::actors::creatures::monks::{MONK_TEMPLATE, SHADOW_MONK_TEMPLATE};
+    use crate::engine::lighting::AmbientLight;
+    use crate::engine::side_effects::{DealDamage, SHADOWY_FORM_DAMAGE_TYPES};
+
+    fn dealt(
+        e: &mut EncounterInstance,
+        victim: usize,
+        dt: DamageType,
+        amount: u32,
+    ) -> u32 {
+        let before = e.actors[&victim].hitpoints();
+        DealDamage {
+            actor_id: victim,
+            amount,
+            damage_type: dt,
+        }
+        .apply(e);
+        before.saturating_sub(e.actors[&victim].hitpoints())
+    }
+
+    // The two lists partition the axis, which is the property the
+    // constant exists to state — and the one a fourteenth damage type
+    // would silently break.
+    let excluded = [DamageType::Psychic, DamageType::Radiant];
+    for dt in DamageType::ALL {
+        assert_eq!(
+            SHADOWY_FORM_DAMAGE_TYPES.contains(&dt),
+            !excluded.contains(&dt),
+            "{dt:?} is on the wrong side of Shadowy Form's carve-out"
+        );
+    }
+
+    // A fresh board per light level, and a fresh victim per blow: the
+    // measurement is `hitpoints` before minus after, which stops being
+    // the damage dealt the moment a creature runs out of hit points to
+    // lose.
+    let board = |ambient: AmbientLight| {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.set_ambient_light(ambient);
+        let monk = e
+            .instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let plain = e
+            .instantiate_creature(&MONK_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+            .unwrap();
+        (e, monk, plain)
+    };
+
+    let (mut e, monk, plain) = board(AmbientLight::Darkness);
+    assert!(e.is_shrouded_in_shadow(monk));
+    assert!(!e.is_shrouded_in_shadow(plain), "the boon is what shrouds");
+    assert_eq!(
+        dealt(&mut e, monk, DamageType::Slashing, 10),
+        5,
+        "in the dark, the blow is halved"
+    );
+    assert_eq!(
+        dealt(&mut e, plain, DamageType::Slashing, 10),
+        10,
+        "and a monk without the boon is standing in the same dark for nothing"
+    );
+
+    let (mut e, monk, _) = board(AmbientLight::Darkness);
+    assert_eq!(
+        dealt(&mut e, monk, DamageType::Radiant, 10),
+        10,
+        "except for the two types RAW carves out"
+    );
+
+    let (mut e, monk, _) = board(AmbientLight::BrightLight);
+    assert!(!e.is_shrouded_in_shadow(monk));
+    assert_eq!(
+        dealt(&mut e, monk, DamageType::Slashing, 10),
+        10,
+        "turn the lights on and the shadow is not there to melt into"
+    );
+}
+
+/// **Boon of the Night Spirit**, *Merge with Shadows*: a Bonus Action in
+/// the dark, and nowhere else.
+#[test]
+fn merge_with_shadows_needs_the_dark_and_ends_on_a_reaction() {
+    use crate::actions::feats::MERGE_WITH_SHADOWS;
+    use crate::actors::creatures::monks::SHADOW_MONK_TEMPLATE;
+    use crate::engine::lighting::AmbientLight;
+    use crate::engine::side_effects::{ConsumeResource, Resource};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let monk = e
+        .instantiate_creature(&SHADOW_MONK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    let merge: &'static (dyn Action + Send + Sync) = &*MERGE_WITH_SHADOWS;
+    let cast = || ActionExecutionInfo::new(merge, monk, None, None, None);
+
+    assert!(
+        !cast().validate(&e),
+        "a lit board offers no shadows to merge with"
+    );
+    e.set_ambient_light(AmbientLight::Darkness);
+    assert!(cast().validate(&e), "and an unlit one does");
+
+    e.push_action(cast());
+    e.process_stack();
+    assert!(
+        e.actors[&monk].has_condition(Condition::Invisible),
+        "the monk is gone"
+    );
+    assert!(
+        !cast().validate(&e),
+        "and does not spend a second bonus action refreshing a timer"
+    );
+
+    // RAW: "the condition ends on you immediately after you take an
+    // action, a Bonus Action, or a Reaction."
+    ConsumeResource {
+        actor_id: monk,
+        resource: Resource::Reaction,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors[&monk].has_condition(Condition::Invisible),
+        "a reaction gives the monk back to the light"
+    );
+}
+
+/// **Boon of Fate**, *Improve Fate*: one charge, spendable on either of
+/// the two lanes RAW's "D20 Test" covers — and only one of them, because
+/// RAW gives the holder one use rather than one per lane.
+#[test]
+fn improve_fate_spends_one_charge_across_both_lanes() {
+    use crate::actions::feats::BOON_OF_FATE_TAG;
+    use crate::actors::creatures::wizards::{DIVINATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let diviner = e
+        .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    assert!(
+        e.actors[&diviner].has_passive_feature(BOON_OF_FATE_TAG),
+        "the Diviner chassis takes the boon"
+    );
+    assert!(!e.actors[&plain].has_passive_feature(BOON_OF_FATE_TAG));
+    assert!(e.actors[&diviner].feature_available(BOON_OF_FATE_TAG));
+    assert!(
+        e.actors.get_mut(&diviner).unwrap().spend_feature(BOON_OF_FATE_TAG),
+        "the charge is there to spend"
+    );
+    assert!(
+        !e.actors[&diviner].feature_available(BOON_OF_FATE_TAG),
+        "and there is only one of it, however it was spent"
+    );
+}
+
+/// **Boon of Dimensional Travel**, *Blink Steps*: the step is offered to
+/// a holder standing in the wrong place, and to nobody else.
+///
+/// The Horizon Walker keeps a scimitar as well as a longbow, so
+/// `first_melee_weapon_action` reads it as a creature that fights close
+/// — the same answer `attack::maneuverable_ally` gives about the same
+/// chassis, and the reason both lanes share one predicate. Out of
+/// position, for this ranger, means "the fight is over there".
+#[test]
+fn blink_steps_moves_a_ranger_who_is_out_of_position() {
+    use crate::actors::creatures::rangers::HORIZON_WALKER_RANGER_TEMPLATE;
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let origin = Coordinate::new(2, 2);
+    let ranger = e
+        .instantiate_creature(&HORIZON_WALKER_RANGER_TEMPLATE, origin, 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(24, 2), 1, 0)
+        .unwrap();
+    let before = e
+        .footprint_distance(ranger, ogre)
+        .expect("both are on the board");
+    let dest = e
+        .blink_step_destination(ranger)
+        .expect("a ranger twenty tiles from the fight has somewhere better to be");
+    assert!(
+        dest.chebyshev_to(origin) <= 12,
+        "and it is within RAW's thirty feet"
+    );
+    e.place_actor_at(ranger, dest).expect("a legal landing spot");
+    assert!(
+        e.footprint_distance(ranger, ogre).unwrap() < before,
+        "the step closes the gap"
+    );
+
+    // Standing in the ogre's face is where this chassis wants to be, so
+    // there is nothing for the boon to fix and it declines to fire.
+    e.place_actor_at(ranger, Coordinate::new(23, 2))
+        .expect("a legal landing spot");
+    assert!(
+        e.blink_step_destination(ranger).is_none(),
+        "a ranger already where it wants to be does not blink for the sake of it"
+    );
+}
+
 /// Every benefit on `species::GIANT_ANCESTRY_TAGS` is actually carried
 /// by a goliath somebody can play.
 ///
@@ -80716,6 +81217,13 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         crate::actions::feats::SAVAGE_ATTACKER_TAG,
         crate::actions::class_features::GRASP_OF_HADAR_TAG,
         crate::actions::class_features::LANCE_OF_LETHARGY_TAG,
+        // The second feat on the ledger, and the only entry anywhere on
+        // it that fires on a *miss*: SRD 5.2's **Boon of Combat
+        // Prowess** turns one failed attack roll a turn into a hit. Both
+        // cohorts describe a die pool added to a landed swing, and this
+        // adds no damage at all, so it is open-coded at the two attack
+        // chokepoints through `EncounterInstance::peerless_aim_rescues`.
+        crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
     ];
 
     let declared: HashSet<&str> = ONCE_PER_TURN_RIDER_TAGS.iter().copied().collect();

@@ -204,6 +204,30 @@ pub const SPELL_TYPICAL_DAMAGE_TYPES: &[DamageType] = &[
     DamageType::Thunder,
 ];
 
+/// Every damage type SRD 5.2's **Boon of the Night Spirit** covers:
+/// *"you have Resistance to all damage except Psychic and Radiant."*
+///
+/// Written out as the eleven it leaves in rather than derived from
+/// `DamageType::ALL` minus the two it takes out, because the cohort row
+/// this feeds is a `&'static [DamageType]` and a subtraction cannot be
+/// done in a const. The sweep in `the_night_spirit_resists_all_but_two`
+/// is what keeps the list honest against a future fourteenth type: it
+/// walks `DamageType::ALL` and asserts the partition rather than
+/// re-typing this list back.
+pub const SHADOWY_FORM_DAMAGE_TYPES: &[DamageType] = &[
+    DamageType::Acid,
+    DamageType::Bludgeoning,
+    DamageType::Cold,
+    DamageType::Fire,
+    DamageType::Force,
+    DamageType::Lightning,
+    DamageType::Necrotic,
+    DamageType::Piercing,
+    DamageType::Poison,
+    DamageType::Slashing,
+    DamageType::Thunder,
+];
+
 /// One row in the `POSITIONAL_DAMAGE_HALVINGS` cohort — a halving that
 /// belongs to *where the target is standing* rather than to anything on
 /// its sheet.
@@ -223,7 +247,9 @@ struct PositionalDamageHalving {
     applies: fn(&EncounterInstance, usize) -> bool,
     /// Which damage types the row answers. Every row is type-filtered —
     /// a positional halving that covered everything would be a
-    /// resistance to all damage, which nothing in 5e grants for free.
+    /// resistance to all damage, and the closest thing 5e has to one
+    /// (Boon of the Night Spirit's Shadowy Form) still carves out two
+    /// types and costs a level-19 feat to hold.
     types: &'static [DamageType],
     /// Log-friendly source name ("aura of warding", "fully immersed").
     label: &'static str,
@@ -275,6 +301,29 @@ const POSITIONAL_DAMAGE_HALVINGS: &[PositionalDamageHalving] = &[
         types: &[DamageType::Fire],
         label: "fully immersed",
         verb: "is shielded by the water",
+    },
+    // SRD 5.2's **Boon of the Night Spirit**, *Shadowy Form*: *"While
+    // within Dim Light or Darkness, you have Resistance to all damage
+    // except Psychic and Radiant."*
+    //
+    // A positional halving in the fullest sense — it is a fact about
+    // where the holder is standing at the instant the blow lands, not
+    // about the fight they walked into, so a step out of the shadow and
+    // into a torch's circle takes it away mid-round. That is exactly
+    // what this cohort is for, and it is why the clause is a row here
+    // rather than a `DamageModifier` written onto the sheet: a sheet
+    // cannot see a light level.
+    //
+    // Last of the three rows, which is the only ordering that could
+    // matter: a night-spirit holder standing in an Ancients paladin's
+    // aura, in a lake, in the dark, is halved once and the log names
+    // whichever narrower row won. All three halve by the same amount,
+    // so the choice is only ever visible as a line of text.
+    PositionalDamageHalving {
+        applies: EncounterInstance::is_shrouded_in_shadow,
+        types: SHADOWY_FORM_DAMAGE_TYPES,
+        label: "shadowy form",
+        verb: "melts into the dark",
     },
 ];
 
@@ -343,6 +392,39 @@ pub struct ConsumeResource {
 
 impl ApplicableSideEffect for ConsumeResource {
     fn apply(&self, ei: &mut EncounterInstance) {
+        // SRD 5.2 **Boon of Spell Recall**, *Free Casting*: a level-1..4
+        // slot has a one-in-four chance of surviving the cast that spent
+        // it.
+        //
+        // Here rather than in `ActorInstance::consume_resource` because
+        // the clause needs a die and a log line, and the actor has
+        // neither. This is the same chokepoint from the other side: every
+        // declared cost in the engine is billed through a
+        // `ConsumeResource` (or, for an Action slot, its typed sibling),
+        // so gating the spend here covers the whole spell list at once.
+        if let Resource::SpellSlot(lvl) = self.resource
+            && ei.free_casting_preserves_slot(self.actor_id, lvl)
+        {
+            return;
+        }
+        // SRD 5.2 **Merge with Shadows**' Reaction clause. Here rather
+        // than in the timer because a Reaction is spent between turns,
+        // where a turn-scoped timer has nothing to say. The other two
+        // thirds of RAW's clause ride the condition's own
+        // `UntilStartOfNextTurn` — see `feats::MergeWithShadows`.
+        //
+        // Before the spend, so a reaction that fails to afford itself
+        // does not cost the holder their invisibility: `consume_resource`
+        // is a no-op when the slot is already gone, and this should be
+        // too.
+        if self.resource == Resource::Reaction
+            && ei
+                .actors
+                .get(&self.actor_id)
+                .is_some_and(|a| a.can_consume_resource(Resource::Reaction))
+        {
+            ei.end_shadow_merge_on_reaction(self.actor_id);
+        }
         if let Some(actor) = ei.get_actor(self.actor_id) {
             actor.consume_resource(self.resource);
         } else {
@@ -707,6 +789,43 @@ impl ApplicableSideEffect for TeleportActor {
             }
             Err(e) => ei.log(format!("TeleportActor failed: {}", e)),
         }
+    }
+}
+
+/// SRD 5.2 **Boon of Dimensional Travel**, *Blink Steps*: *"Immediately
+/// after you take the Attack action or the Magic action, you can
+/// teleport up to 30 feet to an unoccupied space you can see."*
+///
+/// Queued by `Action::execute`'s cost tail — after the action's own
+/// effects and after the resources it spent — which is the engine's
+/// spelling of RAW's "immediately after". Nothing else can express that
+/// timing: the effects an action returns are drained one at a time by
+/// `process_stack`, so a teleport resolved inside `side_effects` would
+/// land *before* the swing it is supposed to follow.
+///
+/// The destination is chosen at apply time rather than at queue time,
+/// and the difference is real: the swing that preceded this may have
+/// killed the creature the step was going to close on, or a summon may
+/// have arrived in the tile. See
+/// `EncounterInstance::blink_step_destination` for how the choice is
+/// made and why it is usually "stay put".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BlinkStep {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for BlinkStep {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(dest) = ei.blink_step_destination(self.actor_id) else {
+            return;
+        };
+        let name = ei.actor_name(self.actor_id);
+        ei.log(format!("  blink steps: {} folds space.", name));
+        TeleportActor {
+            actor_id: self.actor_id,
+            dest,
+        }
+        .apply(ei);
     }
 }
 

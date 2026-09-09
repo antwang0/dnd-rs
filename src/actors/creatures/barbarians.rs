@@ -749,6 +749,12 @@ pub static BERSERKER_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     let mut features = BARBARIAN_TEMPLATE.features.clone();
     features.insert(MINDLESS_RAGE_TAG);
     features.insert(INTIMIDATING_PRESENCE_TAG);
+    // SRD 5.2's **Boon of Irresistible Offense**, and the Berserker is
+    // who it belongs to: a subclass whose whole answer to being stopped
+    // is to not be. Resistance to the greataxe stops mattering, and a
+    // natural 20 lands the barbarian's Strength score on top of the
+    // crit. See `crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG`.
+    features.insert(crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG);
     CreatureTemplate {
         name: "Berserker Barbarian",
         glyph: 'Z',

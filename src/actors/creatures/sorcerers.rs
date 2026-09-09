@@ -565,6 +565,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             crate::actions::class_features::ABSORB_ELEMENTS_TAG,
             crate::actions::class_features::TIDES_OF_CHAOS_TAG,
             crate::actions::class_features::SORCEROUS_RESTORATION_TAG,
+            // SRD 5.2's **Boon of Spell Recall**, and the sorcerer is
+            // who it belongs to: the class whose entire resource system
+            // is an exchange rate between slots and something else, and
+            // who already spends a bonus action turning sorcery points
+            // back into slots. A slot that simply does not go away is
+            // that trade with nothing on the other side of it. See
+            // `crate::actions::feats::BOON_OF_SPELL_RECALL_TAG`.
+            crate::actions::feats::BOON_OF_SPELL_RECALL_TAG,
             // 5e Wild Magic Sorcerer **Wild Magic Surge** — passive: every
             // level-1+ spell cast rolls a d20; on a 1, a random surge
             // table effect fires. The trigger lives in

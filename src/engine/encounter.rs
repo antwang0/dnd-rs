@@ -1248,6 +1248,23 @@ const REACTIVE_ATTACK_DISADVANTAGE_SOURCES: &[ReactiveDisadvantageSource] = &[
     },
 ];
 
+/// The highest slot level SRD 5.2's **Boon of Spell Recall** can bring
+/// back, and — not coincidentally — the number of faces on the die it
+/// rolls to do it. RAW ties the two together ("cast a spell with a level
+/// 1–4 spell slot, roll 1d4"), which is what makes the odds flat across
+/// the range: every eligible level survives exactly one time in four.
+/// One constant rather than two, because a `4` that meant the die and a
+/// `4` that meant the ceiling could drift apart and RAW's symmetry would
+/// go with them.
+const FREE_CASTING_MAX_SLOT_LEVEL: u32 = 4;
+
+/// How far SRD 5.2's **Boon of Dimensional Travel** steps, in tiles.
+/// RAW's thirty feet on the engine's 2.5-ft grid — the same twelve Misty
+/// Step covers, which is the comparison the number is worth making: the
+/// boon is a level-2 spell's worth of teleport, for free, after every
+/// swing.
+const BLINK_STEP_TILES: isize = 12;
+
 const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
     FailedSaveAddDieSource {
         label: "dark one's own luck",
@@ -1257,6 +1274,28 @@ const FAILED_SAVE_ADD_DIE_SOURCES: &[FailedSaveAddDieSource] = &[
     FailedSaveAddDieSource {
         label: "favored by the gods",
         tag: crate::actions::class_features::FAVORED_BY_THE_GODS_TAG,
+        dice: Dice::new(2, 4),
+    },
+    // SRD 5.2's **Boon of Fate** — *"when you or another creature within
+    // 60 feet of you succeeds on or fails a D20 Test, you can roll 2d4
+    // and apply the total rolled as a bonus or penalty to the d20
+    // roll."* The first *feat* on this cohort, and the row the docstring
+    // above has been predicting ("a hypothetical `Reroll +Nd4` feat")
+    // since it was written; nothing about the cohort cared that the tag
+    // came from a feat rather than a subclass.
+    //
+    // Listed last so a holder of one of the two subclass sources above
+    // spends the narrower resource first: both of those refill on a
+    // short rest, and the boon refills on initiative — which on this
+    // board is the same cadence, so the ordering is a tiebreak rather
+    // than a trade.
+    //
+    // Same 2d4 as Favored by the Gods above, which is a coincidence RAW
+    // is entitled to and not a shared constant: the two clauses arrived
+    // from different books and either could be errata'd alone.
+    FailedSaveAddDieSource {
+        label: "improve fate",
+        tag: crate::actions::feats::BOON_OF_FATE_TAG,
         dice: Dice::new(2, 4),
     },
 ];
@@ -3481,6 +3520,143 @@ impl EncounterInstance {
     pub fn steady_the_d20(&mut self, roller_id: usize, mode: RollMode) -> RollMode {
         let mode = self.cancel_disadvantage_with_luck(roller_id, mode);
         self.cancel_mode_with_restore_balance(roller_id, mode)
+    }
+
+    /// SRD 5.2 **Boon of Combat Prowess**, *Peerless Aim*: *"When you
+    /// miss with an attack roll, you can hit instead. Once you use this
+    /// benefit, you can't use it again until the start of your next
+    /// turn."*
+    ///
+    /// Returns whether the miss just became a hit, and marks the boon
+    /// spent for the rest of `attacker_id`'s turn when it did. Shared by
+    /// the weapon chokepoint in `engine::attack` and the spell-attack
+    /// chokepoint in `actions::spells`, because RAW's trigger is "an
+    /// attack roll" and both of those roll one.
+    ///
+    /// **Call it last.** The boon answers the swing's final verdict, so
+    /// every clause that can still un-hit an attack — Bend Luck's
+    /// subtraction, the underwater auto-miss — has to have spoken
+    /// already, or the holder spends their one rescue of the turn on a
+    /// swing something else then takes back. It is the only thing in the
+    /// engine that reaches *past* the natural-1 auto-miss, which is RAW:
+    /// the trigger is an unqualified "when you miss", and a fumble is a
+    /// miss.
+    ///
+    /// Recharges at the start of the holder's next turn, which is
+    /// exactly the window `once_per_turn_marks` measures — so the boon
+    /// rides the shared once-per-turn ledger rather than a per-rest
+    /// charge, and `reset_for_new_round` refills it for free.
+    pub fn peerless_aim_rescues(&mut self, attacker_id: usize) -> bool {
+        use crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG;
+        let eligible = self.actors.get(&attacker_id).is_some_and(|a| {
+            a.has_passive_feature(BOON_OF_COMBAT_PROWESS_TAG)
+                && !a.once_per_turn_used(BOON_OF_COMBAT_PROWESS_TAG)
+        });
+        if !eligible {
+            return false;
+        }
+        if let Some(attacker) = self.actors.get_mut(&attacker_id) {
+            attacker.mark_once_per_turn_used(BOON_OF_COMBAT_PROWESS_TAG);
+        }
+        let name = self.actor_name(attacker_id);
+        self.log(format!(
+            "  peerless aim: {} misses, and hits anyway.",
+            name
+        ));
+        true
+    }
+
+    /// SRD 5.2 **Boon of Irresistible Offense**, *Overwhelming Strike*:
+    /// *"When you roll a 20 on the d20 for an attack roll, you can deal
+    /// extra damage to the target equal to the ability score increased
+    /// by this feat."*
+    ///
+    /// Returns the flat extra damage — the holder's Strength or
+    /// Dexterity *score*, whichever is higher — or 0 when the swing or
+    /// the swinger does not qualify. The caller adds it to the swing's
+    /// own payload so it lands as the attack's damage type, which is
+    /// what RAW asks for ("the extra damage's type is the same as the
+    /// attack's type") and what folding it into one instance achieves
+    /// for free.
+    ///
+    /// `natural_twenty` is the raw d20 face, not "did this crit". The
+    /// two come apart in this engine more often than they do at a table:
+    /// a Champion crits on a 19, a Hexblade's Curse widens the range
+    /// against one creature, and a Paralyzed target turns every hit from
+    /// five feet into a crit. RAW names the face, so the face is what
+    /// this asks for.
+    ///
+    /// Flat, and therefore not doubled by the crit the same face
+    /// produced — the rule crit doubling itself follows.
+    ///
+    /// A *score* rather than a modifier, which is the whole size of the
+    /// clause: an epic-tier Strength of 20 is +20 damage on a natural
+    /// 20, not +5. That is the reward RAW prints for a level-19 feat and
+    /// the reason the boon is worth a feat slot at all.
+    pub fn overwhelming_strike_damage(&mut self, caster_id: usize, natural_twenty: bool) -> u32 {
+        use crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG;
+        if !natural_twenty {
+            return 0;
+        }
+        let Some(attacker) = self.actors.get(&caster_id) else {
+            return 0;
+        };
+        if !attacker.has_passive_feature(BOON_OF_IRRESISTIBLE_OFFENSE_TAG) {
+            return 0;
+        }
+        let bonus = attacker
+            .ability_score(AbilityScoreType::Strength)
+            .max(attacker.ability_score(AbilityScoreType::Dexterity));
+        if bonus == 0 {
+            return 0;
+        }
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  overwhelming strike: {} rolls a natural 20 for +{} damage.",
+            name, bonus
+        ));
+        bonus
+    }
+
+    /// SRD 5.2 **Boon of Spell Recall**, *Free Casting*: *"Whenever you
+    /// cast a spell with a level 1–4 spell slot, roll 1d4. If the number
+    /// you roll is the same as the slot's level, the slot isn't
+    /// expended."*
+    ///
+    /// Returns whether `lvl`'s slot survives the cast. Called from
+    /// `ConsumeResource::apply`, which is the one place a
+    /// `Resource::SpellSlot` cost becomes a spend — every cast in the
+    /// engine declares its slot on `Action::cost` and the cost tail in
+    /// `Action::execute` bills it there, so one gate covers the whole
+    /// spell list without a spell knowing this feat exists.
+    ///
+    /// Levels 5 and up are outside RAW's clause and return `false`
+    /// without rolling: no die is spun, so a high-level caster's log
+    /// stays quiet and the seeded RNG is not advanced by a roll that
+    /// could never have mattered. Level 0 never reaches here — a cantrip
+    /// declares no slot cost at all.
+    pub fn free_casting_preserves_slot(&mut self, caster_id: usize, lvl: u32) -> bool {
+        use crate::actions::feats::BOON_OF_SPELL_RECALL_TAG;
+        if !(1..=FREE_CASTING_MAX_SLOT_LEVEL).contains(&lvl) {
+            return false;
+        }
+        if !self
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_passive_feature(BOON_OF_SPELL_RECALL_TAG))
+        {
+            return false;
+        }
+        let rolled = self.roll(&Dice::new(1, FREE_CASTING_MAX_SLOT_LEVEL));
+        if rolled != lvl {
+            return false;
+        }
+        let name = self.actor_name(caster_id);
+        self.log(format!(
+            "  free casting: 1d4({}) matches the slot level \u{2014} {} keeps the level-{} slot.",
+            rolled, name, lvl
+        ));
+        true
     }
 
     /// Roll a d20 with mode, then apply the 5e Lucky trait reroll if the
@@ -7027,6 +7203,183 @@ impl EncounterInstance {
                     .is_some_and(|t| t.terrain_type.is_water())
             })
         })
+    }
+
+    /// True while `actor_id` holds SRD 5.2's **Boon of the Night
+    /// Spirit** *and* is standing somewhere the light does not reach —
+    /// the shared gate on both of that boon's clauses, *"while within
+    /// Dim Light or Darkness"*.
+    ///
+    /// One predicate for the two clauses because RAW writes one
+    /// condition and hangs both on it: Shadowy Form's resistance (a row
+    /// on `POSITIONAL_DAMAGE_HALVINGS`) and Merge with Shadows'
+    /// invisibility (installed by the bonus action, and stripped the
+    /// moment this stops being true) are the same sentence read twice.
+    ///
+    /// Measured at the holder's own tile rather than across their
+    /// footprint. A Large creature straddling the edge of a torch's
+    /// circle is a case RAW has no answer for, and the anchor tile is
+    /// the answer every other light query in the engine already gives —
+    /// see `light_at`.
+    ///
+    /// Derived rather than latched, like `is_immersed` above and for the
+    /// same reason: a dozen paths move a creature, and a stored flag
+    /// would be correct only until the next one was written.
+    pub fn is_shrouded_in_shadow(&self, actor_id: usize) -> bool {
+        use crate::actions::feats::BOON_OF_THE_NIGHT_SPIRIT_TAG;
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        if !actor.has_passive_feature(BOON_OF_THE_NIGHT_SPIRIT_TAG) {
+            return false;
+        }
+        self.light_at(actor.location()) != crate::engine::lighting::LightLevel::Bright
+    }
+
+    /// Where SRD 5.2's **Boon of Dimensional Travel** puts its holder:
+    /// *"Immediately after you take the Attack action or the Magic
+    /// action, you can teleport up to 30 feet to an unoccupied space you
+    /// can see."*
+    ///
+    /// `None` when the boon does not fire, which is most of the time and
+    /// deliberately so. RAW hands the holder a choice and the engine has
+    /// no channel to ask it, so this answers on their behalf — and the
+    /// most important part of the answer is **"don't"**. A creature that
+    /// teleports thirty feet at the end of every single turn regardless
+    /// of the board is noise in the log rather than a feature, so the
+    /// step is offered only to a holder who is standing in the wrong
+    /// place.
+    ///
+    /// *Wrong place* is the same two-case test
+    /// `attack::maneuverable_ally` uses for the Battle Master's
+    /// Maneuvering Attack, and for the same reason: they are the only
+    /// two ways position can be wrong for a creature whose weapon is
+    /// already chosen. A holder who fights in melee and has nothing in
+    /// reach steps toward the nearest enemy; one who fights at range and
+    /// has something in reach steps away from it. A holder already where
+    /// it wants to be does not step.
+    ///
+    /// The destination is the *best* legal tile within range by that
+    /// measure rather than the first one found, and the scan runs in a
+    /// fixed row-major order with a strict-improvement test, so the same
+    /// seed puts the holder in the same place every run.
+    ///
+    /// Three constraints on a candidate, all RAW's: within thirty feet
+    /// (`BLINK_STEP_TILES`), a legal landing spot for the whole
+    /// footprint (`can_move_to`, which is what "unoccupied space" means
+    /// for a creature wider than one tile), and visible from where the
+    /// holder is standing (`has_line_of_sight` — "a space you can see").
+    pub fn blink_step_destination(&self, actor_id: usize) -> Option<Coordinate> {
+        use crate::actions::action_template::MELEE_REACH;
+        use crate::actions::feats::BOON_OF_DIMENSIONAL_TRAVEL_TAG;
+
+        let actor = self.actors.get(&actor_id)?;
+        if !actor.has_passive_feature(BOON_OF_DIMENSIONAL_TRAVEL_TAG) || !actor.is_combat_active() {
+            return None;
+        }
+        let (team, origin, fights_close) = (
+            actor.team(),
+            actor.location(),
+            actor.first_melee_weapon_action().is_some(),
+        );
+        let (gap, enemy_id) = self
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                self.actors
+                    .get(id)
+                    .is_some_and(|e| e.team() != team && e.is_combat_active())
+            })
+            .filter_map(|id| self.footprint_distance(actor_id, id).map(|d| (d, id)))
+            .min()?;
+        // Out of position, or not. The equality is the whole test: a
+        // melee fighter wants `engaged` and a shooter wants the opposite,
+        // so the two agreeing means there is nothing to fix.
+        let engaged = gap <= MELEE_REACH;
+        if fights_close == engaged {
+            return None;
+        }
+        let mut best: Option<(isize, Coordinate)> = None;
+        for dy in -BLINK_STEP_TILES..=BLINK_STEP_TILES {
+            for dx in -BLINK_STEP_TILES..=BLINK_STEP_TILES {
+                let candidate = origin + Coordinate::new(dx, dy);
+                if candidate == origin || !self.can_move_to(actor_id, candidate) {
+                    continue;
+                }
+                if !self.has_line_of_sight(origin, candidate) {
+                    continue;
+                }
+                let Some(enemy) = self.actors.get(&enemy_id) else {
+                    continue;
+                };
+                // Measured from the candidate tile rather than by moving
+                // the actor there first: `footprint_chebyshev` takes two
+                // anchors and two footprints, so the question can be
+                // asked about a tile nobody is standing on.
+                let reach = crate::engine::util::footprint_chebyshev(
+                    candidate,
+                    crate::engine::util::get_tiles_from_size(
+                        self.actors.get(&actor_id)?.size(),
+                    ),
+                    enemy.location(),
+                    crate::engine::util::get_tiles_from_size(enemy.size()),
+                );
+                // Closing wants the smaller number and withdrawing the
+                // larger, so both lanes maximise one score.
+                let score = if fights_close { -reach } else { reach };
+                let current = if fights_close { -gap } else { gap };
+                if score > current && best.is_none_or(|(b, _)| score > b) {
+                    best = Some((score, candidate));
+                }
+            }
+        }
+        best.map(|(_, c)| c)
+    }
+
+    /// The Reaction clause of SRD 5.2's **Merge with Shadows**: *"The
+    /// condition ends on you immediately after you take an action, a
+    /// Bonus Action, or a Reaction."*
+    ///
+    /// Only the Reaction third is enforced here; the other two are what
+    /// the condition's `UntilStartOfNextTurn` timer already amounts to
+    /// for a creature that has finished its turn (see
+    /// `feats::MergeWithShadows` for the two ways that approximation
+    /// diverges). A Reaction is the one of the three that is spent
+    /// *between* turns, where no timer can stand in for it — a merged
+    /// monk who Deflects a missile has moved, and RAW says the shadows
+    /// give them up.
+    ///
+    /// Gated on the boon rather than on how the holder came to be
+    /// Invisible, because the engine does not record a condition's
+    /// source. The over-reach is a night-spirit holder who is invisible
+    /// from something else losing it to their own reaction, which needs
+    /// a chassis carrying both this boon and a second invisibility to be
+    /// observable at all.
+    ///
+    /// **Called from `ConsumeResource::apply`, which is where a
+    /// *declared* reaction is billed — and that is not every reaction.**
+    /// Some thirty sites debit `Resource::Reaction` straight off the
+    /// actor (the opportunity-attack dispatcher, the reactive-clamp
+    /// cohort, the interposition lanes), and those are reactions the
+    /// engine takes on the holder's behalf rather than actions the
+    /// holder declared. They do not end the merge. The gap is worth
+    /// naming and not worth thirty call-site edits to close: the window
+    /// it leaves open is one round of a condition that expires at the
+    /// top of the holder's next turn anyway.
+    pub fn end_shadow_merge_on_reaction(&mut self, actor_id: usize) {
+        use crate::actions::feats::BOON_OF_THE_NIGHT_SPIRIT_TAG;
+        let merged = self.actors.get(&actor_id).is_some_and(|a| {
+            a.has_passive_feature(BOON_OF_THE_NIGHT_SPIRIT_TAG)
+                && a.has_condition(Condition::Invisible)
+        });
+        if !merged {
+            return;
+        }
+        if let Some(actor) = self.actors.get_mut(&actor_id) {
+            actor.remove_condition(Condition::Invisible);
+        }
+        let name = self.actor_name(actor_id);
+        self.log(format!("  {} steps out of the shadows to act.", name));
     }
 
     /// True if `actor_id` is drawing breath this round — the single

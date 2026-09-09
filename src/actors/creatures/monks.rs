@@ -346,9 +346,24 @@ pub static SHADOW_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SILENCE);
     actions.push(&*PASS_WITHOUT_TRACE);
     actions.push(&*crate::actions::spells::DARKNESS);
+    // The Bonus Action half of the Epic Boon layered on below. Pushed
+    // beside the subclass's own three casts rather than onto the shared
+    // monk chassis, because it is the boon's action and the boon is this
+    // template's: `MergeWithShadows` refuses to fire for anyone who does
+    // not hold the tag, but an action nobody can use still clutters
+    // every other monk's list.
+    actions.push(&*crate::actions::feats::MERGE_WITH_SHADOWS);
     let mut features = MONK_TEMPLATE.features.clone();
     features.insert(SHADOW_ARTS_TAG);
     features.insert(SHADOW_STEP_TAG);
+    // SRD 5.2's **Boon of the Night Spirit**, and the Way of Shadow is
+    // who it belongs to: a subclass that already spends its bonus
+    // actions on the dark and its ki on being somewhere else. The boon
+    // pays the dark back — resistance to nearly everything while the
+    // light does not reach the monk, and a bonus action that makes them
+    // simply not there. See
+    // `crate::actions::feats::BOON_OF_THE_NIGHT_SPIRIT_TAG`.
+    features.insert(crate::actions::feats::BOON_OF_THE_NIGHT_SPIRIT_TAG);
     CreatureTemplate {
         name: "Shadow Monk",
         glyph: 'W',

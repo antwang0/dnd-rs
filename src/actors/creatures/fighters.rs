@@ -64,7 +64,19 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     Barbarian and Improved Divine Smite rides the level-3
         //     Paladin: class templates target a balanced playable
         //     level, not lockstep PHB progression.
-        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG, INDOMITABLE_TAG, SURVIVOR_TAG]),
+        //   - BOON_OF_COMBAT_PROWESS_TAG: SRD 5.2's Epic Boon feat, and
+        //     the Champion is who it belongs to. The subclass's whole
+        //     identity is that its attack rolls land more often than
+        //     anybody else's — a crit range widened to 19, and now one
+        //     miss a turn that simply isn't one. See
+        //     `crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG`.
+        features: HashSet::from([
+            SECOND_WIND_TAG,
+            ACTION_SURGE_TAG,
+            INDOMITABLE_TAG,
+            SURVIVOR_TAG,
+            crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
+        ]),
         has_extra_attack: true,
         // 5e Champion subclass level-3 feature: critical hits trigger on
         // 19 or 20 instead of just 20. Read at every attack-roll site

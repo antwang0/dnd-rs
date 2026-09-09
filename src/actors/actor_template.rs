@@ -4674,6 +4674,33 @@ fn feature_charge_map(features: &HashSet<&'static str>) -> HashMap<&'static str,
         .collect()
 }
 
+/// A template's own senses, plus any a feature tag on it grants.
+///
+/// One row today — SRD 5.2's **Boon of Truesight**, whose entire text is
+/// "you have Truesight with a range of 60 feet" — and the row is here
+/// rather than written straight onto the chassis that takes the boon for
+/// the reason every other feat tag is a tag: a feat is a thing a
+/// character *picked*, and a sense typed directly into `senses` is
+/// indistinguishable from one the creature was born with. A warlock who
+/// later drops the boon should lose the truesight with it.
+///
+/// Grants rather than replaces: `HashSet::insert` on a creature that
+/// already sees this way is a no-op, and one whose intrinsic radius is
+/// wider keeps it, because every reader of the set takes the widest
+/// matching variant (`sense_tiles` maxes over them).
+fn senses_with_feat_grants(ct: &CreatureTemplate) -> HashSet<SpecialSense> {
+    let mut senses = ct.senses.clone();
+    if ct
+        .features
+        .contains(crate::actions::feats::BOON_OF_TRUESIGHT_TAG)
+    {
+        senses.insert(SpecialSense::Truesight(
+            crate::actions::feats::BOON_OF_TRUESIGHT_FEET,
+        ));
+    }
+    senses
+}
+
 #[derive(Clone)]
 pub struct ActorInstance {
     name: String,
@@ -5467,7 +5494,7 @@ impl ActorInstance {
             charisma: ct.charisma,
             skills: ct.skills.clone(),
             items: ct.items.clone(),
-            senses: ct.senses.clone(),
+            senses: senses_with_feat_grants(ct),
             languages: ct.languages.clone(),
             cr: ct.cr,
             hitpoints: hp_roll_val,
@@ -7332,10 +7359,7 @@ impl ActorInstance {
         if self.is_immune_to_damage_type(dt) {
             return 0;
         }
-        let vulnerable = matches!(
-            self.damage_modifiers.get(&dt),
-            Some(DamageModifier::Vulnerability)
-        ) || self.has_condition_vulnerability(dt);
+        let vulnerable = self.is_vulnerable_to_damage_type(dt);
         let resistant = self.resists_damage_type(dt);
         match (vulnerable, resistant) {
             (true, true) => raw,
@@ -7343,6 +7367,44 @@ impl ActorInstance {
             (false, true) => raw / 2,
             (false, false) => raw,
         }
+    }
+
+    /// True iff this actor takes **double** `dt` damage from either lane
+    /// that can grant vulnerability: its own template row, or a held
+    /// condition.
+    ///
+    /// The two-lane OR used to be written inline in `effective_damage`,
+    /// which was fine while that was the only caller. It is not: the
+    /// three rules that function resolves — immunity beats everything,
+    /// resistance and vulnerability cancel, multiple resistances halve
+    /// once — are also the rules an *attacker-side* feature has to
+    /// reason about before it changes a payload, and it cannot do that
+    /// by reading half of them off a private field.
+    pub fn is_vulnerable_to_damage_type(&self, dt: DamageType) -> bool {
+        matches!(
+            self.damage_modifiers.get(&dt),
+            Some(DamageModifier::Vulnerability)
+        ) || self.has_condition_vulnerability(dt)
+    }
+
+    /// True iff `dt` damage arriving at this creature is actually
+    /// **halved** — the net verdict of `effective_damage`'s three
+    /// stacking rules rather than any one lane's opinion.
+    ///
+    /// Distinct from `resists_damage_type`, which answers "is there a
+    /// resistance here" and is the right question for a feature deciding
+    /// whether buying *another* one would be wasted. This is the
+    /// question an attacker-side bypass has to ask instead: a creature
+    /// that resists slashing and is also vulnerable to it takes full
+    /// damage already, and a bypass that "restored" the halving there
+    /// would double a number nothing had halved.
+    ///
+    /// SRD 5.2's **Boon of Irresistible Offense** is the caller — see
+    /// `attack::restore_resisted_physical_damage`.
+    pub fn halves_damage_of_type(&self, dt: DamageType) -> bool {
+        !self.is_immune_to_damage_type(dt)
+            && self.resists_damage_type(dt)
+            && !self.is_vulnerable_to_damage_type(dt)
     }
 
     /// True iff the actor holds a condition that grants outright immunity

@@ -566,11 +566,22 @@ pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `SHORT_REST_FEATURES` for per-rest charge refresh) on top of the
     // shared envelope. 'O' — distinct from baseline warlock 'L', Fiend
     // 'F', and Undying 'U'; 'O' for the alien "Old One" flavor.
-    subclass_warlock_template(
+    let mut goo = subclass_warlock_template(
         "Great Old One Warlock",
         'O',
         crate::actions::class_features::ENTROPIC_WARD_TAG,
-    )
+    );
+    // SRD 5.2's **Boon of Truesight**, and the Great Old One is who it
+    // belongs to: a patron whose every other feature is about perceiving
+    // what was not meant to be perceived. Sixty feet of seeing through
+    // an illusion, a Mirror Image, a Blur, and the dark — granted into
+    // the senses set at instantiation by `senses_with_feat_grants`
+    // rather than written onto this template's own `senses`, so the
+    // sight belongs to the feat and leaves with it. See
+    // `crate::actions::feats::BOON_OF_TRUESIGHT_TAG`.
+    goo.features
+        .insert(crate::actions::feats::BOON_OF_TRUESIGHT_TAG);
+    goo
 });
 
 /// Archfey Warlock — Otherworldly Patron **The Archfey** subclass build

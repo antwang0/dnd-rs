@@ -1278,6 +1278,13 @@ pub static DIVINATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     let mut features = WIZARD_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::EXPERT_DIVINATION_TAG);
     features.insert(crate::actions::class_features::THIRD_EYE_TAG);
+    // SRD 5.2's **Boon of Fate**, and the Diviner is who it belongs to:
+    // the subclass already spends its whole identity rewriting one d20 a
+    // rest, and the boon is that reflex reaching one rung further — 2d4
+    // onto a save or a swing that came up short, after the die has
+    // landed rather than before it. See
+    // `crate::actions::feats::BOON_OF_FATE_TAG`.
+    features.insert(crate::actions::feats::BOON_OF_FATE_TAG);
     CreatureTemplate {
         name: "Divination Wizard",
         glyph: 'Ψ',

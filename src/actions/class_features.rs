@@ -3104,6 +3104,13 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // gates ride together.
     crate::actions::species::FIRES_BURN_TAG,
     crate::actions::species::FROSTS_CHILL_TAG,
+    // SRD 5.2's **Boon of Combat Prowess** — the first row here that
+    // fires on a *miss* rather than a hit, and the first whose RAW
+    // spells the ledger's window out in full: "once you use this
+    // benefit, you can't use it again until the start of your next
+    // turn." Every other row above says "once on each of your turns"
+    // and means the same thing. See `feats::BOON_OF_COMBAT_PROWESS_TAG`.
+    crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
