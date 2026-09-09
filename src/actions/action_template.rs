@@ -1198,6 +1198,35 @@ pub trait Action {
         true
     }
 
+    /// The condition an action's *whole* effect consists of installing,
+    /// or `None` for everything else.
+    ///
+    /// `Some` is a narrow claim: it says a target that already carries
+    /// this condition gains nothing at all from being caught in the
+    /// area again. So it belongs on the control bursts — an umber
+    /// hulk's Confusing Gaze, a cloaker's Moan, a harpy's Luring Song,
+    /// a mummy's Dreadful Glare — and not on anything that also rolls
+    /// damage, because damage lands on a frightened creature as
+    /// readily as on a fresh one.
+    ///
+    /// The AI's area rungs read it, and without it they had no way to
+    /// tell a burst that would change something from one that would
+    /// not. They counted bodies in the radius, every body counted, and
+    /// a monster whose best action was a control burst re-cast it at
+    /// the same already-affected party every turn for the whole fight:
+    /// an umber hulk, a cloaker, a ghost and a harpy each spent every
+    /// round of every encounter re-applying a condition and never once
+    /// swung at anybody.
+    ///
+    /// The sibling of the `deals_damage` override those same actions
+    /// carry, which stopped the focus-fire lane treating them as
+    /// attacks after a medusa re-gazed an already-petrified corpse four
+    /// hundred times. Same failure, one lane over, and this is the half
+    /// the area rungs needed.
+    fn installs_condition(&self) -> Option<crate::conditions::Condition> {
+        None
+    }
+
     /// The recharge pool this action is gated on, or `None` for the
     /// overwhelming majority that are gated on nothing.
     ///

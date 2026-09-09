@@ -6400,7 +6400,11 @@ fn try_breath_weapon(
                     }
                     continue;
                 }
-                enemy_hits += 1;
+                // Same count as `best_burst_placement`'s, and for the
+                // same reason — see `burst_would_change`.
+                if burst_would_change(encounter, *action, *id) {
+                    enemy_hits += 1;
+                }
             }
             if friendly_fire || enemy_hits < 2 {
                 continue;
@@ -8659,7 +8663,11 @@ fn best_burst_placement(
                     if !action.spares_allies() {
                         ally_hits += 1;
                     }
-                } else {
+                } else if burst_would_change(encounter, *action, *id) {
+                    // Only enemies the area would actually change count
+                    // towards the floor — see `burst_would_change`. A
+                    // ghost re-facing an already-frightened party is
+                    // spending its turn on nothing.
                     enemy_hits += 1;
                 }
             }
@@ -9132,6 +9140,43 @@ fn try_area_control(
     })
 }
 
+/// Is `target` worth counting when deciding whether `action`'s area is
+/// worth the turn?
+///
+/// Two questions, and both are the action's own to answer:
+///
+///   - **Can it touch this kind of creature?** RAW scopes a handful of
+///     bursts to a creature type — Turn Undead and its cousins — and
+///     `Action::affects_creature` is that gate. A goblin counted
+///     towards a Turn Undead is how a cleric came to spend its Channel
+///     Divinity on the living.
+///   - **Would it change anything?** A burst whose entire effect is a
+///     condition does nothing at all to a creature that already has it.
+///     `Action::installs_condition` is that gate, and without it four
+///     monsters on the roster spent every round of every fight
+///     re-applying a condition to the same party and never attacked.
+///
+/// Everything else — immunity, cover, the saving throw itself — is
+/// deliberately not asked. Those decide whether the effect *lands*,
+/// which is what the dice are for; this decides whether it is worth
+/// rolling them.
+fn burst_would_change(
+    encounter: &EncounterInstance,
+    action: &'static (dyn Action + Send + Sync),
+    target_id: usize,
+) -> bool {
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return false;
+    };
+    if !action.affects_creature(target) {
+        return false;
+    }
+    match action.installs_condition() {
+        Some(condition) => !target.has_condition(condition),
+        None => true,
+    }
+}
+
 /// Pick a NoArgs harmful action — Thunderwave, Word of Radiance, a
 /// cloaker's Moan — when enough enemies stand inside **that action's
 /// own radius**.
@@ -9239,20 +9284,10 @@ fn try_self_centered_burst(
 
     for action in bursts {
         let radius = action.self_burst_radius().unwrap_or(CLUSTER_RADIUS);
-        // In range, and of a kind this action can touch. The second
-        // half is `Action::affects_creature`, and without it a cleric
-        // counted the goblins standing around it towards a Turn Undead
-        // and spent its Channel Divinity turning creatures that were
-        // never undead.
+        // In range, and worth catching — see `burst_would_change`.
         let catchable = hostiles
             .iter()
-            .filter(|&&(id, gap)| {
-                gap <= radius
-                    && encounter
-                        .actors
-                        .get(&id)
-                        .is_some_and(|a| action.affects_creature(a))
-            })
+            .filter(|&&(id, gap)| gap <= radius && burst_would_change(encounter, action, id))
             .count();
         if catchable < floor {
             continue;
@@ -15697,8 +15732,8 @@ mod tests {
         template.actions = actions;
         let template: &'static CreatureTemplate = Box::leak(Box::new(template));
 
-        /// Put two goblins `gap` tiles east of the cleric and report
-        /// what the self-centred-burst rung offers.
+        // Put two goblins `gap` tiles east of the cleric and report
+        // what the self-centred-burst rung offers.
         let offered = |gap: isize| -> Option<String> {
             let mut e = open_field(30, 12);
             let cleric = e
@@ -15727,6 +15762,80 @@ mod tests {
             Some("word of radiance"),
             "and the same cleric with the same goblins in contact casts it"
         );
+    }
+
+    /// A monster whose best action is a control burst casts it once and
+    /// then fights.
+    ///
+    /// It used to cast it forever. The area rungs counted every hostile
+    /// standing in the radius and had no way to ask whether the burst
+    /// would *change* anything, so an umber hulk, a cloaker, a ghost
+    /// and a harpy each spent every round of every encounter
+    /// re-applying a condition their targets already had — and never
+    /// once swung at anybody. Four stat blocks whose whole melee half
+    /// was unreachable, and no test went red on it, because a monster
+    /// taking an action every turn looks exactly like a monster
+    /// playing well.
+    ///
+    /// Swept across the four rather than pinned on one, because the
+    /// four reach the fix through three different rungs: the hulk, the
+    /// cloaker and the harpy through the self-centred lane, the ghost's
+    /// cone through the area-placement lane. See
+    /// `Action::installs_condition` and `burst_would_change`.
+    #[test]
+    fn a_control_burst_is_cast_once_and_then_the_monster_fights() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::ai::{Controller, ControllerDecision};
+
+        for (name, burst) in [
+            ("Umber Hulk", "confusing gaze"),
+            ("Cloaker", "moan"),
+            ("Ghost", "horrifying visage"),
+            ("Harpy", "luring song"),
+        ] {
+            let template = crate::engine::encounter::EncounterInstance::template_pool()
+                .into_iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} is on the generator's roster"));
+            let mut e = open_field(30, 20);
+            let monster = e
+                .instantiate_creature(template, Coordinate::new(4, 9), 1, 0)
+                .unwrap();
+            for i in 0..3usize {
+                e.instantiate_creature(
+                    &FIGHTER_TEMPLATE,
+                    Coordinate::new(6, 7 + i as isize * 2),
+                    0,
+                    i,
+                )
+                .unwrap();
+            }
+            e.pop_prompt();
+
+            let mut picks = Vec::new();
+            for _ in 0..6 {
+                e.actors.get_mut(&monster).unwrap().reset_for_new_round();
+                let ControllerDecision::Act(aei) = SimpleAi.decide(&e, monster) else {
+                    break;
+                };
+                picks.push(aei.action().name().to_string());
+                e.push_action(aei);
+                e.process_stack();
+            }
+            assert_eq!(
+                picks.first().map(String::as_str),
+                Some(burst),
+                "{name} opens with the ability its stat block is built around: {picks:?}"
+            );
+            assert!(
+                picks.iter().skip(1).all(|p| p != burst),
+                "{name} re-cast {burst} at a party that already had it: {picks:?}"
+            );
+            assert!(
+                picks.len() > 1,
+                "{name} has something to do on the turns after: {picks:?}"
+            );
+        }
     }
 
     /// A burst RAW scopes to a kind of creature is not offered against

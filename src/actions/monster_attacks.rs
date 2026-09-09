@@ -4288,6 +4288,12 @@ impl FrightfulHowl {
 }
 
 impl Action for FrightfulHowl {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -5162,6 +5168,12 @@ impl FrightfulPresence {
 }
 
 impl Action for FrightfulPresence {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -5932,6 +5944,12 @@ impl LuringSong {
 }
 
 impl Action for LuringSong {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Charmed)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -6640,6 +6658,12 @@ impl MummyDreadfulGlare {
 }
 
 impl Action for MummyDreadfulGlare {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -9500,6 +9524,12 @@ impl GhostHorrifyingVisage {
 }
 
 impl Action for GhostHorrifyingVisage {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn name(&self) -> &str {
         "horrifying visage"
     }
@@ -9661,6 +9691,12 @@ impl StoneGolemSlow {
 }
 
 impl Action for StoneGolemSlow {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Slowed)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -13690,6 +13726,12 @@ impl MummyLordDreadfulGlare {
 }
 
 impl Action for MummyLordDreadfulGlare {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -17000,6 +17042,12 @@ pub static NALFESHNEE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
 pub struct NalfeshneeHorrorNimbus {}
 
 impl Action for NalfeshneeHorrorNimbus {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // RAW's 15-foot Emanation — the 3 the resolver passes.
         Some(3)
@@ -20245,6 +20293,12 @@ impl UmberHulkConfusingGaze {
 }
 
 impl Action for UmberHulkConfusingGaze {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Confused)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -20636,6 +20690,12 @@ impl CloakerMoan {
 }
 
 impl Action for CloakerMoan {
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the effect: a creature that already has it gains
+        // nothing from being caught again. See
+        // `Action::installs_condition`.
+        Some(Condition::Frightened)
+    }
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
