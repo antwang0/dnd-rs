@@ -94085,3 +94085,153 @@ fn scattering_traps_arms_them_on_free_floor_and_stays_seeded() {
     assert_eq!(none.scatter_traps(0), 0);
     assert!(none.zones().is_empty());
 }
+
+// ---------------------------------------------------------------------
+// The upcast lane, end to end.
+//
+// `Action::resolved_cost` is what makes "you can cast a spell using a
+// slot of a higher level" true of the whole spell list rather than of
+// the eleven spells whose own `cost()` happened to read the override.
+// ---------------------------------------------------------------------
+
+/// A spell with no "At Higher Levels" clause is still castable with a
+/// bigger slot — and spends the bigger slot.
+///
+/// This is the half that was broken. `cost()` answered
+/// `SpellSlot(printed)` however it was asked, so `can_consume_resource`
+/// looked for a slot the caster had already spent and the cast was
+/// refused; the prompt's `lvl:N` and the AI's fallback both silently
+/// did nothing for three hundred and ten spells.
+#[test]
+fn any_leveled_spell_can_be_cast_with_a_bigger_slot() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::spells::BLESS;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // Bless has no upcast clause the engine implements, which is
+    // exactly why it is the right spell to pin this on.
+    assert!(!BLESS.scales_with_slot());
+
+    // Spend every first-level slot.
+    while e.actors[&cleric].can_consume_resource(Resource::SpellSlot(1)) {
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .consume_resource(Resource::SpellSlot(1));
+    }
+    let targets = vec![cleric];
+    assert!(
+        !BLESS.validate_input(&e, cleric, Some(&targets), None, None),
+        "the printed cast is genuinely out of reach"
+    );
+
+    let up = std::collections::HashSet::from([ActionOverride::CastLevel(3)]);
+    assert!(
+        BLESS.validate_input(&e, cleric, Some(&targets), None, Some(&up)),
+        "and the third-level cast is not"
+    );
+
+    let before = e.actors[&cleric].spell_slot_manager.spell_slots(3).spell_slots;
+    let aei = ActionExecutionInfo::new(&*BLESS, cleric, Some(targets), None, Some(up));
+    assert!(
+        aei.cost(&e).contains(&Resource::SpellSlot(3)),
+        "the cost the UI reads is the slot that will actually be spent"
+    );
+    e.push_action(aei);
+    e.process_stack();
+    assert_eq!(
+        e.actors[&cleric].spell_slot_manager.spell_slots(3).spell_slots,
+        before - 1,
+        "the third-level slot is the one that went"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("gains nothing")),
+        "a player who paid more should be told the spell did not use it"
+    );
+}
+
+/// And a spell that *does* scale says nothing of the kind.
+#[test]
+fn a_spell_that_spends_the_bigger_slot_is_not_told_it_wasted_it() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+        .unwrap();
+    assert!(FIREBALL.scales_with_slot());
+
+    let up = std::collections::HashSet::from([ActionOverride::CastLevel(5)]);
+    let aim = vec![Coordinate::new(12, 5)];
+    e.push_action(ActionExecutionInfo::new(
+        &*FIREBALL,
+        wizard,
+        None,
+        Some(aim),
+        Some(up),
+    ));
+    e.process_stack();
+    assert!(
+        e.messages().iter().any(|m| m.contains("cast at level 5")),
+        "the log says what slot went in"
+    );
+    assert!(
+        !e.messages().iter().any(|m| m.contains("gains nothing")),
+        "and does not say it was wasted"
+    );
+}
+
+/// The declaration and the arithmetic have to stay in step.
+///
+/// `scales_with_slot` cannot be derived — "the damage increases by 1d6
+/// per level" is a line inside `side_effects`, and no amount of asking
+/// an action tells a spell that reads the resolved level for its dice
+/// from one that ignores it. What *can* be checked is that the eleven
+/// spells whose own `cost()` reads `cast_level` — which is what a
+/// spell author writes when they are implementing an upcast — all
+/// declare it, so a twelfth cannot arrive scaling silently.
+///
+/// A source-text sweep, the same blunt instrument
+/// `the_summon_registry_lists_every_summon_spell_declared` uses and for
+/// the same reason: the alternative is trusting a list.
+#[test]
+fn every_spell_that_prices_an_upcast_declares_it() {
+    let source = include_str!("../actions/spells.rs");
+    let mut missing: Vec<&str> = Vec::new();
+    for block in source.split("\nimpl Action for ") {
+        let Some((head, body)) = block.split_once(" {\n") else {
+            continue;
+        };
+        // Only the `cost()` body — a `cast_level` read inside
+        // `side_effects` is the scaling itself, and plenty of actions
+        // that are not spells mention the word in a comment.
+        let Some(cost_at) = body.find("\n    fn cost(") else {
+            continue;
+        };
+        let after = &body[cost_at + 1..];
+        let cost_body = match after[10..].find("\n    fn ") {
+            Some(end) => &after[..10 + end],
+            None => after,
+        };
+        if cost_body.contains("cast_level") && !body.contains("fn scales_with_slot") {
+            missing.push(head);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these spells price an upcast without declaring one — a player \
+         who pays for the bigger slot will be told it bought nothing: {missing:?}"
+    );
+}

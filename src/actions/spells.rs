@@ -1925,6 +1925,12 @@ pub struct HealSpell {
 }
 
 impl Action for HealSpell {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -2151,10 +2157,24 @@ impl Action for HoldPerson {
         _caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        overrides: Option<&HashSet<ActionOverride>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        // Level-2 leveled spell — Action + a level-2 (or upcast) spell slot.
-        action_and_slot(crate::engine::action_overrides::cast_level(overrides, 2))
+        // Level-2 leveled spell — Action and a level-2 slot.
+        //
+        // The upcast is not priced here, and it used to be: this read
+        // the override set and charged the bigger slot for a cast that
+        // did exactly the same thing, because RAW's clause ("you can
+        // target one additional creature for each spell slot level
+        // above 2") needs a targeting shape this spell does not have.
+        // Charging for it was the one place in the file a player could
+        // pay more and get nothing without being told.
+        //
+        // Casting it *with* a bigger slot is still legal, and is now
+        // legal for every leveled spell rather than for the eleven that
+        // hand-rolled it — see `Action::resolved_cost`, which raises the
+        // slot generically. What changed is that the spell no longer
+        // claims the difference buys something.
+        action_and_slot(2)
     }
 
     fn side_effects(
@@ -2553,6 +2573,12 @@ pub static BURNING_HANDS: LazyLock<BurningHands> = LazyLock::new(|| BurningHands
 pub struct MagicMissile {}
 
 impl Action for MagicMissile {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -2799,6 +2825,12 @@ pub static CAUSE_FEAR: LazyLock<CauseFear> = LazyLock::new(|| CauseFear {});
 pub struct GuidingBolt {}
 
 impl Action for GuidingBolt {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -4166,6 +4198,12 @@ pub static POISON_SPRAY: LazyLock<PoisonSpray> = LazyLock::new(|| PoisonSpray {}
 pub struct InflictWounds {}
 
 impl Action for InflictWounds {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "inflict wounds"
     }
@@ -4979,6 +5017,12 @@ pub static SHOCKING_GRASP: LazyLock<ShockingGrasp> = LazyLock::new(|| ShockingGr
 pub struct Shatter {}
 
 impl Action for Shatter {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -5943,6 +5987,12 @@ pub static COMMAND: LazyLock<Command> = LazyLock::new(|| Command {});
 pub struct Fireball {}
 
 impl Action for Fireball {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -6213,6 +6263,12 @@ pub static SCORCHING_RAY: LazyLock<ScorchingRay> = LazyLock::new(|| ScorchingRay
 pub struct LightningBolt {}
 
 impl Action for LightningBolt {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -6653,6 +6709,12 @@ pub fn spirit_guardians_dc(encounter: &EncounterInstance, caster_id: usize) -> i
 }
 
 impl Action for SpiritGuardians {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -14896,6 +14958,12 @@ pub static STORM_OF_VENGEANCE: LazyLock<StormOfVengeance> =
 pub struct HellishRebuke {}
 
 impl Action for HellishRebuke {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -16872,6 +16940,13 @@ pub struct SummonSpell {
 }
 
 impl Action for SummonSpell {
+    /// True for the summons whose stat block RAW prints as an
+    /// expression — see `SummonScaling`, which is what a bigger slot
+    /// buys here. False for the ones whose body is a creature the world
+    /// contains, which a bigger slot does not change.
+    fn scales_with_slot(&self) -> bool {
+        self.scaling != SummonScaling::NONE
+    }
     fn name(&self) -> &str {
         self.display_name
     }
@@ -18199,6 +18274,12 @@ pub static NEGATIVE_ENERGY_FLOOD: LazyLock<NegativeEnergyFlood> =
 pub struct ArmorOfAgathys {}
 
 impl Action for ArmorOfAgathys {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Abjuration)
     }
@@ -27281,6 +27362,12 @@ impl GaseousForm {
 }
 
 impl Action for GaseousForm {
+    /// Its "At Higher Levels" clause is implemented: `side_effects`
+    /// reads the resolved slot and scales with it. See
+    /// `Action::scales_with_slot`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Transmutation)
     }

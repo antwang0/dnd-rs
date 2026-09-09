@@ -1768,6 +1768,90 @@ pub trait Action {
         action_only()
     }
 
+    /// The cost this cast is actually paid at — `cost()`, with the slot
+    /// raised to whatever `ActionOverride::CastLevel` asked for.
+    ///
+    /// 5e: *"When you cast a spell using a slot of a higher level, the
+    /// spell assumes the higher level for that casting."* That sentence
+    /// applies to every leveled spell in the book, whether or not the
+    /// spell has an "At Higher Levels" clause to spend the difference
+    /// on — a cleric out of 1st-level slots casts Bless with a 2nd, and
+    /// gets Bless.
+    ///
+    /// It lives here rather than in each `cost()` because that is where
+    /// it was, and it was in eleven of them. Every other leveled spell
+    /// answered `SpellSlot(printed_level)` however it was asked, so
+    /// `can_consume_resource` looked for a slot the caster had already
+    /// spent, and the cast was refused — which made the entire upcast
+    /// lane, prompt syntax and AI fallback alike, work for eleven
+    /// spells out of three hundred and twenty-one and silently do
+    /// nothing for the rest.
+    ///
+    /// Idempotent on those eleven: raising a slot that is already
+    /// raised is `max`, and their own `cast_level` call returns the
+    /// same number this does.
+    ///
+    /// Only ever *raises*. `cast_level` already refuses to return less
+    /// than a spell's base, and the guard here says the same thing a
+    /// second time at the one place a hand-built override set could
+    /// reach — a `CastLevel(1)` on a Fireball buys a level-3 slot, not
+    /// a level-1 one.
+    fn resolved_cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = self.cost(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        );
+        let Some(asked) = overrides.and_then(|o| {
+            o.iter().find_map(|ov| match ov {
+                ActionOverride::CastLevel(lvl) => Some(*lvl),
+                _ => None,
+            })
+        }) else {
+            return costs;
+        };
+        for cost in costs.iter_mut() {
+            if let Resource::SpellSlot(printed) = *cost
+                && asked > printed
+            {
+                *cost = Resource::SpellSlot(asked);
+            }
+        }
+        costs
+    }
+
+    /// True when a bigger slot buys this action something.
+    ///
+    /// A declaration rather than a derivation, because there is nothing
+    /// to derive it from: "the damage increases by 1d6 for each spell
+    /// slot level above 3" is a line of arithmetic inside
+    /// `side_effects`, and no amount of asking the action can tell a
+    /// spell that reads `cast_level` for its dice from one that ignores
+    /// it entirely.
+    ///
+    /// It is read for exactly one thing — the note `execute` logs when
+    /// somebody spends a bigger slot than the spell is printed at — and
+    /// the default is the safe half of that: a spell that scales and
+    /// forgets to declare loses a log line nobody needed, and one that
+    /// does not scale and forgets is the case the note exists for. The
+    /// cast is legal either way; RAW never forbids paying more.
+    ///
+    /// `every_spell_that_prices_an_upcast_declares_it` pins the
+    /// declared set against the spells whose own `cost()` reads the
+    /// override, which is the closest thing to a check there is.
+    fn scales_with_slot(&self) -> bool {
+        false
+    }
+
     fn validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -1983,7 +2067,12 @@ pub trait Action {
         }
         // Check every declared cost; the action only fires if the actor
         // can afford all of them.
-        let costs = self.cost(
+        //
+        // `resolved_cost`, not `cost`: the slot a cast is paid at is the
+        // one the caller asked for when that is higher than the one the
+        // spell is printed at, and asking the action alone would refuse
+        // every upcast of every spell that does not scale its own dice.
+        let costs = self.resolved_cost(
             encounter,
             caster_id,
             target_ids,
@@ -2080,7 +2169,7 @@ pub trait Action {
         // frame. Everything past that point (cost resolution, post-cast
         // triggers, the ConsumeResource tail) is "after the spell" per
         // RAW and deliberately sits outside the frame.
-        let cast_level = crate::engine::side_effects::spell_slot_level(&self.cost(
+        let cast_level = crate::engine::side_effects::spell_slot_level(&self.resolved_cost(
             encounter,
             caster_id,
             target_ids,
@@ -2088,6 +2177,33 @@ pub trait Action {
             overrides,
         ))
         .unwrap_or(0);
+        // The note the upcast lane owes a player who spent a bigger
+        // slot than the spell prints. Factual on both halves: what it
+        // was cast at, and — for the majority of the spell list, which
+        // has no "At Higher Levels" clause the engine implements —
+        // that the difference bought nothing. RAW never forbids paying
+        // more, and a caster out of low slots has an excellent reason
+        // to; what they should not have is to find out by comparing
+        // damage rolls.
+        let printed = crate::engine::side_effects::spell_slot_level(&self.cost(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            None,
+        ))
+        .unwrap_or(0);
+        if cast_level > printed && printed > 0 {
+            let note = if self.scales_with_slot() {
+                String::new()
+            } else {
+                format!(" — {} gains nothing from the bigger slot", self.name())
+            };
+            encounter.log(format!(
+                "  cast at level {} (a level-{} spell){}",
+                cast_level, printed, note
+            ));
+        }
         encounter.enter_cast(
             self.school(),
             cast_level,
@@ -2161,7 +2277,7 @@ pub trait Action {
             && ids.len() == 1
         {
             let original_target_id = ids[0];
-            let costs = self.cost(
+            let costs = self.resolved_cost(
                 encounter,
                 caster_id,
                 target_ids,
@@ -2272,7 +2388,7 @@ pub trait Action {
         // twin) are fully built. Everything below resolves "after the
         // spell" per RAW and must not read as part of it.
         encounter.exit_cast();
-        let costs = self.cost(
+        let costs = self.resolved_cost(
             encounter,
             caster_id,
             target_ids,
@@ -2411,7 +2527,7 @@ impl ActionExecutionInfo {
     /// target/loc args, not None placeholders) — useful for the engine
     /// log filter and the UI's cost-label / affordability display.
     pub fn cost(&self, encounter: &EncounterInstance) -> Vec<Resource> {
-        self.action.cost(
+        self.action.resolved_cost(
             encounter,
             self.caster_id,
             self.target_ids.as_ref(),
