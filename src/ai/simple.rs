@@ -9740,9 +9740,31 @@ fn best_attack_against(
     // biased toward whichever attacks happened to be annotated. Two
     // unannotated actions, or one of each, fall through to the order
     // they had before this key existed.
-    // (matchup, roll mode, reach, damage estimate, the action itself) —
-    // the four sort keys in priority order plus the candidate they rank.
-    type Ranked<'a> = (u8, u8, isize, Option<f32>, &'a (dyn Action + Send + Sync));
+    // **A routine beats one swing out of it.** RAW prints Multiattack
+    // as *the* action a creature takes; the single attacks are listed
+    // because the routine is sometimes unavailable, not as a rival to
+    // it. Every candidate here already reaches the target — the
+    // distance filter above dropped the ones that do not — so a
+    // compound and a part of that compound are both legal, and the
+    // compound is by construction the whole of the part plus more.
+    //
+    // Ranked above reach, which is what this key had to be to fix
+    // anything: a compound reaches as far as its *shortest* part, so a
+    // routine that ends in a longer weapon lost the reach key to its
+    // own sub-attack. A bone devil stung, once, every turn, instead of
+    // making its two claws and a sting; a salamander whipped its tail
+    // instead of the spear-and-tail it is written with. Neither ever
+    // used the routine at all — the tell that made this findable was a
+    // sweep for actions the AI can never select.
+    //
+    // Below the matchup and roll-mode keys, which stay where they are:
+    // a routine into an immunity, or at disadvantage, is still worse
+    // than a single swing that lands.
+    //
+    // (matchup, roll mode, single-swing penalty, reach, damage estimate,
+    // the action itself) — the five sort keys in priority order plus the
+    // candidate they rank.
+    type Ranked<'a> = (u8, u8, u8, isize, Option<f32>, &'a (dyn Action + Send + Sync));
     let mut best: Option<Ranked> = None;
     for &action in &actor.actions {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
@@ -9857,27 +9879,38 @@ fn best_attack_against(
         let damage = action
             .expected_damage(encounter, actor_id)
             .map(|d| d + mastery_damage_bonus(encounter, actor_id, target_id, action, reach));
+        // 0 for a routine, 1 for a single swing — see the `Ranked`
+        // comment above. Lower wins, like every other key here.
+        let single = u8::from(!action.chains_multiple_attacks());
         let pick = match &best {
             None => true,
-            Some((bs, bm, br, bd, _)) => {
-                match (score.cmp(bs), mode.cmp(bm), reach.cmp(br)) {
-                    (std::cmp::Ordering::Less, _, _) => true,
-                    (std::cmp::Ordering::Greater, _, _) => false,
-                    (_, std::cmp::Ordering::Less, _) => true,
-                    (_, std::cmp::Ordering::Greater, _) => false,
-                    (_, _, std::cmp::Ordering::Greater) => true,
-                    (_, _, std::cmp::Ordering::Less) => false,
-                    // Same matchup, same mode, same reach: the estimate
-                    // decides, but only if both sides have one.
+            Some((bs, bm, bsingle, br, bd, _)) => {
+                match (
+                    score.cmp(bs),
+                    mode.cmp(bm),
+                    single.cmp(bsingle),
+                    reach.cmp(br),
+                ) {
+                    (std::cmp::Ordering::Less, _, _, _) => true,
+                    (std::cmp::Ordering::Greater, _, _, _) => false,
+                    (_, std::cmp::Ordering::Less, _, _) => true,
+                    (_, std::cmp::Ordering::Greater, _, _) => false,
+                    (_, _, std::cmp::Ordering::Less, _) => true,
+                    (_, _, std::cmp::Ordering::Greater, _) => false,
+                    (_, _, _, std::cmp::Ordering::Greater) => true,
+                    (_, _, _, std::cmp::Ordering::Less) => false,
+                    // Same matchup, same mode, same shape, same reach:
+                    // the estimate decides, but only if both sides have
+                    // one.
                     _ => matches!((damage, bd), (Some(d), Some(b)) if d > *b),
                 }
             }
         };
         if pick {
-            best = Some((score, mode, reach, damage, action));
+            best = Some((score, mode, single, reach, damage, action));
         }
     }
-    best.map(|(_, _, r, _, a)| (r, a))
+    best.map(|(_, _, _, r, _, a)| (r, a))
 }
 
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward
@@ -15828,12 +15861,58 @@ mod tests {
                 "{name} opens with the ability its stat block is built around: {picks:?}"
             );
             assert!(
-                picks.iter().skip(1).all(|p| p != burst),
+                picks.get(1).is_some_and(|p| p != burst),
                 "{name} re-cast {burst} at a party that already had it: {picks:?}"
             );
             assert!(
-                picks.len() > 1,
-                "{name} has something to do on the turns after: {picks:?}"
+                picks.iter().skip(1).any(|p| p != burst && p != "move"),
+                "{name} gets to use the rest of its stat block: {picks:?}"
+            );
+        }
+    }
+
+    /// A creature with a Multiattack uses it, rather than one swing out
+    /// of it.
+    ///
+    /// RAW prints Multiattack as *the* action a creature takes; the
+    /// single attacks are listed because the routine is sometimes
+    /// unavailable, not as a rival to it. The picker ranked reach ahead
+    /// of everything else, and a compound reaches as far as its
+    /// *shortest* part — so a routine ending in a longer weapon lost to
+    /// its own sub-attack. A bone devil stung once a turn instead of
+    /// making two claws and a sting; a salamander whipped its tail
+    /// instead of the spear-and-tail its stat block is written with.
+    ///
+    /// Both are pinned, because they fail for the same reason at
+    /// different reaches, and both are checked in contact — where the
+    /// routine and the single swing are equally legal and the routine
+    /// is simply more of it.
+    #[test]
+    fn a_creature_with_a_routine_uses_the_routine() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        for (name, routine) in [
+            ("Bone Devil", "bone devil multiattack"),
+            ("Salamander", "salamander multiattack"),
+        ] {
+            let template = crate::engine::encounter::EncounterInstance::template_pool()
+                .into_iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("{name} is on the generator's roster"));
+            let mut e = open_field(24, 16);
+            let monster = e
+                .instantiate_creature(template, Coordinate::new(4, 8), 1, 0)
+                .unwrap();
+            e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 8), 0, 0)
+                .unwrap();
+            e.pop_prompt();
+            e.actors.get_mut(&monster).unwrap().reset_for_new_round();
+            let picked = try_attack_focus_fire(&e, monster)
+                .unwrap_or_else(|| panic!("{name} has something in reach to swing at"));
+            assert_eq!(
+                picked.action().name(),
+                routine,
+                "{name} should open with its routine, not one attack out of it"
             );
         }
     }

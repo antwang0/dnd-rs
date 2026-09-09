@@ -4866,8 +4866,26 @@ impl Action for CompoundAttack {
             .unwrap_or(TargetingSchema::SingleActor)
     }
 
+    /// The **shortest** reach among the parts, not the first part's.
+    ///
+    /// `side_effects` swings every part unconditionally, so the
+    /// compound is only legal where all of them connect — which is
+    /// what `custom_validate_input`'s `all` already says about the
+    /// parts' own gates, and what this says about their reach.
+    ///
+    /// It read the first part's, and the difference is a rules
+    /// violation on nine stat blocks: a bearded devil's routine is a
+    /// reach-10 glaive followed by a reach-5 beard, a centaur's a
+    /// reach-10 pike followed by reach-5 hooves, an otyugh's reach-15
+    /// tentacles followed by a reach-5 bite. Each of them multiattacked
+    /// from the far edge of its longest weapon and landed the short one
+    /// too, on a target it could not have touched.
+    ///
+    /// The cost is that those creatures now poke with the long weapon
+    /// alone at that range and step in to use the routine, which is
+    /// what the stat block describes.
     fn reach_tiles(&self) -> Option<isize> {
-        self.parts.first().and_then(|(a, _)| a.reach_tiles())
+        self.parts.iter().filter_map(|(a, _)| a.reach_tiles()).min()
     }
 
     fn requires_los(&self) -> bool {

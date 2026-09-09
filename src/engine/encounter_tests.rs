@@ -15632,6 +15632,66 @@ fn a_repeat_save_is_not_owed_to_something_that_shrugged_the_condition_off() {
     assert!(!e.repeat_save_pending(golem, Condition::Paralyzed));
 }
 
+/// A compound routine reaches only as far as its **shortest** part.
+///
+/// `CompoundAttack::side_effects` swings every part unconditionally, so
+/// a routine whose reach came off the *first* part landed its short
+/// weapon wherever its long one could reach. Nine stat blocks are
+/// written that way round — a bearded devil's reach-10 glaive followed
+/// by a reach-5 beard, a centaur's pike then hooves, an otyugh's
+/// reach-15 tentacles then a reach-5 bite — and each of them
+/// multiattacked from the far edge of its longest weapon and connected
+/// with the short one too.
+///
+/// Asserted against the parts rather than against a number, so the
+/// invariant survives any of these weapons being re-statted.
+#[test]
+fn a_routine_reaches_no_further_than_its_shortest_part() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{
+        BEARDED_DEVIL_MULTI, CENTAUR_MULTI, OTYUGH_MULTI, SALAMANDER_MULTI,
+    };
+
+    for routine in [
+        &*BEARDED_DEVIL_MULTI as &crate::actions::monster_attacks::CompoundAttack,
+        &CENTAUR_MULTI,
+        &OTYUGH_MULTI,
+        &SALAMANDER_MULTI,
+    ] {
+        let shortest = routine
+            .parts
+            .iter()
+            .filter_map(|(a, _)| a.reach_tiles())
+            .min()
+            .expect("every part of a melee routine declares a reach");
+        assert_eq!(
+            routine.reach_tiles(),
+            Some(shortest),
+            "{} has to stop where its shortest part stops: {:?}",
+            routine.name(),
+            routine
+                .parts
+                .iter()
+                .map(|(a, _)| (a.name(), a.reach_tiles()))
+                .collect::<Vec<_>>()
+        );
+        // The fixtures only mean anything if the parts really do
+        // disagree — a routine of two equal-reach weapons would pass
+        // this test before the fix as readily as after it.
+        let longest = routine
+            .parts
+            .iter()
+            .filter_map(|(a, _)| a.reach_tiles())
+            .max()
+            .expect("as above");
+        assert!(
+            longest > shortest,
+            "{} was picked as a fixture because its parts disagree about reach",
+            routine.name()
+        );
+    }
+}
+
 /// 5e **Slow**: *"it can't take Reactions."*
 #[test]
 fn a_slowed_creature_has_no_reaction() {
