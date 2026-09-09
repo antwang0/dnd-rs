@@ -3165,6 +3165,11 @@ pub static RAY_OF_FROST: LazyLock<RayOfFrost> = LazyLock::new(|| RayOfFrost {});
 pub struct Thunderwave {}
 
 impl Action for Thunderwave {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "a 15-foot Cube originating from you" — the engine's nearest
+        // sphere is a 2-tile burst.
+        Some(2)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -9149,6 +9154,11 @@ pub static CROWN_OF_MADNESS: LazyLock<CrownOfMadness> = LazyLock::new(|| CrownOf
 pub struct WordOfRadiance {}
 
 impl Action for WordOfRadiance {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature of your choice that you can see within 5 feet
+        // of you".
+        Some(1)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -15836,6 +15846,11 @@ pub static SPIKE_STONES: LazyLock<SpikeStones> = LazyLock::new(|| SpikeStones {}
 pub struct HolyWord {}
 
 impl Action for HolyWord {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature of your choice that you can see within 30 feet
+        // of you".
+        Some(6)
+    }
     fn name(&self) -> &str {
         "holy word"
     }
@@ -20493,6 +20508,10 @@ pub static PSYCHIC_LANCE: LazyLock<PsychicLance> = LazyLock::new(|| PsychicLance
 pub struct Thunderclap {}
 
 impl Action for Thunderclap {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature within 5 feet of you".
+        Some(1)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -21604,6 +21623,10 @@ pub static REDUCE: LazyLock<SizeShiftSpell> = LazyLock::new(|| SizeShiftSpell {
 pub struct DestructiveWave {}
 
 impl Action for DestructiveWave {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature you choose within 30 feet of you".
+        Some(6)
+    }
     fn name(&self) -> &str {
         "destructive wave"
     }
@@ -21704,6 +21727,10 @@ pub static DESTRUCTIVE_WAVE: LazyLock<DestructiveWave> =
 pub struct SwordBurst {}
 
 impl Action for SwordBurst {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature within 5 feet of you".
+        Some(1)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -21926,6 +21953,10 @@ pub static CATAPULT: LazyLock<Catapult> = LazyLock::new(|| Catapult {});
 pub struct EarthTremor {}
 
 impl Action for EarthTremor {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "a 10-foot Emanation originating from you".
+        Some(2)
+    }
     fn name(&self) -> &str {
         "earth tremor"
     }
@@ -22630,6 +22661,11 @@ pub static SORCEROUS_BURST: LazyLock<SorcerousBurst> = LazyLock::new(|| Sorcerou
 pub struct ArmsOfHadar {}
 
 impl Action for ArmsOfHadar {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature in a 10-foot Emanation" — a 1-tile burst on
+        // this grid, matching the radius the spell resolves with.
+        Some(1)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -22715,6 +22751,12 @@ pub static ARMS_OF_HADAR: LazyLock<ArmsOfHadar> = LazyLock::new(|| ArmsOfHadar {
 pub struct DragonsBreath {}
 
 impl Action for DragonsBreath {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW's exhalation is a 15-foot Cone; the engine resolves it as a
+        // 2-tile burst centred on the breather, which is the radius
+        // the AI has to gate on.
+        Some(2)
+    }
     fn name(&self) -> &str {
         "dragon's breath"
     }
@@ -32288,6 +32330,11 @@ impl DivineWord {
 }
 
 impl Action for DivineWord {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The same constant the spell resolves with, rather than a
+        // second copy of 12 that could drift from it.
+        Some(Self::RADIUS)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }

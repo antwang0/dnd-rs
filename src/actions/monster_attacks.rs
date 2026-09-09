@@ -4275,7 +4275,26 @@ pub static WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
 /// Doesn't deal damage. Demonstrates the AoE-no-damage save pattern.
 pub struct FrightfulHowl {}
 
+impl FrightfulHowl {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 4;
+}
+
 impl Action for FrightfulHowl {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "howl"
     }
@@ -4316,7 +4335,6 @@ impl Action for FrightfulHowl {
         use crate::engine::types::AbilityScoreType;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        const RADIUS: isize = 4;
         const DC: i32 = 11;
 
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -4348,7 +4366,7 @@ impl Action for FrightfulHowl {
                 caster_loc,
                 caster_size,
             );
-            if dist > RADIUS {
+            if dist > Self::RADIUS {
                 continue;
             }
             let save = encounter.roll_save(tid, AbilityScoreType::Wisdom, DC);
@@ -5131,7 +5149,26 @@ pub static IMP_STING: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
 /// No damage. Used by fire imps and mid-tier dragon-flavored creatures.
 pub struct FrightfulPresence {}
 
+impl FrightfulPresence {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 6;
+}
+
 impl Action for FrightfulPresence {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "frightful presence"
     }
@@ -5166,7 +5203,6 @@ impl Action for FrightfulPresence {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
 
-        const RADIUS: isize = 6;
         const DC: i32 = 11;
 
         let Some(caster) = encounter.actors.get(&caster_id) else {
@@ -5179,7 +5215,7 @@ impl Action for FrightfulPresence {
         // already carrying the condition" — same end state without the
         // per-target immunity bookkeeping.
         let victims: Vec<usize> = encounter
-            .enemy_burst_targets(caster_id, caster_loc, RADIUS)
+            .enemy_burst_targets(caster_id, caster_loc, Self::RADIUS)
             .into_iter()
             .filter(|id| {
                 crate::actions::action_template::actor_lacks_condition(
@@ -5883,7 +5919,26 @@ pub static HARPY_TALONS: SimpleWeapon = SimpleWeapon::melee(
 /// charmed creature can't make hostile actions against the harpy.
 pub struct LuringSong {}
 
+impl LuringSong {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const SONG_RADIUS: isize = 12;
+}
+
 impl Action for LuringSong {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::SONG_RADIUS)
+    }
+
     fn name(&self) -> &str {
         "luring song"
     }
@@ -5913,7 +5968,6 @@ impl Action for LuringSong {
         };
         let caster_loc = caster.location();
         let caster_team = caster.team();
-        const SONG_RADIUS: isize = 12;
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         // Sorted-id iteration for deterministic save sequencing.
         for target_id in encounter.sorted_actor_ids() {
@@ -5936,7 +5990,7 @@ impl Action for LuringSong {
                 caster_loc,
                 1,
             );
-            if dist > SONG_RADIUS {
+            if dist > Self::SONG_RADIUS {
                 continue;
             }
             let save = encounter.roll_save(target_id, AbilityScoreType::Wisdom, 11);
@@ -6386,7 +6440,26 @@ pub static MINOTAUR_GORE: LazyLock<MinotaurGore> = LazyLock::new(|| MinotaurGore
 /// (rare but possible) from chain-wailing each other.
 pub struct BansheeWail {}
 
+impl BansheeWail {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 12;
+}
+
 impl Action for BansheeWail {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "wail"
     }
@@ -6408,7 +6481,6 @@ impl Action for BansheeWail {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
 
-        const RADIUS: isize = 12;
         const DC: i32 = 13;
 
         let caster_loc = match encounter.actors.get(&caster_id) {
@@ -6426,7 +6498,7 @@ impl Action for BansheeWail {
         ));
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, RADIUS) {
+        for tid in encounter.enemy_burst_targets(caster_id, caster_loc, Self::RADIUS) {
             let Some(t) = encounter.actors.get(&tid) else {
                 continue;
             };
@@ -6555,7 +6627,26 @@ pub static MUMMY_ROTTING_FIST: WeaponWithRider = WeaponWithRider::melee(
 /// immunity, the standard undead proxy).
 pub struct MummyDreadfulGlare {}
 
+impl MummyDreadfulGlare {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 8;
+}
+
 impl Action for MummyDreadfulGlare {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "dreadful glare"
     }
@@ -6580,13 +6671,12 @@ impl Action for MummyDreadfulGlare {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actions::action_template::resolve_los_glare_condition;
-        const RADIUS: isize = 8;
         const DC: i32 = 11;
         encounter.log("  dreadful glare: the mummy fixes its hollow eyes on the living");
         resolve_los_glare_condition(
             encounter,
             caster_id,
-            RADIUS,
+            Self::RADIUS,
             AbilityScoreType::Wisdom,
             DC,
             Condition::Frightened,
@@ -9558,7 +9648,26 @@ pub static STONE_GOLEM_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// the slam multi for raw damage.
 pub struct StoneGolemSlow {}
 
+impl StoneGolemSlow {
+    /// How far the ability reaches, in tiles — RAW's 10 feet.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 2;
+}
+
 impl Action for StoneGolemSlow {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "stone golem slow"
     }
@@ -9583,7 +9692,6 @@ impl Action for StoneGolemSlow {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         const DC: i32 = 17;
-        const RADIUS: isize = 2; // 10ft
         let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
             return Vec::new();
         };
@@ -9592,7 +9700,7 @@ impl Action for StoneGolemSlow {
             encounter,
             caster_id,
             caster_loc,
-            RADIUS,
+            Self::RADIUS,
             AbilityScoreType::Wisdom,
             DC,
             Condition::Slowed,
@@ -9958,6 +10066,11 @@ pub static BALOR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
 pub struct BalorFireAura {}
 
 impl Action for BalorFireAura {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each creature within 5 feet of it". Not the balor's
+        // other 8-tile clause on the same stat block.
+        Some(1)
+    }
     fn name(&self) -> &str {
         "balor fire aura"
     }
@@ -10137,7 +10250,26 @@ pub static VROCK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
 /// on a 2+ cluster so the spam stays meaningful.
 pub struct VrockScreech {}
 
+impl VrockScreech {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 8;
+}
+
 impl Action for VrockScreech {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "vrock screech"
     }
@@ -10166,7 +10298,6 @@ impl Action for VrockScreech {
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
         let center = caster.location();
-        const RADIUS: isize = 8;
         let raw = encounter.roll(&Dice::new(3, 6));
         encounter.log(format!(
             "  vrock screech: 3d6({}) shared thunder area",
@@ -10179,7 +10310,7 @@ impl Action for VrockScreech {
         // which over-spares devils that RAW would catch. Still far tighter
         // than the poison-immunity proxy this used to read, which also
         // spared golems, giant spiders, yuan-ti and the tarrasque.
-        for tid in encounter.enemy_burst_targets(caster_id, center, RADIUS) {
+        for tid in encounter.enemy_burst_targets(caster_id, center, Self::RADIUS) {
             let Some(target) = encounter.actors.get(&tid) else {
                 continue;
             };
@@ -13546,7 +13677,26 @@ pub static MUMMY_LORD_ROTTING_FIST: WeaponWithRider = WeaponWithRider::melee(
 /// and a tougher DC matching the CR-15 stat block.
 pub struct MummyLordDreadfulGlare {}
 
+impl MummyLordDreadfulGlare {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 12;
+}
+
 impl Action for MummyLordDreadfulGlare {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "lord dreadful glare"
     }
@@ -13571,7 +13721,6 @@ impl Action for MummyLordDreadfulGlare {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actions::action_template::resolve_los_glare_condition;
-        const RADIUS: isize = 12;
         const DC: i32 = 17;
         encounter.log(
             "  lord dreadful glare: the mummy lord's hollow gaze freezes the living",
@@ -13579,7 +13728,7 @@ impl Action for MummyLordDreadfulGlare {
         resolve_los_glare_condition(
             encounter,
             caster_id,
-            RADIUS,
+            Self::RADIUS,
             AbilityScoreType::Wisdom,
             DC,
             Condition::Frightened,
@@ -14173,7 +14322,26 @@ pub static KRAKEN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 /// model the "kraken picks safe tile" picker.
 pub struct KrakenLightningStorm {}
 
+impl KrakenLightningStorm {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 12;
+}
+
 impl Action for KrakenLightningStorm {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "lightning storm"
     }
@@ -14207,7 +14375,6 @@ impl Action for KrakenLightningStorm {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        const RADIUS: isize = 12;
         const DC: i32 = 23;
         // Spend the recharge resource before resolving damage so a
         // mid-resolution failure can't leave the storm both spent AND
@@ -14227,7 +14394,7 @@ impl Action for KrakenLightningStorm {
             encounter,
             caster_id,
             caster_loc,
-            RADIUS,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             DC,
             raw,
@@ -16833,6 +17000,10 @@ pub static NALFESHNEE_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
 pub struct NalfeshneeHorrorNimbus {}
 
 impl Action for NalfeshneeHorrorNimbus {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW's 15-foot Emanation — the 3 the resolver passes.
+        Some(3)
+    }
     fn name(&self) -> &str {
         "horror nimbus"
     }
@@ -20061,7 +20232,26 @@ pub static GIANT_WEASEL_BITE: SimpleWeapon = SimpleWeapon::melee(
 /// get nothing for it.
 pub struct UmberHulkConfusingGaze {}
 
+impl UmberHulkConfusingGaze {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 12;
+}
+
 impl Action for UmberHulkConfusingGaze {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "confusing gaze"
     }
@@ -20087,13 +20277,12 @@ impl Action for UmberHulkConfusingGaze {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actions::action_template::resolve_los_glare_condition;
         // 30 ft RAW on the 2.5 ft grid.
-        const RADIUS: isize = 12;
         const DC: i32 = 15;
         encounter.log("  confusing gaze: the hulk's compound eyes swivel and scatter the mind");
         resolve_los_glare_condition(
             encounter,
             caster_id,
-            RADIUS,
+            Self::RADIUS,
             AbilityScoreType::Charisma,
             DC,
             Condition::Confused,
@@ -20327,6 +20516,11 @@ impl RoperReel {
 }
 
 impl Action for RoperReel {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The reel reaches whatever the tendrils reached, which is the
+        // roper's own 60-foot envelope.
+        Some(24)
+    }
     fn name(&self) -> &str {
         "reel"
     }
@@ -20429,7 +20623,26 @@ pub static ROPER_REEL: LazyLock<RoperReel> = LazyLock::new(|| RoperReel {});
 /// every aberration that matters here.
 pub struct CloakerMoan {}
 
+impl CloakerMoan {
+    /// How far the ability reaches, in tiles.
+    ///
+    /// An associated const rather than a `const` inside `side_effects`,
+    /// because two things read it now: the resolver, and
+    /// `self_burst_radius`, which is what the AI gates on. A literal in
+    /// each would be two numbers to keep in step, and a drift between
+    /// them is invisible — the ability would simply start being chosen
+    /// in the wrong situations.
+    const RADIUS: isize = 24;
+}
+
 impl Action for CloakerMoan {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The radius the ability resolves at, declared so the AI's
+        // self-centred-burst rung stops guessing at it. See
+        // `Action::self_burst_radius`.
+        Some(Self::RADIUS)
+    }
+
     fn name(&self) -> &str {
         "moan"
     }
@@ -20455,13 +20668,12 @@ impl Action for CloakerMoan {
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actions::action_template::resolve_audible_burst_condition;
         // 60 ft RAW on the 2.5 ft grid.
-        const RADIUS: isize = 24;
         const DC: i32 = 13;
         encounter.log("  moan: a subsonic wail rolls out of the dark");
         resolve_audible_burst_condition(
             encounter,
             caster_id,
-            RADIUS,
+            Self::RADIUS,
             AbilityScoreType::Wisdom,
             DC,
             Condition::Frightened,

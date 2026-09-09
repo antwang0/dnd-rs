@@ -6142,6 +6142,13 @@ pub const TURN_THE_FAITHLESS_TAG: &str = "paladin.turn_the_faithless";
 /// wanted a ninth, and every caller was already a `&TurnBurst`
 /// spreading itself out at the call site: `TurnBurst::side_effects` is
 /// the only one, and it passed seven of its own fields in order.
+/// How far a Channel-Divinity burst reaches, in tiles — RAW's 30 feet.
+///
+/// Named because two places read it now: the resolver below, and
+/// `TurnBurst::self_burst_radius`, which is what stops the AI guessing
+/// at it. A literal in each would be two numbers to keep in step.
+const TURN_BURST_RADIUS: isize = 12;
+
 fn resolve_turn_burst(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -6209,7 +6216,7 @@ fn resolve_turn_burst(
                 caster_loc,
                 caster_size,
             );
-            dist <= 12
+            dist <= TURN_BURST_RADIUS
         })
         .collect();
 
@@ -6419,6 +6426,18 @@ pub enum TurnEscalationEffect {
 }
 
 impl Action for TurnBurst {
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        // The RAW type gate, surfaced so the AI can count only the
+        // creatures the burst could actually turn. `resolve_turn_burst`
+        // applies the same closure per candidate; this is the read the
+        // picker needs before it spends the charge.
+        (self.type_filter)(target.creature_type())
+    }
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW's 30 feet, and the same constant the resolver measures
+        // with — see `TURN_BURST_RADIUS`.
+        Some(TURN_BURST_RADIUS)
+    }
     fn name(&self) -> &str {
         self.name
     }
@@ -11537,6 +11556,11 @@ pub const RADIANCE_OF_THE_DAWN_TAG: &str = "cleric.radiance_of_the_dawn";
 pub struct RadianceOfTheDawn {}
 
 impl Action for RadianceOfTheDawn {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // RAW: "each hostile creature within 30 feet of you" — the same
+        // twelve tiles the burst below resolves at.
+        Some(TURN_BURST_RADIUS)
+    }
     fn name(&self) -> &str {
         "radiance of the dawn"
     }
@@ -18361,6 +18385,11 @@ pub struct AtWillEnemyBurst {
 }
 
 impl Action for AtWillEnemyBurst {
+    fn self_burst_radius(&self) -> Option<isize> {
+        // The chassis already carries the number; this is the row that
+        // hands it to the AI.
+        Some(self.radius)
+    }
     fn name(&self) -> &str {
         self.display_name
     }

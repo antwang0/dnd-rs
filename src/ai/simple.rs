@@ -9132,16 +9132,32 @@ fn try_area_control(
     })
 }
 
-/// Pick a NoArgs harmful action (Thunderwave / Word of Radiance / Holy
-/// Word) when 2+ enemies sit within ~30ft of the caster. NoArgs actions
-/// implicitly center on the caster, so the AI can't pick a "best point" —
-/// instead we count combat-active enemies within a heuristic 6-tile
-/// (≈30ft) window and fire if the cluster is dense enough. The action
-/// itself uses `enemy_burst_targets` to handle the team filter, so
-/// allies near the cluster are never collateral.
+/// Pick a NoArgs harmful action — Thunderwave, Word of Radiance, a
+/// cloaker's Moan — when enough enemies stand inside **that action's
+/// own radius**.
 ///
-/// Sorted by reach descending so a tight cluster picks the bigger spell
-/// (Holy Word's 30ft radius outranks Thunderwave's 10ft 2-tile burst).
+/// A `NoArgs` action centres on its caster, so there is no point for
+/// the AI to choose; the only decision is whether the area, wherever it
+/// happens to fall, is worth the turn. That decision needs the radius,
+/// and the schema does not carry one — see `Action::self_burst_radius`,
+/// which is where it is declared now.
+///
+/// It used to be guessed, once, at 12 tiles for every action on the
+/// lane, with a comment saying the action "uses `enemy_burst_targets`
+/// to handle the team filter" — true of resolution, and silent about
+/// whether anybody was in range. The radii actually run from 1 to 24.
+/// Word of Radiance reaches one tile, so a cleric with two enemies ten
+/// tiles away cast it into empty air and spent its Action doing it,
+/// every turn of every fight; a cloaker's Moan reaches twenty-four, and
+/// went unused against anybody standing thirteen away.
+///
+/// Anything that declares no radius keeps the old guess. That is the
+/// right answer for the `NoArgs` actions that are not areas at all — a
+/// barbarian's Reckless Attack, a clay golem's Hasten — which have no
+/// radius to be wrong about.
+///
+/// Ordered by declared radius descending, so a caster holding two
+/// bursts that both clear their floor opens with the bigger one.
 fn try_self_centered_burst(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -9153,26 +9169,13 @@ fn try_self_centered_burst(
     let my_loc = actor.location();
     let my_size = get_tiles_from_size(actor.size());
 
-    // Heuristic cluster window — 30ft = 12 tiles. Wider than the smallest
-    // NoArgs burst (Thunderwave's 2-tile radius), but matches Holy Word's
-    // 30ft sphere; the action's own `validate_input` runs anyway and
-    // gates on its true radius via enemy_burst_targets at execute time.
+    // The window for an action that declares no radius of its own —
+    // 30ft = 12 tiles. A guess, and it stays a guess only for the
+    // `NoArgs` actions that are not areas: a self-buff wearing the
+    // schema has no radius to be wrong about. Everything that is an
+    // area declares one. See `Action::self_burst_radius`.
     const CLUSTER_RADIUS: isize = 12;
 
-    let nearby_enemies: usize = encounter
-        .actors
-        .values()
-        .filter(|a| {
-            a.team() != my_team
-                && a.is_combat_active()
-                && footprint_chebyshev(
-                    my_loc,
-                    my_size,
-                    a.location(),
-                    get_tiles_from_size(a.size()),
-                ) <= CLUSTER_RADIUS
-        })
-        .count();
     // Two enemies is the price of *choosing* a burst over a swing: a
     // blast that catches one creature is nearly always worse than
     // pointing an attack at it, so a caster holding both should point
@@ -9187,22 +9190,39 @@ fn try_self_centered_burst(
     // is one when there is nothing else to do with the turn.
     let has_a_swing = try_attack_focus_fire(encounter, actor_id).is_some();
     let floor = if has_a_swing { 2 } else { 1 };
-    if nearby_enemies < floor {
-        return None;
-    }
 
-    // Collect NoArgs harmful actions; sort by reach descending so a
-    // dense cluster picks the bigger burst (longer reach ≈ bigger
-    // radius for self-centered bursts in this codebase). We accept
-    // bursts that either deal damage *or* apply a hostile condition:
-    // the damage_types non-empty branch covers Thunderwave / Word of
-    // Radiance / Holy Word, the deals_damage=false branch admits
-    // condition-only NoArgs bursts like the Ghost's Horrifying Visage
-    // (frighten on save fail, no HP loss). The is_harmful gate alone
-    // is too loose — some default actions inherit the trait default
-    // `is_harmful: true` (e.g. Hide before its explicit override) —
-    // so we also require either damage or an explicit non-damage flag,
-    // which together exclude utility NoArgs (Dodge / Disengage) cleanly.
+    // Every hostile the caster might catch, with the footprint gap
+    // measured once. The per-action test below is a comparison against
+    // each of these, and re-walking the actor table per candidate would
+    // be the same sweep three times on a caster holding three bursts.
+    //
+    // Ids rather than references, because the per-action gate below
+    // needs to ask the *action* about the actor and the borrow has to
+    // survive that call.
+    let hostiles: Vec<(usize, isize)> = encounter
+        .actors
+        .iter()
+        .filter(|(_, a)| a.team() != my_team && a.is_combat_active())
+        .map(|(id, a)| {
+            (
+                *id,
+                footprint_chebyshev(my_loc, my_size, a.location(), get_tiles_from_size(a.size())),
+            )
+        })
+        .collect();
+
+    // Collect NoArgs harmful actions; sort by declared radius
+    // descending so a caster holding two that both clear their floor
+    // opens with the bigger one. We accept bursts that either deal
+    // damage *or* apply a hostile condition: the damage_types non-empty
+    // branch covers Thunderwave / Word of Radiance / Holy Word, the
+    // deals_damage=false branch admits condition-only NoArgs bursts
+    // like the Ghost's Horrifying Visage (frighten on save fail, no HP
+    // loss). The is_harmful gate alone is too loose — some default
+    // actions inherit the trait default `is_harmful: true` (e.g. Hide
+    // before its explicit override) — so we also require either damage
+    // or an explicit non-damage flag, which together exclude utility
+    // NoArgs (Dodge / Disengage) cleanly.
     let mut bursts: Vec<&'static (dyn Action + Send + Sync)> = actor
         .actions
         .iter()
@@ -9213,9 +9233,30 @@ fn try_self_centered_burst(
         })
         .copied()
         .collect();
-    bursts.sort_by_key(|a| std::cmp::Reverse(a.reach_tiles().unwrap_or(0)));
+    bursts.sort_by_key(|a| {
+        std::cmp::Reverse(a.self_burst_radius().unwrap_or(CLUSTER_RADIUS))
+    });
 
     for action in bursts {
+        let radius = action.self_burst_radius().unwrap_or(CLUSTER_RADIUS);
+        // In range, and of a kind this action can touch. The second
+        // half is `Action::affects_creature`, and without it a cleric
+        // counted the goblins standing around it towards a Turn Undead
+        // and spent its Channel Divinity turning creatures that were
+        // never undead.
+        let catchable = hostiles
+            .iter()
+            .filter(|&&(id, gap)| {
+                gap <= radius
+                    && encounter
+                        .actors
+                        .get(&id)
+                        .is_some_and(|a| action.affects_creature(a))
+            })
+            .count();
+        if catchable < floor {
+            continue;
+        }
         let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
         if aei.validate(encounter) {
             return Some(aei);
@@ -15627,6 +15668,179 @@ mod tests {
             try_teleport_escape(&e, barb).is_none(),
             "a melee actor that blinks away only has to walk back"
         );
+    }
+
+    /// A self-centred burst is offered only when somebody is inside
+    /// **its own** radius.
+    ///
+    /// The rung used to gate every action on this lane at a flat twelve
+    /// tiles, with a comment saying the action "uses
+    /// `enemy_burst_targets` to handle the team filter" — which is true
+    /// of resolution and says nothing about range. Word of Radiance
+    /// reaches one tile. A cleric with two enemies ten tiles off spent
+    /// its whole Action casting it at empty floor, every turn.
+    ///
+    /// Run on a cleric carrying that cantrip and nothing else on the
+    /// lane, because the fixture has to be about the *gate*: the real
+    /// chassis also carries Divine Word at twelve tiles, which reaches
+    /// ten legitimately and would be the honest pick there.
+    #[test]
+    fn a_one_tile_burst_is_not_offered_against_enemies_ten_tiles_away() {
+        use crate::actions::default_actions::DEFAULT_ACTIONS;
+        use crate::actors::actor_template::CreatureTemplate;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut template = CLERIC_TEMPLATE.clone();
+        let mut actions = DEFAULT_ACTIONS.clone();
+        actions.push(&*crate::actions::spells::WORD_OF_RADIANCE);
+        template.actions = actions;
+        let template: &'static CreatureTemplate = Box::leak(Box::new(template));
+
+        /// Put two goblins `gap` tiles east of the cleric and report
+        /// what the self-centred-burst rung offers.
+        let offered = |gap: isize| -> Option<String> {
+            let mut e = open_field(30, 12);
+            let cleric = e
+                .instantiate_creature(template, Coordinate::new(2, 4), 0, 0)
+                .unwrap();
+            for i in 0..2 {
+                e.instantiate_creature(
+                    &GOBLIN_TEMPLATE,
+                    Coordinate::new(2 + gap, 4 + i as isize * 2),
+                    1,
+                    i,
+                )
+                .unwrap();
+            }
+            try_self_centered_burst(&e, cleric).map(|a| a.action().name().to_string())
+        };
+
+        assert_eq!(
+            offered(10),
+            None,
+            "a one-tile cantrip does not reach ten tiles, and the turn is \
+             worth more than casting it at the floor"
+        );
+        assert_eq!(
+            offered(1).as_deref(),
+            Some("word of radiance"),
+            "and the same cleric with the same goblins in contact casts it"
+        );
+    }
+
+    /// A burst RAW scopes to a kind of creature is not offered against
+    /// creatures of another kind.
+    ///
+    /// Turn Undead reaches twelve tiles and turns nothing that is not
+    /// undead, and the rung counted every hostile inside the radius
+    /// regardless — so a cleric facing a room of goblins spent its
+    /// once-per-rest Channel Divinity on them. See
+    /// `Action::affects_creature`.
+    #[test]
+    fn a_turn_undead_is_not_offered_against_the_living() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+
+        let offered = |undead: bool| -> Vec<String> {
+            let mut e = open_field(30, 12);
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+                .unwrap();
+            for i in 0..3 {
+                let at = Coordinate::new(8, 2 + i as isize * 3);
+                if undead {
+                    e.instantiate_creature(&SKELETON_TEMPLATE, at, 1, i).unwrap()
+                } else {
+                    e.instantiate_creature(&GOBLIN_TEMPLATE, at, 1, i).unwrap()
+                };
+            }
+            // Walk the whole lane rather than taking the first offer:
+            // the cleric carries several bursts and Turn Undead is not
+            // the widest of them, so "was it offered at all" is the
+            // question.
+            let mut seen = Vec::new();
+            let mut e2 = e;
+            while let Some(aei) = try_self_centered_burst(&e2, cleric) {
+                let name = aei.action().name().to_string();
+                if seen.contains(&name) {
+                    break;
+                }
+                seen.push(name);
+                // Spend the offer so the next iteration moves on.
+                e2.push_action(aei);
+                e2.process_stack();
+            }
+            seen
+        };
+
+        assert!(
+            offered(true).iter().any(|n| n == "turn undead"),
+            "a room of skeletons is what the Channel Divinity is for"
+        );
+        assert!(
+            !offered(false).iter().any(|n| n == "turn undead"),
+            "and a room of goblins is not"
+        );
+    }
+
+    /// The mirror error: a burst that reaches further than the old    /// The mirror error: a burst that reaches further than the old
+    /// guess went unused inside its own radius.
+    ///
+    /// A cloaker's Moan carries twenty-four tiles. Enemies fifteen away
+    /// were well inside it and well outside the twelve-tile window, so
+    /// the CR-8 monster's one control ability sat unused in exactly the
+    /// spread it is written for.
+    #[test]
+    fn a_twenty_four_tile_moan_reaches_past_the_old_guess() {
+        use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = open_field(40, 12);
+        let cloaker = e
+            .instantiate_creature(&CLOAKER_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+            .unwrap();
+        for i in 0..2 {
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(18, 3 + i as isize * 3),
+                0,
+                i,
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            try_self_centered_burst(&e, cloaker).map(|a| a.action().name().to_string()),
+            Some("moan".to_string()),
+            "fifteen tiles is inside a twenty-four tile moan"
+        );
+    }
+
+    /// The declared radii are the numbers the abilities actually
+    /// resolve at, spot-checked across the whole spread the lane
+    /// carries — one tile to twenty-four.
+    ///
+    /// Pinned because the failure is silent in both directions: a
+    /// radius declared too small makes an ability unreachable, and one
+    /// declared too large makes it fire at nobody, and neither prints
+    /// anything.
+    #[test]
+    fn the_declared_self_burst_radii_span_the_lane() {
+        use crate::actions::action_template::Action;
+        for (action, expected) in [
+            (&*crate::actions::spells::WORD_OF_RADIANCE as &(dyn Action + Send + Sync), 1),
+            (&*crate::actions::spells::THUNDERWAVE, 2),
+            (&*crate::actions::spells::HOLY_WORD, 6),
+            (&*crate::actions::monster_attacks::CLOAKER_MOAN, 24),
+        ] {
+            assert_eq!(
+                action.self_burst_radius(),
+                Some(expected),
+                "{} declares the radius it resolves at",
+                action.name()
+            );
+        }
     }
 
     /// The approach lane's own registry: a cloud goliath with nothing

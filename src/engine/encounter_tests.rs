@@ -91665,11 +91665,16 @@ fn a_sphinx_can_reach_its_own_roar() {
 /// The sibling of the test above, and a different bug with the same
 /// symptom. The Sphinx of Lore's roar was invisible to the AI because
 /// no candidate aim point was ever legal; the androsphinx's was
-/// invisible because it declared `TargetingSchema::NoArgs`, and every
-/// rung that looks for an area action asks the schema for its shape.
-/// A CR-17 boss's signature ability had never once been selected, and
-/// nothing said so — an ability nobody uses looks exactly like an
-/// ability nobody needed.
+/// invisible to every *area* rung, because it declared
+/// `TargetingSchema::NoArgs` and those rungs ask the schema for its
+/// shape.
+///
+/// It was not unreachable outright — the self-centred-burst rung takes
+/// `NoArgs` actions — but that rung only offered it when two enemies
+/// stood inside a flat twelve-tile guess, and the roar carries
+/// twenty-four. So the one situation a boss's room-wide emanation is
+/// written for, a party spread across the room, was exactly the one it
+/// would not fire in. This fixture is that situation.
 ///
 /// Pinned on the androsphinx specifically rather than swept over the
 /// roster, because the sweep would be the wrong test: plenty of actions

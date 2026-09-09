@@ -1135,6 +1135,69 @@ pub trait Action {
         self.targeting_schema().area_shape().and_then(|s| s.aim_reach())
     }
 
+    /// The radius, in tiles, of an area this action centres on its own
+    /// caster — the dimension `TargetingSchema::NoArgs` cannot carry.
+    ///
+    /// A self-centred burst takes no arguments, which is exactly what
+    /// makes it convenient and exactly what loses its size: `NoArgs`
+    /// says "point this at nothing" and the radius lives as a literal
+    /// inside `side_effects`, where nothing outside the action can read
+    /// it.
+    ///
+    /// The AI is what needs it, and it needed it badly. Its
+    /// self-centred-burst rung had one number for every action on the
+    /// lane — a 12-tile guess, with a comment saying the action "*uses
+    /// `enemy_burst_targets` to handle the team filter*", which is true
+    /// of resolution and says nothing about whether anybody is in
+    /// range. The actual radii on that lane run from **1** (Word of
+    /// Radiance, Thunderclap, Sword Burst, Arms of Hadar) to **24** (a
+    /// cloaker's Moan). So a cleric with two enemies ten tiles off cast
+    /// Word of Radiance into empty air and spent its Action doing it,
+    /// every turn, and a cloaker moaning at a party fifteen tiles away
+    /// did not moan at all.
+    ///
+    /// `None` means "not a self-centred area", which is most actions
+    /// and also the handful of `NoArgs` ones that are self-buffs
+    /// wearing the schema (Reckless Attack, a clay golem's Hasten).
+    /// Those keep the heuristic, because a guess is the right answer
+    /// for something that has no radius to declare.
+    ///
+    /// Distinct from `reach_tiles`, and deliberately not folded into
+    /// it: that number is how far the *aim point* may be from the
+    /// caster, it is read by targeting validation, and — the reason
+    /// this is a separate method rather than a `Some` on that one — a
+    /// reach above two consumes a sorcerer's Distant Spell prime. A
+    /// Holy Word that declared `reach_tiles(12)` would quietly eat the
+    /// prime of every Distant-Spelling sorcerer who cast it.
+    fn self_burst_radius(&self) -> Option<isize> {
+        None
+    }
+
+    /// Whether this action's effect can touch `target` at all, before
+    /// range, team or line of sight are considered.
+    ///
+    /// `true` for almost everything: a fireball does not care what it
+    /// is burning. The exceptions are the handful of actions RAW scopes
+    /// to a *kind* of creature — a cleric's Turn Undead, a paladin's
+    /// Turn the Faithless, the Arcana Domain's Arcane Abjuration — each
+    /// of which carries a creature-type gate that its resolver applies
+    /// and nothing outside the resolver could see.
+    ///
+    /// The AI is why it is on the trait. Its self-centred-burst rung
+    /// counts how many enemies are worth the Action, and counting a
+    /// goblin towards a Turn Undead is how a cleric came to spend its
+    /// Channel Divinity turning creatures that were never undead — a
+    /// once-per-rest charge, on nothing, against any party of humanoids.
+    ///
+    /// Deliberately narrower than "would this land": immunity, cover
+    /// and saving throws are not this method's business. It answers the
+    /// question RAW asks in the *targeting* line, and a target it
+    /// rejects is one the action's own resolver would have skipped
+    /// before rolling anything.
+    fn affects_creature(&self, _target: &crate::actors::actor_template::ActorInstance) -> bool {
+        true
+    }
+
     /// The recharge pool this action is gated on, or `None` for the
     /// overwhelming majority that are gated on nothing.
     ///
