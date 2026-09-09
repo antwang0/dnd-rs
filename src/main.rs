@@ -454,6 +454,51 @@ mod tests {
         );
     }
 
+    /// No spelling means two things.
+    ///
+    /// The two flag lanes are tried in order — light level first,
+    /// weather second — so a word both parsers accepted would be read as
+    /// a light level and the weather flag would silently do nothing.
+    /// That failure has no error message and no test of its own: the
+    /// argument parses, the game starts, and the sky is simply wrong.
+    ///
+    /// Swept over both parsers' *whole* vocabularies rather than over
+    /// the two `NAMES` lists, because `NAMES` is only what the help text
+    /// advertises and `parse` accepts a good deal more — "gale",
+    /// "downpour", "torchlit", "gloom". The collision would come from
+    /// the synonyms long before it came from the flags.
+    #[test]
+    fn no_word_is_both_a_light_level_and_a_weather() {
+        // Every spelling either parser is known to take, plus the
+        // obvious neighbours of each. A word that parses as neither is
+        // free to be a class name and is not this test's business.
+        const VOCABULARY: &[&str] = &[
+            "dark", "darkness", "unlit", "night", "dim", "dusk", "gloom", "bright", "lit",
+            "torchlit", "day", "daylight", "sun", "sunlight", "calm", "still", "fair", "wind",
+            "windy", "gale", "strongwind", "rain", "rainy", "storm", "snow", "downpour",
+            "overcast", "fog", "clear", "shade",
+        ];
+        for word in VOCABULARY {
+            let light = AmbientLight::parse(word).is_some();
+            let sky = Weather::parse(word).is_some();
+            assert!(
+                !(light && sky),
+                "{word:?} parses as both a light level and a weather; the light \
+                 lane is checked first, so the weather flag would be silently eaten"
+            );
+        }
+        // …and every word each of them advertises really is taken by
+        // exactly the one that advertises it.
+        for name in AmbientLight::NAMES {
+            assert!(AmbientLight::parse(name).is_some(), "--{name}");
+            assert!(Weather::parse(name).is_none(), "--{name}");
+        }
+        for name in Weather::NAMES {
+            assert!(Weather::parse(name).is_some(), "--{name}");
+            assert!(AmbientLight::parse(name).is_none(), "--{name}");
+        }
+    }
+
     /// An unrecognized `--flag` is still refused as a class name rather
     /// than silently ignored — the same bargain the unknown-class error
     /// makes, and the reason a typo'd `--darkk` does not quietly start
