@@ -268,6 +268,27 @@ pub fn spell_attack_roll(
             hit = !is_nat_one && (nat_crit || total >= target_ac);
         }
     }
+    // Per-rest "add a die to a swing that missed" sources, shared with
+    // the weapon chokepoint through `MISSED_ATTACK_BOOSTS`. RAW's
+    // triggers on that cohort are about attack rolls rather than about
+    // weapons — Boon of Fate's covers any D20 Test at all — and a spell
+    // attack is an attack roll. The two weapon-named rows decline here
+    // on their own `eligible` gate, so the lane widens without loosening
+    // anything. Runs after the Seeking Spell reroll for the same reason
+    // the weapon path runs it there: a caster holding both spends the
+    // free reroll before the charge.
+    if !hit && !is_nat_one {
+        let boost = crate::engine::attack::fire_missed_attack_boost(
+            encounter,
+            caster_id,
+            action_name,
+            target_ac - total,
+        );
+        if boost > 0 {
+            total += boost;
+            hit = total >= target_ac;
+        }
+    }
     // 5e Wild Magic Sorcerer Bend Luck (lv6): the target may burn 2 SP +
     // reaction to subtract a 1d4 from the attacker's roll. Symmetric with
     // the weapon-attack hook in `resolve_attack_outcome` — both lanes
@@ -628,13 +649,12 @@ fn spell_attack_outcome_exploding(
     // Knife's piercing — so the lane is walked here as well as at the
     // weapon chokepoint. Same call, same position: after every rider has
     // queued its payload, before the vulnerability removals.
-    let total_dmg =
-        total_dmg.saturating_add(crate::engine::attack::restore_resisted_physical_damage(
-            encounter,
-            &mut effects,
-            caster_id,
-            target_id,
-        ));
+    crate::engine::attack::restore_resisted_physical_damage(
+        encounter,
+        &mut effects,
+        caster_id,
+        target_id,
+    );
     // "And then the curse ends" — see the weapon chokepoint's twin
     // call. Last, so every damage instance the spell attack queued is
     // still doubled when it applies.

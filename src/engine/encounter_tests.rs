@@ -15041,28 +15041,33 @@ fn overcome_defenses_lands_a_resisted_blow_whole() {
         })]
     };
 
+    let felt = |e: &EncounterInstance, effects: &[Box<dyn ApplicableSideEffect>]| {
+        let (_, dt, amount) = effects[0].damage_payload().unwrap();
+        e.actors[&target].effective_damage(amount, dt)
+    };
+
     let mut slash = payloads(9, DamageType::Slashing);
-    let restored =
-        restore_resisted_physical_damage(&mut e, &mut slash, barbarian, target);
-    assert_eq!(restored, 5, "9 resisted is 4; the boon puts the other 5 back");
-    let (_, _, doubled) = slash[0].damage_payload().unwrap();
+    assert_eq!(felt(&e, &slash), 4, "9 slashing at a resistant skeleton is 4");
+    restore_resisted_physical_damage(&mut e, &mut slash, barbarian, target);
     assert_eq!(
-        e.actors[&target].effective_damage(doubled, DamageType::Slashing),
+        felt(&e, &slash),
         9,
-        "and the halving the sheet applies nets back to the whole number"
+        "and the boon carries the whole 9 through the halving"
     );
 
     let mut fire = payloads(9, DamageType::Fire);
+    restore_resisted_physical_damage(&mut e, &mut fire, barbarian, target);
     assert_eq!(
-        restore_resisted_physical_damage(&mut e, &mut fire, barbarian, target),
-        0,
+        felt(&e, &fire),
+        4,
         "the boon names three physical types and fire is not one of them"
     );
 
     let mut other = payloads(9, DamageType::Slashing);
+    restore_resisted_physical_damage(&mut e, &mut other, plain, target);
     assert_eq!(
-        restore_resisted_physical_damage(&mut e, &mut other, plain, target),
-        0,
+        felt(&e, &other),
+        4,
         "and a barbarian without the boon still swings into the resistance"
     );
 }
@@ -15359,6 +15364,75 @@ fn improve_fate_spends_one_charge_across_both_lanes() {
     assert!(
         !e.actors[&diviner].feature_available(BOON_OF_FATE_TAG),
         "and there is only one of it, however it was spent"
+    );
+}
+
+/// **Boon of Fate** on the attack lane reaches a spell attack, because
+/// RAW's trigger is "a D20 Test" and a Fire Bolt rolls one.
+///
+/// The cohort behind it was weapon-only until the boon arrived: its two
+/// prior rows each name a specific weapon, so nothing had ever noticed
+/// that `spells::spell_attack_roll` never walked it. Driven through
+/// `fire_missed_attack_boost` directly rather than through a cast,
+/// because forcing a Fire Bolt to miss by a *specific* amount is what
+/// the `shortfall` argument is, and a seeded cast would only prove it
+/// for one seed.
+#[test]
+fn improve_fate_rescues_a_missed_spell_attack_too() {
+    use crate::actions::feats::BOON_OF_FATE_TAG;
+    use crate::actors::creatures::wizards::{DIVINATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+    use crate::engine::attack::fire_missed_attack_boost;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let diviner = e
+        .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+
+    assert_eq!(
+        fire_missed_attack_boost(&mut e, plain, "fire bolt", 3),
+        0,
+        "a wizard without the boon has nothing to spend"
+    );
+    let boost = fire_missed_attack_boost(&mut e, diviner, "fire bolt", 3);
+    assert!(
+        (2..=8).contains(&boost),
+        "the boon adds 2d4 to a spell attack that came up short, got {boost}"
+    );
+    assert!(
+        !e.actors[&diviner].feature_available(BOON_OF_FATE_TAG),
+        "and the charge is gone"
+    );
+    assert_eq!(
+        fire_missed_attack_boost(&mut e, diviner, "fire bolt", 3),
+        0,
+        "there is only one of it"
+    );
+}
+
+/// The cohort declines a shortfall its die cannot close, rather than
+/// burning a once-per-fight charge to turn a miss by eleven into a miss
+/// by four.
+#[test]
+fn improve_fate_declines_a_gap_it_cannot_close() {
+    use crate::actions::feats::BOON_OF_FATE_TAG;
+    use crate::actors::creatures::wizards::DIVINATION_WIZARD_TEMPLATE;
+    use crate::engine::attack::fire_missed_attack_boost;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let diviner = e
+        .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert_eq!(
+        fire_missed_attack_boost(&mut e, diviner, "fire bolt", 9),
+        0,
+        "2d4 tops out at 8 and the swing missed by 9"
+    );
+    assert!(
+        e.actors[&diviner].feature_available(BOON_OF_FATE_TAG),
+        "so the charge is still there for a swing it can rescue"
     );
 }
 

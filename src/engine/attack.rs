@@ -2095,7 +2095,8 @@ pub fn resolve_attack_outcome_with_rider(
     // after the Seeking Spell reroll so a caster holding both spends the
     // free reroll before the charge.
     if !hit && !is_nat_one {
-        let boost = fire_missed_attack_boost(encounter, &p, target_ac - attack_total);
+        let boost =
+            fire_missed_attack_boost(encounter, p.caster_id, p.action_name, target_ac - attack_total);
         if boost > 0 {
             attack_total += boost;
             hit = attack_total >= target_ac;
@@ -2711,13 +2712,9 @@ pub fn resolve_attack_outcome_with_rider(
     // SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*.
     // Runs after the source-qualified lane above, so the two bypasses
     // compose rather than race: whatever that walk left halved, this one
-    // restores. See `restore_resisted_physical_damage`.
-    damage = damage.saturating_add(restore_resisted_physical_damage(
-        encounter,
-        &mut effects,
-        p.caster_id,
-        p.target_id,
-    ));
+    // restores. See `restore_resisted_physical_damage` — and note that
+    // it deliberately does not move `damage`.
+    restore_resisted_physical_damage(encounter, &mut effects, p.caster_id, p.target_id);
     push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
     (effects, damage)
 }
@@ -2737,9 +2734,18 @@ const IRRESISTIBLE_PHYSICAL_TYPES: &[DamageType] = &[
 ];
 
 /// SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*: the
-/// holder's physical damage ignores Resistance. Returns how much damage
-/// the bypass put back, so the caller's `damage_dealt` figure stays
-/// honest for riders that chain off it.
+/// holder's physical damage ignores Resistance.
+///
+/// **Returns nothing, and that is the correct bookkeeping** rather than
+/// an omission — this is the one adjustment at this chokepoint that
+/// should leave the caller's `damage_dealt` figure alone. Its siblings
+/// move it because they change what the target will feel relative to
+/// the payload the figure is counting; this one changes the payload
+/// *because* of a halving the figure never counted in the first place.
+/// A resisted 9 has always been reported as 9 here and felt as 4; under
+/// the boon it is carried as 18 and felt as 9, and 9 is what the figure
+/// already says. Adding anything would make the running total agree with
+/// neither number.
 ///
 /// **It pre-doubles rather than un-halves**, which is the whole of the
 /// implementation and the reason it belongs at this chokepoint. The
@@ -2773,13 +2779,12 @@ pub fn restore_resisted_physical_damage(
     effects: &mut [Box<dyn ApplicableSideEffect>],
     attacker_id: usize,
     target_id: usize,
-) -> u32 {
+) {
     if !encounter.actors.get(&attacker_id).is_some_and(|a| {
         a.has_passive_feature(crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG)
     }) {
-        return 0;
+        return;
     }
-    let mut restored: u32 = 0;
     let mut notes: Vec<String> = Vec::new();
     for effect in effects.iter_mut() {
         let Some((aimed_at, damage_type, amount)) = effect.damage_payload() else {
@@ -2802,10 +2807,6 @@ pub fn restore_resisted_physical_damage(
         if !effect.set_damage_amount(doubled) {
             continue;
         }
-        // What the target will actually feel, which is what the caller's
-        // running total is measured in: `2n` halved is `n`, and the
-        // resistance would have delivered `n / 2`.
-        restored = restored.saturating_add(amount - amount / 2);
         notes.push(format!("{} {:?}", amount, damage_type));
     }
     if !notes.is_empty() {
@@ -2820,7 +2821,6 @@ pub fn restore_resisted_physical_damage(
             notes.join(", ")
         ));
     }
-    restored
 }
 
 /// Scale every damage payload this attack aimed at `target_id` by the
@@ -4422,11 +4422,19 @@ struct MissedAttackBoost {
     tag: &'static str,
     /// Die added to the attack total on a spend.
     dice: Dice,
-    /// Which swings are eligible. RAW usually names a specific weapon,
-    /// and the swing's `action_name` is the only handle the pipeline has
-    /// on which weapon it is — the alternative would be threading a
-    /// weapon identity through `AttackParams` for one feature.
-    eligible: fn(&AttackParams) -> bool,
+    /// Which swings are eligible, by the name of the action that made
+    /// them. RAW usually names a specific weapon, and the action's name
+    /// is the only handle the pipeline has on which weapon it is — the
+    /// alternative would be threading a weapon identity through
+    /// `AttackParams` for one feature.
+    ///
+    /// The name rather than the whole `AttackParams`, because the whole
+    /// `AttackParams` is a weapon-chokepoint type and the cohort is not
+    /// a weapon-chokepoint cohort: `spells::spell_attack_roll` rolls
+    /// attack rolls too, and it has a name and no `AttackParams`. Both
+    /// existing rows only ever read the name, so narrowing the argument
+    /// cost nothing and bought the second caller.
+    eligible: fn(&str) -> bool,
 }
 
 /// Every "spend a charge to rescue a miss" source, in spend order.
@@ -4446,9 +4454,9 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
         // Blade, Green Flame Blade and Shadow Blade, none of which RAW
         // lets this rescue, and a rename should break the comparison
         // rather than silently widen it.
-        eligible: |p| {
-            p.action_name == crate::actions::class_attacks::PSYCHIC_BLADE.name
-                || p.action_name == crate::actions::class_attacks::PSYCHIC_BLADE_FLOURISH.name
+        eligible: |name| {
+            name == crate::actions::class_attacks::PSYCHIC_BLADE.name
+                || name == crate::actions::class_attacks::PSYCHIC_BLADE_FLOURISH.name
         },
     },
     // 5e Arcane Archer Fighter **Curving Shot** (subclass level 7):
@@ -4462,9 +4470,9 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
         label: "curving shot",
         tag: crate::actions::class_features::CURVING_SHOT_TAG,
         dice: Dice::new(1, 8),
-        eligible: |p| {
-            p.action_name == crate::actions::monster_attacks::LONGBOW.display_name
-                || p.action_name == crate::actions::monster_attacks::SHORTBOW.display_name
+        eligible: |name| {
+            name == crate::actions::monster_attacks::LONGBOW.display_name
+                || name == crate::actions::monster_attacks::SHORTBOW.display_name
         },
     },
     // SRD 5.2's **Boon of Fate** — the attack-roll half of *"you can
@@ -4495,6 +4503,15 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
 /// holds a charge for and whose swing qualifies. Returns the rolled
 /// bonus, or 0 if nothing fired.
 ///
+/// Called from **both** attack chokepoints — `resolve_attack_outcome`
+/// for weapons and `spells::spell_attack_roll` for spell attacks. It was
+/// weapon-only until Boon of Fate arrived and made the gap visible: the
+/// boon's RAW covers "a D20 Test", a spell attack roll is one, and a
+/// Divination wizard who missed with a dagger was being offered a rescue
+/// their Fire Bolt was not. The two rows that predate it name specific
+/// weapons and so decline on the spell lane by themselves, which is why
+/// widening the caller set needed no new gate.
+///
 /// Called only on a miss that wasn't a natural 1 — a nat 1 misses no
 /// matter what the total says, so spending a charge on it would burn the
 /// charge for nothing.
@@ -4507,23 +4524,24 @@ const MISSED_ATTACK_BOOSTS: &[MissedAttackBoost] = &[
 /// eleven into a miss by four is not a decision anyone at a table
 /// makes. Skipping leaves the charge for the next swing, which is what
 /// the feature is for.
-fn fire_missed_attack_boost(
+pub fn fire_missed_attack_boost(
     encounter: &mut EncounterInstance,
-    p: &AttackParams,
+    caster_id: usize,
+    action_name: &str,
     shortfall: i32,
 ) -> i32 {
     let Some(source) = MISSED_ATTACK_BOOSTS.iter().find(|source| {
-        (source.eligible)(p)
+        (source.eligible)(action_name)
             && shortfall <= source.dice.max_roll() as i32
             && encounter
                 .actors
-                .get(&p.caster_id)
+                .get(&caster_id)
                 .is_some_and(|a| a.feature_available(source.tag))
     }) else {
         return 0;
     };
     let rolled = encounter.roll(&source.dice) as i32;
-    if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
+    if let Some(attacker) = encounter.actors.get_mut(&caster_id) {
         attacker.spend_feature(source.tag);
     }
     encounter.log(format!(
