@@ -10948,6 +10948,19 @@ mod tests {
                 // path too.
                 e.set_ambient_light(crate::engine::lighting::AmbientLight::Darkness);
             }
+            // …and a third of them under weather, so the wind's ranged
+            // tax, its end-of-turn grounding and the rain's board-wide
+            // obscurement are on the driver's path as well. The wind is
+            // the one worth having here: it is the only rule in the
+            // engine that reaches into `advance_initiative` and moves a
+            // creature, and a flier grounded at the wrong moment is
+            // exactly the shape of thing that deadlocks a fight rather
+            // than failing an assertion.
+            match seed % 5 {
+                0 => e.set_weather(crate::engine::weather::Weather::StrongWind),
+                1 => e.set_weather(crate::engine::weather::Weather::HeavyPrecipitation),
+                _ => {}
+            }
             let ai = SimpleAi;
             // The cap is a backstop for a genuine hang, not a budget:
             // a settled fight uses a low four-figure number of steps,
