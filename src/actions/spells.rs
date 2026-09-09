@@ -1431,6 +1431,100 @@ fn ally_aura_concentration_effects(
     effects
 }
 
+/// How a summoned body grows with the slot the spell was cast at.
+///
+/// SRD 5.2's summon stat blocks print their defences as *expressions*
+/// rather than numbers — the Giant Insect is "AC 11 + the spell's level,
+/// HP 30 + 10 for each spell level above 4", and the Draconic Spirit
+/// "AC 14 + the spell's level, HP 50 + 10 for each spell level above 5"
+/// — and each spell closes with the same sentence: *"Use the spell
+/// slot's level for the spell's level in the stat block."*
+///
+/// The engine had no channel for that, and said so: `SummonSpell::template`
+/// pointed at one fixed `CreatureTemplate` and `instantiate_creature`
+/// takes a template and nothing else. So upcasting a summon spent the
+/// bigger slot and bought the same body — which on a lane whose whole
+/// design is a ladder of slot level against body size is the one clause
+/// that most needed to work.
+///
+/// Two fields rather than a general stat-delta bag, because these are
+/// the two lines RAW actually scales. Every summon in the book leaves
+/// its ability scores, its speed, its senses and its damage dice alone;
+/// what a higher slot buys is a body that is harder to hit and takes
+/// longer to remove. A future stat block that scales a third line adds
+/// a third field here rather than a second mechanism.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SummonScaling {
+    /// Armor class gained per slot level above the spell's base — `1`
+    /// for every "AC N + the spell's level" block in the book.
+    pub ac_per_level: i32,
+    /// Hit points gained per slot level above the spell's base.
+    pub hp_per_level: i32,
+}
+
+impl SummonScaling {
+    /// A summon whose stat block is a stat block: Animate Dead's
+    /// skeleton, Find Steed's warhorse, the phantom steed, the faithful
+    /// hound. None of the four prints an expression, and RAW's upcast
+    /// clause for them (where they have one at all) buys *more bodies*
+    /// rather than a bigger one — which the `count` field already says.
+    pub const NONE: Self = Self {
+        ac_per_level: 0,
+        hp_per_level: 0,
+    };
+
+    /// The pair SRD 5.2 prints most often: +1 AC and +10 hit points per
+    /// slot level above the spell's own.
+    pub const STANDARD: Self = Self {
+        ac_per_level: 1,
+        hp_per_level: 10,
+    };
+}
+
+/// Grow every body in `spawned` to the slot the open cast frame was
+/// stamped with.
+///
+/// Reads the level off `current_cast()` rather than taking it as an
+/// argument, for the reason `spawn_adjacent_summons` reads the same
+/// frame to decide whether to mark the caster a `Summoner`:
+/// `Action::execute` opens the frame before `side_effects` runs and
+/// stamps it with the *resolved* slot, so upcasting through
+/// `ActionOverride::CastLevel` arrives here already applied and a
+/// per-rest feature summon arrives at level 0 and scales by nothing.
+///
+/// A no-op below the spell's own level, which is the floor rather than
+/// an arithmetic guard: `cast_level` already refuses to return less
+/// than a spell's base, and the `saturating_sub` keeps a level-0
+/// feature frame from wrapping into a very large body.
+fn scale_summons_to_slot(
+    encounter: &mut EncounterInstance,
+    spawned: &[usize],
+    scaling: SummonScaling,
+    base_level: u32,
+) {
+    if scaling == SummonScaling::NONE || spawned.is_empty() {
+        return;
+    }
+    let level = encounter.current_cast().map(|c| c.level).unwrap_or(0);
+    let steps = level.saturating_sub(base_level) as i32;
+    if steps == 0 {
+        return;
+    }
+    let (ac, hp) = (steps * scaling.ac_per_level, steps * scaling.hp_per_level);
+    for &id in spawned {
+        if let Some(actor) = encounter.actors.get_mut(&id) {
+            actor.bump_base_ac(ac);
+            actor.bump_max_hp(hp);
+        }
+    }
+    if ac != 0 || hp != 0 {
+        encounter.log(format!(
+            "  the summoning is sustained at level {} (+{} AC, +{} HP).",
+            level, ac, hp
+        ));
+    }
+}
+
 /// Spawn up to `max_count` instances of `template` on free anchors
 /// adjacent to the caster's footprint, joining the caster's team. Each
 /// successful spawn is logged through the standard "<spell>: a <name>
@@ -15199,6 +15293,7 @@ pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
     search_radius: 2,
     base_instance_id: 99,
     concentration: None,
+    scaling: SummonScaling::NONE,
 };
 
 /// Confusion — 5e level-4 enchantment, concentration, action. Targets a
@@ -16712,15 +16807,22 @@ pub struct SummonSpell {
     /// the engine is lazily built, and the deref happens once, at
     /// resolution.
     ///
-    /// One fixed stat block per spell, deliberately. RAW's summons scale
-    /// their hit points and attack count off the slot level, and the
-    /// engine has no channel for "instantiate this template but with 20
-    /// more hit points" — `instantiate_creature` takes a template and
-    /// nothing else. A spell whose minion should be meaningfully bigger
-    /// is a second `SummonSpell` declaration pointing at a second
-    /// template, which is also how RAW's *option tables* (Conjure
-    /// Animals' four CR tiers, the Bestial Spirit's land/sky/water) are
-    /// collapsed here: pick the load-bearing branch and say so.
+    /// One fixed stat block per spell. The template is the body at the
+    /// spell's *base* level; what a bigger slot buys rides `scaling`,
+    /// which bumps the spawned actor rather than the template — a
+    /// `&'static CreatureTemplate` is shared by every cast on the board
+    /// and cannot be edited by one of them.
+    ///
+    /// Two things still do not scale, and both are structural rather
+    /// than an oversight. RAW's *option tables* (Conjure Animals' four
+    /// CR tiers, the Bestial Spirit's land/sky/water) are collapsed
+    /// here — pick the load-bearing branch and say so — and RAW's
+    /// per-level *attack* clauses ("a number of attacks equal to half
+    /// this spell's level", "+ the spell's level damage") are fixed at
+    /// the base cast, because a `Multiattack` count and a `Dice` both
+    /// live on the same shared literal the template does. A spell whose
+    /// minion should be a different creature at a higher slot is a
+    /// second `SummonSpell` declaration pointing at a second template.
     pub template: &'static LazyLock<crate::actors::actor_template::CreatureTemplate>,
     /// The summon's footprint, which decides what counts as a free tile.
     pub size: crate::engine::types::Size,
@@ -16751,6 +16853,10 @@ pub struct SummonSpell {
     /// nothing about a raised skeleton depends on the necromancer still
     /// thinking about it.
     pub concentration: Option<&'static str>,
+    /// How the body grows when the spell is cast with a bigger slot —
+    /// see `SummonScaling`. `SummonScaling::NONE` for the four summons
+    /// whose stat block is a stat block rather than an expression.
+    pub scaling: SummonScaling,
 }
 
 impl Action for SummonSpell {
@@ -16784,9 +16890,16 @@ impl Action for SummonSpell {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(self.slot_level)
+        // RAW's closing line on every scaling summon — "use the spell
+        // slot's level for the spell's level in the stat block" —
+        // starts here: the slot has to actually be *spent* at the level
+        // the body is built at.
+        action_and_slot(crate::engine::action_overrides::cast_level(
+            overrides,
+            self.slot_level,
+        ))
     }
     fn custom_validate_input(
         &self,
@@ -16820,6 +16933,10 @@ impl Action for SummonSpell {
             self.base_instance_id,
             self.display_name,
         );
+        // The upcast, applied to the bodies rather than to the dice.
+        // Reads the resolved slot off the open cast frame — see
+        // `scale_summons_to_slot`.
+        scale_summons_to_slot(encounter, &spawned, self.scaling, self.slot_level);
         // A summon that found no room burns the slot but must not burn
         // the caster's concentration: anchoring an empty cohort would
         // drop whatever they were already holding in exchange for
@@ -16854,6 +16971,7 @@ pub static CONJURE_ANIMALS: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 90,
     concentration: Some("Conjure Animals"),
+    scaling: SummonScaling::NONE,
 };
 
 /// Conjure Elemental — 5e level-5 conjuration, concentration, action.
@@ -16883,6 +17001,7 @@ pub static CONJURE_ELEMENTAL: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 80,
     concentration: Some("Conjure Elemental"),
+    scaling: SummonScaling::NONE,
 };
 
 // ---------------------------------------------------------------------
@@ -16905,7 +17024,21 @@ pub static CONJURE_ELEMENTAL: SummonSpell = SummonSpell {
 //
 // Instance-id bands run 100..114, two apart, clear of the existing
 // summons (70–72 feature summons, 80 Conjure Elemental, 90–91 Conjure
-// Animals, 99 Animate Dead).
+// Animals, 99 Animate Dead), with Giant Insect at 116 on the end.
+//
+// **All eight carry `SummonScaling::STANDARD`**, and it is the whole
+// family or none of it. Every stat block on this lane prints its
+// defences as an expression rather than a number — "AC N + the spell's
+// level", "HP N + 10 for each spell level above M" — and SRD 5.2
+// licenses one of them (the Draconic Spirit) to show the shape. Giving
+// the eight one shared ladder is the honest translation of a table the
+// SRD only prints a corner of: at every rung, what a bigger slot buys
+// on this lane is a body that is harder to hit and slower to remove.
+//
+// The one-off conjurations below them take `NONE` for the opposite
+// reason. Their bodies are creatures the world contains — a wolf, a
+// fire elemental, a satyr, a couatl — and nothing about a wolf changes
+// with the slot that called it.
 // ---------------------------------------------------------------------
 
 /// Summon Beast — 5e level-2 conjuration (TCE), concentration, action.
@@ -16931,6 +17064,7 @@ pub static SUMMON_BEAST: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 100,
     concentration: Some("Summon Beast"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Fey — 5e level-3 conjuration (TCE), concentration, action.
@@ -16952,6 +17086,7 @@ pub static SUMMON_FEY: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 102,
     concentration: Some("Summon Fey"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Undead — 5e level-3 necromancy (TCE), concentration, action.
@@ -16973,6 +17108,7 @@ pub static SUMMON_UNDEAD: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 104,
     concentration: Some("Summon Undead"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Aberration — 5e level-4 conjuration (TCE), concentration,
@@ -16994,6 +17130,7 @@ pub static SUMMON_ABERRATION: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 106,
     concentration: Some("Summon Aberration"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Elemental — 5e level-4 conjuration (TCE), concentration,
@@ -17017,6 +17154,7 @@ pub static SUMMON_ELEMENTAL: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 108,
     concentration: Some("Summon Elemental"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Celestial — 5e level-5 conjuration (TCE), concentration,
@@ -17039,6 +17177,7 @@ pub static SUMMON_CELESTIAL: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 110,
     concentration: Some("Summon Celestial"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Draconic Spirit — 5e level-5 conjuration (FTD),
@@ -17061,6 +17200,7 @@ pub static SUMMON_DRACONIC_SPIRIT: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 112,
     concentration: Some("Summon Draconic Spirit"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Summon Fiend — 5e level-6 conjuration (TCE), concentration, action.
@@ -17083,6 +17223,54 @@ pub static SUMMON_FIEND: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 114,
     concentration: Some("Summon Fiend"),
+    scaling: SummonScaling::STANDARD,
+};
+
+/// **Giant Insect** — SRD 5.2 level-4 conjuration (Druid), action, 60
+/// feet, concentration up to 10 minutes.
+///
+/// > You summon a giant centipede, spider, or wasp (chosen when you cast
+/// > the spell). It manifests in an unoccupied space you can see within
+/// > range and uses the Giant Insect stat block. The form you choose
+/// > determines certain details in its stat block.
+/// >
+/// > **Using a Higher-Level Spell Slot.** Use the spell slot's level for
+/// > the spell's level in the stat block.
+///
+/// The one summon in the engine whose stat block RAW prints as an
+/// *expression* — "AC 11 + the spell's level, HP 30 + 10 for each spell
+/// level above 4" — and therefore the spell `SummonScaling` was built
+/// for. A druid casting this with a 7th-level slot gets AC 18 and sixty
+/// hit points, which is a different body from the one a 4th-level slot
+/// buys and used to be exactly the same one.
+///
+/// **The Spider branch**, for the reason `GIANT_INSECT_WEB_BOLT` gives:
+/// of RAW's three forms it is the only one that puts a *ranged* body on
+/// the druid's summon lane, where everything else has to walk into
+/// contact before it matters.
+///
+/// Slots between Summon Aberration and Summon Elemental at level 4 and
+/// is neither of them: those two are cohorts of hit points that shoot or
+/// swing, and this is a lockdown body — a hit pins a charging enemy in
+/// place for a turn, which is a level-2 spell's worth of control riding
+/// on an attack roll the summon was going to make anyway.
+///
+/// `search_radius` 4 is the Large footprint's ring, the same one the
+/// other Large summons use; RAW's 60 ft placement is wider than the
+/// engine's spawn search, which looks near the caster for every summon
+/// on the lane.
+pub static GIANT_INSECT: SummonSpell = SummonSpell {
+    display_name: "giant insect",
+    aliases: &["insect", "ginsect"],
+    school: SpellSchool::Conjuration,
+    slot_level: 4,
+    template: &crate::actors::creatures::summoned_spirits::GIANT_INSECT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 116,
+    concentration: Some("Giant Insect"),
+    scaling: SummonScaling::STANDARD,
 };
 
 /// Find Steed — 5e level-2 conjuration, action, no concentration. The
@@ -17129,6 +17317,7 @@ pub static FIND_STEED: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 120,
     concentration: None,
+    scaling: SummonScaling::NONE,
 };
 
 /// Find Greater Steed — 5e level-4 conjuration, action, no
@@ -17158,6 +17347,7 @@ pub static FIND_GREATER_STEED: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 121,
     concentration: None,
+    scaling: SummonScaling::NONE,
 };
 
 /// Phantom Steed — 5e level-3 illusion (wizard), action, no
@@ -17215,6 +17405,7 @@ pub static PHANTOM_STEED: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 122,
     concentration: None,
+    scaling: SummonScaling::NONE,
 };
 
 // ---------------------------------------------------------------------
@@ -17273,6 +17464,7 @@ pub static CONJURE_WOODLAND_BEINGS: SummonSpell = SummonSpell {
     search_radius: 4,
     base_instance_id: 130,
     concentration: Some("Conjure Woodland Beings"),
+    scaling: SummonScaling::NONE,
 };
 
 /// Conjure Minor Elementals — 5e level-4 conjuration (druid / wizard),
@@ -17301,6 +17493,7 @@ pub static CONJURE_MINOR_ELEMENTALS: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 134,
     concentration: Some("Conjure Minor Elementals"),
+    scaling: SummonScaling::NONE,
 };
 
 /// Conjure Fey — 5e level-6 conjuration (druid / warlock),
@@ -17330,6 +17523,7 @@ pub static CONJURE_FEY: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 138,
     concentration: Some("Conjure Fey"),
+    scaling: SummonScaling::NONE,
 };
 
 /// Conjure Celestial — 5e level-7 conjuration (cleric), concentration,
@@ -17365,6 +17559,7 @@ pub static CONJURE_CELESTIAL: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 139,
     concentration: Some("Conjure Celestial"),
+    scaling: SummonScaling::NONE,
 };
 
 /// Faithful Hound — SRD 5.2 level-4 conjuration (wizard), action, **no
@@ -17406,6 +17601,7 @@ pub static FAITHFUL_HOUND: SummonSpell = SummonSpell {
     search_radius: 3,
     base_instance_id: 140,
     concentration: None,
+    scaling: SummonScaling::NONE,
 };
 
 /// Every spell in the Tasha's summon family, in ascending slot order.
@@ -17475,6 +17671,7 @@ pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
         &CONJURE_FEY,
         &CONJURE_CELESTIAL,
         &FAITHFUL_HOUND,
+        &GIANT_INSECT,
     ]);
     all
 }

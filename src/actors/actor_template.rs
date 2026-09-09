@@ -9126,6 +9126,26 @@ impl ActorInstance {
         self.hitpoints() * 2 < self.max_hitpoints()
     }
 
+    /// Permanently move the actor's *base* armor class by `delta`,
+    /// floored at 0.
+    ///
+    /// The floor rather than the total: every bonus the item, condition
+    /// and fighting-style lanes add still stacks on top through
+    /// `armor_class`, exactly as it does for the number the template
+    /// shipped. That is what makes this usable for a stat block whose
+    /// printed AC is an expression rather than a number — SRD 5.2's
+    /// summons all read *"AC 11 + the spell's level"*, and the spell is
+    /// moving the floor the sheet was written against.
+    ///
+    /// The production sibling of the test-only `set_base_ac`, and a
+    /// bump rather than a set for `bump_max_hp`'s reason: a caller that
+    /// has to read the current value to write a new one is a caller
+    /// that needs a getter for a field the type otherwise keeps to
+    /// itself.
+    pub fn bump_base_ac(&mut self, delta: i32) {
+        self.base_ac = (self.base_ac as i32 + delta).max(0) as u32;
+    }
+
     /// Permanently bump the actor's max HP by `delta`. Current HP rises
     /// by the same amount so the boost is immediately useful (matches
     /// 5e's Aid spell semantics: "their hit point maximum and current

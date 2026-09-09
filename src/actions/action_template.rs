@@ -1782,9 +1782,23 @@ pub trait Action {
         // delegate everything to `custom_validate_input` below.
         let schema = self.targeting_schema();
         let schema_ok = match schema {
-            TargetingSchema::NoArgs => {
-                target_ids.is_none() && target_locations.is_none() && overrides.is_none()
-            }
+            // Targets, not overrides. `NoArgs` means the action aims
+            // itself — no ids, no points — and it used to also refuse
+            // any override set at all, which is a different sentence
+            // and the wrong one: an override is not a targeting
+            // argument, and the three arms below all ignore the field
+            // for exactly that reason.
+            //
+            // What the extra clause actually did was make every
+            // self-aimed spell in the engine impossible to upcast.
+            // `ActionOverride::CastLevel` is the only channel a bigger
+            // slot travels down, and `NoArgs` is the schema every
+            // summon spell and Spirit Guardians declares — so a druid
+            // asking for a 7th-level Giant Insect, or a cleric for a
+            // 6th-level Spirit Guardians, had the cast refused at the
+            // first gate and never found out why. Upcast support on
+            // those spells was code nothing could reach.
+            TargetingSchema::NoArgs => target_ids.is_none() && target_locations.is_none(),
             TargetingSchema::SingleActor => {
                 target_locations.is_none()
                     && target_ids.is_some_and(|ids| !ids.is_empty())

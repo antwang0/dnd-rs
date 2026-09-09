@@ -357,6 +357,14 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&crate::actions::spells::SUMMON_FEY);
     actions.push(&crate::actions::spells::SUMMON_ELEMENTAL);
     actions.push(&crate::actions::spells::SUMMON_DRACONIC_SPIRIT);
+    // Giant Insect (lv4) — the druid's fourth summon and the only one
+    // in the engine whose stat block RAW writes as an expression, so it
+    // is also the only one an upcast visibly changes: AC 11 + the
+    // spell's level, 30 hit points + 10 a level. What it adds to the
+    // lane is a shape rather than a rung — the Spider branch's web bolt
+    // pins a target's Speed at 0 from sixty feet, and every other body
+    // the druid can call has to reach contact before it does anything.
+    actions.push(&crate::actions::spells::GIANT_INSECT);
     // The rest of the SRD `conjure` family, druid half — the three
     // rungs that sat between Conjure Animals (lv3, two wolves) and
     // Conjure Elemental (lv5, one Large body) with nothing on them.

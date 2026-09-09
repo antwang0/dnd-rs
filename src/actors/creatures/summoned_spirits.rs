@@ -32,19 +32,27 @@
 //!
 //! **What each spirit is not.** RAW's summons each ship an option table
 //! — the Bestial Spirit is Land, Sky or Water; the Fiendish Spirit is
-//! Demon, Devil or Yugoloth — and RAW scales every line of the block off
-//! the slot the spell was cast with. The engine collapses both, for the
-//! same reason `SummonSpell::template` documents: `instantiate_creature`
-//! takes a template and nothing else, and there is no channel for "this
-//! template, but with 20 more hit points". So each spirit here is one
-//! branch of its option table, fixed at the spell's base level, chosen
-//! for what it adds to the roster rather than for fidelity to a
-//! particular column. The picks are called out per block.
+//! Demon, Devil or Yugoloth — and each spirit here is one branch of its
+//! table, chosen for what it adds to the roster rather than for fidelity
+//! to a particular column. The picks are called out per block.
+//!
+//! **Every block below is written at its spell's base level**, and that
+//! is now a starting point rather than a ceiling. RAW scales the AC and
+//! hit points off the slot the spell was cast with, and each of these
+//! spells carries `SummonScaling::STANDARD` to say so: the numbers in
+//! the table above are what a base-level cast puts on the board, and an
+//! upcast bumps the body it lands on through
+//! `spells::scale_summons_to_slot`. What the templates still do *not*
+//! scale is the attack line — RAW's "a number of attacks equal to half
+//! this spell's level" and its "+ the spell's level" damage terms are
+//! fixed here at the base cast, because a `Multiattack` count and a
+//! `Dice` both live on a `&'static` literal that no cast can reach.
 
 use crate::engine::areas::AreaShape;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    BreathWeapon, Multiattack, SimpleWeapon, WeaponWithSaveCondition,
+    BreathWeapon, Multiattack, SimpleWeapon, WeaponWithCondition, WeaponWithRider,
+    WeaponWithSaveCondition,
 };
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::actors::creatures::fire_elementals::{
@@ -676,6 +684,148 @@ pub static FIENDISH_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
+    }
+});
+
+// ---------------------------------------------------------------------
+// Giant Insect — the Giant Insect spell (level 4 conjuration, Druid)
+//
+// Not a Tasha's spirit, and deliberately outside `summoned_spirit_
+// templates()` below: that list is a *ladder*, and its sweeps assert
+// that each rung is tougher than the last. A level-4 spell that summons
+// a thirty-hit-point beast sits in the middle of the ladder's hit-point
+// column and at the top of its level column, which is a fact about the
+// spell rather than a defect in either.
+//
+// It belongs in this file all the same, by the module's own membership
+// test: nothing in the world is a Giant Insect. It exists because one
+// spell names it, and SRD 5.2 prints its stat block inside that spell's
+// entry rather than in the bestiary.
+// ---------------------------------------------------------------------
+
+/// **Poison Jab** — the insect's melee attack.
+///
+/// RAW: *"reach 10 ft. Hit: 1d6 + 3 plus the spell's level Piercing
+/// damage plus 1d4 Poison damage."*
+///
+/// The `+ 3` is STR 17's modifier and comes out of the ability score
+/// rather than being written down. The `+ the spell's level` does not
+/// come out of anything — this chassis is dice plus one ability
+/// modifier, with no channel for a flat term — so the piercing die is
+/// widened from `1d6` to `1d8` and the remainder of the level's four
+/// points is the honest rounding: 1d8 + 3 averages 7.5 where RAW's
+/// 1d6 + 3 + 4 averages 10.5, and the poison rider closes the rest of
+/// the gap in a way a flat bonus could not (it is a second damage type,
+/// which is the half of the line that actually matters against a
+/// resistant target).
+///
+/// Reach 4 tiles is RAW's ten feet on the 2.5-ft grid, and it is most of
+/// what the body is for: a summon that threatens from a rank back can
+/// stand behind the druid.
+pub static GIANT_INSECT_JAB: WeaponWithRider = WeaponWithRider::reach_melee(
+    "poison jab",
+    &["jab", "gij"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
+    DamageType::Piercing,
+    4,
+    Dice::new(1, 4),
+    DamageType::Poison,
+    "venom",
+);
+
+/// **Web Bolt** — the Spider branch's ranged attack.
+///
+/// RAW: *"range 60 ft. Hit: 1d10 + 3 plus the spell's level Bludgeoning
+/// damage, and the target's Speed is reduced to 0 until the start of the
+/// insect's next turn."*
+///
+/// `Condition::Rooted` is that clause exactly — the engine's name for a
+/// speed pinned to zero by something that is neither a grapple nor a
+/// restraint — and `UntilStartOfNextTurn` is a half-round short of RAW
+/// for the same reason every other rider on this lane is: the engine's
+/// timer clears on the *victim's* turn rather than the attacker's.
+/// Erring short is the right direction for a rider that costs a
+/// creature its whole movement.
+///
+/// **Why the Spider branch.** RAW's option table is centipede, spider or
+/// wasp, and the three differ in exactly one line each — the centipede
+/// gets a bonus-action Poisoned save, the wasp gets a fly speed, the
+/// spider gets this. The spider is the branch worth having because it is
+/// the only one that makes the summon a *ranged* body: everything else
+/// on the druid's summon lane has to walk into contact to matter, and a
+/// spell that can lock a charging enemy in place from sixty feet is a
+/// different purchase from a fourth wall of hit points.
+pub static GIANT_INSECT_WEB_BOLT: WeaponWithCondition = WeaponWithCondition::ranged(
+    "web bolt",
+    &["web", "bolt"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 10),
+    DamageType::Bludgeoning,
+    &[Condition::Rooted],
+    ConditionTimer::UntilStartOfNextTurn,
+    "webbing",
+    24,
+    24,
+);
+
+/// The insect's two jabs for one Action. RAW: *"a number of attacks
+/// equal to half this spell's level (round down)"* — two at the base
+/// level of 4, and the fixed pair is the honest reading of the base
+/// cast for the reason `SummonSpell::template` gives: the count lives on
+/// a shared literal no cast can reach.
+pub static GIANT_INSECT_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "jab flurry",
+    sub_attack: &GIANT_INSECT_JAB,
+    count: 2,
+});
+
+/// Giant Insect — the Large beast **Giant Insect** puts on the board for
+/// a level-4 slot.
+///
+/// Written at the spell's base level, as every block in this file is:
+/// SRD 5.2 prints *"AC 11 + the spell's level"* and *"HP 30 + 10 for
+/// each spell level above 4"*, which at level 4 is AC 15 and 30 hit
+/// points. An upcast moves both, through
+/// `SummonScaling::STANDARD` on the spell — this is the one stat block
+/// in the engine whose printed numbers are an expression the engine can
+/// now actually evaluate.
+///
+/// Glyph 'n' — for i**n**sect, the family's letters 'b', 'y', 'u', 'a',
+/// 'e', 'c', 'd' and 'i' being spoken for.
+pub static GIANT_INSECT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
+    let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&GIANT_INSECT_JAB);
+    actions.push(&GIANT_INSECT_WEB_BOLT);
+    actions.push(&*GIANT_INSECT_MULTI);
+    CreatureTemplate {
+        name: "Giant Insect",
+        glyph: 'n',
+        // RAW's "AC 11 + the spell's level" at the base level of 4.
+        ac: 15,
+        // RAW's flat 30 at the base level — and flat is the point.
+        // Every other block in this file rolls its pool because the
+        // bestiary rolls; this one is printed as a number ("HP 30 + 10
+        // for each spell level above 4"), so a summoned insect has
+        // exactly thirty hit points however the dice fall.
+        hitpoints: "30".parse().unwrap(),
+        speed: 40.,
+        strength: 17,
+        dexterity: 13,
+        constitution: 15,
+        intelligence: 4,
+        wisdom: 14,
+        charisma: 3,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        // RAW prints "CR None (PB equals your Proficiency Bonus)". The
+        // engine's encounter budgeting needs a number, and 2 is what a
+        // Large beast with AC 15, thirty hit points and two 1d8 + 3
+        // attacks rates at beside the rest of the bestiary.
+        cr: 2.0,
+        size: Size::Large,
+        creature_type: CreatureType::Beast,
+        actions,
+        ..CreatureTemplate::defaults()
     }
 });
 

@@ -19227,6 +19227,10 @@ mod tests {
             ("summon celestial", true),
             ("summon draconic spirit", true),
             ("summon fiend", true),
+            // The one summon whose stat block RAW writes as an
+            // expression, and a concentrating one like the rest of the
+            // conjure family.
+            ("giant insect", true),
             ("bear spirit", false),
             ("unicorn spirit", false),
             ("ranger's companion", false),

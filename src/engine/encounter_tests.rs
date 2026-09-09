@@ -93688,3 +93688,187 @@ fn a_lapsed_aura_leaves_no_slot_behind_for_the_next_one() {
         "a missing payload falls back to the printed level"
     );
 }
+
+// ---------------------------------------------------------------------
+// The summon that grows with the slot.
+//
+// SRD 5.2 writes its summon stat blocks as expressions — "AC 11 + the
+// spell's level", "HP 30 + 10 for each spell level above 4" — and closes
+// each spell with "use the spell slot's level for the spell's level in
+// the stat block". `SummonScaling` is that sentence; these are its
+// three halves: the base cast, the upcast, and the summons that have
+// nothing to scale.
+// ---------------------------------------------------------------------
+
+/// Cast `spell` at `level` through the whole action stack — push,
+/// process, done — and hand back the bodies it left on the board.
+///
+/// Through the stack rather than by calling `side_effects` directly,
+/// because the level the scaling reads is stamped on the *cast frame*
+/// that `Action::execute` opens, and a test that shortcuts the stack
+/// would be testing a code path no cast ever takes.
+fn summon_at_level(
+    spell: &'static crate::actions::spells::SummonSpell,
+    level: u32,
+) -> (EncounterInstance, Vec<usize>) {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let before: Vec<usize> = e.sorted_actor_ids();
+    let overrides = std::collections::HashSet::from([ActionOverride::CastLevel(level)]);
+    e.push_action(ActionExecutionInfo::new(
+        spell,
+        druid,
+        None,
+        None,
+        Some(overrides),
+    ));
+    e.process_stack();
+    let spawned: Vec<usize> = e
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|id| !before.contains(id))
+        .collect();
+    (e, spawned)
+}
+
+/// The base cast puts the printed block on the board — AC 15 and thirty
+/// hit points, which is "AC 11 + the spell's level" and "HP 30" at the
+/// level Giant Insect is printed at.
+#[test]
+fn a_base_level_giant_insect_is_the_stat_block_as_printed() {
+    use crate::actions::spells::GIANT_INSECT;
+
+    let (e, spawned) = summon_at_level(&GIANT_INSECT, 4);
+    let insect = *spawned.first().expect("the spell summons a body");
+    assert_eq!(e.actors[&insect].armor_class(), 15);
+    assert_eq!(e.actors[&insect].max_hitpoints(), 30);
+}
+
+/// And the upcast moves both lines, which is the entire clause: before
+/// `SummonScaling` a 7th-level slot bought exactly the body a 4th-level
+/// slot did.
+#[test]
+fn an_upcast_summon_is_a_bigger_body_and_not_just_a_bigger_slot() {
+    use crate::actions::spells::GIANT_INSECT;
+
+    let (e, spawned) = summon_at_level(&GIANT_INSECT, 7);
+    let insect = *spawned.first().expect("the spell summons a body");
+    assert_eq!(
+        e.actors[&insect].armor_class(),
+        18,
+        "AC 11 + the spell's level, at level 7"
+    );
+    assert_eq!(
+        e.actors[&insect].max_hitpoints(),
+        60,
+        "HP 30 + 10 for each spell level above 4, at level 7"
+    );
+    assert_eq!(
+        e.actors[&insect].hitpoints(),
+        60,
+        "a summon arrives at full, not thirty points down"
+    );
+}
+
+/// A summon whose body is a creature the world contains has nothing to
+/// scale, and says so rather than quietly growing.
+#[test]
+fn a_stat_block_summon_ignores_the_slot_it_was_called_with() {
+    use crate::actions::spells::CONJURE_ANIMALS;
+
+    let (base, base_spawn) = summon_at_level(&CONJURE_ANIMALS, 3);
+    let (up, up_spawn) = summon_at_level(&CONJURE_ANIMALS, 6);
+    let (a, b) = (
+        *base_spawn.first().expect("wolves"),
+        *up_spawn.first().expect("wolves"),
+    );
+    assert_eq!(
+        base.actors[&a].armor_class(),
+        up.actors[&b].armor_class(),
+        "nothing about a wolf changes with the slot that called it"
+    );
+    assert_eq!(
+        base.actors[&a].max_hitpoints(),
+        up.actors[&b].max_hitpoints()
+    );
+}
+
+/// The scaling is declared per spell rather than inferred, so the two
+/// answers have to stay tied to the two shapes: an expression block
+/// scales, a bestiary block does not.
+#[test]
+fn every_summon_declares_whether_its_block_is_an_expression() {
+    use crate::actions::spells::{SummonScaling, all_summon_spells};
+
+    for spell in all_summon_spells() {
+        let scales = spell.scaling != SummonScaling::NONE;
+        // A scaling summon must gain *something* per level, or the
+        // declaration is a lie that reads like a feature.
+        if scales {
+            assert!(
+                spell.scaling.ac_per_level > 0 || spell.scaling.hp_per_level > 0,
+                "{} claims to scale and gains nothing",
+                spell.name()
+            );
+        }
+        // And nothing may scale downward — a bigger slot that bought a
+        // frailer body would be a sign error nobody would ever see.
+        assert!(
+            spell.scaling.ac_per_level >= 0 && spell.scaling.hp_per_level >= 0,
+            "{} shrinks when upcast",
+            spell.name()
+        );
+    }
+}
+
+/// A self-aimed spell can be upcast.
+///
+/// `TargetingSchema::NoArgs` is the schema every summon spell and
+/// Spirit Guardians declares, and its shape gate used to refuse *any*
+/// override set — which made `ActionOverride::CastLevel`, the only
+/// channel a bigger slot travels down, unusable on all of them. The
+/// upcast clauses on that whole cohort were code nothing could reach,
+/// and the failure was silent: the cast was refused at the first gate,
+/// which reads to a player exactly like not having the slot.
+#[test]
+fn a_self_aimed_spell_accepts_the_slot_it_is_being_upcast_with() {
+    use crate::actions::action_template::{Action, TargetingSchema};
+    use crate::actions::spells::{GIANT_INSECT, SPIRIT_GUARDIANS};
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(matches!(
+        SPIRIT_GUARDIANS.targeting_schema(),
+        TargetingSchema::NoArgs
+    ));
+    assert!(matches!(
+        GIANT_INSECT.targeting_schema(),
+        TargetingSchema::NoArgs
+    ));
+
+    let up = std::collections::HashSet::from([ActionOverride::CastLevel(5)]);
+    assert!(
+        SPIRIT_GUARDIANS.validate_input(&e, cleric, None, None, Some(&up)),
+        "a fifth-level Spirit Guardians is a legal cast"
+    );
+    // And the shape gate still does its own job: a self-aimed spell
+    // takes no targets, override set or not.
+    assert!(!SPIRIT_GUARDIANS.validate_input(&e, cleric, Some(&vec![cleric]), None, Some(&up)));
+    assert!(!SPIRIT_GUARDIANS.validate_input(
+        &e,
+        cleric,
+        None,
+        Some(&vec![Coordinate::new(6, 6)]),
+        None
+    ));
+}
