@@ -571,4 +571,40 @@ mod tests {
             }
         }
     }
+
+    /// `--traps` arms the default density; `--traps=N` names one; and
+    /// neither collides with the seed, the class, or the two other
+    /// board flags.
+    ///
+    /// The `=` form rather than a following bare number, and this is
+    /// what pins the reason: the parser is order-independent and a bare
+    /// number is already the seed, so `--traps 42` and `42 --traps` are
+    /// the same argument list.
+    #[test]
+    fn the_trap_flag_takes_an_optional_count() {
+        assert_eq!(parse(&[]).unwrap().traps, 0, "clean floor by default");
+        assert_eq!(parse(&["--traps"]).unwrap().traps, Cli::DEFAULT_TRAPS);
+        assert_eq!(parse(&["--traps=12"]).unwrap().traps, 12);
+        assert_eq!(parse(&["--traps=0"]).unwrap().traps, 0);
+
+        let cli = parse(&["--traps=3", "--rain", "--dark", "9", "Rogue"])
+            .expect("the board flags compose with each other and with the seed");
+        assert_eq!(cli.traps, 3);
+        assert_eq!(cli.seed, Some(9));
+        assert_eq!(cli.pc_template.name, "Rogue");
+        assert_eq!(cli.weather, Weather::HeavyPrecipitation);
+        assert_eq!(cli.ambient, AmbientLight::Darkness);
+    }
+
+    /// A count that is not a count is refused rather than read as a
+    /// class name — the same discipline the unknown-class message
+    /// keeps, applied to the flag that takes an argument.
+    #[test]
+    fn a_malformed_trap_count_is_refused_by_name() {
+        let err = match parse(&["--traps=lots"]) {
+            Err(e) => e,
+            Ok(cli) => panic!("\"lots\" is not {} traps", cli.traps),
+        };
+        assert!(err.contains("lots"), "{}", err);
+    }
 }

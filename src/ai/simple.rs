@@ -11161,6 +11161,19 @@ mod tests {
                 1 => e.set_weather(crate::engine::weather::Weather::HeavyPrecipitation),
                 _ => {}
             }
+            // …and half of them trapped, so the ward lane is on the
+            // driver's path with nobody spared by it. Traps are the one
+            // hazard on the board that neither side can see and neither
+            // side laid, which makes them the shape of thing that could
+            // plausibly wedge a fight: an area that damages whoever
+            // steps on it, that the pathfinder is blind to, and that
+            // deletes itself when it fires. A creature killed by the
+            // floor mid-move is a body the occupancy grid has to give
+            // back, which is exactly what `board_inconsistencies` below
+            // is watching for.
+            if seed.is_multiple_of(2) {
+                e.scatter_traps(1 + (seed % 6) as usize);
+            }
             let ai = SimpleAi;
             // The cap is a backstop for a genuine hang, not a budget:
             // a settled fight uses a low four-figure number of steps,
