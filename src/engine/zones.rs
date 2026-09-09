@@ -850,6 +850,20 @@ impl Zone {
         self.effect.is_bad_ground() && (self.effect.ward.is_none() || self.revealed)
     }
 
+    /// True if the player's-eye view should keep this area to itself
+    /// entirely — an unfound trap, and nothing else.
+    ///
+    /// The distinction the map and the initiative panel both need, and
+    /// the one `is_concealed` cannot make: a set glyph is invisible to
+    /// the pathfinder and *not* a secret from the player, because they
+    /// set it and its position is the one thing they most need back.
+    /// A trap was set by the dungeon, and drawing it — on the map, or
+    /// as a line reading "hidden pit (12, 8)" in the panel — would hand
+    /// over the answer the Search action exists to buy.
+    pub fn is_secret(&self) -> bool {
+        matches!(self.effect.ward, Some(WardTrigger::Anyone { .. })) && !self.revealed
+    }
+
     /// True if this area is one nobody can see yet — a set ward or an
     /// unfound trap.
     ///

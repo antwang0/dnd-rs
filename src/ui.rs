@@ -11,7 +11,6 @@ use crate::engine::lighting::LightLevel;
 use crate::engine::side_effects::Resource;
 use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
-use crate::engine::zones::WardTrigger;
 use crate::engine::util::get_colored_span;
 
 /// Render the actor's damage modifier table as up to five colored
@@ -417,12 +416,10 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
         // action exists to buy. A found one drops through to the
         // ordinary hazard glyphs below, which is right — it is now a
         // piece of bad ground like any other.
-        let concealed_ward = zone.is_concealed()
-            && matches!(zone.effect.ward, Some(WardTrigger::EnemiesOf(_)));
-        if zone.is_concealed() && !concealed_ward {
+        if zone.is_secret() {
             continue;
         }
-        let glyph = if concealed_ward {
+        let glyph = if zone.is_concealed() {
             '◈'
         } else if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
             '☠'
@@ -683,12 +680,25 @@ pub fn render_sideinfo(
             ]));
         };
         for zone in encounter.zones() {
+            // An unfound trap is not on the list. The panel is the
+            // player's ledger of what is on the board, and a line
+            // reading "hidden pit (12, 8)" is the answer the Search
+            // action is for. See `Zone::is_secret`.
+            if zone.is_secret() {
+                continue;
+            }
             let glyph = zone_glyph(encounter, zone.origin).unwrap_or('·');
-            layer_line(
-                glyph,
-                zone.name,
-                format!(" {} — {}r", zone.origin, zone.rounds_remaining),
-            );
+            // A ward waits. RAW's glyph holds "until it is triggered or
+            // dispelled" and a trap holds until somebody stands on it,
+            // so the round count both of them carry is a number nobody
+            // is counting down — printing it would be the panel's only
+            // dishonest column.
+            let detail = if zone.effect.ward.is_some() {
+                format!(" {} — armed", zone.origin)
+            } else {
+                format!(" {} — {}r", zone.origin, zone.rounds_remaining)
+            };
+            layer_line(glyph, zone.name, detail);
         }
         for patch in encounter.conjured_terrain() {
             layer_line(
@@ -2170,6 +2180,79 @@ mod tests {
             "a spent boss is an ordinary row again:\n{}",
             rendered_panel(&e)
         );
+    }
+
+    /// An unfound trap is on neither the map nor the panel, and a found
+    /// one is on both.
+    ///
+    /// The whole of what the Search action buys, and the whole of what
+    /// would have been given away for free: the panel lists every area
+    /// by name and coordinate, so a line reading "hidden pit (12, 8)"
+    /// answers the question before anybody looks down.
+    #[test]
+    fn an_unfound_trap_is_on_neither_the_map_nor_the_panel() {
+        use crate::engine::traps::SPIKED_PIT;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let id = e.install_zone(SPIKED_PIT.zone_at(Coordinate::new(4, 4)));
+        let (map, panel) = (rendered_map(&e), rendered_panel(&e));
+        assert!(
+            !panel.contains("spiked pit"),
+            "an unfound trap is not the player's to know about:\n{}",
+            panel
+        );
+        assert!(!map.contains('◈'), "and is not drawn:\n{}", map);
+        assert!(!map.contains('☠'), "not even as a hazard:\n{}", map);
+
+        assert!(e.reveal_zone(id));
+        let (map, panel) = (rendered_map(&e), rendered_panel(&e));
+        assert!(
+            panel.contains("spiked pit"),
+            "a found one is on the ledger:\n{}",
+            panel
+        );
+        assert!(
+            panel.contains("armed") && !panel.contains("10000r"),
+            "a trap waits rather than counting down:\n{}",
+            panel
+        );
+        assert!(map.contains('☠'), "and is drawn as the bad ground it is:\n{}", map);
+    }
+
+    /// A set glyph is the concealed area that *is* the player's to know
+    /// about — they set it, and its position is the one thing the map
+    /// is the only record of.
+    #[test]
+    fn a_set_glyph_stays_on_the_panel_that_a_trap_is_kept_off() {
+        use crate::engine::dice::Dice;
+        use crate::engine::types::{AbilityScoreType, DamageType};
+        use crate::engine::zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.install_zone(Zone {
+            id: 0,
+            name: "glyph of warding",
+            owner_id: 0,
+            origin: Coordinate::new(4, 4),
+            radius: 1,
+            effect: ZoneEffect::ward(
+                ZoneContact::save_for_half(
+                    AbilityScoreType::Dexterity,
+                    15,
+                    Dice::new(5, 8),
+                    DamageType::Fire,
+                ),
+                0,
+            ),
+            rounds_remaining: 100,
+            concentration: false,
+            motion: ZoneMotion::Fixed,
+            revealed: false,
+        });
+        let panel = rendered_panel(&e);
+        assert!(panel.contains("glyph of warding"), "{}", panel);
+        assert!(panel.contains("armed"), "a glyph waits too:\n{}", panel);
+        assert!(rendered_map(&e).contains('◈'));
     }
 
     /// A persistent area is listed with the rounds it has left. The map
