@@ -577,6 +577,10 @@ struct ReactiveDamageClamp {
 ///     acid / cold / fire / lightning / thunder damage; self *or* an ally
 ///     within 30 ft, burns a `DAMPEN_ELEMENTS_TAG` charge — the narrow
 ///     half of the damage-type-filtered pair.
+///   - **Stone's Endurance** (Goliath Giant Ancestry, SRD 5.2): 1d12 +
+///     CON, any attack, self, burns a `STONES_ENDURANCE_TAG` charge.
+///     The biggest die on the cohort, and the last of the self-scoped
+///     rows — free clamps spend first.
 ///   - **Protective Field** (Psi Warrior Fighter lv3, TCE): 1d8 + INT,
 ///     any attack, self *or* an ally within 30 ft, burns a
 ///     `PROTECTIVE_FIELD_TAG` charge.
@@ -694,6 +698,38 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
         formula: ClampFormula::RollMinus {
             dice: Dice::new(1, 10),
             bonus: |a| a.ability_modifier(AbilityScoreType::Dexterity),
+        },
+    },
+    // SRD 5.2 Goliath **Stone's Endurance** (Stone Giant ancestry):
+    // "when you take damage, you can take a Reaction to roll 1d12. Add
+    // your Constitution modifier to the number rolled and reduce the
+    // damage by that total."
+    //
+    // Last of the self-scoped rows, which is where the cohort's
+    // "free before charged" principle puts it: a goliath monk with
+    // Deflect Missiles spends the free one first and keeps its two
+    // ancestry uses for the blows nothing else answered.
+    //
+    // The biggest die on the cohort — 1d12 where every other roll is a
+    // d8 or a d10 — and the only one scaling off Constitution, which is
+    // the stat the species is built around. On a CON 16 chassis it
+    // takes an average of 9.5 off a blow, twice a day.
+    //
+    // **RAW's trigger is wider than this lane.** "When you take damage"
+    // includes a failed save against a fireball; the cohort is walked
+    // from the two attack chokepoints and answers landed attacks only.
+    // See `species::STONES_ENDURANCE_TAG` for why the wider reading is a
+    // subsystem rather than a column here.
+    ReactiveDamageClamp {
+        flag: |a| a.has_passive_feature(crate::actions::species::STONES_ENDURANCE_TAG),
+        tag: Some(crate::actions::species::STONES_ENDURANCE_TAG),
+        label: "stone's endurance",
+        damage_types: None,
+        lane: ClampLane::AnyAttack,
+        scope: ClampScope::Holder,
+        formula: ClampFormula::RollMinus {
+            dice: Dice::new(1, 12),
+            bonus: |a| a.ability_modifier(AbilityScoreType::Constitution),
         },
     },
     ReactiveDamageClamp {
@@ -817,6 +853,16 @@ struct OnHitConditionMark {
     /// raging" clause, which is a condition rather than a feature and so
     /// can't be folded into the tag check.
     holder_gate: Option<fn(&crate::actors::actor_template::ActorInstance) -> bool>,
+    /// Target-side gate. `None` for the rows RAW leaves ungated, which
+    /// is every class mark here; the Goliath's Hill's Tumble uses it for
+    /// RAW's *"a Large or smaller creature"* clause.
+    target_gate: Option<fn(&crate::actors::actor_template::ActorInstance) -> bool>,
+    /// `Some(tag)` if the mark burns a per-rest charge; `None` for the
+    /// always-on rows, which was every row until a species trait
+    /// arrived. Checked with `feature_available` before the stamp and
+    /// spent with `spend_feature` after it, so a goliath out of ancestry
+    /// uses simply stops knocking things over.
+    charge: Option<&'static str>,
     /// How often the mark lands. See `MarkCadence`.
     cadence: MarkCadence,
     /// Full log line for the stamp, minus the leading indent.
@@ -871,6 +917,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         timer: ConditionTimer::Rounds(2),
         melee_only: false,
         holder_gate: None,
+        target_gate: None,
+        charge: None,
         cadence: MarkCadence::EveryHit,
         log: "eldritch strike: the blow rattles the target's guard",
     },
@@ -880,6 +928,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         timer: ConditionTimer::Rounds(2),
         melee_only: true,
         holder_gate: None,
+        target_gate: None,
+        charge: None,
         cadence: MarkCadence::EveryHit,
         log: "unwavering mark: the target is locked onto its attacker",
     },
@@ -899,6 +949,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         // attack" — a thrown handaxe marks just as well.
         melee_only: false,
         holder_gate: Some(|a| a.has_condition(Condition::Raging)),
+        target_gate: None,
+        charge: None,
         cadence: MarkCadence::FirstHitOfTurn,
         log: "ancestral protectors: the spirits fix on the barbarian's first mark",
     },
@@ -926,8 +978,54 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         timer: ConditionTimer::Rounds(2),
         melee_only: true,
         holder_gate: None,
+        target_gate: None,
+        charge: None,
         cadence: MarkCadence::EveryHit,
         log: "thunder gauntlets: the concussion fixes the target on its attacker",
+    },
+    // SRD 5.2 Goliath **Hill's Tumble** (Hill Giant ancestry): "when
+    // you hit a Large or smaller creature with an attack roll and deal
+    // damage to it, you can give that target the Prone condition."
+    //
+    // Here rather than beside its two ancestry siblings on
+    // `ONCE_PER_TURN_WEAPON_DIE_RIDERS` because it rolls nothing at
+    // all: the whole benefit is the condition, and a row on that cohort
+    // would have had to invent a `0d0` die and log a `+0` to reach it.
+    // It is also the row that gave this cohort its `target_gate` and
+    // `charge` columns — the first mark here with a clause about the
+    // target and the first with a pool behind it.
+    //
+    // No save, which is RAW and is what makes the ancestry worth its
+    // two uses a day: Prone costs the target half its movement to shake
+    // off, hands every melee attacker advantage until it does, and
+    // taxes its own swings in the meantime.
+    OnHitConditionMark {
+        tag: crate::actions::species::HILLS_TUMBLE_TAG,
+        condition: Condition::Prone,
+        // Prone is not a timed debuff — it lasts until the target
+        // spends the movement to stand. Every other install of it in
+        // the engine says `Permanent` for the same reason.
+        timer: ConditionTimer::Permanent,
+        // RAW is "hit … with an attack roll", not "with a melee weapon
+        // attack" — a goliath's thrown handaxe tumbles a target as well
+        // as its maul does.
+        melee_only: false,
+        holder_gate: None,
+        // RAW's size clause, plus a gate RAW does not write because RAW
+        // does not charge for a benefit the player can decline: the
+        // charge is spent here and `ApplyCondition` would swallow it
+        // against anything immune to Prone. A goliath clubbing an ooze
+        // keeps its ancestry uses.
+        target_gate: Some(|t| {
+            t.size().is_at_most(crate::engine::types::Size::Large)
+                && !t.effectively_immune_to_condition(Condition::Prone)
+        }),
+        charge: Some(crate::actions::species::HILLS_TUMBLE_TAG),
+        // "When you hit", not "the first creature you hit" — a goliath
+        // who reaches two targets could knock both down, if it had the
+        // uses. The charge is what actually rations it.
+        cadence: MarkCadence::EveryHit,
+        log: "hill's tumble: the goliath's weight goes through the blow and the target goes down",
     },
 ];
 
@@ -951,11 +1049,26 @@ fn push_on_hit_condition_marks(
         let holds = encounter.actors.get(&p.caster_id).is_some_and(|a| {
             a.has_passive_feature(row.tag)
                 && row.holder_gate.is_none_or(|gate| gate(a))
+                && row.charge.is_none_or(|tag| a.feature_available(tag))
                 && !(row.cadence == MarkCadence::FirstHitOfTurn
                     && a.once_per_turn_used(row.tag))
         });
         if !holds {
             continue;
+        }
+        // The target-side clause, checked after the holder's so a row
+        // whose charge is spent never pays for a footprint lookup it
+        // cannot use.
+        if row
+            .target_gate
+            .is_some_and(|gate| !encounter.actors.get(&p.target_id).is_some_and(gate))
+        {
+            continue;
+        }
+        if let Some(tag) = row.charge
+            && let Some(a) = encounter.actors.get_mut(&p.caster_id)
+        {
+            a.spend_feature(tag);
         }
         if row.cadence == MarkCadence::FirstHitOfTurn {
             // Spend the turn's single stamp, then move the mark off
@@ -2930,13 +3043,41 @@ pub struct AnyAttackReflect {
     /// a tag so a row can gate on a template flag, a passive feature
     /// tag, or a condition — whichever the feature actually stores.
     pub holds: fn(&crate::actors::actor_template::ActorInstance) -> bool,
-    /// How much the holder bounces back. Reads the actor because every
-    /// feature on this lane scales with one of their ability
-    /// modifiers.
-    pub amount: fn(&crate::actors::actor_template::ActorInstance) -> u32,
+    /// How much the holder bounces back — a flat amount read off the
+    /// holder, or a die the walker rolls.
+    ///
+    /// Scornful Rebuke is a modifier and Storm's Thunder is a d8, and
+    /// the split is what `ReflectAmount` is for: the flat arm reads the
+    /// actor because every *flat* feature on this lane scales with one
+    /// of their ability modifiers, and the die arm does not need to.
+    pub amount: ReflectAmount,
     pub damage_type: DamageType,
+    /// `Some(tag)` if the row costs a per-rest charge and the holder's
+    /// reaction; `None` for the free passives, which was every row on
+    /// this lane until a species trait arrived.
+    ///
+    /// The two prices ride together deliberately — every RAW feature on
+    /// this lane that rations itself at all rations itself with both,
+    /// and a row that charged one without the other would be describing
+    /// no feature in the book.
+    pub price: Option<&'static str>,
     /// Log-friendly tag ("scornful rebuke", ...).
     pub label: &'static str,
+}
+
+/// What a row on `ANY_ATTACK_REFLECT_FEATURES` bounces back.
+///
+/// Distinct from `ReflectDamage` one lane over, which is data a
+/// template declares inline: this one has to be able to read the holder
+/// (Scornful Rebuke is "equal to your Charisma modifier"), which a
+/// `const`-constructible plain-data enum cannot do.
+#[derive(Clone, Copy)]
+pub enum ReflectAmount {
+    /// A number read off the holder — an ability modifier, floored by
+    /// the row itself where RAW says "minimum of 1".
+    Flat(fn(&crate::actors::actor_template::ActorInstance) -> u32),
+    /// A die rolled fresh on each retaliation.
+    Roll(Dice),
 }
 
 /// The any-attack reflect table. One row today; the shape exists
@@ -2956,9 +3097,39 @@ const ANY_ATTACK_REFLECT_FEATURES: &[AnyAttackReflect] = &[
     // you're not incapacitated."
     AnyAttackReflect {
         holds: |a| a.has_scornful_rebuke(),
-        amount: |a| a.ability_modifier(AbilityScoreType::Charisma).max(1) as u32,
+        amount: ReflectAmount::Flat(|a| {
+            a.ability_modifier(AbilityScoreType::Charisma).max(1) as u32
+        }),
         damage_type: DamageType::Psychic,
+        price: None,
         label: "scornful rebuke",
+    },
+    // SRD 5.2 Goliath **Storm's Thunder** (Storm Giant ancestry): "when
+    // you take damage from a creature within 60 feet of you, you can
+    // take a Reaction to deal 1d8 Thunder damage to that creature."
+    //
+    // The row that made this lane grow a die and a price. Scornful
+    // Rebuke is free, flat and permanent; this rolls, spends the
+    // goliath's reaction, and runs out after two uses — which is also
+    // the tension the ancestry is built on, since the reaction it wants
+    // is the one Stone's Endurance would have spent.
+    //
+    // Two RAW clauses need no code. The 60-foot range is free: an
+    // attack that reached the goliath came from someone the goliath can
+    // answer. And "from a creature" excludes a fall or a burning floor,
+    // which cannot reach this lane at all — it is walked from the
+    // attack chokepoints, and an attack has an attacker by
+    // construction.
+    //
+    // What is narrowed is the same thing Stone's Endurance narrows:
+    // RAW's "when you take damage" covers a failed save, and this lane
+    // answers landed attacks. See `species::STORMS_THUNDER_TAG`.
+    AnyAttackReflect {
+        holds: |a| a.has_passive_feature(crate::actions::species::STORMS_THUNDER_TAG),
+        amount: ReflectAmount::Roll(Dice::new(1, 8)),
+        damage_type: DamageType::Thunder,
+        price: Some(crate::actions::species::STORMS_THUNDER_TAG),
+        label: "storm's thunder",
     },
 ];
 
@@ -2975,23 +3146,50 @@ pub fn push_any_attack_reflect_riders(
     target_id: usize,
 ) {
     for row in ANY_ATTACK_REFLECT_FEATURES {
-        let amount = match encounter.actors.get(&target_id) {
+        let eligible = encounter.actors.get(&target_id).is_some_and(|t| {
             // RAW's "if you're not incapacitated" clause, applied to the
             // whole lane. A downed or stunned holder retaliates with
             // nothing.
-            Some(t) if t.is_combat_active() && !t.is_incapacitated() && (row.holds)(t) => {
-                (row.amount)(t)
-            }
-            _ => continue,
-        };
-        if amount == 0 {
+            t.is_combat_active()
+                && !t.is_incapacitated()
+                && (row.holds)(t)
+                // A priced row needs both halves in hand before anything
+                // is rolled or logged, so a goliath out of ancestry uses
+                // — or one that already spent its reaction on Stone's
+                // Endurance this round — simply doesn't answer.
+                && row
+                    .price
+                    .is_none_or(|tag| t.feature_available(tag) && t.has_reaction())
+        });
+        if !eligible {
             continue;
+        }
+        let damage = match row.amount {
+            ReflectAmount::Flat(f) => {
+                let Some(n) = encounter.actors.get(&target_id).map(f) else {
+                    continue;
+                };
+                // A zero skips the row silently, which is what makes
+                // RAW's "minimum of 1" clauses expressible in the row
+                // rather than in this walker.
+                if n == 0 {
+                    continue;
+                }
+                ReflectDamage::Flat(n)
+            }
+            ReflectAmount::Roll(dice) => ReflectDamage::Dice(dice),
+        };
+        if let Some(tag) = row.price
+            && let Some(t) = encounter.actors.get_mut(&target_id)
+        {
+            t.spend_feature(tag);
+            t.consume_resource(Resource::Reaction);
         }
         push_reflect_damage(
             encounter,
             effects,
             attacker_id,
-            ReflectDamage::Flat(amount),
+            damage,
             row.damage_type,
             row.label,
         );
@@ -3276,6 +3474,25 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// this one — would have made every future row choose between two
     /// spellings of the same idea.
     pub caster_gate: Option<fn(&EncounterInstance, &ActorInstance) -> bool>,
+    /// `Some(tag)` if the row also burns a per-rest charge on top of the
+    /// once-a-turn ledger; `None` for the rows that are free every turn,
+    /// which is every class rider on this cohort.
+    ///
+    /// The Goliath's Giant Ancestry is why it exists. RAW rations Fire's
+    /// Burn and Frost's Chill by a pool ("a number of times equal to
+    /// your Proficiency Bonus") rather than by a cadence, and a pool is
+    /// exactly what `tag`'s ledger cannot express — the ledger resets
+    /// every turn.
+    ///
+    /// Both gates ride together rather than the charge replacing the
+    /// ledger, and the extra one is a deliberate narrowing of RAW: it
+    /// stops a goliath with Extra Attack from spending the whole day's
+    /// ancestry inside a single turn, which is legal by the letter and
+    /// is not what the trait is for. It costs the holder nothing they
+    /// would have wanted — two uses across two turns beats two uses in
+    /// one — and it keeps every row on this cohort rationed the same
+    /// way.
+    pub charge_tag: Option<&'static str>,
 }
 
 /// A condition an `OncePerTurnWeaponRiderSpec` lays on its target, and
@@ -3332,6 +3549,7 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
     let caster_ok = encounter.actors.get(&p.caster_id).is_some_and(|a| {
         a.has_passive_feature(spec.tag)
             && !a.once_per_turn_used(spec.tag)
+            && spec.charge_tag.is_none_or(|tag| a.feature_available(tag))
             && spec.caster_gate.is_none_or(|gate| gate(encounter, a))
     });
     if !caster_ok {
@@ -3368,6 +3586,9 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
     }
     if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
         caster.mark_once_per_turn_used(spec.tag);
+        if let Some(tag) = spec.charge_tag {
+            caster.spend_feature(tag);
+        }
     }
     true
 }
@@ -3429,6 +3650,14 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
 ///   - **Hand of Harm** (Way of Mercy Monk lv3, TCE): +1d6 Necrotic,
 ///     no target gate, and the only row that also installs a condition
 ///     — Physician's Touch's Poisoned rider. See its `installs` field.
+///   - **Fire's Burn** (Goliath Giant Ancestry, SRD 5.2): +1d10 Fire,
+///     no target gate, and the first row to spend a per-rest charge —
+///     see `charge_tag`. The biggest die on the cohort, bought with the
+///     smallest pool.
+///   - **Frost's Chill** (Goliath Giant Ancestry, SRD 5.2): +1d6 Cold
+///     and a −10 ft slow, charge-gated. The second row to install a
+///     condition, and the first whose condition is worth more than its
+///     die.
 pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
@@ -3438,6 +3667,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |t| t.is_wounded(),
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     // 5e Way of the Kensei Monk **Deft Strike** (subclass level 6):
     // "when you hit a target with a kensei weapon, you can spend 1 ki
@@ -3455,6 +3685,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
@@ -3464,6 +3695,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
@@ -3473,6 +3705,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PLANAR_WARRIOR_TAG,
@@ -3482,6 +3715,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::SLAYERS_PREY_TAG,
@@ -3491,6 +3725,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::GATHERED_SWARM_TAG,
@@ -3500,6 +3735,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSIONIC_STRIKE_TAG,
@@ -3509,6 +3745,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     // 5e Way of Mercy Monk **Hand of Harm** (subclass lv3) with
     // **Physician's Touch** (lv6) folded in: the monk's hand carries
@@ -3543,6 +3780,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
             timer: crate::conditions::ConditionTimer::Rounds(1),
         }),
         caster_gate: None,
+        charge_tag: None,
     },
     // 5e Way of the Astral Self Monk **Empowered Arms** (subclass level
     // 11, TCE): "once on each of your turns when you hit a creature
@@ -3569,6 +3807,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: Some(|_, a| a.has_condition(crate::conditions::Condition::AstralArms)),
+        charge_tag: None,
     },
     // 5e Drakewarden Ranger **Bond of Fang and Scale** (subclass level
     // 7): while the drake is summoned, the ranger's weapon attacks
@@ -3596,6 +3835,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
                 crate::engine::encounter::FANG_AND_SCALE_REACH_TILES,
             )
         }),
+        charge_tag: None,
     },
     // 5e Armorer Artificer **Arcane Armor: Infiltrator** (subclass
     // level 3, TCE): "once on each of your turns when you hit a
@@ -3617,6 +3857,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
     },
     // 5e Battle Smith Artificer **Arcane Jolt** (subclass level 9,
     // TCE), damage half: "the target takes an extra 2d6 force damage."
@@ -3641,6 +3882,66 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         target_gate: |_| true,
         installs: None,
         caster_gate: None,
+        charge_tag: None,
+    },
+    // SRD 5.2 Goliath **Fire's Burn** (Fire Giant ancestry): "when you
+    // hit a target with an attack roll and deal damage to it, you can
+    // also deal 1d10 Fire damage to that target."
+    //
+    // Ties Arcane Jolt for the biggest average on the cohort and beats
+    // every class row for the biggest single die, which is the trade
+    // the charge is paying for: this fires twice a day, and the rows
+    // above it fire on every turn of every fight.
+    //
+    // Fire rather than `|p| p.damage_type` because RAW names the type,
+    // and the choice has teeth on this cohort in a way it does not on
+    // most: half the bestiary's heavy hitters resist or are immune to
+    // fire, so a goliath of this ancestry facing a balor should — and
+    // does — get nothing for the charge it spends.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::species::FIRES_BURN_TAG,
+        dice: Dice::new(1, 10),
+        damage_type: |_| DamageType::Fire,
+        label: "fire's burn",
+        // The only target gate on this cohort that is about the charge
+        // rather than about RAW. A fire-immune target takes nothing from
+        // the die, and RAW's holder — who can see that — would simply
+        // not spend the use. The same call the missed-attack boost makes
+        // when it declines to rescue a swing it cannot reach. Frost's
+        // Chill needs no equivalent: its slow lands on a cold-immune
+        // target all the same.
+        target_gate: |t| !t.is_immune_to_damage_type(DamageType::Fire),
+        installs: None,
+        caster_gate: None,
+        charge_tag: Some(crate::actions::species::FIRES_BURN_TAG),
+    },
+    // SRD 5.2 Goliath **Frost's Chill** (Frost Giant ancestry): "you
+    // can also deal 1d6 Cold damage to that target and reduce its Speed
+    // by 10 feet until the start of your next turn."
+    //
+    // Fire's Burn's sibling, four points of average damage lighter and
+    // worth more for it. The slow rides `Condition::Hobbled` — the same
+    // −10 ft row the Slow weapon mastery already put on
+    // `CONDITION_SPEED_BONUSES` — so a goliath swinging a club with
+    // that mastery cannot stack the two into a −20, which is what RAW
+    // says about two helpings of the same reduction.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::species::FROSTS_CHILL_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |_| DamageType::Cold,
+        label: "frost's chill",
+        target_gate: |_| true,
+        installs: Some(RiderCondition {
+            condition: crate::conditions::Condition::Hobbled,
+            // RAW: "until the start of your next turn", which is the
+            // goliath's clock. `Rounds(1)` expires at the start of the
+            // *target's* next turn instead — the same half-turn rounding
+            // Hand of Harm's Poisoned rider already documents, and the
+            // same one the Slow mastery makes with this very condition.
+            timer: crate::conditions::ConditionTimer::Rounds(1),
+        }),
+        caster_gate: None,
+        charge_tag: Some(crate::actions::species::FROSTS_CHILL_TAG),
     },
 ];
 

@@ -3,7 +3,21 @@
 /// while `Prone`; `can_consume_resource` blocks Action/BonusAction/Reaction
 /// while `Stunned`). New variants land here and then plug into the
 /// relevant accessor — no central dispatcher.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// `Ord` is derived, and it is derived for one reason: an actor's
+/// conditions live in a `HashMap`, and two of the places that walk that
+/// map produce output whose *order* is observable — the expiry sweeps
+/// in `tick_condition_timers` and `clear_until_next_turn_conditions`,
+/// each of which returns a list the encounter then logs a line per.
+/// `HashMap` iteration order is not stable between two maps holding the
+/// same keys, so those two lists came out shuffled and the same seed
+/// could print "is no longer fleet" before "is no longer grappled" on
+/// one run and after it on the next.
+///
+/// The ordering itself is declaration order and carries no meaning —
+/// nothing should ever branch on `a < b` between two conditions. It
+/// exists so a sweep can `sort_unstable()` its snapshot and get the
+/// same answer twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Condition {
     /// Speed = 0; ranged attacks against you have disadvantage; melee
     /// against you have advantage; you have disadvantage on attacks.
@@ -1191,6 +1205,29 @@ pub enum Condition {
     /// magically become larger"), unlike the maneuver primes it sits
     /// beside on the fighter's sheet.
     GiantsMight,
+    /// **Large Form** (SRD 5.2 Goliath, character level 5). A bonus
+    /// action spent drawing on giant blood — the species' version of
+    /// the same idea `GiantsMight` is the Rune Knight's: *"you can
+    /// change your size to Large… For that duration, you have Advantage
+    /// on Strength checks, and your Speed increases by 10 feet."*
+    ///
+    /// Three cohorts read it and no code anywhere else does:
+    /// `RESIZING_CONDITIONS` (+1 size step), `CONDITION_SPEED_BONUSES`
+    /// (+10 ft), and `STRENGTH_CHECK_MODE_CONDITIONS` (advantage).
+    ///
+    /// Deliberately *not* `GiantsMight` under another name, and the two
+    /// differ in both directions: Large Form pays speed where Giant's
+    /// Might pays a once-a-turn damage die, and Giant's Might's
+    /// advantage covers Strength saves where RAW writes this one for
+    /// checks alone. They share one row — the resizing one — and
+    /// nothing else, which is why the checks-only membership had to be
+    /// split out of `STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS` rather
+    /// than added to it.
+    ///
+    /// On `is_dispellable_buff`: RAW is explicit that the goliath
+    /// "magically" changes size, so it sits with `GiantsMight` and
+    /// `Enlarged` rather than with the mundane martial primes.
+    LargeForm,
     /// **Elemental Cleaver** (5e Path of the Giant Barbarian, subclass
     /// level 3). A bonus action spent wreathing the barbarian's weapon
     /// in one of the four giant elements: while it lasts, every hit
@@ -3159,6 +3196,7 @@ impl Condition {
             Condition::Enlarged => "enlarged",
             Condition::Reduced => "reduced",
             Condition::GiantsMight => "wreathed in giant's might",
+            Condition::LargeForm => "drawn up to giant size",
             Condition::ElementalCleaver => "weapon wreathed in elemental fury",
             Condition::FireRuneInvoked => "burning with a fire rune",
             Condition::TouchingDeath => "wreathed in the reaper's touch",
@@ -3471,6 +3509,13 @@ impl Condition {
                 | Condition::Shillelaghed
                 | Condition::Enlarged
                 | Condition::GiantsMight
+                // SRD 5.2 Goliath Large Form, arriving at the same
+                // "you are briefly a bigger creature" lane from the
+                // species axis rather than the subclass one. RAW says
+                // the change is magical, so a Dispel Magic takes it —
+                // and takes the ten-minute posture with it, which is
+                // the whole of the goliath's once-a-day trait.
+                | Condition::LargeForm
                 | Condition::ElementalCleaver
                 | Condition::WardingBonded
                 | Condition::MindBlanked

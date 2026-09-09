@@ -979,6 +979,48 @@ const STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
     (Condition::GiantsMight, RollMode::Advantage),
 ];
 
+/// Conditions that flip the roll mode on **Strength checks only** —
+/// leaving Strength saves alone.
+///
+/// The sibling of `STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS`, and it
+/// exists because RAW does not always name the pair. Every row on that
+/// table says "Strength checks **and** Strength saving throws" in one
+/// breath, which is what made one table serve two callers. SRD 5.2's
+/// Goliath **Large Form** says *"you have Advantage on Strength
+/// checks"* and stops there — so folding it into the shared table would
+/// have handed the goliath a save clause the species does not have.
+///
+/// Read only by `compute_check_mode`. A row here is a deliberate
+/// statement that the feature's RAW text names checks alone; a feature
+/// whose text names both belongs on the shared table next door.
+const STRENGTH_CHECK_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
+    // SRD 5.2 Goliath Large Form. Checks, not saves — see the table
+    // docstring, and `Condition::LargeForm` for the rest of the trait.
+    (Condition::LargeForm, RollMode::Advantage),
+];
+
+/// Sources of advantage on the ability check that ends a grapple.
+///
+/// SRD 5.2 writes this clause about the *condition* rather than about
+/// the roll's ability — *"Advantage on any ability check you make to
+/// end the Grappled condition"* — which is a scope neither
+/// `compute_check_mode` nor the Strength tables above can express: the
+/// escape contest picks whichever of Athletics or Acrobatics the
+/// captive is better at, so a rule written for "the escape" has to be
+/// read at the escape rather than at an ability.
+///
+/// Read by `EncounterInstance::escape_check_mode`, which
+/// `default_actions::GrappleEscape` uses on both of its lanes — the
+/// contest against a named grappler and the flat-DC check against a
+/// hold with nobody on the other end.
+///
+/// Entries:
+///   - **Powerful Build** (Goliath species trait) — the whole of RAW's
+///     first sentence. Its second, about carrying capacity, has no
+///     surface here.
+const ESCAPE_CHECK_ADVANTAGES: &[fn(&crate::actors::actor_template::ActorInstance) -> bool] =
+    &[|a| a.has_passive_feature(crate::actions::species::POWERFUL_BUILD_TAG)];
+
 /// A single "reroll the failed save once" source read at
 /// `roll_save_with_extra_mode` after the initial roll lands on a
 /// `Fail`. Each entry's `consume` closure returns true iff its
@@ -6349,8 +6391,16 @@ impl EncounterInstance {
         // same flat way it taxes an attack and a save, and
         // `roll_ability_check` folds the number into the modifier it
         // prints. See `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
+        //
+        // Two tables, chained: the shared one whose rows RAW words as
+        // "Strength checks and Strength saving throws", and the
+        // checks-only one whose rows RAW words as checks alone. See
+        // `STRENGTH_CHECK_MODE_CONDITIONS`.
         if matches!(ability, AbilityScoreType::Strength) {
-            for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS {
+            for (condition, effect) in STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS
+                .iter()
+                .chain(STRENGTH_CHECK_MODE_CONDITIONS)
+            {
                 if actor.has_condition(*condition) {
                     tally.add(*effect);
                 }
@@ -6371,6 +6421,24 @@ impl EncounterInstance {
             tally.add(RollMode::Disadvantage);
         }
         tally.resolve()
+    }
+
+    /// The roll-mode rider an actor brings to a check made *to end a
+    /// grapple*, over and above whatever `compute_check_mode` already
+    /// says about them.
+    ///
+    /// `RollMode::Advantage` when any row on `ESCAPE_CHECK_ADVANTAGES`
+    /// fires, `Normal` otherwise. Handed to
+    /// `roll_ability_check_with_extra_mode` /
+    /// `roll_contest_with_challenger_mode` by `GrappleEscape`, which is
+    /// the only place in the engine that rolls this particular check —
+    /// see `ESCAPE_CHECK_ADVANTAGES` for why the clause cannot ride the
+    /// ordinary check-mode lane.
+    pub fn escape_check_mode(&self, actor_id: usize) -> RollMode {
+        match self.actors.get(&actor_id) {
+            Some(a) if ESCAPE_CHECK_ADVANTAGES.iter().any(|row| row(a)) => RollMode::Advantage,
+            _ => RollMode::Normal,
+        }
     }
 
     /// Roll one ability check: `1d20 + ability modifier + proficiency
@@ -6396,7 +6464,33 @@ impl EncounterInstance {
         ability: crate::engine::types::AbilityScoreType,
         skill: Option<crate::engine::types::Skill>,
     ) -> i32 {
-        let mode = self.compute_check_mode(actor_id, ability);
+        self.roll_ability_check_with_extra_mode(actor_id, ability, skill, RollMode::Normal)
+    }
+
+    /// `roll_ability_check` plus a roll-mode rider that applies to
+    /// *this* check only.
+    ///
+    /// The distinction `compute_check_mode` cannot make. Every source
+    /// it knows about is a property of the roller — a condition they
+    /// hold, an ability they are rolling — so it answers the same way
+    /// for every check of that ability. SRD 5.2's Powerful Build is
+    /// scoped to *what the check is for* ("to end the Grappled
+    /// condition") rather than to who is rolling or which ability they
+    /// picked, and the escape contest chooses its ability at roll time,
+    /// so the rider has to arrive from the call site.
+    ///
+    /// Combined with the computed mode rather than replacing it, so a
+    /// Poisoned goliath straining out of a grapple gets the wash RAW
+    /// gives it instead of whichever clause the code happened to test
+    /// first.
+    pub fn roll_ability_check_with_extra_mode(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        skill: Option<crate::engine::types::Skill>,
+        extra: RollMode,
+    ) -> i32 {
+        let mode = self.compute_check_mode(actor_id, ability).combine(extra);
         let raw = self.roll_d20_lucky(actor_id, mode) as i32;
         let Some(actor) = self.actors.get(&actor_id) else {
             return raw;
@@ -6519,6 +6613,33 @@ impl EncounterInstance {
         defender_id: usize,
         defender_options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
     ) -> bool {
+        self.roll_contest_with_challenger_mode(
+            label,
+            challenger_id,
+            challenger_options,
+            RollMode::Normal,
+            defender_id,
+            defender_options,
+        )
+    }
+
+    /// `roll_contest` with a roll-mode rider on the challenger's side of
+    /// it only.
+    ///
+    /// The contest twin of `roll_ability_check_with_extra_mode`, and it
+    /// exists for the same caller: a goliath's Powerful Build is
+    /// advantage on the escape, and the escape is a contest. The
+    /// defender — the grappler holding on — is rolling their own
+    /// Athletics under their own modes and is not part of the clause.
+    pub fn roll_contest_with_challenger_mode(
+        &mut self,
+        label: &str,
+        challenger_id: usize,
+        challenger_options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
+        challenger_extra: RollMode,
+        defender_id: usize,
+        defender_options: &[(crate::engine::types::AbilityScoreType, crate::engine::types::Skill)],
+    ) -> bool {
         let Some((c_ability, c_skill)) =
             self.best_check_option(challenger_id, challenger_options)
         else {
@@ -6530,7 +6651,12 @@ impl EncounterInstance {
         };
         let challenger_name = self.actor_name(challenger_id);
         let defender_name = self.actor_name(defender_id);
-        let challenger_roll = self.roll_ability_check(challenger_id, c_ability, Some(c_skill));
+        let challenger_roll = self.roll_ability_check_with_extra_mode(
+            challenger_id,
+            c_ability,
+            Some(c_skill),
+            challenger_extra,
+        );
         let defender_roll = self.roll_ability_check(defender_id, d_ability, Some(d_skill));
         let won = challenger_roll >= defender_roll;
         self.log(format!(
@@ -11963,6 +12089,19 @@ impl EncounterInstance {
             &crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE,
             &crate::actors::creatures::half_orcs::HALF_ORC_TEMPLATE,
             &crate::actors::creatures::gnomes::GNOME_TEMPLATE,
+            // One goliath, not six, for the reason there is one
+            // dragonborn and not fifteen: the six differ only in which
+            // Giant Ancestry they carry, so putting every one in the
+            // pool would weight the generator towards "a goliath,
+            // again" for no variety in return.
+            //
+            // The Stone ancestry is the pick, because it is the one an
+            // encounter feels from the other side of the table: a
+            // 1d12 + CON reaction clamp makes the goliath take a round
+            // longer to drop, where the on-hit ancestries only add
+            // damage the party was already taking. The other five stay
+            // playable.
+            &crate::actors::creatures::goliaths::STONE_GOLIATH_TEMPLATE,
             // The five SRD swarms (CR ¼ – 2). The first entries in the
             // pool that answer "hit it with a sword" with "that will
             // not work" — four of the five resist all three physical

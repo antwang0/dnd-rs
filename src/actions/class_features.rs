@@ -729,6 +729,40 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // table that is read as a budget across several features rather
     // than as one feature's depth. See `KI_POINTS_TAG`.
     (KI_POINTS_TAG, 5),
+    // SRD 5.2 Goliath **Giant Ancestry**, all six benefits: "you can
+    // use the chosen benefit a number of times equal to your
+    // Proficiency Bonus." Two is that number on the CR-2 chassis these
+    // templates are built to, so these six rows are RAW rather than the
+    // "collapse a scaling pool to something spendable" compromise most
+    // of this table is making.
+    //
+    // Sized once, at `species::GIANT_ANCESTRY_USES`, because the six
+    // are one trait with six faces — a pool that differed between them
+    // would be a typo rather than a decision.
+    (
+        crate::actions::species::CLOUDS_JAUNT_TAG,
+        crate::actions::species::GIANT_ANCESTRY_USES,
+    ),
+    (
+        crate::actions::species::FIRES_BURN_TAG,
+        crate::actions::species::GIANT_ANCESTRY_USES,
+    ),
+    (
+        crate::actions::species::FROSTS_CHILL_TAG,
+        crate::actions::species::GIANT_ANCESTRY_USES,
+    ),
+    (
+        crate::actions::species::HILLS_TUMBLE_TAG,
+        crate::actions::species::GIANT_ANCESTRY_USES,
+    ),
+    (
+        crate::actions::species::STONES_ENDURANCE_TAG,
+        crate::actions::species::GIANT_ANCESTRY_USES,
+    ),
+    (
+        crate::actions::species::STORMS_THUNDER_TAG,
+        crate::actions::species::GIANT_ANCESTRY_USES,
+    ),
 ];
 
 /// How many charges `tag` starts a rest with. One unless
@@ -3038,6 +3072,14 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // `GRASP_OF_HADAR_TAG` / `LANCE_OF_LETHARGY_TAG`.
     GRASP_OF_HADAR_TAG,
     LANCE_OF_LETHARGY_TAG,
+    // The first entries that are a *species* trait — SRD 5.2's Goliath
+    // Giant Ancestry. They are also the first rows whose RAW cadence is
+    // not once-a-turn at all: the ancestry is rationed by a per-rest
+    // pool, and the ledger is the engine's extra narrowing on top of
+    // it. See `OncePerTurnWeaponRiderSpec::charge_tag` for why both
+    // gates ride together.
+    crate::actions::species::FIRES_BURN_TAG,
+    crate::actions::species::FROSTS_CHILL_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -7503,7 +7545,7 @@ fn spend_feature_and_grant_extra_action(
 /// for *self-only* primes; targeted effects (Cutting Words, Bardic
 /// Inspiration) still inline their own logic since they apply to an
 /// ally / enemy id, not the caster.
-fn prime_self_condition(
+pub(crate) fn prime_self_condition(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     feature_tag: &'static str,

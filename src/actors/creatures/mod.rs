@@ -87,6 +87,7 @@ pub mod gnoll_pack_lords;
 pub mod gnolls;
 pub mod goblin_bosses;
 pub mod goblins;
+pub mod goliaths;
 pub mod harpies;
 pub mod hell_hounds;
 pub mod hill_giants;
@@ -584,6 +585,17 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*halflings::HALFLING_SCOUT_TEMPLATE,
                     &*half_orcs::HALF_ORC_TEMPLATE,
                     &*gnomes::GNOME_TEMPLATE,
+                    // The six Goliath builds. One family member per
+                    // Giant Ancestry benefit, for the reason the
+                    // dragonborn has one per breath type: RAW makes the
+                    // choice at character creation and it is the only
+                    // thing that differs between them.
+                    &*goliaths::CLOUD_GOLIATH_TEMPLATE,
+                    &*goliaths::FIRE_GOLIATH_TEMPLATE,
+                    &*goliaths::FROST_GOLIATH_TEMPLATE,
+                    &*goliaths::HILL_GOLIATH_TEMPLATE,
+                    &*goliaths::STONE_GOLIATH_TEMPLATE,
+                    &*goliaths::STORM_GOLIATH_TEMPLATE,
                 ],
             ),
             (

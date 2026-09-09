@@ -367,6 +367,28 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c'''½. Large Form — the Goliath's once-a-day growth. The
+        //        species-axis twin of Giant's Might directly above,
+        //        and it sits on the same rung with the same gate for
+        //        the same reason: the trait's best half is the widened
+        //        footprint, and a wider footprint buys nothing until
+        //        there is somebody close enough to be caught by it.
+        //
+        //        Below Giant's Might rather than beside it only so the
+        //        order is written down. The two never co-occur — one is
+        //        a fighter subclass and the other a species — so a
+        //        hypothetical Rune Knight goliath is the only build
+        //        that would ever read this line, and it should spend
+        //        the short-rest charge before the daily one.
+        if let Some(aei) = try_self_action_when_enemy_within(
+            encounter,
+            actor_id,
+            IMMINENT_CONTACT_GAP,
+            "large form",
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c''''. Elemental Cleaver — the Path of the Giant Barbarian's
         //         bonus-action kindling. Below Rage rather than beside
         //         it, and the order is load-bearing: the action refuses
@@ -7542,6 +7564,17 @@ fn try_hypnotic_gaze(
 const SELF_TELEPORT_ESCAPES: &[&str] = &[
     "benign transposition",
     "hidden paths",
+    // SRD 5.2 Goliath **Cloud's Jaunt** — a bonus action and a per-long-
+    // rest ancestry charge, and no slot at all, which is Hidden Paths'
+    // price exactly. Ranked below it only because the druid's charge
+    // comes back on a short rest and the goliath's does not.
+    //
+    // The first row on this lane carried by a chassis with no spell
+    // list. Every escape above and below it is a caster's; a goliath
+    // reaching for this one is a fighter walking out of a bad melee
+    // without spending its action, which is a thing no other martial on
+    // the roster can do.
+    "cloud's jaunt",
     "misty step",
     "dimension door",
 ];

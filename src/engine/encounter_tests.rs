@@ -14906,6 +14906,518 @@ fn savage_attacker_shifts_the_damage_up() {
     );
 }
 
+/// Every benefit on `species::GIANT_ANCESTRY_TAGS` is actually carried
+/// by a goliath somebody can play.
+///
+/// The same contract as `every_feat_is_carried_by_a_playable_chassis`
+/// one test up, and it catches the same silent failure: an ancestry
+/// nobody carries is a cohort row that never fires, and no other test
+/// goes red on it.
+#[test]
+fn every_giant_ancestry_is_carried_by_a_goliath() {
+    use crate::actions::species::GIANT_ANCESTRY_TAGS;
+    use crate::actors::creatures::pc_template_families;
+    for tag in GIANT_ANCESTRY_TAGS {
+        assert!(
+            pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts)
+                .any(|t| t.features.contains(tag)),
+            "no playable template carries {tag} — the ancestry can never fire"
+        );
+    }
+}
+
+/// RAW has a goliath **choose one** Giant Ancestry benefit. Six
+/// templates carrying one apiece is the engine's spelling of that, and
+/// this is what stops a copy-pasted seventh from quietly carrying two.
+///
+/// The failure it catches is not hypothetical: `goliath_chassis` takes
+/// the ancestry as a parameter precisely so the templates cannot each
+/// spell out a feature set, and a future template that stopped using
+/// the helper would be one `HashSet::from` away from a goliath with
+/// both Fire's Burn and Frost's Chill.
+#[test]
+fn no_goliath_carries_more_than_one_giant_ancestry() {
+    use crate::actions::species::GIANT_ANCESTRY_TAGS;
+    use crate::actors::creatures::pc_template_families;
+    for template in pc_template_families().into_iter().flat_map(|(_, ts)| ts) {
+        let carried: Vec<&str> = GIANT_ANCESTRY_TAGS
+            .iter()
+            .copied()
+            .filter(|tag| template.features.contains(tag))
+            .collect();
+        assert!(
+            carried.len() <= 1,
+            "{} carries {} Giant Ancestry benefits: {:?}",
+            template.name,
+            carried.len(),
+            carried
+        );
+    }
+}
+
+/// SRD 5.2 Goliath **Powerful Build**: *"You have Advantage on any
+/// ability check you make to end the Grappled condition."*
+///
+/// Both halves of the clause. The goliath gets the advantage; the
+/// fighter standing next to it, held by the same ogre, does not — and
+/// the advantage is scoped to the escape rather than to Strength
+/// checks in general, which is what
+/// `EncounterInstance::escape_check_mode` exists to say.
+#[test]
+fn powerful_build_strains_out_of_a_grapple_at_advantage() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goliaths::STONE_GOLIATH_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::engine::types::AbilityScoreType;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let goliath = e
+        .instantiate_creature(&STONE_GOLIATH_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 5), 0, 1)
+        .unwrap();
+    assert!(matches!(
+        e.escape_check_mode(goliath),
+        RollMode::Advantage
+    ));
+    assert!(matches!(e.escape_check_mode(fighter), RollMode::Normal));
+    assert!(
+        matches!(
+            e.compute_check_mode(goliath, AbilityScoreType::Strength),
+            RollMode::Normal
+        ),
+        "the clause is about the escape, not about Strength checks at large"
+    );
+}
+
+/// SRD 5.2 Goliath **Large Form**: *"you can change your size to Large
+/// as a Bonus Action… you have Advantage on Strength checks, and your
+/// Speed increases by 10 feet."*
+///
+/// All three clauses off one bonus action, plus the one RAW does *not*
+/// give it: Strength saves stay flat, which is the whole reason the
+/// checks-only cohort was split out of the shared Strength table.
+#[test]
+fn large_form_grows_the_goliath_and_speeds_it_up() {
+    use crate::actions::species::LARGE_FORM_TAG;
+    use crate::actors::creatures::goliaths::FIRE_GOLIATH_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::engine::types::{AbilityScoreType, Size};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let g = e
+        .instantiate_creature(&FIRE_GOLIATH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    let base_speed = e.actors[&g].speed();
+    assert_eq!(e.actors[&g].size(), Size::Medium);
+
+    let grow = e.actors[&g]
+        .actions
+        .iter()
+        .find(|a| a.name() == "large form")
+        .copied()
+        .expect("every goliath carries Large Form");
+    e.actors.get_mut(&g).unwrap().reset_for_new_round();
+    let aei = ActionExecutionInfo::new(grow, g, None, None, None);
+    assert!(aei.validate(&e), "an unspent Large Form is takeable");
+    e.push_action(aei);
+    e.process_stack();
+    e.reconcile_footprints();
+
+    assert!(e.actors[&g].has_condition(Condition::LargeForm));
+    assert_eq!(e.actors[&g].size(), Size::Large, "the goliath grows");
+    assert_eq!(
+        e.actors[&g].speed(),
+        base_speed + 10.0,
+        "and picks up RAW's ten feet"
+    );
+    assert!(matches!(
+        e.compute_check_mode(g, AbilityScoreType::Strength),
+        RollMode::Advantage
+    ));
+    assert!(
+        matches!(
+            e.compute_save_mode(g, AbilityScoreType::Strength),
+            RollMode::Normal
+        ),
+        "RAW names checks and stops there — Giant's Might is the one that \
+         also covers saves"
+    );
+    assert!(
+        !e.actors[&g].feature_available(LARGE_FORM_TAG),
+        "and the day's one use is spent"
+    );
+}
+
+/// SRD 5.2 Goliath **Stone's Endurance**: *"roll 1d12. Add your
+/// Constitution modifier to the number rolled and reduce the damage by
+/// that total."*
+///
+/// Asserted against the clamp chokepoint directly rather than through a
+/// swing, because the swing's own dice would drown the effect: the
+/// question here is whether the reaction fires and how much it takes
+/// off, and both are visible at `apply_reactive_damage_clamps`.
+#[test]
+fn stones_endurance_shaves_a_landed_blow() {
+    use crate::actions::species::STONES_ENDURANCE_TAG;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::goliaths::STONE_GOLIATH_TEMPLATE;
+    use crate::engine::attack::apply_reactive_damage_clamps;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 7);
+    let g = e
+        .instantiate_creature(&STONE_GOLIATH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&g).unwrap().reset_for_new_round();
+
+    let con = e.actors[&g].ability_modifier(crate::engine::types::AbilityScoreType::Constitution);
+    let landed =
+        apply_reactive_damage_clamps(&mut e, goblin, g, 40, true, false, DamageType::Slashing);
+    let taken_off = 40 - landed;
+    assert!(
+        (1 + con as u32..=12 + con as u32).contains(&taken_off),
+        "1d12 + CON came off the blow, not {taken_off}"
+    );
+    assert_eq!(
+        e.actors[&g].feature_charges_remaining(STONES_ENDURANCE_TAG),
+        crate::actions::species::GIANT_ANCESTRY_USES - 1,
+        "one ancestry use spent"
+    );
+    assert!(
+        !e.actors[&g].has_reaction(),
+        "and the reaction with it — RAW prices the clamp at both"
+    );
+
+    // The reaction is gone, so the second blow of the same round lands
+    // whole even though a charge remains.
+    let second =
+        apply_reactive_damage_clamps(&mut e, goblin, g, 40, true, false, DamageType::Slashing);
+    assert_eq!(second, 40);
+}
+
+/// SRD 5.2 Goliath **Storm's Thunder**: *"you can take a Reaction to
+/// deal 1d8 Thunder damage to that creature."*
+///
+/// The reflect lane's first priced row, so the test is as much about
+/// the price as the payload: the retaliation fires once, spends a
+/// charge and the reaction, and then stops.
+#[test]
+fn storms_thunder_answers_the_attacker_once_a_round() {
+    use crate::actions::species::STORMS_THUNDER_TAG;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::goliaths::STORM_GOLIATH_TEMPLATE;
+    use crate::engine::attack::push_any_attack_reflect_riders;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 3);
+    let g = e
+        .instantiate_creature(&STORM_GOLIATH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&g).unwrap().reset_for_new_round();
+    let before = e.actors[&goblin].hitpoints();
+
+    let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> = Vec::new();
+    push_any_attack_reflect_riders(&mut e, &mut effects, goblin, g);
+    assert_eq!(effects.len(), 1, "one retaliation queued");
+    for effect in effects.drain(..) {
+        effect.apply(&mut e);
+    }
+    let dealt = before - e.actors[&goblin].hitpoints();
+    assert!((1..=8).contains(&dealt), "1d8 thunder, not {dealt}");
+    assert_eq!(
+        e.actors[&g].feature_charges_remaining(STORMS_THUNDER_TAG),
+        crate::actions::species::GIANT_ANCESTRY_USES - 1
+    );
+    assert!(!e.actors[&g].has_reaction());
+
+    push_any_attack_reflect_riders(&mut e, &mut effects, goblin, g);
+    assert!(
+        effects.is_empty(),
+        "the reaction is spent, so the next blow goes unanswered"
+    );
+}
+
+/// SRD 5.2 Goliath **Frost's Chill**: *"you can also deal 1d6 Cold
+/// damage to that target and reduce its Speed by 10 feet until the
+/// start of your next turn."*
+///
+/// Run through real swings rather than through the cohort walker,
+/// because the interesting part is the pairing — the die and the slow
+/// arrive together or not at all — and the walker is where they are
+/// wired together.
+#[test]
+fn frosts_chill_slows_what_it_hits() {
+    use crate::actions::species::FROSTS_CHILL_TAG;
+    use crate::actors::creatures::goliaths::FROST_GOLIATH_TEMPLATE;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 11);
+    let g = e
+        .instantiate_creature(&FROST_GOLIATH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    // A wall of hit points the swings cannot kill, wearing no armour
+    // the swings can miss: the loop is measuring the rider, and the
+    // tarrasque's own AC 25 would have made it measure the d20
+    // instead.
+    let mut dummy_template = TARRASQUE_TEMPLATE.clone();
+    dummy_template.ac = 1;
+    let dummy_template: &'static CreatureTemplate = Box::leak(Box::new(dummy_template));
+    let dummy = e
+        .instantiate_creature(dummy_template, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    let swing = e.actors[&g]
+        .actions
+        .iter()
+        .find(|a| a.name() == "greatclub")
+        .copied()
+        .expect("the goliath swings a greatclub");
+
+    let mut slowed = false;
+    for _ in 0..30 {
+        e.actors.get_mut(&g).unwrap().reset_for_new_round();
+        let aei = ActionExecutionInfo::new(swing, g, Some(vec![dummy]), None, None);
+        if aei.validate(&e) {
+            e.push_action(aei);
+            e.process_stack();
+        }
+        if e.actors[&dummy].has_condition(Condition::Hobbled) {
+            slowed = true;
+            break;
+        }
+    }
+    assert!(slowed, "a connecting swing lays the chill's slow");
+    assert!(
+        e.actors[&g].feature_charges_remaining(FROSTS_CHILL_TAG)
+            < crate::actions::species::GIANT_ANCESTRY_USES,
+        "and spends an ancestry use doing it"
+    );
+
+    // Swing until the pool is empty, then keep swinging: the rider has
+    // to stop rather than keep paying out of an exhausted pool.
+    for _ in 0..60 {
+        if !e.actors.contains_key(&dummy) {
+            break;
+        }
+        e.actors.get_mut(&g).unwrap().reset_for_new_round();
+        let aei = ActionExecutionInfo::new(swing, g, Some(vec![dummy]), None, None);
+        if aei.validate(&e) {
+            e.push_action(aei);
+            e.process_stack();
+        }
+    }
+    assert_eq!(
+        e.actors[&g].feature_charges_remaining(FROSTS_CHILL_TAG),
+        0,
+        "the pool empties and stays emptied — it never goes negative"
+    );
+}
+
+/// SRD 5.2 Goliath **Hill's Tumble**: *"When you hit a **Large or
+/// smaller** creature with an attack roll and deal damage to it, you
+/// can give that target the Prone condition."*
+///
+/// Both sides of the size clause, which is the column this ancestry
+/// added to the on-hit mark cohort: an ogre goes down, and a Gargantuan
+/// tarrasque takes the same swings standing up.
+#[test]
+fn hills_tumble_knocks_down_what_it_can_reach_around() {
+    use crate::actors::creatures::goliaths::HILL_GOLIATH_TEMPLATE;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+
+    /// Swing at `target` up to thirty times and report whether it ever
+    /// ended up Prone.
+    fn tumbles(seed: u64, huge: bool) -> bool {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], seed);
+        let g = e
+            .instantiate_creature(&HILL_GOLIATH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let target = if huge {
+            e.instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+                .unwrap()
+        } else {
+            e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+                .unwrap()
+        };
+        e.pop_prompt();
+        let swing = e.actors[&g]
+            .actions
+            .iter()
+            .find(|a| a.name() == "greatclub")
+            .copied()
+            .expect("the goliath swings a greatclub");
+        for _ in 0..30 {
+            if !e.actors.contains_key(&target) {
+                break;
+            }
+            e.actors.get_mut(&g).unwrap().reset_for_new_round();
+            // The ogre stands back up between swings, so a knockdown
+            // has to be the swing's doing and not a leftover.
+            e.actors
+                .get_mut(&target)
+                .unwrap()
+                .remove_condition(Condition::Prone);
+            let aei = ActionExecutionInfo::new(swing, g, Some(vec![target]), None, None);
+            if aei.validate(&e) {
+                e.push_action(aei);
+                e.process_stack();
+            }
+            if e.actors
+                .get(&target)
+                .is_some_and(|t| t.has_condition(Condition::Prone))
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    assert!(
+        (0..4).any(|seed| tumbles(seed, false)),
+        "a Large ogre goes down to the tumble"
+    );
+    assert!(
+        !(0..4).any(|seed| tumbles(seed, true)),
+        "a Gargantuan tarrasque is outside RAW's \"Large or smaller\" clause"
+    );
+}
+
+/// A Giant Ancestry use is not spent on something it cannot touch.
+///
+/// The gate RAW does not write, because RAW's goliath can see the
+/// board and decline: Fire's Burn against a fire-immune target and
+/// Hill's Tumble against something that cannot be knocked down both
+/// buy nothing, and a charge spent on nothing is a charge gone for the
+/// day. The same call `fire_missed_attack_boost` already makes when it
+/// declines to rescue a swing its die cannot reach.
+#[test]
+fn a_giant_ancestry_keeps_its_charge_against_a_target_it_cannot_touch() {
+    use crate::actions::species::{FIRES_BURN_TAG, GIANT_ANCESTRY_USES, HILLS_TUMBLE_TAG};
+    use crate::actors::creatures::goliaths::{FIRE_GOLIATH_TEMPLATE, HILL_GOLIATH_TEMPLATE};
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::engine::types::{DamageModifier, DamageType};
+
+    /// Swing thirty times at a target nothing can hurt and report how
+    /// many ancestry uses the goliath has left.
+    fn charges_left(
+        goliath: &'static CreatureTemplate,
+        tag: &'static str,
+        immune: fn(&mut CreatureTemplate),
+    ) -> u32 {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], 5);
+        let g = e
+            .instantiate_creature(goliath, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let mut dummy_template = TARRASQUE_TEMPLATE.clone();
+        // AC 1 so every swing lands — the question is what the rider
+        // does with a hit, not whether one happens.
+        dummy_template.ac = 1;
+        immune(&mut dummy_template);
+        let dummy_template: &'static CreatureTemplate = Box::leak(Box::new(dummy_template));
+        let dummy = e
+            .instantiate_creature(dummy_template, Coordinate::new(6, 4), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        let swing = e.actors[&g]
+            .actions
+            .iter()
+            .find(|a| a.name() == "greatclub")
+            .copied()
+            .expect("the goliath swings a greatclub");
+        for _ in 0..30 {
+            if !e.actors.contains_key(&dummy) {
+                break;
+            }
+            e.actors.get_mut(&g).unwrap().reset_for_new_round();
+            let aei = ActionExecutionInfo::new(swing, g, Some(vec![dummy]), None, None);
+            if aei.validate(&e) {
+                e.push_action(aei);
+                e.process_stack();
+            }
+        }
+        e.actors[&g].feature_charges_remaining(tag)
+    }
+
+    assert_eq!(
+        charges_left(&FIRE_GOLIATH_TEMPLATE, FIRES_BURN_TAG, |t| {
+            t.damage_modifiers
+                .insert(DamageType::Fire, DamageModifier::Immunity);
+        }),
+        GIANT_ANCESTRY_USES,
+        "Fire's Burn keeps its pool against something immune to fire"
+    );
+    assert_eq!(
+        charges_left(&HILL_GOLIATH_TEMPLATE, HILLS_TUMBLE_TAG, |t| {
+            t.condition_immunities.insert(Condition::Prone);
+        }),
+        GIANT_ANCESTRY_USES,
+        "Hill's Tumble keeps its pool against something that cannot fall over"
+    );
+}
+
+/// SRD 5.2 Goliath **Cloud's Jaunt**: *"As a Bonus Action, you
+/// magically teleport up to 30 feet to an unoccupied space you can
+/// see."*
+///
+/// The blink lands the goliath where it asked to go, spends an ancestry
+/// use, and then refuses to fire once the pool is empty — which is the
+/// whole of the trait, since the teleport itself is Misty Step's own
+/// `TeleportActor`.
+#[test]
+fn clouds_jaunt_blinks_the_goliath_across_the_room() {
+    use crate::actions::species::CLOUDS_JAUNT_TAG;
+    use crate::actors::creatures::goliaths::CLOUD_GOLIATH_TEMPLATE;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let g = e
+        .instantiate_creature(&CLOUD_GOLIATH_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    let jaunt = e.actors[&g]
+        .actions
+        .iter()
+        .find(|a| a.name() == "cloud's jaunt")
+        .copied()
+        .expect("the cloud goliath carries its ancestry's action");
+
+    let mut landed = Vec::new();
+    for step in 0..crate::actions::species::GIANT_ANCESTRY_USES {
+        e.actors.get_mut(&g).unwrap().reset_for_new_round();
+        let dest = Coordinate::new(10 + step as isize, 4);
+        let aei = ActionExecutionInfo::new(jaunt, g, None, Some(vec![dest]), None);
+        assert!(aei.validate(&e), "an unspent jaunt is takeable");
+        e.push_action(aei);
+        e.process_stack();
+        landed.push(e.actors[&g].location());
+        assert_eq!(e.actors[&g].location(), dest);
+    }
+    assert_eq!(e.actors[&g].feature_charges_remaining(CLOUDS_JAUNT_TAG), 0);
+
+    e.actors.get_mut(&g).unwrap().reset_for_new_round();
+    let aei = ActionExecutionInfo::new(jaunt, g, None, Some(vec![Coordinate::new(4, 4)]), None);
+    assert!(
+        !aei.validate(&e),
+        "an exhausted pool refuses the third jaunt"
+    );
+    assert_eq!(
+        e.actors[&g].location(),
+        *landed.last().unwrap(),
+        "and the goliath stays where the second one put it"
+    );
+}
+
 /// 5e **Slow**: *"it can't take Reactions."*
 #[test]
 fn a_slowed_creature_has_no_reaction() {

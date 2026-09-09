@@ -1232,12 +1232,19 @@ impl Action for GrappleEscape {
         // challenging side here — the roles are reversed from Grapple's,
         // because it is the captive straining now).
         let grappler = actor.linked_by(Condition::Grappled);
+        // SRD 5.2's "advantage on any ability check you make to end the
+        // Grappled condition" clauses — the Goliath's Powerful Build
+        // today. Scoped to *what the check is for* rather than to who is
+        // rolling, so it cannot ride `compute_check_mode` and arrives
+        // from here instead. See `ESCAPE_CHECK_ADVANTAGES`.
+        let escape_mode = encounter.escape_check_mode(caster_id);
         let broke_free = match grappler {
             Some(grappler_id) if encounter.actors.contains_key(&grappler_id) => encounter
-                .roll_contest(
+                .roll_contest_with_challenger_mode(
                     "escape grapple",
                     caster_id,
                     GRAPPLE_DEFENSE_CONTEST,
+                    escape_mode,
                     grappler_id,
                     ATHLETICS_CONTEST,
                 ),
@@ -1252,7 +1259,12 @@ impl Action for GrappleEscape {
                         crate::engine::types::AbilityScoreType::Strength,
                         crate::engine::types::Skill::Athletics,
                     ));
-                let total = encounter.roll_ability_check(caster_id, ability, Some(skill));
+                let total = encounter.roll_ability_check_with_extra_mode(
+                    caster_id,
+                    ability,
+                    Some(skill),
+                    escape_mode,
+                );
                 encounter.log(format!(
                     "  escape grapple: {} vs DC {}",
                     total, UNANCHORED_ESCAPE_DC

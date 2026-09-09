@@ -1295,6 +1295,21 @@ const RESIZING_CONDITIONS: &[ResizingCondition] = &[
         steps: 1,
         holder_gate: None,
     },
+    // SRD 5.2 Goliath **Large Form** (character level 5): "you can
+    // change your size to Large as a Bonus Action if you're in a big
+    // enough space."
+    //
+    // The species-axis twin of the Giant's Might row above it, and the
+    // clause it shares with that row is exactly this one — the +10 ft
+    // and the Strength-check advantage live on their own cohorts. RAW's
+    // "if you're in a big enough space" needs no gate here:
+    // `reconcile_footprints` declines to stamp a footprint that does not
+    // fit and stamps it the moment one does.
+    ResizingCondition {
+        condition: Condition::LargeForm,
+        steps: 1,
+        holder_gate: None,
+    },
     // 5e Path of the Giant Barbarian **Giant's Havoc**, the Giant
     // Stature half (subclass level 3): "your size becomes Large, if
     // there is enough room."
@@ -1818,6 +1833,15 @@ const CONDITION_SPEED_BONUSES: &[ConditionSpeedBonus] = &[
     ConditionSpeedBonus {
         flag: |a| a.has_condition(Condition::Chilled),
         bonus_ft: -20.0,
+    },
+    // SRD 5.2 Goliath **Large Form**: "your Speed increases by 10
+    // feet." The half of the trait that is not the footprint, and the
+    // one that makes the once-a-day posture worth taking on a chassis
+    // that already walks 35 — a Large goliath moving 45 ft closes a
+    // gap most casters were relying on.
+    ConditionSpeedBonus {
+        flag: |a| a.has_condition(Condition::LargeForm),
+        bonus_ft: 10.0,
     },
 ];
 
@@ -8138,13 +8162,24 @@ impl ActorInstance {
 
     /// Decrement every `Rounds(n)` timer by 1 and report which conditions
     /// expired. `Permanent` and `UntilStartOfNextTurn` are untouched.
+    ///
+    /// The snapshot is **sorted**, and the sort is load-bearing rather
+    /// than tidy: `self.conditions` is a `HashMap`, its iteration order
+    /// is not stable between two maps holding the same keys, and the
+    /// `expired` list this returns is logged a line apiece by
+    /// `round_end`. Unsorted, the same seed printed the same expiries in
+    /// a different order on a second run, which is a divergence
+    /// `the_same_seed_fights_the_same_fight_twice` is there to catch.
+    /// `remove_condition` also runs back-link cleanup, so the removal
+    /// order is not purely cosmetic either.
     pub fn tick_condition_timers(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
-        let snapshot: Vec<(Condition, ConditionTimer)> = self
+        let mut snapshot: Vec<(Condition, ConditionTimer)> = self
             .conditions
             .iter()
             .map(|(c, t)| (*c, *t))
             .collect();
+        snapshot.sort_unstable_by_key(|(c, _)| *c);
         for (c, timer) in snapshot {
             match timer {
                 ConditionTimer::Permanent | ConditionTimer::UntilStartOfNextTurn => {}
@@ -8171,9 +8206,13 @@ impl ActorInstance {
     }
 
     /// Clear every condition with the `UntilStartOfNextTurn` timer.
+    ///
+    /// Sorted for the same reason `tick_condition_timers` is — see its
+    /// docstring. This is the turn-start half of the same expiry lane,
+    /// and `start_turn_for` logs a line per entry.
     pub fn clear_until_next_turn_conditions(&mut self) -> Vec<Condition> {
         let mut expired = Vec::new();
-        let to_remove: Vec<Condition> = self
+        let mut to_remove: Vec<Condition> = self
             .conditions
             .iter()
             .filter_map(|(c, t)| match t {
@@ -8181,6 +8220,7 @@ impl ActorInstance {
                 _ => None,
             })
             .collect();
+        to_remove.sort_unstable();
         for c in to_remove {
             self.remove_condition(c);
             expired.push(c);
