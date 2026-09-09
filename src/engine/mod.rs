@@ -26,6 +26,7 @@ pub mod staged_saves;
 pub mod swallow;
 pub mod terrain;
 pub mod terrain_gen;
+pub mod traps;
 pub mod triggers;
 pub mod types;
 pub mod underwater;

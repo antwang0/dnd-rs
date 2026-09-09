@@ -112,7 +112,7 @@
 
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
-use crate::engine::types::{AbilityScoreType, Coordinate, DamageType};
+use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size};
 
 /// The saving throw a zone's contact clause opens with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +154,22 @@ pub struct ZoneContact {
     ///
     /// Only ever charged to a creature that has concentration to lose.
     pub breaks_concentration: bool,
+    /// RAW's *"The target succeeds automatically if it's Huge or
+    /// larger"* — the largest creature the clause can catch, or `None`
+    /// for the majority the book leaves ungated.
+    ///
+    /// The same rider the weapon chassis carries as
+    /// `WeaponWithCondition::max_target_size`, and the same sentence:
+    /// SRD 5.2's single most-printed qualifier is a size ceiling on the
+    /// clause *after* the damage. It arrives on this layer with the
+    /// falling net, whose whole effect is a hold that a giant walks
+    /// out of.
+    ///
+    /// Gates the whole clause rather than only its rider, which is
+    /// where the two chassis differ and is what the net's wording asks
+    /// for: *"The target succeeds automatically"* is a made save, and a
+    /// made save on this clause takes the damage with it.
+    pub catches_at_most: Option<Size>,
 }
 
 impl ZoneContact {
@@ -174,6 +190,7 @@ impl ZoneContact {
             damage: None,
             condition: Some((condition, timer)),
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -192,6 +209,7 @@ impl ZoneContact {
             damage: None,
             condition: Some((condition, timer)),
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -199,6 +217,19 @@ impl ZoneContact {
     /// same DC. Sleet Storm's second sentence.
     pub const fn also_breaking_concentration(mut self) -> Self {
         self.breaks_concentration = true;
+        self
+    }
+
+    /// Chainable: RAW gates this clause on the target's size — *"the
+    /// target succeeds automatically if it's Huge or larger"*.
+    ///
+    /// A builder rather than a sixth positional argument on six
+    /// constructors, for the reason `also_breaking_concentration` is
+    /// one: the clause is a minority case, and threading `None` through
+    /// every ungated declaration to serve the gated ones makes each row
+    /// harder to read than the rule it encodes.
+    pub const fn against_at_most(mut self, max: Size) -> Self {
+        self.catches_at_most = Some(max);
         self
     }
 
@@ -219,6 +250,7 @@ impl ZoneContact {
             damage: Some((dice, damage_type)),
             condition: None,
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -242,6 +274,7 @@ impl ZoneContact {
             damage: Some((dice, damage_type)),
             condition: Some((condition, timer)),
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -272,6 +305,7 @@ impl ZoneContact {
             damage: Some((dice, damage_type)),
             condition: Some((condition, timer)),
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -292,6 +326,7 @@ impl ZoneContact {
             damage: Some((dice, damage_type)),
             condition: None,
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -303,6 +338,7 @@ impl ZoneContact {
             damage: Some((dice, damage_type)),
             condition: None,
             breaks_concentration: false,
+            catches_at_most: None,
         }
     }
 
@@ -311,6 +347,65 @@ impl ZoneContact {
     pub fn is_harmful(&self) -> bool {
         self.damage.is_some() || self.condition.is_some() || self.breaks_concentration
     }
+}
+
+/// Who springs a hidden area — the one question that separates the two
+/// kinds of thing the `ward` lane carries.
+///
+/// Both are areas nobody can see until they go off, and both are spent
+/// when they do. What differs is whose foot sets them off, and it
+/// differs because of who put them there:
+///
+///   - A **glyph** was set by somebody, for somebody else. RAW lets the
+///     caster "refine the trigger so the spell activates only under
+///     certain circumstances", and the circumstance every caster picks
+///     is "somebody who is not us" — so the setter's own side walks
+///     over it.
+///   - A **trap** was set by the dungeon. There is no side it belongs
+///     to and nobody it spares, so the first creature to stand on the
+///     pressure plate springs it whoever they are. That symmetry is
+///     most of what makes a trapped corridor a decision rather than a
+///     hazard the monsters happen to be immune to.
+///
+/// The two variants also carry the *second* thing that differs between
+/// them, which is what it takes to find one. RAW makes a glyph
+/// findable "against your spell save DC" — the number the area is
+/// already carrying on its own contact clause — and prints a separate
+/// number for every trap. One enum rather than a `find_dc` field on
+/// `ZoneEffect`, because the answer is only ever asked of an area that
+/// has a trigger at all, and a field would put it on the thirty that
+/// do not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WardTrigger {
+    /// Glyph of Warding, Symbol: everybody but this team.
+    EnemiesOf(usize),
+    /// A dungeon trap: everybody, found against the DC the trap prints.
+    Anyone { find_dc: i32 },
+}
+
+impl WardTrigger {
+    /// True if a creature on `team` sets this off.
+    pub fn springs_for(self, team: usize) -> bool {
+        match self {
+            WardTrigger::EnemiesOf(setter) => team != setter,
+            WardTrigger::Anyone { .. } => true,
+        }
+    }
+
+    /// The DC a Search action beats to find this, given the area's own
+    /// save DC — which is what RAW makes a glyph findable against, and
+    /// which a trap ignores in favour of its printed number.
+    pub fn find_dc(self, own_save_dc: Option<i32>) -> i32 {
+        match self {
+            WardTrigger::EnemiesOf(_) => own_save_dc.unwrap_or(Self::UNSAVED_FIND_DC),
+            WardTrigger::Anyone { find_dc } => find_dc,
+        }
+    }
+
+    /// The fallback for a concealed area whose clause offers no save to
+    /// read a DC off. Only reachable by a hypothetical save-less glyph;
+    /// every trap prints its own.
+    pub const UNSAVED_FIND_DC: i32 = 15;
 }
 
 /// The standing clauses a zone lays on the ground under it, plus the
@@ -421,18 +516,24 @@ pub struct ZoneEffect {
     ///     triggered" — which is the one lifecycle the round-end tick
     ///     cannot express.
     ///
-    /// `Some(team)` carries the side that set it, snapshotted at
-    /// install time rather than read live off `owner_id` — the same
-    /// choice, for the same reason, that `ZoneSave::dc` makes one field
-    /// up. A ward outlives the state that made it: RAW's glyph holds
-    /// "until it is triggered or dispelled" and nothing in that
-    /// sentence is about the setter still being alive. Read live, a
-    /// glyph whose caster fell would quietly stop having a trigger at
-    /// all, since there would be no team to compare anybody against.
+    /// `Some(trigger)` carries who springs it — see `WardTrigger`. The
+    /// setter's team is snapshotted at install time rather than read
+    /// live off `owner_id`, the same choice and for the same reason
+    /// that `ZoneSave::dc` makes one field up: a ward outlives the state
+    /// that made it. RAW's glyph holds "until it is triggered or
+    /// dispelled" and nothing in that sentence is about the setter still
+    /// being alive. Read live, a glyph whose caster fell would quietly
+    /// stop having a trigger at all, since there would be no team to
+    /// compare anybody against.
+    ///
+    /// The invisibility is the clause the *instance* qualifies: a trap
+    /// that has been found is still a trap and still goes off, but it
+    /// is no longer a surprise, and `Zone::revealed` is where that
+    /// lives.
     ///
     /// See `EncounterInstance::touch_zone`, which is where all three
     /// clauses are enforced.
-    pub ward: Option<usize>,
+    pub ward: Option<WardTrigger>,
 }
 
 impl ZoneEffect {
@@ -573,30 +674,38 @@ impl ZoneEffect {
             per_step_damage: None,
             suppresses_magic: false,
             darkens: None,
-            ward: Some(setter_team),
+            ward: Some(WardTrigger::EnemiesOf(setter_team)),
         }
     }
 
-    /// True if anything walking the board should route around this
-    /// area.
+    /// A dungeon trap (`crate::engine::traps`): the same three ward
+    /// clauses, with nobody spared. See `WardTrigger::Anyone`.
+    pub const fn trap(contact: ZoneContact, find_dc: i32) -> Self {
+        Self {
+            obscures: false,
+            difficult: false,
+            contact: Some(contact),
+            per_step_damage: None,
+            suppresses_magic: false,
+            darkens: None,
+            ward: Some(WardTrigger::Anyone { find_dc }),
+        }
+    }
+
+    /// True if standing here can cost a creature something — the
+    /// *ground's* half of "should anybody route around this area".
     ///
-    /// Named for the question its callers ask rather than for the one
-    /// it used to answer. As `is_harmful` it was very nearly a synonym
-    /// for "can this hurt you", and a ward broke the synonym: a glyph
-    /// deals 5d8 fire and must still be walked straight into, because
-    /// nobody can see it. A predicate called `is_harmful` that answers
-    /// `false` for 5d8 fire is a name that lies, and the three callers
-    /// — both pathfinder gates and the map's dangerous-ground glyph —
-    /// were all asking about avoidance in the first place.
+    /// Obscurement is deliberately not on the list: it is as much a
+    /// hiding place as a handicap, and the AI treats fog as free
+    /// ground.
     ///
-    /// Two clauses, for opposite reasons. Obscurement doesn't deter:
-    /// it is as much a hiding place as a handicap, and the AI treats
-    /// fog as free ground. A ward doesn't deter either — not because
-    /// it is harmless but because it is invisible. Answering `false`
-    /// here is the whole of RAW's "nearly invisible".
-    pub fn deters_walkers(&self) -> bool {
-        self.ward.is_none()
-            && (self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some())
+    /// The other half is whether the area can be seen at all, and that
+    /// belongs to the instance rather than to the effect — a glyph is
+    /// invisible until it goes off and a trap only until somebody finds
+    /// it. `Zone::deters_walkers` is the question the pathfinder and
+    /// the map actually ask; this is what it is built out of.
+    pub fn is_bad_ground(&self) -> bool {
+        self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some()
     }
 }
 
@@ -695,6 +804,22 @@ pub struct Zone {
     /// `ZoneMotion`. `Fixed` for all but the drifting clouds and the
     /// steered beams.
     pub motion: ZoneMotion,
+    /// True once somebody has *found* this area, for the areas that
+    /// start out unfindable — see `ZoneEffect::ward`. Meaningless for
+    /// every other zone, all of which are in plain sight from the
+    /// moment they are cast and install with this already `true`.
+    ///
+    /// One flag rather than a per-side ledger, and that is a
+    /// simplification the engine makes consistently rather than a
+    /// corner cut here. Nothing else in the engine models knowledge per
+    /// observer: `Condition::Hidden` is a fact about the hider, not a
+    /// relation between the hider and each pair of eyes, and the three
+    /// predicates that would have to carry a team — `tile_is_hazardous`,
+    /// `has_bad_ground_for`, and the map's glyph — have never had one.
+    /// The price is that a rogue who spots the pressure plate has
+    /// spotted it for the goblins too, which is worth naming and is not
+    /// worth a knowledge model to fix.
+    pub revealed: bool,
 }
 
 impl Zone {
@@ -703,6 +828,37 @@ impl Zone {
     /// asks the same question of the whole body.
     pub fn covers(&self, coord: Coordinate) -> bool {
         self.origin.chebyshev_to(coord) <= self.radius
+    }
+
+    /// True if anything walking the board should route around this
+    /// area.
+    ///
+    /// Named for the question its callers ask rather than for the one
+    /// it used to answer. As `is_harmful` it was very nearly a synonym
+    /// for "can this hurt you", and a ward broke the synonym: a glyph
+    /// deals 5d8 fire and must still be walked straight into, because
+    /// nobody can see it. A predicate called `is_harmful` that answers
+    /// `false` for 5d8 fire is a name that lies, and the three callers
+    /// — both pathfinder gates and the map's dangerous-ground glyph —
+    /// were all asking about avoidance in the first place.
+    ///
+    /// The ward clause is now a question about *this* area rather than
+    /// about its kind, which is what traps needed: a pressure plate
+    /// nobody has found is walked over exactly like a glyph, and one a
+    /// rogue has just spotted is walked around exactly like a web.
+    pub fn deters_walkers(&self) -> bool {
+        self.effect.is_bad_ground() && (self.effect.ward.is_none() || self.revealed)
+    }
+
+    /// True if this area is one nobody can see yet — a set ward or an
+    /// unfound trap.
+    ///
+    /// The map's question, and the reason it is phrased about
+    /// concealment rather than about the `ward` field: a found trap is
+    /// drawn as the hazard it is, and only an unfound one is drawn as
+    /// the secret it still is.
+    pub fn is_concealed(&self) -> bool {
+        self.effect.ward.is_some() && !self.revealed
     }
 
     /// Where a `DriftsFromOwner` area would end up this turn, given
@@ -759,6 +915,7 @@ mod tests {
             rounds_remaining: 10,
             concentration: false,
             motion: ZoneMotion::Fixed,
+            revealed: false,
         }
     }
 
@@ -786,7 +943,7 @@ mod tests {
 
     #[test]
     fn obscurement_alone_is_not_harmful() {
-        assert!(!ZoneEffect::OBSCURING.deters_walkers());
+        assert!(!ZoneEffect::OBSCURING.is_bad_ground());
     }
 
     /// A still area is still: nothing about the default motion asks the
@@ -852,7 +1009,7 @@ mod tests {
             Condition::Restrained,
             ConditionTimer::Rounds(10),
         ));
-        assert!(effect.deters_walkers());
+        assert!(effect.is_bad_ground());
         assert!(effect.difficult);
     }
 
@@ -909,6 +1066,7 @@ mod tests {
             damage: None,
             condition: None,
             breaks_concentration: true,
+            catches_at_most: None,
         };
         assert!(bare.is_harmful());
         // And the chainable form composes onto a real clause without
@@ -932,10 +1090,10 @@ mod tests {
         let effect = ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing);
         assert!(effect.contact.is_none());
         assert!(effect.difficult);
-        assert!(effect.deters_walkers());
+        assert!(effect.is_bad_ground());
         // Bad ground with nothing else on it does not.
         let rough = ZoneEffect::ROUGH;
-        assert!(!rough.deters_walkers());
+        assert!(!rough.is_bad_ground());
         assert!(rough.difficult);
     }
 
@@ -943,8 +1101,12 @@ mod tests {
     /// does so while dealing damage. Pinned beside the rows above
     /// because the whole reason the predicate is named for avoidance
     /// rather than for harm is that this row exists.
+    ///
+    /// And a *found* one deters everybody, which is the other half of
+    /// the same sentence and the clause traps needed: the ward's
+    /// invisibility belongs to the instance, not to its kind.
     #[test]
-    fn a_ward_deters_nobody_however_hard_it_hits() {
+    fn a_ward_deters_nobody_however_hard_it_hits_until_it_is_found() {
         let effect = ZoneEffect::ward(
             ZoneContact::save_for_half(
                 AbilityScoreType::Dexterity,
@@ -958,8 +1120,39 @@ mod tests {
             effect.contact.is_some_and(|c| c.is_harmful()),
             "the clause itself can very much hurt you"
         );
-        assert!(!effect.deters_walkers(), "and nothing routes around it");
-        assert_eq!(effect.ward, Some(0));
+        assert!(effect.is_bad_ground(), "the ground is bad ground");
+        assert_eq!(effect.ward, Some(WardTrigger::EnemiesOf(0)));
+
+        let mut z = zone_at(Coordinate::new(5, 5), 1);
+        z.effect = effect;
+        assert!(!z.deters_walkers(), "and nothing routes around it");
+        assert!(z.is_concealed());
+        z.revealed = true;
+        assert!(z.deters_walkers(), "a glyph that has gone off is no secret");
+        assert!(!z.is_concealed());
+    }
+
+    /// A trap spares nobody. The glyph is set by somebody for somebody
+    /// else; a pressure plate was set by the dungeon, and the first
+    /// foot on it is the one that finds out.
+    #[test]
+    fn a_trap_springs_for_every_side_and_a_glyph_does_not() {
+        assert!(WardTrigger::Anyone { find_dc: 11 }.springs_for(0));
+        assert!(WardTrigger::Anyone { find_dc: 11 }.springs_for(7));
+        assert!(!WardTrigger::EnemiesOf(0).springs_for(0));
+        assert!(WardTrigger::EnemiesOf(0).springs_for(1));
+
+        let trap = ZoneEffect::trap(
+            ZoneContact::save_for_half(
+                AbilityScoreType::Dexterity,
+                13,
+                Dice::new(2, 10),
+                DamageType::Bludgeoning,
+            ),
+            11,
+        );
+        assert_eq!(trap.ward, Some(WardTrigger::Anyone { find_dc: 11 }));
+        assert!(trap.is_bad_ground());
     }
 
     #[test]
@@ -968,7 +1161,7 @@ mod tests {
             Dice::new(4, 4),
             DamageType::Slashing,
         ));
-        assert!(effect.deters_walkers());
+        assert!(effect.is_bad_ground());
         assert!(!effect.difficult);
         assert!(!effect.obscures);
     }

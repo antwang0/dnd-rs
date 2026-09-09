@@ -2983,6 +2983,7 @@ impl Action for Web {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // RAW: "each creature in the area when the web appears"
                 // saves at once, as well as on entry and at the start
@@ -7750,6 +7751,7 @@ impl Action for StinkingCloud {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // RAW's trigger is the *start of a turn* inside the
                 // cloud; the gas rolling in around somebody costs them
@@ -8502,6 +8504,7 @@ impl Action for CloudOfDaggers {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // RAW charges only on entry and at the start of a turn:
                 // conjuring the blades around somebody already standing
@@ -10810,6 +10813,7 @@ impl Action for WallOfFire {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // "When the wall appears, each creature within its area
                 // must make a Dexterity saving throw."
@@ -10947,6 +10951,7 @@ impl Action for Cloudkill {
                     motion: ZoneMotion::DriftsFromOwner {
                         tiles: Self::DRIFT,
                     },
+                    revealed: false,
                 },
                 catch_present: true,
             }),
@@ -11064,6 +11069,7 @@ impl Action for InsectPlague {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // "When the swarm appears…" — the one damaging area in
                 // the set whose text charges on arrival as well.
@@ -12133,6 +12139,7 @@ impl Action for SpikeGrowth {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // Nothing to charge on arrival: the thorns bill
                 // movement, and standing still in them is free.
@@ -14188,6 +14195,7 @@ impl Action for Moonbeam {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Directed { tiles: Self::STEP },
+                    revealed: false,
                 },
                 // "…each creature in the cylinder when it appears makes
                 // a Constitution saving throw."
@@ -14403,6 +14411,7 @@ impl Action for SleetStorm {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // RAW's triggers are entry and turn-start only; the
                 // storm rolls in around whoever is standing there
@@ -14542,6 +14551,7 @@ impl Action for GlyphOfWarding {
                 rounds_remaining: Self::WAITS_FOR,
                 concentration: false,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             // A ward is armed, not cast. Charging whoever happens to be
             // standing on the tile at inscription time would make it a
@@ -14651,6 +14661,7 @@ impl Action for Symbol {
                 rounds_remaining: GlyphOfWarding::WAITS_FOR,
                 concentration: false,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             catch_present: false,
         })]
@@ -16068,6 +16079,7 @@ impl Action for SpikeStones {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 catch_present: false,
             }),
@@ -18362,6 +18374,7 @@ impl Action for SickeningRadiance {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // RAW's triggers are entry and turn-start; the light
                 // going up around a creature costs it nothing until its
@@ -19061,6 +19074,7 @@ impl Action for Dawn {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Directed { tiles: Self::STEP },
+                    revealed: false,
                 },
                 catch_present: false,
             }),
@@ -19368,6 +19382,7 @@ impl Action for Grease {
                 rounds_remaining: 10,
                 concentration: false,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             catch_present: true,
         })]
@@ -19501,6 +19516,7 @@ impl Action for FlamingSphere {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Directed { tiles: Self::STEP },
+                    revealed: false,
                 },
                 // "…any creature that ends its turn within 5 feet of the
                 // sphere" — the sphere doesn't burn on arrival, only on
@@ -19720,6 +19736,7 @@ impl Action for BladeBarrier {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // RAW's trigger is entering or starting a turn there —
                 // the blades spring up *around* whoever is standing in
@@ -19925,6 +19942,7 @@ impl Action for EvardsBlackTentacles {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // The tentacles erupt around whoever is standing there,
                 // and RAW's "enters the area" covers the square
@@ -22501,6 +22519,7 @@ impl Action for FogCloud {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // Nothing to charge: the cloud's whole effect is the
                 // obscurement, which is a standing property of the
@@ -24673,6 +24692,7 @@ impl Action for IncendiaryCloud {
                     motion: ZoneMotion::DriftsFromOwner {
                         tiles: Self::DRIFT,
                     },
+                    revealed: false,
                 },
                 // "When the cloud appears, each creature in it must make
                 // a Dexterity saving throw."
@@ -25426,6 +25446,7 @@ impl Action for WallOfThorns {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 // "When the wall appears, each creature within its area
                 // must make a Dexterity saving throw."
@@ -26078,6 +26099,7 @@ impl Action for Entangle {
                 rounds_remaining: 10,
                 concentration: true,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             // The zone carries no contact clause, so there is nothing
             // for it to charge on arrival; the sweep below is the
@@ -26712,6 +26734,7 @@ impl Action for HungerOfHadar {
                 rounds_remaining: 10,
                 concentration: true,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             // Neither clause has a "when it appears" trigger: the void
             // opens, and the bill arrives on the victim's own turn.
@@ -31263,6 +31286,7 @@ impl Action for Silence {
                 rounds_remaining: 10,
                 concentration: false,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             // The sphere falls over whoever is standing there and they
             // are silenced at once; the timer they pick up lapses at
@@ -31611,6 +31635,7 @@ impl Action for Darkness {
                     rounds_remaining: 10,
                     concentration: true,
                     motion: ZoneMotion::Fixed,
+                    revealed: false,
                 },
                 catch_present: false,
             }),
@@ -32617,6 +32642,7 @@ impl Action for AntimagicField {
                 rounds_remaining: 100,
                 concentration: true,
                 motion: ZoneMotion::FollowsOwner,
+                revealed: false,
             },
             // Nothing to catch — the area has no contact clause. Passed
             // `false` rather than `true` so the install doesn't walk a
@@ -33266,6 +33292,7 @@ impl Action for Whirlwind {
                 rounds_remaining: 10,
                 concentration: true,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             },
             // The column drops on whoever is already standing there.
             catch_present: true,

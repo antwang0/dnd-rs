@@ -1565,6 +1565,19 @@ impl Action for Search {
         use crate::engine::types::{AbilityScoreType, Skill};
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
         const SEARCH_RANGE: isize = 12;
+        // The floor is looked at from much closer than a room is
+        // scanned. RAW's trap entries say "examine the trapped area" and
+        // "a creature within 5 feet of the statue"; four tiles is ten
+        // feet on the 2.5-ft grid, which is the tile you are standing on
+        // and the ring around it — the ground a creature could actually
+        // crouch down and read.
+        //
+        // Deliberately much shorter than `SEARCH_RANGE`. A search that
+        // found every pressure plate in the room from thirty feet away
+        // would make the Action the answer to the whole trap layer, and
+        // there would be no reason ever to walk anywhere without
+        // spending it first.
+        const TRAP_SEARCH_RANGE: isize = 4;
 
         let Some(searcher) = encounter.actors.get(&caster_id) else {
             return Vec::new();
@@ -1676,6 +1689,23 @@ impl Action for Search {
                     condition: Condition::Outlined,
                     timer: crate::conditions::ConditionTimer::UntilStartOfNextTurn,
                 }));
+                revealed += 1;
+            }
+        }
+        // The floor, after the room. A concealed area — a set glyph, a
+        // dungeon trap — is found by the same act of looking and the
+        // same roll: RAW asks for one check against the thing's own DC,
+        // and the searcher who rolled a 19 rolled it once.
+        //
+        // Resolved here rather than as a queued effect because
+        // `reveal_zone` is a change to the board rather than to an
+        // actor, the same reason `add_light_source` is called inline by
+        // the spells that light one.
+        for (zone_id, dc) in encounter.concealed_zones_near(caster_id, TRAP_SEARCH_RANGE) {
+            if perception < dc {
+                continue;
+            }
+            if encounter.reveal_zone(zone_id) {
                 revealed += 1;
             }
         }

@@ -37786,6 +37786,7 @@ fn test_zone(origin: Coordinate, radius: isize, effect: ZoneEffect) -> Zone {
         rounds_remaining: 10,
         concentration: false,
         motion: ZoneMotion::Fixed,
+        revealed: false,
     }
 }
 
@@ -37957,7 +37958,7 @@ fn a_glyph_is_armed_rather_than_cast() {
         .expect("the glyph should be on the board");
     assert_eq!(
         zone.effect.ward,
-        Some(0),
+        Some(crate::engine::zones::WardTrigger::EnemiesOf(0)),
         "the ward remembers the side that set it rather than reading it \
          off an owner who can die"
     );
@@ -38007,7 +38008,10 @@ fn symbol_sets_a_stunning_ward() {
         .iter()
         .find(|z| z.name == "symbol")
         .expect("the symbol should be on the board");
-    assert_eq!(zone.effect.ward, Some(0));
+    assert_eq!(
+        zone.effect.ward,
+        Some(crate::engine::zones::WardTrigger::EnemiesOf(0))
+    );
     let contact = zone.effect.contact.expect("a ward has a trigger clause");
     assert_eq!(
         contact.condition.map(|(c, _)| c),
@@ -82495,6 +82499,7 @@ fn concentration_ends_when_the_area_it_placed_disperses() {
             rounds_remaining: 2,
             concentration: true,
             motion: ZoneMotion::Fixed,
+            revealed: false,
         },
         catch_present: false,
     }
@@ -82582,6 +82587,7 @@ fn a_two_anchor_spell_survives_on_whichever_anchor_is_left() {
             rounds_remaining: 6,
             concentration: true,
             motion: ZoneMotion::Fixed,
+            revealed: false,
         },
         catch_present: false,
     }
@@ -83121,6 +83127,7 @@ fn magical_darkness_beats_darkvision_and_beats_a_torch() {
         rounds_remaining: 10,
         concentration: false,
         motion: ZoneMotion::Fixed,
+        revealed: false,
     });
     // Bright ambient, and a torch right on top of it, and it is still
     // dark: "nonmagical light can't illuminate it."
@@ -83171,6 +83178,7 @@ fn devils_sight_sees_through_magical_darkness() {
         rounds_remaining: 10,
         concentration: false,
         motion: ZoneMotion::Fixed,
+        revealed: false,
     });
     assert!(
         e.actors[&devil].has_devils_sight(),
@@ -83251,6 +83259,7 @@ fn daylight_dispels_magical_darkness_and_frees_its_caster() {
         rounds_remaining: 10,
         concentration: true,
         motion: ZoneMotion::Fixed,
+        revealed: false,
     });
     assert_eq!(e.light_at(Coordinate::new(10, 2)), LightLevel::Dark);
     let lifted = e.dispel_magical_darkness_in(Coordinate::new(10, 2), 6, 3);
@@ -83392,6 +83401,7 @@ fn a_darkness_sphere_lifts_the_sunlight_penalty_inside_it() {
         rounds_remaining: 10,
         concentration: false,
         motion: ZoneMotion::Fixed,
+        revealed: false,
     });
     assert!(!e.is_sunlit(Coordinate::new(4, 2)));
     // The drow is out of the sun, and now blind — the sphere obscures
@@ -93871,4 +93881,207 @@ fn a_self_aimed_spell_accepts_the_slot_it_is_being_upcast_with() {
         Some(&vec![Coordinate::new(6, 6)]),
         None
     ));
+}
+
+// ---------------------------------------------------------------------
+// Traps — SRD 5.2's *Example Traps* on the zone layer's ward lane.
+//
+// The three things that separate a trap from a glyph, one test each:
+// it springs for every side, it is invisible until somebody looks for
+// it, and looking for it is what makes everybody walk around it.
+// ---------------------------------------------------------------------
+
+/// A trap set by the dungeon catches whoever steps on it — both sides.
+///
+/// The glyph clause it inverts is `WardTrigger::EnemiesOf`, which
+/// spares the setter's own team; a pressure plate was set by nobody and
+/// spares nobody, and that symmetry is what makes a trapped corridor a
+/// decision rather than a hazard the monsters are immune to.
+#[test]
+fn a_trap_springs_for_whoever_steps_on_it() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::traps::SPIKED_PIT;
+
+    for team in [0usize, 1usize] {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let pit = e.install_zone(SPIKED_PIT.zone_at(Coordinate::new(10, 10)));
+        let victim = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), team, 0)
+            .unwrap();
+        let before = e.actors[&victim].hitpoints();
+        e.touch_zone(pit, victim);
+        assert!(
+            e.actors.get(&victim).is_none_or(|a| a.hitpoints() < before),
+            "team {team} walked over a spiked pit for free"
+        );
+        assert!(
+            e.zones().iter().all(|z| z.id != pit),
+            "a sprung trap is spent"
+        );
+    }
+}
+
+/// Nobody routes around a trap they have not found, and everybody
+/// routes around one they have.
+///
+/// This is the clause that moved from `ZoneEffect` onto `Zone`: the
+/// ward's invisibility used to be a property of its *kind*, which is
+/// right for a glyph (which nobody ever finds — it goes off instead)
+/// and wrong for a trap, whose whole interaction is being found.
+#[test]
+fn a_found_trap_is_the_only_kind_anybody_walks_around() {
+    use crate::engine::traps::COLLAPSING_ROOF;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e.install_zone(COLLAPSING_ROOF.zone_at(Coordinate::new(10, 10)));
+    let under_it = Coordinate::new(10, 10);
+    assert!(
+        !e.tile_is_hazardous(under_it),
+        "an unfound trap is invisible to the pathfinder"
+    );
+    assert!(e.reveal_zone(id), "the first look finds it");
+    assert!(
+        e.tile_is_hazardous(under_it),
+        "and a found one is bad ground like any other"
+    );
+    assert!(!e.reveal_zone(id), "finding it twice finds nothing");
+}
+
+/// The Search action is what finds one, at the DC the book prints
+/// beside the trap rather than at the trap's own save DC.
+///
+/// Rolled across a sweep of seeds rather than once: the check is a d20
+/// and the assertion is about which DC it is being compared to, which
+/// only shows up over a spread of rolls.
+#[test]
+fn searching_the_floor_turns_up_the_trap_under_it() {
+    use crate::actions::action_template::Action;
+    use crate::actions::default_actions::SEARCH;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::traps::COLLAPSING_ROOF;
+
+    let mut ever_found = false;
+    for seed in 0..30 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        // Two tiles from the rogue's footprint: inside the floor-level
+        // search band, nowhere near the room-wide one.
+        let id = e.install_zone(COLLAPSING_ROOF.zone_at(Coordinate::new(12, 10)));
+        for eff in SEARCH.side_effects(&mut e, rogue, None, None, None) {
+            eff.apply(&mut e);
+        }
+        if e.zones().iter().any(|z| z.id == id && z.revealed) {
+            ever_found = true;
+            break;
+        }
+    }
+    assert!(
+        ever_found,
+        "a rogue crouching over a DC-11 tripwire should find it inside thirty seeds"
+    );
+}
+
+/// And a trap across the room stays hidden however well the search
+/// rolls. The floor is examined from arm's length; the room is scanned
+/// from thirty feet, and conflating the two would make one Action the
+/// answer to the whole trap layer.
+#[test]
+fn a_search_does_not_read_the_floor_on_the_far_side_of_the_room() {
+    use crate::actions::action_template::Action;
+    use crate::actions::default_actions::SEARCH;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::traps::FALLING_NET;
+
+    for seed in 0..20 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let rogue = e
+            .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let id = e.install_zone(FALLING_NET.zone_at(Coordinate::new(25, 25)));
+        for eff in SEARCH.side_effects(&mut e, rogue, None, None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.zones().iter().any(|z| z.id == id && !z.revealed),
+            "seed {seed}: a net sixty feet away is not something you spot by looking down"
+        );
+    }
+}
+
+/// A net is a net-sized thing: RAW's "the target succeeds
+/// automatically if it's Huge or larger", which arrives on the zone
+/// layer as `ZoneContact::catches_at_most`.
+#[test]
+fn a_falling_net_does_not_catch_a_giant() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::traps::FALLING_NET;
+
+    // The giant walks out of it.
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let net = e.install_zone(FALLING_NET.zone_at(Coordinate::new(15, 15)));
+    let giant = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(15, 15), 1, 0)
+        .unwrap();
+    e.touch_zone(net, giant);
+    assert!(
+        !e.actors[&giant].has_condition(Condition::Restrained),
+        "a ten-foot square of rope is not a giant-sized problem"
+    );
+
+    // And a Small creature is exactly what it is for — across enough
+    // seeds that a DC-10 save is failed at least once.
+    let mut ever_caught = false;
+    for seed in 0..30 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let net = e.install_zone(FALLING_NET.zone_at(Coordinate::new(15, 15)));
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 15), 1, 0)
+            .unwrap();
+        e.touch_zone(net, goblin);
+        if e.actors[&goblin].has_condition(Condition::Restrained) {
+            ever_caught = true;
+            break;
+        }
+    }
+    assert!(ever_caught, "thirty goblins should fail one DC-10 save");
+}
+
+/// The generator arms what it says it arms, on floor, and the board
+/// stays reproducible from its seed.
+#[test]
+fn scattering_traps_arms_them_on_free_floor_and_stays_seeded() {
+    let mut a = ei_with_terrain_seeded(20, 20, &[], 5);
+    let armed = a.scatter_traps(4);
+    assert_eq!(armed, 4);
+    assert_eq!(a.zones().len(), 4);
+    for zone in a.zones() {
+        assert!(zone.is_concealed(), "a fresh trap is nobody's business yet");
+        assert_eq!(
+            a.terrain_at(zone.origin).unwrap().terrain_type,
+            TerrainType::Floor,
+            "traps go on floor, not in walls"
+        );
+    }
+
+    // Same seed, same board.
+    let mut b = ei_with_terrain_seeded(20, 20, &[], 5);
+    b.scatter_traps(4);
+    let origins_a: Vec<Coordinate> = a.zones().iter().map(|z| z.origin).collect();
+    let origins_b: Vec<Coordinate> = b.zones().iter().map(|z| z.origin).collect();
+    assert_eq!(origins_a, origins_b, "a seeded board is a seeded board");
+
+    // And nothing is armed when nothing is asked for, which is what
+    // keeps every existing encounter in the suite on clean floor.
+    let mut none = ei_with_terrain_seeded(20, 20, &[], 5);
+    assert_eq!(none.scatter_traps(0), 0);
+    assert!(none.zones().is_empty());
 }

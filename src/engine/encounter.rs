@@ -7666,6 +7666,126 @@ impl EncounterInstance {
         id
     }
 
+    /// Mark a concealed area found, and say so. `false` if there is no
+    /// such zone or it was already known.
+    ///
+    /// The whole payoff of the Search action against a trap: a revealed
+    /// area stops being invisible to the pathfinder (see
+    /// `Zone::deters_walkers`) and starts being drawn on the map, so
+    /// everybody walks around the thing. It does not stop being armed —
+    /// RAW's disarm is an iron spike and ten minutes, neither of which
+    /// fits in a six-second round — so a creature that steps on a
+    /// spotted plate still springs it.
+    pub fn reveal_zone(&mut self, zone_id: usize) -> bool {
+        let Some(zone) = self.zones.iter_mut().find(|z| z.id == zone_id) else {
+            return false;
+        };
+        if zone.revealed {
+            return false;
+        }
+        zone.revealed = true;
+        let (name, origin) = (zone.name, zone.origin);
+        self.log(format!("  a {} is spotted at {}.", name, origin));
+        true
+    }
+
+    /// Every concealed area within `radius` of `searcher_id`'s
+    /// footprint, with the DC that finds it — the Search action's
+    /// candidate list.
+    ///
+    /// The DC comes off the ward's own trigger — see
+    /// `WardTrigger::find_dc`, which is where the difference between a
+    /// glyph (found against its caster's spell save DC, per RAW) and a
+    /// trap (found against the number the book prints beside it) lives.
+    pub fn concealed_zones_near(
+        &self,
+        searcher_id: usize,
+        radius: isize,
+    ) -> Vec<(usize, i32)> {
+        let Some(searcher) = self.actors.get(&searcher_id) else {
+            return Vec::new();
+        };
+        let (loc, size) = (searcher.location(), get_tiles_from_size(searcher.size()));
+        self.zones
+            .iter()
+            .filter(|z| z.is_concealed())
+            .filter(|z| footprint_chebyshev(loc, size, z.origin, 1) <= radius + z.radius)
+            .map(|z| {
+                let own_save = z.effect.contact.and_then(|c| c.save.map(|s| s.dc));
+                let dc = z
+                    .effect
+                    .ward
+                    .map(|w| w.find_dc(own_save))
+                    .unwrap_or(crate::engine::zones::WardTrigger::UNSAVED_FIND_DC);
+                (z.id, dc)
+            })
+            .collect()
+    }
+
+    /// Arm `count` traps on random free floor, drawn from
+    /// `traps::ALL_TRAPS`.
+    ///
+    /// The dungeon's own half of the board, and it is opt-in for the
+    /// reason the weather is: before this, every fight in the engine
+    /// was fought on clean floor, and turning traps on by default would
+    /// have silently rewritten every seeded encounter in the suite. A
+    /// caller that wants them asks — `dnd-rs --traps` on the command
+    /// line. See `crate::engine::traps`.
+    ///
+    /// Candidate tiles are ordinary floor with nobody standing on them
+    /// and no trap already on them. Deliberately *not* filtered by how
+    /// far they are from anybody: a trap under the party's feet at the
+    /// start of the fight is a trap they have not stepped on yet, and
+    /// `install_zone` does not fire a contact clause on install.
+    ///
+    /// Drawn through `rng()` — the seeded content-generation RNG the
+    /// terrain and the roster already come out of — so a seed still
+    /// reproduces a board exactly.
+    ///
+    /// Returns how many were actually armed, which is fewer than
+    /// `count` on a board with less free floor than that.
+    pub fn scatter_traps(&mut self, count: usize) -> usize {
+        use crate::engine::traps::ALL_TRAPS;
+
+        if count == 0 {
+            return 0;
+        }
+        let mut candidates: Vec<Coordinate> = Vec::new();
+        for y in 0..self.height as isize {
+            for x in 0..self.width as isize {
+                let coord = Coordinate::new(x, y);
+                if !self
+                    .terrain_at(coord)
+                    .is_some_and(|t| t.terrain_type == TerrainType::Floor)
+                {
+                    continue;
+                }
+                if self.actor_id_at(coord).is_some() {
+                    continue;
+                }
+                if self.zones.iter().any(|z| z.covers(coord)) {
+                    continue;
+                }
+                candidates.push(coord);
+            }
+        }
+        let mut armed = 0usize;
+        for _ in 0..count {
+            if candidates.is_empty() {
+                break;
+            }
+            let pick = self.rng().usize(0..candidates.len());
+            let origin = candidates.swap_remove(pick);
+            let trap = ALL_TRAPS[self.rng().usize(0..ALL_TRAPS.len())];
+            self.install_zone(trap.zone_at(origin));
+            armed += 1;
+        }
+        if armed > 0 {
+            self.log(format!("The dungeon is trapped: {} armed.", armed));
+        }
+        armed
+    }
+
     /// Every patch of conjured map currently standing, in install order.
     pub fn conjured_terrain(&self) -> &[ConjuredTerrain] {
         &self.conjured_terrain
@@ -8025,7 +8145,7 @@ impl EncounterInstance {
     pub fn tile_is_hazardous(&self, coord: Coordinate) -> bool {
         self.zones
             .iter()
-            .any(|z| z.effect.deters_walkers() && z.covers(coord))
+            .any(|z| z.deters_walkers() && z.covers(coord))
     }
 
     /// True if heavy obscurement stands between (or on top of) the two
@@ -8259,11 +8379,11 @@ impl EncounterInstance {
         // without springing it. See `ZoneEffect::ward` for why this is
         // the one friend-or-foe clause on a friend-or-foe-blind layer.
         let ward = zone.effect.ward;
-        if let Some(setter_team) = ward
+        if let Some(trigger) = ward
             && self
                 .actors
                 .get(&actor_id)
-                .is_some_and(|a| a.team() == setter_team)
+                .is_some_and(|a| !trigger.springs_for(a.team()))
         {
             return;
         }
@@ -8329,6 +8449,18 @@ impl EncounterInstance {
         };
         let (name, owner_id) = (zone.name, zone.owner_id);
         let actor_name = self.actor_name(actor_id);
+        // RAW's *"the target succeeds automatically if it's Huge or
+        // larger"*. A made save, not an exemption from the clause —
+        // which for a contact that halves on a success would still be a
+        // half-share of the damage, and for the falling net that
+        // carries it is nothing at all. Asked before the roll so the
+        // log does not print a save the giant never made.
+        if let Some(size) = self.actors.get(&actor_id).map(|a| a.size())
+            && !size.clears_gate(contact.catches_at_most)
+        {
+            self.log(format!("  {}: {} is too big to catch.", name, actor_name));
+            return;
+        }
         let saved = match contact.save {
             Some(s) => {
                 let outcome =
@@ -11125,7 +11257,7 @@ impl EncounterInstance {
         let aversions = self.aversions_of(actor_id);
         self.zones
             .iter()
-            .any(|z| z.effect.deters_walkers() || (z.effect.suppresses_magic && aversions.casts))
+            .any(|z| z.deters_walkers() || (z.effect.suppresses_magic && aversions.casts))
             || (aversions.drowns && self.has_water())
     }
 

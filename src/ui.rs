@@ -11,6 +11,7 @@ use crate::engine::lighting::LightLevel;
 use crate::engine::side_effects::Resource;
 use crate::engine::terrain::TerrainType;
 use crate::engine::types::Coordinate;
+use crate::engine::zones::WardTrigger;
 use crate::engine::util::get_colored_span;
 
 /// Render the actor's damage modifier table as up to five colored
@@ -408,11 +409,24 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
         // record of where it is. Its own glyph rather than the skull,
         // because "armed and waiting" and "burning right now" are the
         // two facts a player standing next to one has to tell apart.
-        let glyph = if zone.effect.ward.is_some() {
+        //
+        // A **trap** is the concealed area this does *not* apply to,
+        // and the exception is the whole of what a trap is. Nobody laid
+        // it and nobody knows where it is; drawing an unfound pressure
+        // plate on the map would hand the player the answer the Search
+        // action exists to buy. A found one drops through to the
+        // ordinary hazard glyphs below, which is right — it is now a
+        // piece of bad ground like any other.
+        let concealed_ward = zone.is_concealed()
+            && matches!(zone.effect.ward, Some(WardTrigger::EnemiesOf(_)));
+        if zone.is_concealed() && !concealed_ward {
+            continue;
+        }
+        let glyph = if concealed_ward {
             '◈'
         } else if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
             '☠'
-        } else if zone.effect.deters_walkers() || zone.effect.difficult {
+        } else if zone.deters_walkers() || zone.effect.difficult {
             '≈'
         } else if zone.effect.obscures {
             '▚'
@@ -2086,6 +2100,7 @@ mod tests {
                 rounds_remaining: 10,
                 concentration: false,
                 motion: ZoneMotion::Fixed,
+                revealed: false,
             });
         };
 
@@ -2182,6 +2197,7 @@ mod tests {
             rounds_remaining: 7,
             concentration: true,
             motion: ZoneMotion::Fixed,
+            revealed: false,
         });
         let panel = rendered_panel(&e);
         assert!(

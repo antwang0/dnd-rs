@@ -46,6 +46,15 @@ struct Cli {
     /// rainy noon is `daylight` and `--rain` at once. Defaults to the
     /// still air every fight was fought in before the weather layer.
     weather: Weather,
+    /// How many of SRD 5.2's traps the dungeon is holding — see
+    /// `crate::engine::traps`. `0` by default, which is the clean floor
+    /// every fight in the engine has ever been fought on; `--traps`
+    /// arms `Cli::DEFAULT_TRAPS` of them, and `--traps=N` arms N.
+    ///
+    /// A count rather than a flag, because the interesting question a
+    /// trapped board asks is how often it is worth spending an Action
+    /// on the floor, and that is entirely a matter of density.
+    traps: usize,
 }
 
 /// What `Cli::parse` decided the arguments meant.
@@ -74,6 +83,7 @@ impl Cli {
         let mut seed = None;
         let mut ambient = AmbientLight::default();
         let mut weather = Weather::default();
+        let mut traps = 0usize;
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
             // Checked before the number parse and before the name
@@ -116,6 +126,23 @@ impl Cli {
                 weather = w;
                 continue;
             }
+            // The traps, on the same `--` lane as the other two board
+            // settings and with an optional count: `--traps` takes the
+            // default density and `--traps=12` names one. The `=` form
+            // rather than a following bare number, because a bare
+            // number is already the seed and the parser is
+            // order-independent — there would be no way to tell
+            // `--traps 42` from `42 --traps`.
+            if let Some(rest) = arg.strip_prefix("--traps") {
+                traps = match rest.strip_prefix('=') {
+                    Some(n) => n
+                        .parse::<usize>()
+                        .map_err(|_| format!("--traps wants a count, not {:?}", n))?,
+                    None if rest.is_empty() => Self::DEFAULT_TRAPS,
+                    None => return Err(format!("unknown flag {:?}", arg)),
+                };
+                continue;
+            }
             match arg.parse::<u64>() {
                 Ok(n) if seed.is_none() => seed = Some(n),
                 _ => name_parts.push(arg),
@@ -132,15 +159,27 @@ impl Cli {
             pc_template,
             ambient,
             weather,
+            traps,
         }))
     }
+
+    /// Traps armed by a bare `--traps`, on the 40x30 board `main`
+    /// generates.
+    ///
+    /// Six is roughly one per BSP room at the default branch depth,
+    /// which is the density that makes searching a decision: fewer and
+    /// the Action is never worth spending, more and it is always worth
+    /// spending and the fight stops being about the creatures.
+    const DEFAULT_TRAPS: usize = 6;
 
     /// Usage plus the full class listing. Shares
     /// `class_listing` with the unknown-class error so the two can't
     /// disagree about what is playable.
     fn help_message() -> String {
         let mut msg =
-            String::from("usage: dnd-rs [seed] [class name] [--light-level] [--weather]\n\n");
+            String::from(
+                "usage: dnd-rs [seed] [class name] [--light-level] [--weather] [--traps[=N]]\n\n",
+            );
         msg.push_str("Every argument is optional and order-independent: the first\n");
         msg.push_str("argument that parses as a number is the seed, a --flag sets\n");
         msg.push_str("the light level or the weather, and everything else is the\n");
@@ -150,6 +189,10 @@ impl Cli {
         msg.push('\n');
         msg.push_str(&Self::weather_listing());
         msg.push('\n');
+        msg.push_str(&format!(
+            "Traps (none by default):\n  --traps arms {}, --traps=N arms N\n\n",
+            Self::DEFAULT_TRAPS
+        ));
         msg.push_str("Classes:\n");
         msg.push_str(&Self::class_listing());
         msg
@@ -264,6 +307,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
         .expect("failed to create encounter");
     encounter.set_ambient_light(cli.ambient);
     encounter.set_weather(cli.weather);
+    encounter.scatter_traps(cli.traps);
 
     let n_teams = actor_params.n_teams;
     let mut app = App::new(encounter, terrain_params, actor_params);
