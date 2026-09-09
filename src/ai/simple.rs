@@ -2331,6 +2331,79 @@ fn try_lockdown(
     pick_from_cohort(encounter, actor_id, LOCKDOWNS)
 }
 
+/// Build a cast of `action`, spending the cheapest slot the caster can
+/// actually pay — its printed level when that slot is still there, and
+/// the next one up when it is not.
+///
+/// 5e: *"you can cast a spell using a higher-level spell slot"*, which
+/// is the sentence the AI could not say. The engine prices a cast at
+/// exactly one level (`Resource::SpellSlot`), so a cleric out of
+/// 3rd-level slots holding two 5ths is correctly refused *that* Spirit
+/// Guardians — and, before this, simply stopped casting it for the rest
+/// of the day rather than casting the 5th-level one. Every rung on the
+/// ladder behaved the same way: a spell whose printed slot ran out fell
+/// out of the AI's repertoire while the caster sat on bigger ones.
+///
+/// The rule is strictly a *fallback*, and that is the whole of the
+/// policy. The base level is tried first and wins whenever it can, so a
+/// caster never burns a 9th-level slot on a Fireball while a 3rd is
+/// available; the promotion only ever fires on a slot the caster does
+/// not have. That is why this is safe to put on the shared paths
+/// without any per-spell judgement about whether the upcast is *worth*
+/// it: the alternative it is being compared against is not a cheaper
+/// cast, it is no cast at all.
+///
+/// `None` when the actor cannot make this cast at any level — the
+/// action is not a leveled spell, or the refusal was about reach, line
+/// of sight, concentration or a target, none of which a bigger slot
+/// fixes.
+fn afford_cast(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    action: &'static (dyn Action + Send + Sync),
+    target_ids: Option<Vec<usize>>,
+    target_locations: Option<Vec<Coordinate>>,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::action_overrides::ActionOverride;
+    use crate::engine::side_effects::{Resource, spell_slot_level};
+
+    let plain = ActionExecutionInfo::new(
+        action,
+        actor_id,
+        target_ids.clone(),
+        target_locations.clone(),
+        None,
+    );
+    if plain.validate(encounter) {
+        return Some(plain);
+    }
+    // Only a spent slot is worth a second look. Anything else the
+    // validator refused for — reach, sight, a held concentration, a
+    // target that is already Charmed — reads the same at every level.
+    let base = spell_slot_level(&action.cost(
+        encounter,
+        actor_id,
+        target_ids.as_ref(),
+        target_locations.as_ref(),
+        None,
+    ))?;
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.can_consume_resource(Resource::SpellSlot(base)) {
+        return None;
+    }
+    let higher = actor.lowest_available_spell_slot_at_least(base + 1)?;
+    let upcast = ActionExecutionInfo::new(
+        action,
+        actor_id,
+        target_ids,
+        target_locations,
+        Some(std::collections::HashSet::from([ActionOverride::CastLevel(
+            higher,
+        )])),
+    );
+    upcast.validate(encounter).then_some(upcast)
+}
+
 /// The walk both control cohorts share: offer every row the caster can
 /// currently cast to every legal enemy, and keep the best pair.
 ///
@@ -2367,11 +2440,11 @@ fn pick_from_cohort(
             if condition.is_some_and(|c| target.has_condition(c)) {
                 continue;
             }
-            let aei =
-                ActionExecutionInfo::new(*action, actor_id, Some(vec![target_id]), None, None);
-            if !aei.validate(encounter) {
+            let Some(aei) =
+                afford_cast(encounter, actor_id, *action, Some(vec![target_id]), None)
+            else {
                 continue;
-            }
+            };
             let hp = target.hitpoints();
             let pick = match &best {
                 None => true,
@@ -5038,8 +5111,7 @@ fn try_self_action(
         TargetingSchema::SingleActor if !action.is_harmful() => Some(vec![actor_id]),
         _ => None,
     };
-    let aei = ActionExecutionInfo::new(action, actor_id, targets, None, None);
-    aei.validate(encounter).then_some(aei)
+    afford_cast(encounter, actor_id, action, targets, None)
 }
 
 /// Sister to `try_self_action` gated on "at least one hostile within
@@ -5128,10 +5200,9 @@ fn try_action_on_nearest_enemy(
         if !gap_ok(dist) {
             continue;
         }
-        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None);
-        if !aei.validate(encounter) {
+        let Some(aei) = afford_cast(encounter, actor_id, action, Some(vec![tid]), None) else {
             continue;
-        }
+        };
         if best.as_ref().is_none_or(|(best_d, _)| dist < *best_d) {
             best = Some((dist, aei));
         }
@@ -8722,13 +8793,14 @@ fn best_burst_placement(
         let anchor_id = *anchor_id;
 
         for (action, shape) in &burst_actions {
-            // Validate caster→point reach + LOS + cost via the action's
-            // own validation (avoids reimplementing).
-            let aei =
-                ActionExecutionInfo::new(*action, actor_id, None, Some(vec![point]), None);
-            if !aei.validate(encounter) {
+            // Reach, line of sight and cost through the action's own
+            // validation (avoids reimplementing) — and, when the only
+            // thing missing is the printed slot, at the cheapest bigger
+            // one the caster still holds. See `afford_cast`.
+            let Some(aei) = afford_cast(encounter, actor_id, *action, None, Some(vec![point]))
+            else {
                 continue;
-            }
+            };
 
             // Count combat-active actors in the radius. Friendly fire
             // disqualifies the candidate entirely — we don't damage our
@@ -20088,6 +20160,121 @@ mod tests {
         assert!(
             try_open_a_wall(&e, wiz).is_none(),
             "a door to an empty room is not worth a fifth-level slot"
+        );
+    }
+
+    /// The AI reaches for a bigger slot when the printed one is spent —
+    /// and only then.
+    ///
+    /// 5e lets any spell be cast with a slot of its own level or
+    /// higher. The engine prices a cast at exactly one level, so a
+    /// cleric out of 3rd-level slots was refused Spirit Guardians for
+    /// the rest of the day while sitting on 5ths; the spell simply left
+    /// its repertoire. `afford_cast` is the fallback, and the second
+    /// half of this test is the half that matters — the promotion must
+    /// never fire while the printed slot is there, or the first
+    /// Fireball of every fight would cost a 9th-level slot.
+    #[test]
+    fn the_ai_reaches_for_a_bigger_slot_only_once_the_printed_one_is_spent() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::action_overrides::ActionOverride;
+        use crate::engine::side_effects::Resource;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(8, 5),
+            1,
+            0,
+        )
+        .unwrap();
+
+        // With the printed slot in hand, the cast is the printed cast.
+        let plain = try_self_action(&e, cleric, "spirit guardians")
+            .expect("a cleric with third-level slots casts it");
+        assert!(
+            plain.overrides().is_none(),
+            "the base slot is there; nothing should be upcast"
+        );
+
+        // Spend every third-level slot and nothing else.
+        while e.actors[&cleric].can_consume_resource(Resource::SpellSlot(3)) {
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .consume_resource(Resource::SpellSlot(3));
+        }
+        let higher = e.actors[&cleric]
+            .lowest_available_spell_slot_at_least(4)
+            .expect("the cleric still holds something bigger");
+        let upcast = try_self_action(&e, cleric, "spirit guardians")
+            .expect("a spent third-level slot is not the end of the spell");
+        assert!(
+            upcast
+                .overrides()
+                .is_some_and(|o| o.contains(&ActionOverride::CastLevel(higher))),
+            "the fallback should name the cheapest slot that is left"
+        );
+
+        // And when nothing at all is left, the refusal stands.
+        for lvl in 1..=9 {
+            while e.actors[&cleric].can_consume_resource(Resource::SpellSlot(lvl)) {
+                e.actors
+                    .get_mut(&cleric)
+                    .unwrap()
+                    .consume_resource(Resource::SpellSlot(lvl));
+            }
+        }
+        assert!(
+            try_self_action(&e, cleric, "spirit guardians").is_none(),
+            "an empty sheet is an empty sheet"
+        );
+    }
+
+    /// A refusal that a bigger slot cannot fix stays a refusal.
+    ///
+    /// The fallback is scoped to the one reason a spell becomes
+    /// uncastable that a slot answers. Reach, sight, a held
+    /// concentration and an already-Charmed target all read the same at
+    /// every level, and re-validating at each of them would be the same
+    /// no for nine times the work.
+    #[test]
+    fn the_upcast_fallback_does_not_paper_over_a_different_refusal() {
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(8, 5),
+            1,
+            0,
+        )
+        .unwrap();
+        while e.actors[&cleric].can_consume_resource(Resource::SpellSlot(3)) {
+            e.actors
+                .get_mut(&cleric)
+                .unwrap()
+                .consume_resource(Resource::SpellSlot(3));
+        }
+        // Spirit Guardians refuses while its caster is already holding
+        // something, and that refusal is not about the slot.
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .start_concentration(ConcentrationData::new("Bless"));
+        assert!(
+            try_self_action(&e, cleric, "spirit guardians").is_none(),
+            "a held concentration reads the same at every level"
         );
     }
 }
