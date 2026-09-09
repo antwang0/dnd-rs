@@ -281,6 +281,23 @@ pub struct LightSource {
     /// innate light is a contradiction (nothing is carrying it) and the
     /// drop routine never looks at one.
     pub innate: bool,
+    /// True for a light that is a *fire somebody lit* — a torch, a
+    /// brazier — and false for every light that is magic, or a creature,
+    /// or both.
+    ///
+    /// Read by exactly one rule, and it is SRD 5.2's weather: strong
+    /// wind "extinguishes open flames", and heavy rain "also
+    /// extinguishes open flames". See `engine::weather`.
+    ///
+    /// A field rather than a derivation, and `spell_level == 0` is the
+    /// derivation it is not. That field's own docstring calls 0
+    /// "nonmagical flame", which was true of the only source that had it
+    /// when the field was written and is no longer true of most of them:
+    /// Light, Dancing Lights and Starry Wisp are cantrips, cantrips are
+    /// level 0, and none of the three is a flame. Deriving "can the wind
+    /// put this out" from a number that means "can Darkness dispel this"
+    /// would have blown out three spells and an azer.
+    pub open_flame: bool,
 }
 
 impl LightSource {
@@ -465,6 +482,7 @@ mod tests {
             rounds_remaining: None,
             spell_level: 0,
             innate: false,
+            open_flame: true,
         };
         assert_eq!(torch.level_at_distance(0), LightLevel::Bright);
         assert_eq!(torch.level_at_distance(8), LightLevel::Bright);
@@ -494,6 +512,7 @@ mod tests {
             rounds_remaining: Some(10),
             spell_level: 0,
             innate: false,
+            open_flame: false,
         };
         assert_eq!(
             motes.level_at_distance(0),
@@ -569,6 +588,7 @@ mod tests {
             rounds_remaining: None,
             spell_level: 0,
             innate: false,
+            open_flame: true,
         };
         for (dist, expected) in [
             (0, LightLevel::Bright),

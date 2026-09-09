@@ -17268,6 +17268,7 @@ mod tests {
             rounds_remaining: None,
             spell_level: 0,
             innate: false,
+            open_flame: true,
         });
         assert!(
             super::try_continual_flame(&e, cleric).is_none(),

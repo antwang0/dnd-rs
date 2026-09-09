@@ -1938,6 +1938,18 @@ pub fn resolve_attack_outcome_with_rider(
     {
         tally.add(crate::engine::dice::RollMode::Disadvantage);
     }
+    // SRD 5.2 **Strong Wind**: "strong wind imposes Disadvantage on
+    // ranged attack rolls with weapons."
+    //
+    // Here rather than in the shared `attack_mode_tally` for exactly the
+    // reason the long-range clause directly above is here: RAW names
+    // ranged attacks *with weapons*, the shared sweep does not know
+    // whether it is being walked for a longbow or a Fire Bolt, and this
+    // chokepoint does. A wind that shut down archers and wizards alike
+    // would be a different rule.
+    if !p.is_melee && !p.is_spell && encounter.weather().taxes_ranged_weapons() {
+        tally.add(crate::engine::dice::RollMode::Disadvantage);
+    }
     // …and its mirror at the other end of the reach. 5e's lance: "you
     // have disadvantage when you use a lance to attack a target within
     // 5 feet of you." Unlike the long-range clause this one is *not*

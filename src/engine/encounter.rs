@@ -309,6 +309,7 @@ use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::conjured_terrain::ConjuredTerrain;
 use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
+use crate::engine::weather::Weather;
 use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
@@ -2214,6 +2215,16 @@ pub struct EncounterInstance {
     /// the fully-lit board every encounter behaved as before the
     /// lighting layer existed.
     ambient_light: AmbientLight,
+    /// What the sky is *doing* — see `crate::engine::weather`. `Calm` by
+    /// default, which is the still air every encounter was fought in
+    /// before the weather layer existed.
+    ///
+    /// Sibling to `ambient_light` above rather than part of it, because
+    /// the two answer different questions about the same sky: one is how
+    /// much light there is, the other is what the wind and the rain are
+    /// doing to the fight. A rainy noon is `Daylight` and
+    /// `HeavyPrecipitation` at once.
+    weather: Weather,
     /// Everything currently shedding light: lit torches, Light
     /// cantrips, Daylight spheres.
     ///
@@ -4551,6 +4562,123 @@ impl EncounterInstance {
         self.ambient_light = ambient;
     }
 
+    /// What the sky is doing to this encounter — see
+    /// `crate::engine::weather`.
+    pub fn weather(&self) -> Weather {
+        self.weather
+    }
+
+    /// Set the weather, and put out anything it blows out.
+    ///
+    /// Unlike its sibling `set_ambient_light`, this one has an immediate
+    /// consequence rather than only a standing one: SRD 5.2's wind and
+    /// rain both "extinguish open flames", and a torch that was already
+    /// burning when the storm arrived is exactly the flame that sentence
+    /// is about. Called at setup by the CLI and by tests; nothing in the
+    /// rules changes the weather mid-fight, but the snuff is written to
+    /// survive it being called anyway.
+    pub fn set_weather(&mut self, weather: Weather) {
+        self.weather = weather;
+        self.snuff_open_flames();
+    }
+
+    /// Put out every open flame on the board, if the weather is the kind
+    /// that does that. A no-op in calm air, which is the common case and
+    /// costs one enum compare.
+    ///
+    /// Called from `set_weather` and from `add_light_source`, which
+    /// between them are every way a flame can come to be burning in a
+    /// storm: either the storm arrived and found it lit, or somebody lit
+    /// it in the storm. The second is the one worth having — RAW does
+    /// not let a creature spend an action lighting a torch in a gale and
+    /// keep it, and without the gate at the add site the engine would.
+    fn snuff_open_flames(&mut self) {
+        if !self.weather.snuffs_open_flames() {
+            return;
+        }
+        let doomed: Vec<(usize, &'static str)> = self
+            .light_sources
+            .iter()
+            .filter(|s| s.open_flame)
+            .map(|s| (s.id, s.name))
+            .collect();
+        for (id, name) in doomed {
+            self.remove_light_source(id);
+            self.log(format!(
+                "  the {} gutters out in the {}.",
+                name,
+                self.weather.label()
+            ));
+        }
+    }
+
+    /// SRD 5.2 **Strong Wind**: *"A flying creature in a strong wind
+    /// must land at the end of its turn or fall."*
+    ///
+    /// Called from `advance_initiative` with the id of the creature
+    /// whose turn just closed, which is the only place the engine knows
+    /// whose turn ended — the same hook the regurgitation checks and the
+    /// legendary-action dispatcher read.
+    ///
+    /// **It lands them rather than dropping them**, and the choice is
+    /// RAW's own sentence read the way its subject would read it. The
+    /// clause offers two outcomes and instructs one of them: a creature
+    /// *must land*, and falls only if it does not. Nothing chooses to
+    /// fall. Dropping a dragon for 20d6 at the end of every round it
+    /// spends in a gale would also be a rule nobody has ever played —
+    /// the wind grounds fliers, it does not kill them.
+    ///
+    /// What that costs the flier is still the whole point of the clause:
+    /// they may fly during their turn, and they end it on the ground,
+    /// where a reach weapon can find them and where the next turn starts
+    /// from. A hovering creature is not exempt; RAW writes none.
+    fn ground_fliers_in_the_wind(&mut self, ended: Option<usize>) {
+        if !self.weather.grounds_fliers() {
+            return;
+        }
+        let Some(id) = ended else {
+            return;
+        };
+        if self
+            .actors
+            .get(&id)
+            .is_none_or(|a| !a.is_airborne() || !a.is_combat_active())
+        {
+            return;
+        }
+        let name = self.actor_name(id);
+        if let Some(actor) = self.actors.get_mut(&id) {
+            // Two writes, and they are two different halves of "landed".
+            //
+            // `Earthbound` is the one that *means* something: it is the
+            // engine's "your flying speed is 0 right now, and you keep
+            // your wings", the flag `flight_is_disabled` reads, and so
+            // the thing that actually takes the flier out of the air —
+            // off the difficult-terrain waiver, off the tremorsense
+            // exemption, and back onto its walking speed. Timed
+            // `UntilStartOfNextTurn`, which is exactly RAW's window: the
+            // creature is down from the end of its turn until the start
+            // of its next, and may take off again on its own time.
+            //
+            // `set_altitude_ft(0)` is the one that stops the landing
+            // costing anything. `reconcile_altitudes` charges 1d6 per
+            // ten feet to anybody sitting above their supported
+            // altitude, and Earthbound has just moved this flier's
+            // supported altitude to the floor. Setting the height first
+            // is what makes this a landing rather than a fall — the same
+            // pairing `LandSafely` uses, and for the same reason.
+            actor.set_altitude_ft(0);
+            actor.add_condition(
+                Condition::Earthbound,
+                crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+            );
+        }
+        self.log(format!(
+            "  the wind forces {} down to the ground.",
+            name
+        ));
+    }
+
     /// Every light source currently burning.
     pub fn light_sources(&self) -> &[LightSource] {
         &self.light_sources
@@ -4567,6 +4695,14 @@ impl EncounterInstance {
         self.light_source_id_next += 1;
         source.id = id;
         self.light_sources.push(source);
+        // A torch struck in a gale is a torch that goes straight back
+        // out. Run here rather than at the call sites for the reason
+        // every sweep in this file runs where it does: there are eight
+        // ways to light something and one of them is a magic item's
+        // action, and a gate at the add site is the only one all eight
+        // pass through. Cheap — an enum compare, then nothing at all in
+        // calm air.
+        self.snuff_open_flames();
         id
     }
 
@@ -4665,6 +4801,19 @@ impl EncounterInstance {
             if let Some(dist) = self.distance_from_light(source, coord) {
                 level = level.brighter_of(source.level_at_distance(dist));
             }
+        }
+        // SRD 5.2 **Heavy Precipitation**: "everything within an area of
+        // heavy rain or heavy snowfall is Lightly Obscured", which this
+        // engine spells `LightLevel::Dim`.
+        //
+        // A **cap** rather than a floor, and applied after the sources
+        // rather than to the ambient alone: rain makes a sunlit field
+        // gloomy and a torchlit circle gloomy, and does nothing
+        // whatsoever to a cellar that was already black. Folding it into
+        // `AmbientLight::level` would have got the first two wrong by
+        // letting a torch light straight back through the rain.
+        if self.weather.obscures() {
+            level = level.min(LightLevel::Dim);
         }
         level
     }
@@ -11437,6 +11586,7 @@ impl EncounterInstance {
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
             ambient_light: AmbientLight::default(),
+            weather: Weather::default(),
             light_sources: Vec::new(),
             light_source_id_next: 0,
         }
@@ -13521,6 +13671,12 @@ impl EncounterInstance {
         // board that leaves — and before the queue advances, because
         // the per-turn tally this reads is cleared by the same sweep.
         self.resolve_regurgitation_checks();
+        // SRD 5.2 **Strong Wind**: "a flying creature in a strong wind
+        // must land at the end of its turn or fall." Beside the
+        // regurgitation checks because it is the same kind of clause —
+        // something a creature owes at the close of its own turn — and
+        // read from the same `ended` slot, before the queue moves off it.
+        self.ground_fliers_in_the_wind(ended);
         // The slot moved, so whoever lands in it has not had their turn
         // opened yet — even when the queue has a single actor and the
         // "move" lands back on the same id. `ensure_turn_started` reads
@@ -17314,6 +17470,10 @@ impl EncounterInstance {
                 rounds_remaining: None,
                 spell_level: 0,
                 innate: true,
+                // An azer is not a torch: the wind cannot blow out a
+                // creature that is itself made of fire. See
+                // `engine::weather`.
+                open_flame: false,
             });
         }
 

@@ -14906,6 +14906,295 @@ fn savage_attacker_shifts_the_damage_up() {
     );
 }
 
+/// SRD 5.2 **Strong Wind**: *"Strong wind imposes Disadvantage on ranged
+/// attack rolls with weapons."*
+///
+/// Both halves of the qualifier. The archer eats the wind and the
+/// wizard does not, because RAW names ranged attacks *with weapons* and
+/// a Fire Bolt is not one — which is the whole reason the clause is read
+/// at the weapon chokepoint rather than in the shared attack-mode sweep.
+#[test]
+fn strong_wind_taxes_a_bow_and_leaves_a_fire_bolt_alone() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::monster_attacks::LONGBOW;
+    use crate::actions::spells::FIRE_BOLT;
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::weather::Weather;
+
+    /// One shot from `shooter` at a zombie eight tiles off, and the log
+    /// it wrote. The action is passed in so the two lanes differ in
+    /// exactly the thing under test.
+    fn one_shot(
+        weather: Weather,
+        template: &'static CreatureTemplate,
+        action: &'static (dyn Action + Send + Sync),
+    ) -> String {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.set_weather(weather);
+        let shooter = e
+            .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let before = e.messages().len();
+        for se in ActionExecutionInfo::new(action, shooter, Some(vec![target]), None, None)
+            .execute(&mut e)
+        {
+            se.apply(&mut e);
+        }
+        e.messages()[before..].join("\n")
+    }
+
+    let calm = one_shot(Weather::Calm, &RANGER_TEMPLATE, &LONGBOW);
+    assert!(
+        calm.contains("longbow:") && !calm.contains("(dis)"),
+        "still air costs the archer nothing:\n{calm}"
+    );
+    let windy = one_shot(Weather::StrongWind, &RANGER_TEMPLATE, &LONGBOW);
+    assert!(
+        windy.contains("(dis)"),
+        "a bowshot in a gale rolls twice and takes the worse:\n{windy}"
+    );
+    let spell = one_shot(Weather::StrongWind, &WIZARD_TEMPLATE, &*FIRE_BOLT);
+    assert!(
+        spell.contains("fire bolt:") && !spell.contains("(dis)"),
+        "RAW taxes ranged attacks with *weapons*, and a Fire Bolt is not one:\n{spell}"
+    );
+    let rain = one_shot(Weather::HeavyPrecipitation, &RANGER_TEMPLATE, &LONGBOW);
+    assert!(
+        !rain.contains("(dis)"),
+        "and rain is not wind — the clause belongs to one entry:\n{rain}"
+    );
+}
+
+/// Both weather entries *"extinguish open flames"*, and neither touches
+/// anything else that is shedding light.
+///
+/// The discriminator is `LightSource::open_flame` rather than
+/// `spell_level == 0`, and this is what that distinction is worth: three
+/// of the engine's light sources are cantrips, cantrips are level 0, and
+/// none of the three is a flame.
+#[test]
+fn the_weather_puts_out_open_flames_and_leaves_the_magic_alight() {
+    use crate::engine::lighting::{AmbientLight, LightAnchor, LightSource};
+    use crate::engine::weather::Weather;
+
+    fn board(weather: Weather) -> Vec<&'static str> {
+        let mut e = ei_with_terrain(20, 8, &[]);
+        e.set_ambient_light(AmbientLight::Darkness);
+        for (name, open_flame) in [("torch", true), ("light", false), ("daylight", false)] {
+            e.add_light_source(LightSource {
+                id: 0,
+                name,
+                anchor: LightAnchor::Fixed(Coordinate::new(4, 4)),
+                bright_tiles: 2,
+                dim_tiles: 0,
+                rounds_remaining: None,
+                spell_level: 0,
+                innate: false,
+                open_flame,
+            });
+        }
+        e.set_weather(weather);
+        e.light_sources().iter().map(|s| s.name).collect()
+    }
+
+    assert_eq!(
+        board(Weather::Calm),
+        vec!["torch", "light", "daylight"],
+        "still air leaves everything burning"
+    );
+    assert_eq!(
+        board(Weather::StrongWind),
+        vec!["light", "daylight"],
+        "the wind takes the torch and nothing else"
+    );
+    assert_eq!(
+        board(Weather::HeavyPrecipitation),
+        vec!["light", "daylight"],
+        "and so does the rain — RAW gives both entries the clause"
+    );
+}
+
+/// A torch struck *in* the storm goes out as fast as one the storm found
+/// already lit.
+///
+/// The gate is at `add_light_source` rather than at the eight call sites
+/// that can light something, which is what makes it hold for the magic
+/// item, the AI's torch and the player's alike.
+#[test]
+fn a_torch_lit_in_a_gale_does_not_stay_lit() {
+    use crate::engine::lighting::{AmbientLight, LightAnchor, LightSource};
+    use crate::engine::weather::Weather;
+
+    let mut e = ei_with_terrain(20, 8, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    e.set_weather(Weather::StrongWind);
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "torch",
+        anchor: LightAnchor::Fixed(Coordinate::new(4, 4)),
+        bright_tiles: 4,
+        dim_tiles: 4,
+        rounds_remaining: None,
+        spell_level: 0,
+        innate: false,
+        open_flame: true,
+    });
+    assert!(
+        e.light_sources().is_empty(),
+        "there is no lighting a torch in a gale"
+    );
+    assert_eq!(e.light_at(Coordinate::new(4, 4)), LightLevel::Dark);
+}
+
+/// SRD 5.2 **Heavy Precipitation**: *"Everything within an area of heavy
+/// rain or heavy snowfall is Lightly Obscured."*
+///
+/// A cap on the light and not a floor on the dark — which is the half
+/// worth pinning, because folding it into the ambient level instead
+/// would have let a torch light straight back through the rain.
+#[test]
+fn heavy_rain_dims_a_lit_board_and_leaves_a_dark_one_dark() {
+    use crate::engine::lighting::{AmbientLight, LightAnchor, LightSource};
+    use crate::engine::weather::Weather;
+
+    let here = Coordinate::new(4, 4);
+    let mut e = ei_with_terrain(20, 8, &[]);
+    e.set_ambient_light(AmbientLight::Daylight);
+    assert_eq!(e.light_at(here), LightLevel::Bright);
+    e.set_weather(Weather::HeavyPrecipitation);
+    assert_eq!(
+        e.light_at(here),
+        LightLevel::Dim,
+        "rain makes a sunlit field gloomy"
+    );
+
+    // A magical light inside the rain is still only gloom: the cap runs
+    // after the sources, so nothing can shine back through it.
+    e.add_light_source(LightSource {
+        id: 0,
+        name: "daylight",
+        anchor: LightAnchor::Fixed(here),
+        bright_tiles: 6,
+        dim_tiles: 6,
+        rounds_remaining: None,
+        spell_level: 3,
+        innate: false,
+        open_flame: false,
+    });
+    assert_eq!(e.light_at(here), LightLevel::Dim);
+
+    let mut dark = ei_with_terrain(20, 8, &[]);
+    dark.set_ambient_light(AmbientLight::Darkness);
+    dark.set_weather(Weather::HeavyPrecipitation);
+    assert_eq!(
+        dark.light_at(here),
+        LightLevel::Dark,
+        "and does nothing at all to a cellar that was already black"
+    );
+}
+
+/// SRD 5.2 **Strong Wind**: *"A flying creature in a strong wind must
+/// land at the end of its turn or fall."*
+///
+/// It lands rather than falls, which is RAW's own sentence read the way
+/// its subject would: the clause instructs one of its two outcomes, and
+/// nothing chooses the other. What the flier loses is the air between
+/// its turns, which is the whole tactical point of the rule.
+#[test]
+fn strong_wind_grounds_a_flier_at_the_end_of_its_turn() {
+    use crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE;
+    use crate::engine::weather::Weather;
+
+    /// `(altitude, still in the air, took fall damage)` for an owl whose
+    /// turn has just closed under `weather`.
+    fn after_a_turn(weather: Weather) -> (u32, bool, bool) {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.set_weather(weather);
+        let owl = e
+            .instantiate_creature(&GIANT_OWL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        assert!(
+            e.actors[&owl].is_airborne(),
+            "an owl starts its turn in the air"
+        );
+        let full_hp = e.actors[&owl].hitpoints();
+        // Four advances is more than enough for a two-actor queue to
+        // close the owl's own turn, which is the moment the clause
+        // fires. Advancing rather than acting keeps the fixture to the
+        // one thing under test.
+        for _ in 0..4 {
+            e.advance_initiative();
+        }
+        (
+            e.actors[&owl].altitude_ft(),
+            e.actors[&owl].is_airborne(),
+            e.actors[&owl].hitpoints() < full_hp,
+        )
+    }
+
+    let (altitude, airborne, hurt) = after_a_turn(Weather::Calm);
+    assert!(altitude > 0 && airborne, "in still air the owl stays up");
+    assert!(!hurt);
+
+    let (altitude, airborne, hurt) = after_a_turn(Weather::StrongWind);
+    assert_eq!(altitude, 0, "and in a gale it comes down");
+    assert!(
+        !airborne,
+        "all the way down: the grounding is what takes the owl off the \
+         difficult-terrain waiver and back onto its walking speed, and a \
+         height of zero on its own would have been decoration"
+    );
+    assert!(
+        !hurt,
+        "RAW says the creature *lands*, and a landing costs nothing"
+    );
+}
+
+/// SRD 5.2 **Earthbind**: *"the target's flying speed (if any) becomes 0
+/// feet for the duration"* — and "if any" reaches a flying speed a spell
+/// granted as surely as one a creature was born with.
+///
+/// The condition suppressed innate flight only, which was invisible
+/// while the Earthbind *spell* was its only source: that spell strips
+/// the *Fly* cohort as its other half, so a wizard it caught came down
+/// by the other road. The wind is the second source, it cannot go
+/// around dispelling level-3 spells, and it made the gap show.
+#[test]
+fn earthbound_grounds_a_flying_spell_as_well_as_a_pair_of_wings() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    assert!(
+        e.actors[&wizard].is_airborne(),
+        "a wizard under Fly is in the air"
+    );
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .add_condition(Condition::Earthbound, ConditionTimer::Rounds(10));
+    assert!(
+        !e.actors[&wizard].is_airborne(),
+        "and an earthbound one is not, spell or no spell"
+    );
+    assert!(
+        e.actors[&wizard].has_condition(Condition::Flying),
+        "without the spell having been dispelled — the wings are held, not clipped"
+    );
+}
+
 /// SRD 5.2's Epic Boon category, whole — every constant on
 /// `feats::EPIC_BOON_TAGS` is also on `feats::FEAT_TAGS`, and the two
 /// lists agree on what a boon is.
@@ -44901,6 +45190,7 @@ fn the_gloom_at_the_edge_of_a_torch_is_worth_five_points_of_hiding() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert_eq!(
         e.perceived_light(watcher, e.actors[&rogue].location()),
@@ -82644,6 +82934,7 @@ fn shooting_out_of_the_dark_into_the_light_is_advantage_one_way_only() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert!(
         !e.darkness_blinds(fighter, zombie),
@@ -82694,6 +82985,7 @@ fn a_light_source_lights_a_bright_core_and_a_dim_collar_on_the_board() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert_eq!(e.light_at(Coordinate::new(8, 0)), LightLevel::Bright);
     assert_eq!(e.light_at(Coordinate::new(9, 0)), LightLevel::Dim);
@@ -82717,6 +83009,7 @@ fn a_carried_light_travels_with_its_bearer() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert_eq!(e.light_at(Coordinate::new(1, 2)), LightLevel::Bright);
     assert_eq!(e.light_at(Coordinate::new(20, 2)), LightLevel::Dark);
@@ -82744,6 +83037,7 @@ fn a_dead_bearers_torch_keeps_burning_on_the_tile_they_fell_on() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     e.drop_light_sources_carried_by(fighter);
     e.actors.remove(&fighter);
@@ -82792,6 +83086,7 @@ fn magical_darkness_beats_darkvision_and_beats_a_torch() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert_eq!(e.light_at(sphere), LightLevel::Dark);
     assert_eq!(
@@ -82866,6 +83161,7 @@ fn darkness_snuffs_cheap_light_and_spares_daylight() {
             rounds_remaining: None,
             spell_level: level,
             innate: false,
+            open_flame: false,
         });
     }
     let snuffed = e.dispel_light_in(point, 4, ZoneEffect::DARKNESS_SPELL_LEVEL);
@@ -82934,6 +83230,7 @@ fn a_timed_light_gutters_out_and_an_untimed_one_does_not() {
         rounds_remaining: Some(2),
         spell_level: 3,
         innate: false,
+        open_flame: false,
     });
     e.add_light_source(LightSource {
         id: 0,
@@ -82944,6 +83241,7 @@ fn a_timed_light_gutters_out_and_an_untimed_one_does_not() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     e.round_end();
     assert_eq!(e.light_sources().len(), 2);
@@ -83197,6 +83495,7 @@ fn casting_darkness_installs_the_sphere_and_snuffs_the_torch_under_it() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert_eq!(e.light_at(point), LightLevel::Bright);
 
@@ -83676,6 +83975,7 @@ fn a_huge_bearers_torch_is_centred_on_its_body_and_not_on_its_corner() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     // The body occupies x = 16 ..= 16 + span - 1. `footprint_chebyshev`
     // reports the *gap*, so the last lit tile on either side is
@@ -90077,6 +90377,7 @@ fn a_continual_flame_is_not_lit_where_it_would_add_nothing() {
         rounds_remaining: None,
         spell_level: 0,
         innate: false,
+        open_flame: true,
     });
     assert!(
         !action.custom_validate_input(&e, cleric, None, Some(&vec![spot]), None),

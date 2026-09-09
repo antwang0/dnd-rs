@@ -15,6 +15,7 @@ use crate::app::{App, Tick};
 use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::lighting::AmbientLight;
+use crate::engine::weather::Weather;
 use crate::engine::terrain_gen::TerrainGenParams;
 
 use crossterm::{execute, terminal};
@@ -40,6 +41,11 @@ struct Cli {
     /// cantrip matter, and `daylight` puts the fight under an open sun
     /// where the kobolds and the drow flinch.
     ambient: AmbientLight,
+    /// What the sky is *doing* — see `crate::engine::weather`. Its own
+    /// axis rather than a fifth light level, because the two compose: a
+    /// rainy noon is `daylight` and `--rain` at once. Defaults to the
+    /// still air every fight was fought in before the weather layer.
+    weather: Weather,
 }
 
 /// What `Cli::parse` decided the arguments meant.
@@ -67,6 +73,7 @@ impl Cli {
     fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, String> {
         let mut seed = None;
         let mut ambient = AmbientLight::default();
+        let mut weather = Weather::default();
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
             // Checked before the number parse and before the name
@@ -96,6 +103,19 @@ impl Cli {
                 ambient = a;
                 continue;
             }
+            // The weather, on the same `--` lane and for the same reason:
+            // `rain` and `wind` are not class names, and the prefix is
+            // what keeps them from being read as one. A second lane
+            // rather than a second value on the first, because the two
+            // axes compose — `--daylight --rain` is a legal and
+            // meaningful pair, and a single `ambient` slot could only
+            // hold whichever came last.
+            if let Some(flagless) = arg.strip_prefix("--")
+                && let Some(w) = Weather::parse(flagless)
+            {
+                weather = w;
+                continue;
+            }
             match arg.parse::<u64>() {
                 Ok(n) if seed.is_none() => seed = Some(n),
                 _ => name_parts.push(arg),
@@ -111,6 +131,7 @@ impl Cli {
             seed,
             pc_template,
             ambient,
+            weather,
         }))
     }
 
@@ -118,13 +139,16 @@ impl Cli {
     /// `class_listing` with the unknown-class error so the two can't
     /// disagree about what is playable.
     fn help_message() -> String {
-        let mut msg = String::from("usage: dnd-rs [seed] [class name] [--light-level]\n\n");
+        let mut msg =
+            String::from("usage: dnd-rs [seed] [class name] [--light-level] [--weather]\n\n");
         msg.push_str("Every argument is optional and order-independent: the first\n");
         msg.push_str("argument that parses as a number is the seed, a --flag sets\n");
-        msg.push_str("the light level, and everything else is the class name. With\n");
-        msg.push_str("no seed, one is drawn and printed in the initiative panel so\n");
-        msg.push_str("the encounter can be replayed.\n\n");
+        msg.push_str("the light level or the weather, and everything else is the\n");
+        msg.push_str("class name. With no seed, one is drawn and printed in the\n");
+        msg.push_str("initiative panel so the encounter can be replayed.\n\n");
         msg.push_str(&Self::lighting_listing());
+        msg.push('\n');
+        msg.push_str(&Self::weather_listing());
         msg.push('\n');
         msg.push_str("Classes:\n");
         msg.push_str(&Self::class_listing());
@@ -143,6 +167,18 @@ impl Cli {
         format!(
             "Light levels ({} is the default):\n  {}\n",
             AmbientLight::default().label(),
+            flags.join(", ")
+        )
+    }
+
+    /// The weather options, read off `Weather::NAMES` for the reason
+    /// `lighting_listing` reads off `AmbientLight::NAMES`: the help text
+    /// must not be able to advertise a spelling the parser refuses.
+    fn weather_listing() -> String {
+        let flags: Vec<String> = Weather::NAMES.iter().map(|n| format!("--{}", n)).collect();
+        format!(
+            "Weather ({} is the default):\n  {}\n",
+            Weather::default().label(),
             flags.join(", ")
         )
     }
@@ -192,7 +228,7 @@ fn main() -> io::Result<()> {
             // listing survives on the terminal instead of being wiped
             // by the TUI teardown.
             eprintln!("{}", msg);
-            eprintln!("usage: dnd-rs [seed] [class name] [--light-level]");
+            eprintln!("usage: dnd-rs [seed] [class name] [--light-level] [--weather]");
             std::process::exit(2);
         }
     };
@@ -227,6 +263,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
     let mut encounter = EncounterInstance::from_params(&terrain_params, &actor_params, cli.seed)
         .expect("failed to create encounter");
     encounter.set_ambient_light(cli.ambient);
+    encounter.set_weather(cli.weather);
 
     let n_teams = actor_params.n_teams;
     let mut app = App::new(encounter, terrain_params, actor_params);
@@ -248,7 +285,7 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
 
 #[cfg(test)]
 mod tests {
-    use super::{AmbientLight, Cli, Invocation};
+    use super::{AmbientLight, Cli, Invocation, Weather};
 
     /// Parse and unwrap to a playable configuration. Every test below
     /// but the help ones expects `Play`, so the unwrap is the assertion.
@@ -387,6 +424,34 @@ mod tests {
             assert_eq!(cli.pc_template.name, name);
             assert_eq!(cli.ambient, AmbientLight::default(), "{:?}", args);
         }
+    }
+
+    /// The weather flags are recognised on the same lane as the light
+    /// levels, and the two **compose** — which is the whole reason they
+    /// are separate axes rather than four more values on one enum. A
+    /// rainy noon is a real sky.
+    #[test]
+    fn a_weather_flag_sets_the_sky_and_composes_with_the_light() {
+        assert_eq!(parse(&[]).expect("no args is always valid").weather, Weather::Calm);
+        for args in [
+            &["--wind", "7", "Champion"][..],
+            &["7", "--wind", "Champion"][..],
+            &["7", "Champion", "--wind"][..],
+        ] {
+            let cli = parse(args).unwrap_or_else(|e| panic!("{:?}: {}", args, e));
+            assert_eq!(cli.weather, Weather::StrongWind, "{:?}", args);
+            assert_eq!(cli.seed, Some(7), "{:?}", args);
+            assert_eq!(cli.pc_template.name, "Champion", "{:?}", args);
+        }
+        let both = parse(&["--daylight", "--rain"]).expect("two axes, two flags");
+        assert_eq!(both.ambient, AmbientLight::Daylight);
+        assert_eq!(both.weather, Weather::HeavyPrecipitation);
+        // …and the light flag alone leaves the sky still, so neither
+        // axis can quietly set the other.
+        assert_eq!(
+            parse(&["--dark"]).expect("a bare flag").weather,
+            Weather::Calm
+        );
     }
 
     /// An unrecognized `--flag` is still refused as a class name rather

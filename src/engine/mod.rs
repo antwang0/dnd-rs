@@ -30,5 +30,6 @@ pub mod triggers;
 pub mod types;
 pub mod underwater;
 pub mod util;
+pub mod weather;
 pub mod zones;
 

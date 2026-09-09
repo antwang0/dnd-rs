@@ -8574,6 +8574,22 @@ impl ActorInstance {
         }
         self.has_condition(Condition::Prone)
             || self.has_condition(Condition::Incapacitated)
+            // **Earthbound** — RAW's "the target's flying speed (if any)
+            // becomes 0 feet", which is the third rung of the same
+            // general rule read from the other end: a creature whose
+            // flying speed is zero has had its speed reduced to 0 for
+            // the purpose of staying up.
+            //
+            // The clause is here as well as in `has_innate_flight`
+            // because "if any" is unqualified and the engine keeps a
+            // creature's two ways of flying in two places: wings on the
+            // stat block, and a *Fly* spell on the condition list.
+            // Suppressing only the first left Earthbind's own
+            // definition doing all the work through the *other* half of
+            // the spell — the buff-strip — and left every other route to
+            // this condition (the wind, in `engine::weather`, and any
+            // future one) grounding wyverns and not wizards.
+            || self.has_condition(Condition::Earthbound)
             // Priced off the *unsuppressed* flying base rather than off
             // `speed()`, and that is a hard requirement rather than a
             // preference: `speed()` reads `base_speed_now`, which reads

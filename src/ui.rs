@@ -703,11 +703,24 @@ pub fn render_sideinfo(
     } else {
         format!(" — {}", ambient.label())
     };
+    // The weather rides beside the light on the same terms and for the
+    // same reason: a player whose archer is shooting at disadvantage and
+    // whose torch will not stay lit needs the title to say why, and a
+    // player fighting in still air does not need a word telling them so.
+    // Its own segment rather than folded into the lighting one, because
+    // the two axes are independent — a rainy noon prints both.
+    let weather = encounter.weather();
+    let sky = if weather == crate::engine::weather::Weather::default() {
+        String::new()
+    } else {
+        format!(" — {}", weather.label())
+    };
     let init_title = format!(
-        "Initiative — Round {} — seed {}{}",
+        "Initiative — Round {} — seed {}{}{}",
         encounter.round(),
         encounter.seed(),
-        lighting
+        lighting,
+        sky
     );
     frame.render_widget(
         Paragraph::new(initiative_lines)
@@ -1470,6 +1483,7 @@ mod tests {
             rounds_remaining: None,
             spell_level: 0,
             innate: false,
+            open_flame: true,
         });
         assert!(
             rendered_map(&e).contains(GOBLIN_TEMPLATE.glyph),
@@ -1496,6 +1510,36 @@ mod tests {
         assert!(
             panel.contains("darkness"),
             "an unlit board says so on the panel:\n{}",
+            panel
+        );
+    }
+
+    /// The weather rides the same title on the same terms as the light,
+    /// and the two print side by side rather than one replacing the
+    /// other — a player fighting a rainy midnight needs both words.
+    #[test]
+    fn the_panel_names_the_weather_beside_the_lighting() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::lighting::AmbientLight;
+        use crate::engine::weather::Weather;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0)]);
+        assert!(
+            !rendered_panel(&e).contains("wind"),
+            "still air says nothing about the weather"
+        );
+        e.set_weather(Weather::StrongWind);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("strong wind"),
+            "a gale says so on the panel:\n{}",
+            panel
+        );
+        e.set_ambient_light(AmbientLight::Darkness);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("darkness") && panel.contains("strong wind"),
+            "and a dark, windy board says both:\n{}",
             panel
         );
     }

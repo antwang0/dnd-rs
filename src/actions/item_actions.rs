@@ -5546,6 +5546,9 @@ impl Action for LightTorch {
             // creature carries, not things it is. See
             // `LightSource::innate`.
             innate: false,
+            // A fire somebody lit, and therefore the one light on the
+            // board the weather can put out. See `engine::weather`.
+            open_flame: true,
         });
         let name = encounter.actor_name(caster_id);
         encounter.log(format!("{} lights a torch.", name));
@@ -5702,6 +5705,7 @@ impl Action for KindleWeapon {
             spell_level: 3,
             // Carried, not innate: the wielder can drop it.
             innate: false,
+            open_flame: false,
         });
         let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));

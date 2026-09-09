@@ -11025,6 +11025,7 @@ impl Action for Daylight {
             // creature carries, not things it is. See
             // `LightSource::innate`.
             innate: false,
+            open_flame: false,
         });
         encounter
             .ally_burst_targets(caster_id, point, Self::RADIUS)
@@ -11174,6 +11175,7 @@ impl Action for DancingLights {
             // Light cantrip.
             spell_level: 0,
             innate: false,
+            open_flame: false,
         });
         encounter.log("  dancing lights: four pale motes drift out over the dark.".to_string());
         // A bare concentration mark: the spell installs no condition on
@@ -20991,6 +20993,7 @@ impl Action for Light {
             // creature carries, not things it is. See
             // `LightSource::innate`.
             innate: false,
+            open_flame: false,
         });
         let name = encounter.actor_name(target_id);
         encounter.log(format!("  {} begins to glow.", name));
@@ -21131,6 +21134,11 @@ impl Action for ContinualFlame {
             // whole subject is a light that dies with its bearer. This
             // one has no bearer to die.
             innate: false,
+            // A flame, and not an open one: RAW's continual flame
+            // "can be covered or hidden but not smothered or
+            // quenched", which is the sentence that keeps it lit in a
+            // gale. See `engine::weather`.
+            open_flame: false,
         });
         encounter.log(format!("  a continual flame springs up at {}.", point));
         Vec::new()
@@ -21271,6 +21279,7 @@ impl Action for StarryWisp {
             // burning where it fell, which is what RAW's "emits Dim
             // Light" describes and what `LightSource::innate` is for.
             innate: false,
+            open_flame: false,
         });
         let name = encounter.actor_name(target_id);
         encounter.log(format!("  a mote of starlight clings to {}.", name));
