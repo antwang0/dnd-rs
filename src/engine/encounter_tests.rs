@@ -15418,6 +15418,220 @@ fn clouds_jaunt_blinks_the_goliath_across_the_room() {
     );
 }
 
+/// SRD 5.2 Androsphinx **Roar (3/Day)**: *"Whenever it roars, the roar
+/// has a different effect."*
+///
+/// All three, in order, off one action and one pool. The engine
+/// shipped the first roar on a recharge for a long time and said so in
+/// its own docstring; this is the test that the other two exist.
+#[test]
+fn the_sphinxs_three_roars_escalate() {
+    use crate::actions::class_features::{ROAR_TAG, ROAR_USES};
+    use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain_seeded(24, 24, &[], 4);
+    let sphinx = e
+        .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblins: Vec<usize> = (0..4)
+        .map(|i| {
+            e.instantiate_creature(
+                &GOBLIN_TEMPLATE,
+                Coordinate::new(10, 4 + i as isize * 2),
+                1,
+                i,
+            )
+            .unwrap()
+        })
+        .collect();
+    e.pop_prompt();
+    let roar = e.actors[&sphinx]
+        .actions
+        .iter()
+        .find(|a| a.name() == "roar")
+        .copied()
+        .expect("the sphinx roars");
+    assert_eq!(
+        e.actors[&sphinx].feature_charges_remaining(ROAR_TAG),
+        ROAR_USES,
+        "three a day, per RAW"
+    );
+
+    /// Roar once and hand back the log lines it produced.
+    fn roar_once(
+        e: &mut EncounterInstance,
+        sphinx: usize,
+        roar: &'static (dyn crate::actions::action_template::Action + Send + Sync),
+    ) -> Vec<String> {
+        let before = e.messages().len();
+        e.actors.get_mut(&sphinx).unwrap().reset_for_new_round();
+        let here = e.actors[&sphinx].location();
+        let aei = ActionExecutionInfo::new(roar, sphinx, None, Some(vec![here]), None);
+        assert!(aei.validate(e), "an unspent roar is takeable");
+        e.push_action(aei);
+        e.process_stack();
+        e.messages()[before..].to_vec()
+    }
+
+    let first = roar_once(&mut e, sphinx, roar).join("\n");
+    assert!(first.contains("the first roar"), "{first}");
+    assert!(
+        goblins
+            .iter()
+            .any(|g| e.actors.get(g).is_some_and(|a| a
+                .has_condition(Condition::Frightened))),
+        "the first roar frightens"
+    );
+
+    let second = roar_once(&mut e, sphinx, roar).join("\n");
+    assert!(second.contains("the second roar"), "{second}");
+    let paralysed = goblins
+        .iter()
+        .copied()
+        .find(|g| e.actors.get(g).is_some_and(|a| a.has_condition(Condition::Paralyzed)))
+        .expect("the second roar paralyses");
+    assert!(
+        e.repeat_save_pending(paralysed, Condition::Paralyzed),
+        "and owes its victim a save every turn — the clause the old \
+         collapse could not express"
+    );
+
+    let hp_before: u32 = goblins
+        .iter()
+        .filter_map(|g| e.actors.get(g).map(|a| a.hitpoints()))
+        .sum();
+    let third = roar_once(&mut e, sphinx, roar).join("\n");
+    assert!(third.contains("the third roar"), "{third}");
+    let hp_after: u32 = goblins
+        .iter()
+        .filter_map(|g| e.actors.get(g).map(|a| a.hitpoints()))
+        .sum();
+    assert!(hp_after < hp_before, "the third roar is the one that hurts");
+
+    assert_eq!(e.actors[&sphinx].feature_charges_remaining(ROAR_TAG), 0);
+    e.actors.get_mut(&sphinx).unwrap().reset_for_new_round();
+    let here = e.actors[&sphinx].location();
+    let aei = ActionExecutionInfo::new(roar, sphinx, None, Some(vec![here]), None);
+    assert!(!aei.validate(&e), "and there is no fourth roar");
+}
+
+/// SRD 5.2's *"repeats the save at the end of each of its turns,
+/// ending the effect on itself on a success"* — for an effect nobody is
+/// concentrating on.
+///
+/// The lane `ROUND_END_SAVES` could not serve, and the reason half a
+/// dozen stat blocks had collapsed their escape clause into a flat
+/// timer. See `crate::engine::repeat_saves`.
+#[test]
+fn a_repeat_save_frees_its_victim_and_a_hopeless_one_does_not() {
+    use crate::actions::monster_attacks::PARALYSING_ROAR;
+    use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    for (dc, escapes) in [(1, true), (99, false)] {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], 2);
+        let sphinx = e
+            .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        e.begin_repeat_save(
+            fighter,
+            sphinx,
+            dc,
+            &PARALYSING_ROAR,
+            ConditionTimer::Rounds(10),
+        );
+        assert!(e.actors[&fighter].has_condition(Condition::Paralyzed));
+        assert!(e.repeat_save_pending(fighter, Condition::Paralyzed));
+
+        e.tick_repeat_saves(fighter);
+        assert_eq!(
+            !e.actors[&fighter].has_condition(Condition::Paralyzed),
+            escapes,
+            "DC {dc}: the repeat is a real roll, not a formality"
+        );
+        assert_eq!(
+            !e.repeat_save_pending(fighter, Condition::Paralyzed),
+            escapes,
+            "DC {dc}: a victim still caught is still owed its next save"
+        );
+    }
+}
+
+/// The ledger drops an entry the moment the condition leaves by some
+/// other route — a Dispel, an ally's Greater Restoration, the timer
+/// running out.
+///
+/// RAW's repeat is conditioned on still being caught, and an entry that
+/// outlived its condition would roll dice every round for nothing and
+/// print a line about a paralysis nobody has.
+#[test]
+fn a_repeat_save_lapses_with_the_condition_it_was_written_for() {
+    use crate::actions::monster_attacks::PARALYSING_ROAR;
+    use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 6);
+    let sphinx = e
+        .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    // A DC nobody makes, so a lapse can only be the condition leaving.
+    e.begin_repeat_save(
+        fighter,
+        sphinx,
+        99,
+        &PARALYSING_ROAR,
+        ConditionTimer::Rounds(10),
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .remove_condition(Condition::Paralyzed);
+    e.tick_repeat_saves(fighter);
+    assert!(!e.repeat_save_pending(fighter, Condition::Paralyzed));
+}
+
+/// A creature immune to the condition is owed no escape from it,
+/// because it never had it.
+///
+/// The install bounces at `add_condition`, and an entry behind a
+/// bounced install would be a ledger row nothing could ever clear.
+#[test]
+fn a_repeat_save_is_not_owed_to_something_that_shrugged_the_condition_off() {
+    use crate::actions::monster_attacks::PARALYSING_ROAR;
+    use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+    use crate::actors::creatures::flesh_golems::FLESH_GOLEM_TEMPLATE;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 8);
+    let sphinx = e
+        .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let golem = e
+        .instantiate_creature(&FLESH_GOLEM_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    assert!(
+        e.actors[&golem].effectively_immune_to_condition(Condition::Paralyzed),
+        "the fixture only means anything if the golem really is immune"
+    );
+    e.begin_repeat_save(
+        golem,
+        sphinx,
+        99,
+        &PARALYSING_ROAR,
+        ConditionTimer::Rounds(10),
+    );
+    assert!(!e.repeat_save_pending(golem, Condition::Paralyzed));
+}
+
 /// 5e **Slow**: *"it can't take Reactions."*
 #[test]
 fn a_slowed_creature_has_no_reaction() {
@@ -90704,6 +90918,121 @@ fn shaking_the_first_rung_loose_ends_the_ladder() {
     panic!("a DC 11 save fails somewhere in forty seeds");
 }
 
+/// A ladder that ends in paralysis hands its victim a way off it; one
+/// that ends in stone does not.
+///
+/// The distinction is RAW's, printed in the two stat blocks. The silver
+/// dragon's Paralyzing Breath says *"it repeats the save at the end of
+/// each of its turns … After 1 minute, it succeeds automatically"*; the
+/// four petrification ladders say *"only a Greater Restoration spell or
+/// similar magic can end this condition"*. The engine used to give
+/// neither one a repeat, which turned a silver dragon's second breath
+/// into a flat three rounds of paralysis with no roll to be made.
+#[test]
+fn only_the_ladders_raw_says_so_of_can_be_shaken_off() {
+    use crate::engine::staged_saves::{PARALYZING_BREATH, PETRIFICATION};
+
+    assert!(
+        PARALYZING_BREATH.second_escape.is_some(),
+        "RAW's silver dragon lets its victims keep rolling"
+    );
+    assert!(
+        PETRIFICATION.second_escape.is_none(),
+        "and RAW's basilisk does not"
+    );
+    assert_eq!(
+        PARALYZING_BREATH.second_escape.map(|c| c.condition),
+        Some(Condition::Paralyzed),
+        "the escape has to name the rung it is an escape from"
+    );
+}
+
+/// Falling off the second rung of a shakeable ladder registers the
+/// escape, and the escape actually frees the victim.
+///
+/// Driven through the ladder rather than through a dragon, because what
+/// is under test is the seam between the two ledgers: `tick_staged_save`
+/// resolving into `begin_repeat_save`, and `tick_repeat_saves` picking
+/// the victim up from there.
+#[test]
+fn a_paralysing_ladder_hands_its_victim_off_to_the_escape_ledger() {
+    use crate::actors::creatures::dragons::ADULT_SILVER_DRAGON_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::staged_saves::PARALYZING_BREATH;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 3);
+    let dragon = e
+        .instantiate_creature(&ADULT_SILVER_DRAGON_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    // A DC nothing makes, so the ladder's second rung is reached for
+    // certain and the test is about what happens there rather than
+    // about the dice.
+    e.begin_staged_save(victim, dragon, 99, &PARALYZING_BREATH);
+    assert!(e.staged_save_pending(victim));
+    // Two ticks: the first spends `opened_this_round`, the second rolls.
+    e.tick_staged_save(victim);
+    e.tick_staged_save(victim);
+    assert!(
+        e.actors[&victim].has_condition(Condition::Paralyzed),
+        "the ladder resolved onto its second rung"
+    );
+    assert!(
+        e.repeat_save_pending(victim, Condition::Paralyzed),
+        "and handed the victim to the escape ledger"
+    );
+
+    // The escape is a real roll: at DC 1 the fighter is out on the
+    // first try.
+    e.repeat_saves.clear();
+    e.begin_repeat_save(
+        victim,
+        dragon,
+        1,
+        PARALYZING_BREATH
+            .second_escape
+            .expect("this ladder has an escape"),
+        ConditionTimer::Rounds(10),
+    );
+    e.tick_repeat_saves(victim);
+    assert!(!e.actors[&victim].has_condition(Condition::Paralyzed));
+}
+
+/// SRD 5.2 **Sword of Wounding**: *"The target repeats the save at the
+/// end of each of its turns, ending the effect on itself on a
+/// success."*
+///
+/// The clause the blade shipped without, and the direction its absence
+/// pointed: RAW's hour was collapsed to ten rounds, which is shorter,
+/// but ten rounds nobody can roll out of is crueller than an hour a
+/// good Constitution save ends on the first try.
+#[test]
+fn a_sword_wound_can_be_shaken_off() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::SWORD_WOUND;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 9);
+    let swinger = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    assert_eq!(SWORD_WOUND.condition, Condition::Wounded);
+    e.begin_repeat_save(victim, swinger, 1, &SWORD_WOUND, ConditionTimer::Rounds(10));
+    assert!(!e.actors[&victim].can_regain_hitpoints());
+    e.tick_repeat_saves(victim);
+    assert!(
+        e.actors[&victim].can_regain_hitpoints(),
+        "a DC the victim makes closes the wound"
+    );
+}
+
 /// A creature already immune to the first rung never starts the ladder.
 /// A skeleton cannot be Restrained by creeping stone it has no muscles
 /// for, and a ladder with no first rung has nothing to escalate from.
@@ -91327,6 +91656,62 @@ fn a_sphinx_can_reach_its_own_roar() {
     assert!(
         reached,
         "a sphinx with two adventurers across the room should reach for its roar"
+    );
+}
+
+/// …and so can the androsphinx, which for the whole of its life could
+/// not.
+///
+/// The sibling of the test above, and a different bug with the same
+/// symptom. The Sphinx of Lore's roar was invisible to the AI because
+/// no candidate aim point was ever legal; the androsphinx's was
+/// invisible because it declared `TargetingSchema::NoArgs`, and every
+/// rung that looks for an area action asks the schema for its shape.
+/// A CR-17 boss's signature ability had never once been selected, and
+/// nothing said so — an ability nobody uses looks exactly like an
+/// ability nobody needed.
+///
+/// Pinned on the androsphinx specifically rather than swept over the
+/// roster, because the sweep would be the wrong test: plenty of actions
+/// are deliberately unreachable by the AI (the player's own utility
+/// actions, the reaction lanes). What is not deliberate is a monster's
+/// best Action being one of them.
+#[test]
+fn the_androsphinx_can_reach_its_own_roar() {
+    use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let mut reached = false;
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(40, 24, &[], seed);
+        let sphinx = e
+            .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(4, 10), 1, 0)
+            .unwrap();
+        // Out past the roar's own aim leash, so the sphinx's tile is the
+        // only candidate — the same fixture the Sphinx of Lore's test
+        // uses, and out of claw reach so a swing is not the better
+        // answer.
+        for i in 0..2usize {
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(22, 8 + 4 * i as isize),
+                0,
+                i,
+            )
+            .unwrap();
+        }
+        if let ControllerDecision::Act(aei) = SimpleAi.decide(&e, sphinx)
+            && aei.action().name() == "roar"
+        {
+            reached = true;
+            break;
+        }
+    }
+    assert!(
+        reached,
+        "the androsphinx should reach for the ability its whole stat block is built around"
     );
 }
 

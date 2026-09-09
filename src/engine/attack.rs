@@ -4149,6 +4149,23 @@ pub enum FollowUpEffect {
         condition: Condition,
         timer: ConditionTimer,
     },
+    /// Apply a condition the victim can roll its way back out of —
+    /// SRD 5.2's *"The target repeats the save at the end of each of
+    /// its turns, ending the effect on itself on a success."*
+    ///
+    /// The sibling of `Condition` above and distinguished from it by
+    /// exactly one clause, which is why it is a variant rather than an
+    /// `Option<&RepeatSave>` field on that one: a rider either grants
+    /// the escape or it does not, and every existing row means "does
+    /// not".
+    ///
+    /// `timer` is still RAW's cap — the hour or the minute the effect
+    /// lasts if nobody ever makes the save — and the ledger in
+    /// `engine::repeat_saves` is what happens before it is reached.
+    RepeatingCondition {
+        clause: &'static crate::engine::repeat_saves::RepeatSave,
+        timer: ConditionTimer,
+    },
     /// Push the target `tiles` away from the attacker. Used by the
     /// Battle Master Pushing Attack maneuver. No condition apply —
     /// the displacement IS the effect.
@@ -6120,11 +6137,21 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
         // 5e **Sword of Wounding** (Weapon, one of six blades; Rare):
         // "the target takes an extra 2d6 Necrotic damage and must
         // succeed on a DC 15 Constitution saving throw or be unable to
-        // regain Hit Points for 1 hour."
+        // regain Hit Points for 1 hour. The target repeats the save at
+        // the end of each of its turns, ending the effect on itself on
+        // a success."
         //
         // The wound is the point rather than the die: 2d6 necrotic is
         // ordinary, and a healer who cannot close it changes what a
         // fight is. See `Condition::Wounded`.
+        //
+        // The last sentence is the one that used to be missing, and its
+        // absence pointed the wrong way: RAW's hour collapsed to ten
+        // rounds, which is shorter, but ten rounds with no way out is
+        // *worse* than an hour a good Constitution save shrugs off in
+        // one. The escape is a row on `engine::repeat_saves` now, and
+        // the ten rounds are RAW's hour as before — a cap the repeats
+        // race rather than a sentence.
         OnHitRider {
             condition: Condition::Wounding,
             dice: Dice::new(2, 6),
@@ -6136,8 +6163,8 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 save_ability: Some(AbilityScoreType::Constitution),
                 dc_ability: AbilityScoreType::Constitution,
                 fixed_dc: Some(15),
-                effect: FollowUpEffect::Condition {
-                    condition: Condition::Wounded,
+                effect: FollowUpEffect::RepeatingCondition {
+                    clause: &SWORD_WOUND,
                     timer: ConditionTimer::Rounds(10),
                 },
                 label: "sword of wounding wound",
@@ -6147,6 +6174,22 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
         },
 ];
+
+/// SRD 5.2 **Sword of Wounding**: *"The target repeats the save at the
+/// end of each of its turns, ending the effect on itself on a
+/// success."*
+///
+/// The blade's whole point is the wound rather than the die, and this
+/// is the clause that keeps the wound from being strictly crueller than
+/// the book — see the rider row for why its absence pointed the wrong
+/// way.
+pub static SWORD_WOUND: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "sword of wounding",
+        condition: Condition::Wounded,
+        ability: AbilityScoreType::Constitution,
+        escaped_flavor: "closes the wound at last",
+    };
 
 /// Every once-per-turn ledger key `ON_HIT_RIDERS` writes through, read
 /// back out of the private table.
@@ -6256,6 +6299,20 @@ fn apply_smite_follow_up(
             return false;
         }
     }
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return false;
+    };
+    // A rider that prints its own DC uses it; everything else derives
+    // one from the holder. See `SmiteFollowUp::fixed_dc`.
+    //
+    // Computed ahead of the save branch rather than inside it, because
+    // the effect can want the number even when there was no roll:
+    // `FollowUpEffect::RepeatingCondition` hands the DC to the escape
+    // ledger, and RAW's repeat is "repeats the save" — the same DC,
+    // whether or not a first save was ever rolled.
+    let dc = follow
+        .fixed_dc
+        .unwrap_or_else(|| caster.spell_save_dc(follow.dc_ability));
     let Some(save_ability) = follow.save_ability else {
         encounter.log(format!("  {}: auto-apply on hit", follow.label));
         push_follow_up_effect(
@@ -6265,17 +6322,10 @@ fn apply_smite_follow_up(
             target_id,
             follow.effect,
             follow.label,
+            dc,
         );
         return true;
     };
-    let Some(caster) = encounter.actors.get(&caster_id) else {
-        return false;
-    };
-    // A rider that prints its own DC uses it; everything else derives
-    // one from the holder. See `SmiteFollowUp::fixed_dc`.
-    let dc = follow
-        .fixed_dc
-        .unwrap_or_else(|| caster.spell_save_dc(follow.dc_ability));
     let save = encounter.roll_save(target_id, save_ability, dc);
     if save.passed() {
         encounter.log(format!("  {}: target saves", follow.label));
@@ -6289,6 +6339,7 @@ fn apply_smite_follow_up(
         target_id,
         follow.effect,
         follow.label,
+        dc,
     );
     true
 }
@@ -6306,6 +6357,7 @@ fn apply_smite_follow_up(
 /// themselves. It used to be hardcoded to "sweeping attack" inside the
 /// `Splash` arm, which was true of the only row that used the variant
 /// and would have quietly mislabeled the next one.
+#[allow(clippy::too_many_arguments)]
 fn push_follow_up_effect(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
@@ -6313,6 +6365,7 @@ fn push_follow_up_effect(
     target_id: usize,
     effect: FollowUpEffect,
     label: &'static str,
+    dc: i32,
 ) {
     match effect {
         FollowUpEffect::Condition { condition, timer } => {
@@ -6336,6 +6389,16 @@ fn push_follow_up_effect(
             {
                 effects.push(link);
             }
+        }
+        FollowUpEffect::RepeatingCondition { clause, timer } => {
+            // Applied on the spot rather than queued, because the
+            // escape writes an encounter ledger alongside the condition
+            // and only the encounter can do that. The two must land
+            // together — an entry behind a condition that has not been
+            // installed yet would be an escape from nothing, and a
+            // condition without its entry is the crueller effect this
+            // variant exists to stop shipping.
+            encounter.begin_repeat_save(target_id, caster_id, dc, clause, timer);
         }
         FollowUpEffect::Push { tiles } => {
             let Some(caster) = encounter.actors.get(&caster_id) else {

@@ -6,7 +6,8 @@ use crate::engine::attack::{CHARGE_RUN_TILES, ChargeRider, charge_run_tiles};
 use crate::{
     actions::action_template::{
         Action, MELEE_REACH, TargetingSchema, actor_has_recharge, bonus_action_only,
-        first_target_id, first_target_location, target_has_condition,
+        first_target_id, first_target_location, install_condition_on_failed_saves,
+        resolve_burst_targets, target_has_condition,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -15,6 +16,7 @@ use crate::{
         dice::Dice,
         encounter::EncounterInstance,
         mastery::{MasteryRider, WeaponMastery},
+        saves::SaveDamagePolicy,
         side_effects::{ApplicableSideEffect, DealDamage, Resource},
         swallow::{RegurgitationClause, SwallowProfile},
         types::{AbilityScoreType, Coordinate, DamageType, Size},
@@ -12343,20 +12345,34 @@ impl Action for MetallicBreath {
                     ));
                 }
                 MetallicBreathEffect::Weaken => {
-                    effects.push(Box::new(
-                        crate::engine::side_effects::ApplyCondition {
-                            actor_id: tid,
-                            condition: Condition::Enfeebled,
-                            // RAW lets the target repeat the save at
-                            // the end of each of its turns. The engine's
-                            // repeated-save table is anchored on a
-                            // concentrating caster and a dragon is not
-                            // concentrating, so the escape collapses
-                            // into a short timer — three rounds, which
-                            // is about what a middling save buys.
-                            timer: ConditionTimer::Rounds(3),
-                        },
-                    ));
+                    // RAW: "It repeats the save at the end of each of
+                    // its turns, ending the effect on itself on a
+                    // success. After 1 minute, it succeeds
+                    // automatically."
+                    //
+                    // Both halves ship. The minute is the condition's
+                    // own ten-round timer and the repeat is a row on
+                    // `engine::repeat_saves` — the lane that exists
+                    // precisely because a dragon is not concentrating
+                    // on its own breath. This used to be a flat three
+                    // rounds with a comment saying three rounds "is
+                    // about what a middling save buys", which is true
+                    // of the median and false of everything either side
+                    // of it: a Strength-save fighter should shrug this
+                    // off on the first try and a wizard should
+                    // sometimes still be weakened a minute later.
+                    //
+                    // Opened on the spot rather than queued, for the
+                    // same reason the ladder arm above is: the escape
+                    // writes an encounter ledger alongside the
+                    // condition, and only the encounter can do that.
+                    encounter.begin_repeat_save(
+                        tid,
+                        caster_id,
+                        self.dc,
+                        &WEAKENING_BREATH,
+                        ConditionTimer::Rounds(10),
+                    );
                 }
             }
         }
@@ -14338,22 +14354,149 @@ pub static ANDROSPHINX_CLAW: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-/// Androsphinx Roar — every enemy within radius 10 (50 ft) with line-of-
-/// sight makes a DC 18 WIS save or is Frightened for 10 rounds. Recharge
-/// 5-6 via the shared `"breath_weapon"` pool — RAW frames the three Roars
-/// (First / Second / Third) as a per-day escalating-effect series; we
-/// collapse the three-tier ladder to the Frightened-on-fail base effect
-/// since the engine's recharge chassis fits cleanly into the start-of-turn
-/// refresher without per-day bookkeeping.
+/// The androsphinx's **Roar** — SRD 5.2's three-in-one, in full.
 ///
-/// LOS-gated: a Roar travels by sound but RAW requires the target to hear
-/// the sphinx; we approximate by routing through
-/// `resolve_los_glare_condition` so an enemy behind a heavy stone wall
-/// shrugs off the burst (matches Mummy Lord Dreadful Glare's shape). The
-/// `skip_immune_to_damage` arg is `None` — Frightened immunity is checked
-/// at the install site by `add_condition` rather than the damage-type
-/// proxy used for undead vs glare.
+/// > *Roar (3/Day). The sphinx emits a magical roar. Whenever it roars,
+/// > the roar has a different effect, as detailed below (the sequence
+/// > resets when it takes a Long Rest).*
+///
+/// | roar | save | on a failure |
+/// |------|------|--------------|
+/// | first | WIS DC 18 | Frightened for a minute |
+/// | second | WIS DC 18 | Paralyzed, repeating the save every turn |
+/// | third | CON DC 18 | 8d10 Thunder and Prone; half damage on a success |
+///
+/// The escalation is the stat block. A sphinx that roars three times in
+/// a fight opens with fear, follows with a paralysis half the party
+/// will not shake off for two rounds, and finishes by putting whoever
+/// is left on the floor — and it is the only creature on this roster
+/// whose signature ability is *different each time it is used*.
+///
+/// It had been collapsed to the first roar on a recharge, with the
+/// collapse written down in its own docstring: *"we collapse the
+/// three-tier ladder to the Frightened-on-fail base effect since the
+/// engine's recharge chassis fits cleanly into the start-of-turn
+/// refresher without per-day bookkeeping."* Two things had changed
+/// since. The per-day bookkeeping exists — `FEATURE_CHARGES` rations
+/// half the roster — and so does the paralysis clause's other half:
+/// `engine::repeat_saves` is what lets a creature nobody is
+/// concentrating on grant its victims a way out.
+///
+/// The collapse was also load-bearing in a way nobody intended. The AI
+/// finds area actions by asking for their `targeting_schema`'s shape,
+/// and the old Roar declared `NoArgs` — so a CR-17 boss's signature
+/// ability was unreachable by every AI rung in the engine, and had
+/// been since it was written. It is a `Burst` now, which is what RAW's
+/// Emanation has always been, and the sphinx roars unprompted.
+///
+/// ## Where it diverges
+///
+/// **The radius.** RAW's is a 500-foot Emanation — the whole dungeon.
+/// `ROAR_RADIUS` is 24 tiles, which covers any board the engine
+/// generates, and is the same compression the Sphinx of Lore's
+/// Mind-Rending Roar already makes for the same reason.
+///
+/// **The DC.** RAW's Sphinx of Valor roars at DC 20 off a +6
+/// proficiency bonus. This chassis keeps the DC 18 the ability shipped
+/// with, which is what the rest of its stat line is priced against.
+///
+/// **The audience.** RAW scopes every roar to *enemies*, and so does
+/// this: `spares_allies` is true and the target list comes from
+/// `enemy_burst_targets`. A sphinx that paralysed its own guardians
+/// would be reading the wrong word in its own stat block.
+///
+/// Hearing, not sight. RAW's clause is an Emanation with no line-of-
+/// sight requirement at all, and the engine's nearest reading is the
+/// audible-burst lane — a pillar does not stop a roar.
 pub struct AndrosphinxRoar {}
+
+/// How far the roar carries, in tiles.
+///
+/// RAW's 500-foot Emanation is 200 tiles on the 2.5 ft grid, which is
+/// larger than any board the terrain generator makes. 24 is the same
+/// number the Sphinx of Lore's roar uses and means the same thing:
+/// everything hostile hears it.
+const ROAR_RADIUS: isize = 24;
+
+/// The roar's save DC, shared by all three stages.
+///
+/// One constant because RAW gives the three roars one DC, and the two
+/// abilities they roll against — Wisdom for the first two, Constitution
+/// for the third — are the only thing that changes.
+const ROAR_DC: i32 = 18;
+
+/// SRD 5.2's metallic **Weakening Breath**: *"It repeats the save at
+/// the end of each of its turns, ending the effect on itself on a
+/// success. After 1 minute, it succeeds automatically."*
+///
+/// Strength, because that is the save the breath opened with — RAW says
+/// *repeats* the save, and the gold and brass dragons' breath is a
+/// Strength save.
+pub static WEAKENING_BREATH: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "weakening breath",
+        condition: Condition::Enfeebled,
+        ability: AbilityScoreType::Strength,
+        escaped_flavor: "finds their strength again",
+    };
+
+/// SRD 5.2's *"the target has the Paralyzed condition, and it repeats
+/// the save at the end of each of its turns, ending the effect on
+/// itself on a success. After 1 minute, it succeeds automatically."*
+///
+/// The whole of the Second Roar's failure branch, and the first
+/// occupant of the `repeat_saves` lane. The minute is the condition's
+/// own ten-round timer; this is what happens before it runs out.
+pub static PARALYSING_ROAR: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "paralysing roar",
+        condition: Condition::Paralyzed,
+        ability: AbilityScoreType::Wisdom,
+        escaped_flavor: "shakes the ringing out of their head and moves again",
+    };
+
+/// Which roar this is. The sphinx's charge pool counts down, so the
+/// stage counts up from what is left.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RoarStage {
+    /// *"Wisdom Saving Throw … Failure: The target has the Frightened
+    /// condition for 1 minute."*
+    Fear,
+    /// *"Failure: The target has the Paralyzed condition, and it
+    /// repeats the save at the end of each of its turns."*
+    Paralysis,
+    /// *"Constitution Saving Throw … Failure: 44 (8d10) Thunder damage,
+    /// and the target has the Prone condition. Success: Half damage
+    /// only."*
+    Thunder,
+}
+
+impl RoarStage {
+    /// Read the stage off what is left of the pool.
+    ///
+    /// Derived rather than stored, which is what keeps the sequence and
+    /// the resource from ever disagreeing: there is one number, the
+    /// charge count, and both "may I roar" and "which roar is this"
+    /// read it. A separate stage counter would need its own reset on a
+    /// long rest, and RAW resets both in the same sentence.
+    /// Called with what is left *before* the roar is spent, so the
+    /// difference from the full pool is the sequence position: nothing
+    /// spent is the first roar, one spent is the second, and everything
+    /// after is the third.
+    ///
+    /// Subtracting rather than matching the count directly is what
+    /// keeps this honest if the pool ever changes size. RAW's three
+    /// uses and three roars line up exactly; a fourth use would be a
+    /// fourth *roar*, and RAW does not print one, so the last one
+    /// repeats rather than the sequence wrapping back to fear.
+    fn from_remaining(remaining: u32) -> RoarStage {
+        match crate::actions::class_features::ROAR_USES.saturating_sub(remaining) {
+            0 => RoarStage::Fear,
+            1 => RoarStage::Paralysis,
+            _ => RoarStage::Thunder,
+        }
+    }
+}
 
 impl Action for AndrosphinxRoar {
     fn name(&self) -> &str {
@@ -14363,13 +14506,39 @@ impl Action for AndrosphinxRoar {
         vec!["roar-s", "sphinx-roar"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
+        TargetingSchema::Burst {
+            radius: ROAR_RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // An Emanation is not thrown: the aim point names the sphinx's
+        // own body. Same leash the Mind-Rending Roar uses, and for the
+        // same reason.
+        Some(EMANATION_AIM_LEASH)
+    }
+    fn requires_los(&self) -> bool {
+        // Of the aim point, which is the sphinx's own tile. The roar's
+        // *targets* are not sight-gated — see the docstring.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn spares_allies(&self) -> bool {
+        // RAW: "each enemy in a 500-foot Emanation".
+        true
     }
     fn deals_damage(&self) -> bool {
-        false
+        // The third roar does. Declared unconditionally because the
+        // trait answers per action rather than per use, and the
+        // conservative direction here is the honest one: an AI rung
+        // that prices this as a damage option is right one time in
+        // three and wrong in the direction of using a boss's best
+        // ability.
+        true
     }
     fn damage_types(&self) -> Vec<DamageType> {
-        Vec::new()
+        vec![DamageType::Thunder]
     }
     fn custom_validate_input(
         &self,
@@ -14379,7 +14548,9 @@ impl Action for AndrosphinxRoar {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        actor_has_recharge(encounter, caster_id, "breath_weapon")
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.feature_available(crate::actions::class_features::ROAR_TAG)
+        })
     }
     fn side_effects(
         &self,
@@ -14389,30 +14560,118 @@ impl Action for AndrosphinxRoar {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        const RADIUS: isize = 10;
-        const DC: i32 = 18;
+        use crate::actions::class_features::ROAR_TAG;
+        let Some(caster_loc) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let stage = RoarStage::from_remaining(
+            encounter
+                .actors
+                .get(&caster_id)
+                .map(|a| a.feature_charges_remaining(ROAR_TAG))
+                .unwrap_or(0),
+        );
+        // Spent before anything resolves, so a mid-resolution bail
+        // cannot leave the roar both used and unspent — and so the next
+        // roar is the next stage even if this one caught nobody.
         if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("breath_weapon");
+            caster.spend_feature(ROAR_TAG);
         }
-        encounter.log(format!(
-            "  roar: 50ft burst (DC {} WIS, frightened on fail)",
-            DC
-        ));
-        // A roar, not a stare: RAW's clause is "each creature within
-        // 500 feet of it that can hear the roar", which asks for an ear
-        // and says nothing about sight. It had been routed through the
-        // gaze helper, which asks the opposite question and let a
-        // sphinx be out-roared by a pillar.
-        crate::actions::action_template::resolve_audible_burst_condition(
-            encounter,
-            caster_id,
-            RADIUS,
-            AbilityScoreType::Wisdom,
-            DC,
-            Condition::Frightened,
-            ConditionTimer::Rounds(10),
-            None,
-        )
+        let targets = encounter.enemy_burst_targets(caster_id, caster_loc, ROAR_RADIUS);
+        match stage {
+            RoarStage::Fear => {
+                encounter.log(format!(
+                    "  roar: the first roar rolls out (DC {} WIS, frightened on a failure)",
+                    ROAR_DC
+                ));
+                install_condition_on_failed_saves(
+                    encounter,
+                    caster_id,
+                    &targets,
+                    AbilityScoreType::Wisdom,
+                    ROAR_DC,
+                    Condition::Frightened,
+                    // RAW's minute.
+                    ConditionTimer::Rounds(10),
+                )
+            }
+            RoarStage::Paralysis => {
+                encounter.log(format!(
+                    "  roar: the second roar rolls out (DC {} WIS, paralyzed on a failure)",
+                    ROAR_DC
+                ));
+                // Applied here rather than queued, because the escape
+                // ledger and the condition are installed together by
+                // `begin_repeat_save` and an entry queued behind a
+                // condition that has not landed yet would be an escape
+                // from nothing. Nothing else in the roar is ordered
+                // against it.
+                for tid in targets {
+                    if encounter
+                        .roll_save_vs_condition(
+                            tid,
+                            AbilityScoreType::Wisdom,
+                            ROAR_DC,
+                            Condition::Paralyzed,
+                        )
+                        .passed()
+                    {
+                        continue;
+                    }
+                    encounter.begin_repeat_save(
+                        tid,
+                        caster_id,
+                        ROAR_DC,
+                        &PARALYSING_ROAR,
+                        // RAW's "after 1 minute, it succeeds
+                        // automatically" — the cap the repeats race.
+                        ConditionTimer::Rounds(10),
+                    );
+                }
+                Vec::new()
+            }
+            RoarStage::Thunder => {
+                let damage = encounter.roll(&Dice::new(8, 10));
+                encounter.log(format!(
+                    "  roar: the third roar rolls out (DC {} CON, {} thunder and prone on a failure)",
+                    ROAR_DC, damage
+                ));
+                let origin = encounter.area_origin(
+                    caster_id,
+                    AreaShape::Burst {
+                        radius: ROAR_RADIUS,
+                    },
+                    caster_loc,
+                );
+                let (mut effects, saves) = resolve_burst_targets(
+                    encounter,
+                    caster_id,
+                    origin,
+                    &targets,
+                    AbilityScoreType::Constitution,
+                    ROAR_DC,
+                    damage,
+                    DamageType::Thunder,
+                    SaveDamagePolicy::HalfOnSave,
+                    &HashSet::new(),
+                );
+                // RAW's Prone rides the *same* save the damage did —
+                // "Failure: … damage, and the target has the Prone
+                // condition" — so it reads the outcomes the burst
+                // already rolled rather than asking for a second one.
+                for (tid, passed) in saves {
+                    if passed {
+                        continue;
+                    }
+                    effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                        actor_id: tid,
+                        condition: Condition::Prone,
+                        timer: ConditionTimer::Permanent,
+                    }));
+                }
+                effects
+            }
+        }
     }
 }
 

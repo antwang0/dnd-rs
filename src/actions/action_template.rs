@@ -480,7 +480,7 @@ pub fn resolve_area_save_condition(
 /// dropping it at this line. A condition with no link is unaffected —
 /// the installer hands back a one-element vec — so the parameter costs
 /// the non-linked callers nothing but the argument.
-fn install_condition_on_failed_saves(
+pub(crate) fn install_condition_on_failed_saves(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_ids: &[usize],

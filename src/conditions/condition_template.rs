@@ -3030,12 +3030,16 @@ pub enum Condition {
     ///
     ///   - **Sword of Wounding** (Rare weapon): "must succeed on a DC 15
     ///     Constitution saving throw or be unable to regain Hit Points
-    ///     for 1 hour". RAW's hour collapses to ten rounds, the engine's
-    ///     standing stand-in for any duration longer than a fight; RAW's
-    ///     end-of-turn repeat save is not modeled, which makes the wound
-    ///     strictly worse than RAW while it lasts and strictly shorter
-    ///     than RAW's hour. The two errors point opposite ways and the
-    ///     fight-scale one is the one a player can see.
+    ///     for 1 hour. The target repeats the save at the end of each
+    ///     of its turns, ending the effect on itself on a success."
+    ///     RAW's hour collapses to ten rounds, the engine's standing
+    ///     stand-in for any duration longer than a fight, and the
+    ///     end-of-turn repeat is a row on `engine::repeat_saves`. Both
+    ///     halves matter: the ten rounds are the cap, and the repeat is
+    ///     what a good Constitution save is *for*. Without it the wound
+    ///     was shorter than RAW and strictly crueller while it lasted,
+    ///     which is the pair of errors that lane was built to stop
+    ///     shipping.
     ///   - **Bearded Devil** (*Beard*): "the target has the Poisoned
     ///     condition until the start of the devil's next turn. Until
     ///     this poison ends, the target can't regain Hit Points." Rides

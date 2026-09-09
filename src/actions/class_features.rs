@@ -729,6 +729,10 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // table that is read as a budget across several features rather
     // than as one feature's depth. See `KI_POINTS_TAG`.
     (KI_POINTS_TAG, 5),
+    // SRD 5.2 Androsphinx **Roar (3/Day)** — RAW to the number, and
+    // the only row on this table whose count is read for something
+    // other than "may I". See `ROAR_TAG`.
+    (ROAR_TAG, ROAR_USES),
     // SRD 5.2 Goliath **Giant Ancestry**, all six benefits: "you can
     // use the chosen benefit a number of times equal to your
     // Proficiency Bonus." Two is that number on the CR-2 chassis these
@@ -784,6 +788,26 @@ pub fn feature_charges(tag: &str) -> u32 {
 /// actor state stays a flat map instead of carrying an enum import.
 pub const SECOND_WIND_TAG: &str = "fighter.second_wind";
 pub const ACTION_SURGE_TAG: &str = "fighter.action_surge";
+
+/// Per-day pool for the androsphinx's **Roar** — SRD 5.2's *"Roar
+/// (3/Day) … whenever it roars, the roar has a different effect …
+/// (the sequence resets when it takes a Long Rest)."*
+///
+/// The pool and the sequence are the same number, which is why there
+/// is only one of them: `RoarStage::from_remaining` reads which roar
+/// this is off what is left to spend, so the escalation and the
+/// resource cannot drift apart and a long rest resets both in the one
+/// place RAW resets them.
+///
+/// Sits in this module rather than beside the action for the same
+/// reason every other charge does: `FEATURE_CHARGES` is where a pool's
+/// size is declared, and a tag declared anywhere else would be a
+/// second place to look.
+pub const ROAR_TAG: &str = "androsphinx.roar";
+
+/// How many roars a day. RAW to the number, and the number is the
+/// whole ability — a fourth would have no effect to be.
+pub const ROAR_USES: u32 = 3;
 
 /// Tag for the Half-Orc Relentless Endurance racial trait. Passive
 /// no-action feature: once per long rest, when damage would reduce

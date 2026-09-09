@@ -15,8 +15,8 @@ use std::sync::LazyLock;
 /// Adult Red Dragon / Dragon Turtle (both CR 17) on the boss ladder —
 /// the "wisdom guardian" lane to the dragons' "elemental tyrant" lane.
 /// Load-bearing per-round threat is the double-claw multi (heavy CR-17
-/// physical damage band) plus the recharge-gated Roar that frightens
-/// every enemy in line-of-sight inside a 50 ft radius.
+/// physical damage band) plus the Roar, whose three uses escalate from
+/// a room-wide fear to a room-wide paralysis to eight d10s of thunder.
 ///
 /// Action lanes:
 /// - **Androsphinx Multiattack** — 2 claw swings per Action. Vanilla
@@ -24,10 +24,13 @@ use std::sync::LazyLock;
 /// - **Androsphinx Claw** (standalone) — STR-based 2d8+STR slashing.
 ///   Provided so the AI can fall back to a single swing when bonus-
 ///   action-tagged or moving in.
-/// - **Roar** — 50ft burst, DC 18 WIS save or Frightened for 10 rounds.
-///   Recharge 5-6 via the shared `"breath_weapon"` pool — collapses the
-///   RAW three-Roar escalation ladder (First/Second/Third Roar) to the
-///   base Frightened install via the standard recharge chassis.
+/// - **Roar** — three a day, and a different roar each time: fear,
+///   then a paralysis its victims roll their way out of, then eight
+///   d10s of thunder that puts whoever is left on the floor. The whole
+///   escalation ships; see `ANDROSPHINX_ROAR`. It is what makes this
+///   stat block different from every other boss on the roster, because
+///   the answer to "what does the sphinx do next" changes as the fight
+///   goes on.
 ///
 /// Damage envelope: nonmagical B/P/S resistance (the canonical "magic
 /// weapons or nothing" boss defense). RAW pairs this with the sphinx's
@@ -117,10 +120,9 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Pit Fiend at the boss tier.
         legendary_resistances: 3,
         has_magic_resistance: true,
-        // 5e Recharge 5-6 on the Roar — shared with the dragon family's
-        // `"breath_weapon"` pool key so the start-of-turn refresher uses
-        // the same chassis.
-        recharge_abilities: vec![("breath_weapon", 5)],
+        // No recharge. SRD 5.2 rations the Roar at 3/Day and makes
+        // each of the three a *different* roar, which a recharge pool
+        // cannot say — see `ROAR_TAG`, whose count is the sequence.
         // 5e Legendary Actions — 3 per round per MM. The engine
         // surfaces the resource via `legendary_actions_per_round` but
         // no Action in the engine currently costs the legendary slot
@@ -129,8 +131,12 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::ANDROSPHINX_LEGENDARY,
         has_extra_attack: true,
-        // 5e **Magic Weapons**: "the sphinx's weapon attacks are magical."
-        features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        // 5e **Magic Weapons**: "the sphinx's weapon attacks are
+        // magical", plus the Roar's three-a-day pool.
+        features: HashSet::from([
+            crate::actions::class_features::MAGICAL_ATTACKS_TAG,
+            crate::actions::class_features::ROAR_TAG,
+        ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

@@ -91,6 +91,25 @@ pub struct StagedSave {
     pub second: Condition,
     /// How long the second rung holds. See `PETRIFIED_ROUNDS`.
     pub second_timer: ConditionTimer,
+    /// `Some(clause)` when RAW lets the victim keep rolling their way
+    /// off the second rung — *"it repeats the save at the end of each of
+    /// its turns … After 1 minute, it succeeds automatically"* — and
+    /// `None` when it does not.
+    ///
+    /// The distinction is RAW's and it is not decoration. The silver
+    /// dragon's paralysis says the sentence; the four petrification
+    /// ladders say the opposite, and end *"only a Greater Restoration
+    /// spell or similar magic can end this condition"*. A ladder that
+    /// handed everybody a repeat would make a basilisk's gaze a
+    /// two-round inconvenience, and one that handed nobody one — which
+    /// is what shipped — turns a silver dragon's breath into a flat
+    /// three-round paralysis with no way out.
+    ///
+    /// Registered through `EncounterInstance::begin_repeat_save`
+    /// alongside the second condition, so the rung and its escape land
+    /// together. `second_timer` stays what it was: RAW's cap, which the
+    /// repeats race.
+    pub second_escape: Option<&'static crate::engine::repeat_saves::RepeatSave>,
     /// The clause of the log line for the moment the ladder opens —
     /// "feels its limbs stiffening".
     pub caught_flavor: &'static str,
@@ -117,6 +136,10 @@ pub static PETRIFICATION: StagedSave = StagedSave {
     first: Condition::Restrained,
     second: Condition::Petrified,
     second_timer: ConditionTimer::Rounds(PETRIFIED_ROUNDS),
+    // RAW ends this one "only a Greater Restoration spell or similar
+    // magic can end this condition" — the explicit opposite of a
+    // per-turn repeat. Stone is stone.
+    second_escape: None,
     caught_flavor: "feels their limbs stiffening",
     escaped_flavor: "shrugs off the creeping stone",
     lost_flavor: "turns to stone",
@@ -143,6 +166,11 @@ pub static SLEEP_BREATH: StagedSave = StagedSave {
     // than the petrification rung can afford to be, because this one
     // ends the moment anybody lands a blow.
     second_timer: ConditionTimer::Rounds(10),
+    // RAW gives sleep no repeated save either — it ends "if the target
+    // takes damage or a creature within 5 feet of it takes an action to
+    // wake it", which is somebody else's doing rather than the
+    // sleeper's. `Condition::Asleep` already carries the damage half.
+    second_escape: None,
     caught_flavor: "sags, eyelids heavy",
     escaped_flavor: "shakes the drowsiness off",
     lost_flavor: "drops where they stand, fast asleep",
@@ -160,20 +188,49 @@ pub static SLEEP_BREATH: StagedSave = StagedSave {
 /// somebody hits you — which is the whole reason a silver dragon
 /// breathes this second and its cold first.
 ///
-/// RAW's per-turn repeat on the second rung collapses into the timer,
-/// the way every other "repeats the save each turn" outside
-/// `ROUND_END_SAVES` does in this engine: that table is anchored on a
-/// concentrating caster, and a dragon is not concentrating.
+/// RAW's per-turn repeat on the second rung ships, through
+/// `second_escape`. It used to collapse into the timer — "the way every
+/// other 'repeats the save each turn' outside `ROUND_END_SAVES` does in
+/// this engine: that table is anchored on a concentrating caster, and a
+/// dragon is not concentrating" — and `engine::repeat_saves` is the
+/// lane that was missing when that was written.
+///
+/// The timer went from three rounds to ten with it, and the two changes
+/// are one change: three rounds was a stand-in for a minute of repeats,
+/// and once the repeats are real the cap should be RAW's minute. A
+/// fighter with a good Constitution save now walks out on the first
+/// try, and an unlucky wizard can be frozen for the whole fight — which
+/// is what a silver dragon's second breath is supposed to feel like on
+/// either end.
 pub static PARALYZING_BREATH: StagedSave = StagedSave {
     name: "paralyzing breath",
     ability: AbilityScoreType::Constitution,
     first: Condition::Incapacitated,
     second: Condition::Paralyzed,
-    second_timer: ConditionTimer::Rounds(3),
+    // RAW's minute — "After 1 minute, it succeeds automatically" — now
+    // that the repeats below race it.
+    second_timer: ConditionTimer::Rounds(10),
+    second_escape: Some(&PARALYZING_BREATH_ESCAPE),
     caught_flavor: "stiffens as the frost bites",
     escaped_flavor: "forces their limbs back under control",
     lost_flavor: "freezes solid where they stand",
 };
+
+/// The silver dragon's escape clause — *"it repeats the save at the end
+/// of each of its turns, ending the effect on itself on a success."*
+///
+/// Split out of `PARALYZING_BREATH` because the two ledgers want
+/// different shapes: a ladder is one entry per victim and ends when it
+/// resolves, and an escape is one entry per condition and repeats until
+/// it is made. The DC and the source are the same on both, and are
+/// handed over when the second rung lands.
+pub static PARALYZING_BREATH_ESCAPE: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "paralyzing breath",
+        condition: Condition::Paralyzed,
+        ability: AbilityScoreType::Constitution,
+        escaped_flavor: "forces the frost out of their limbs",
+    };
 
 /// A ladder the encounter is part-way through on one creature: which
 /// one, who opened it, and at what DC.
@@ -378,14 +435,28 @@ impl EncounterInstance {
             return;
         }
         self.log(format!("  {}: {} {}.", ladder.name, name, ladder.lost_flavor));
-        crate::engine::side_effects::ApplicableSideEffect::apply(
-            &crate::engine::side_effects::ApplyCondition {
-                actor_id: victim_id,
-                condition: ladder.second,
-                timer: ladder.second_timer,
-            },
-            self,
-        );
+        // The second rung, with or without a way off it — see
+        // `StagedSave::second_escape`. Both branches install the same
+        // condition on the same timer; the escape branch also registers
+        // the per-turn repeat, which is why it goes through
+        // `begin_repeat_save` rather than doing the install itself.
+        match ladder.second_escape {
+            Some(clause) => self.begin_repeat_save(
+                victim_id,
+                pending.source_id,
+                pending.dc,
+                clause,
+                ladder.second_timer,
+            ),
+            None => crate::engine::side_effects::ApplicableSideEffect::apply(
+                &crate::engine::side_effects::ApplyCondition {
+                    actor_id: victim_id,
+                    condition: ladder.second,
+                    timer: ladder.second_timer,
+                },
+                self,
+            ),
+        }
     }
 
     /// True while `victim_id` is on a ladder — the first rung installed

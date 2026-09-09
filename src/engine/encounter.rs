@@ -2149,6 +2149,20 @@ pub struct EncounterInstance {
     /// accessors that exist only to get around the keyword.
     pub(crate) staged_saves:
         std::collections::HashMap<usize, crate::engine::staged_saves::PendingStage>,
+    /// Creatures owed SRD 5.2's *"repeats the save at the end of each
+    /// of its turns"* by something nobody is concentrating on — see
+    /// `crate::engine::repeat_saves`.
+    ///
+    /// A `Vec` per victim rather than one entry, because the conditions
+    /// are the key and a creature can be caught by two different
+    /// clauses at once: paralysed by a sphinx's roar and enfeebled by a
+    /// dragon's breath is two escapes owed, not one.
+    ///
+    /// `pub(crate)` for the same reason `staged_saves` next door is.
+    pub(crate) repeat_saves: std::collections::HashMap<
+        usize,
+        Vec<crate::engine::repeat_saves::PendingRepeat>,
+    >,
     /// Map tiles a spell has retyped, and the ledger that hands them
     /// back — see `crate::engine::conjured_terrain`. Sibling to `zones`
     /// in every respect but one: a zone overlays the map and this
@@ -11066,6 +11080,7 @@ impl EncounterInstance {
             zone_contacts_this_turn: std::collections::HashSet::new(),
             trait_immunities: std::collections::HashSet::new(),
             staged_saves: std::collections::HashMap::new(),
+            repeat_saves: std::collections::HashMap::new(),
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
             ambient_light: AmbientLight::default(),
@@ -16154,8 +16169,16 @@ impl EncounterInstance {
     /// hold / control spells get to repeat the saving throw. On a pass
     /// the condition is removed and the caster's concentration (if
     /// anchored to the same condition) is dropped. Only fires when the
-    /// condition came from a concentration spell — permanent or timer-only
-    /// applications (e.g. monster innate stun) don't grant repeated saves.
+    /// condition came from a concentration spell — the DC is found by
+    /// asking who is concentrating, and there is nobody to ask
+    /// otherwise.
+    ///
+    /// A monster ability whose RAW text carries the same clause is not
+    /// this table's business and no longer goes without: it registers
+    /// its own entry on `crate::engine::repeat_saves`, which is handed
+    /// the DC when the effect lands. The two lanes are disjoint by
+    /// construction — this one skips anything with no concentration
+    /// owner, and that one only holds what was put on it explicitly.
     fn apply_round_end_saves(&mut self, actor_id: usize) {
         for entry in ROUND_END_SAVES {
             let has = self
@@ -16388,6 +16411,14 @@ impl EncounterInstance {
             // ends the effect on a success and leaves it standing on a
             // failure, and this one *escalates*.
             self.tick_staged_save(id);
+            // SRD 5.2's *"repeats the save at the end of each of its
+            // turns"* for the effects nobody is concentrating on — see
+            // `crate::engine::repeat_saves`. The third member of this
+            // little family, and the one that answers what the table
+            // two lines up cannot: same moment, same failure branch,
+            // and a DC that was handed over when the effect landed
+            // rather than looked up from a caster who does not exist.
+            self.tick_repeat_saves(id);
             // 5e: "the grapple ends if the grappler is incapacitated."
             // Checked here rather than at the moment the grappler goes
             // down, because the ways to become incapacitated are many
@@ -17380,6 +17411,7 @@ impl EncounterInstance {
     pub fn despawn_actor(&mut self, id: usize, log_verb: &str) {
         // Same teardown as `remove_actor`'s, and for the same reason.
         self.clear_staged_save(id);
+        self.clear_repeat_saves(id);
         // Same reason as `remove_actor`: an actor leaving the board
         // takes their concentration — and so the areas it was holding
         // up — with them.
@@ -17424,6 +17456,9 @@ impl EncounterInstance {
         // here rather than left to expire, so the entry cannot outlive
         // the body and greet whoever inherits the id.
         self.clear_staged_save(id);
+        // …and a corpse is owed no escapes either. Same hazard, same
+        // remedy — see `clear_repeat_saves`.
+        self.clear_repeat_saves(id);
         // Cut before the corpse is lifted out of the table: a rider and
         // a mount are the only two actors in the engine that hold ids
         // pointing at each other, and either half surviving the other
