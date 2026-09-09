@@ -145,9 +145,13 @@ fn goliath_chassis(
 /// stand on the caster behind it, twice a day, without spending a slot
 /// it does not have.
 ///
-/// It is also the one the AI reaches for unprompted: the jaunt is a row
-/// on `SELF_TELEPORT_ESCAPES`, so a pinned cloud goliath blinks out of
-/// a bad melee the same way a wizard's Misty Step does.
+/// It is also the one the AI reaches for unprompted, and the direction
+/// it reaches in is the interesting part. The jaunt is a row on both
+/// `SELF_TELEPORT_APPROACHES` and `SELF_TELEPORT_ESCAPES`, but the
+/// escape rung declines for anyone whose melee lane beats their ranged
+/// one — which is every goliath — so in practice the AI spends it going
+/// *in*: a cloud goliath with a caster six tiles away arrives next to
+/// it on a bonus action and still has its Action to swing with.
 ///
 /// Glyph '\u{03a9}' (omega) — an arch with its feet apart, which is a
 /// cloud bank seen from below. Unused elsewhere on the roster.

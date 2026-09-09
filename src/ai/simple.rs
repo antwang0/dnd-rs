@@ -483,17 +483,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3c''^. Shadow Step — Way of Shadow Monk bonus action,
-        //        at-will, 60 ft. The approach counterpart to the
-        //        `try_teleport_escape` rung far above: that one moves a
-        //        pinned caster away from melee, this one drops a monk
-        //        into it with advantage on the swing that follows.
+        // 3c''^. The approach blinks — `SELF_TELEPORT_APPROACHES`, the
+        //        counterpart to the `try_teleport_escape` rung far
+        //        above: that one moves a pinned caster away from melee,
+        //        this one drops a melee chassis into it. Shadow Step
+        //        arrives with advantage on the swing that follows; a
+        //        goliath's Cloud's Jaunt arrives with a greatclub.
         //        Slotted here with the other bonus-action grants
         //        because it competes with them for the same slot; its
         //        own gate declines whenever an enemy is already in
         //        reach, which is when Stunning Strike and Flurry want
         //        the bonus action more.
-        if let Some(aei) = try_shadow_step(encounter, actor_id) {
+        if let Some(aei) = try_teleport_approach(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -7816,22 +7817,42 @@ fn try_wild_heal(
     try_self_action(encounter, actor_id, "wild heal")
 }
 
-/// Shadow Step — the Way of Shadow Monk's 60 ft bonus-action blink.
+/// Self-teleports the AI will spend to *close* on a foe, in the order
+/// it reaches for them — the mirror of `SELF_TELEPORT_ESCAPES`, which
+/// spends them to get away.
+///
+/// A blink is on one list, the other, or both, and which it is says
+/// what the feature is for:
+///
+///   1. **Shadow Step** (Way of Shadow Monk lv6) — bonus action,
+///      at-will, 60 ft, and it hands the monk advantage on the swing it
+///      arrives with. Approach-only: nothing about it rewards leaving.
+///   2. **Cloud's Jaunt** (Goliath Cloud Giant ancestry, SRD 5.2) —
+///      bonus action, 30 ft, twice a day. On both lists, because a
+///      goliath has a use for each direction: half the reach of Shadow
+///      Step and a pool behind it, so it ranks below.
+///
+/// The list is deliberately not `SELF_TELEPORT_ESCAPES` read backwards.
+/// Misty Step and Dimension Door are on that one because a pinned
+/// caster is worth a slot; neither belongs here, because a caster who
+/// blinks *into* melee has spent a slot to make its turn worse.
+const SELF_TELEPORT_APPROACHES: &[&str] = &["shadow step", "cloud's jaunt"];
+
+/// Spend a self-teleport to arrive next to something worth hitting.
 ///
 /// The mirror image of `try_teleport_escape`, and deliberately so:
 /// that picker moves a pinned caster *away* from the nearest threat,
-/// this one moves a monk *onto* one. Same candidate-and-validate
-/// shape, opposite objective function.
+/// this one moves a melee chassis *onto* one. Same
+/// candidate-and-validate shape, opposite objective function.
 ///
 /// Three gates:
-///   1. An enemy already in melee reach → don't. The monk's bonus
-///      action is worth more as a Stunning Strike prime or a Flurry
-///      than as a teleport to somewhere they already are, and the
+///   1. An enemy already in melee reach → don't. The bonus action is
+///      worth more as a Stunning Strike prime or a Flurry than as a
+///      teleport to somewhere the actor already is, and Shadow Step's
 ///      advantage rider is worth less than either when the swing was
 ///      going to happen anyway.
-///   2. A reachable enemy exists — the nearest one inside the step's
-///      own 24-tile envelope. Out past that there is nothing to arrive
-///      at.
+///   2. A reachable enemy exists — the nearest one inside the blink's
+///      own envelope. Out past that there is nothing to arrive at.
 ///   3. Some compass-neighbour tile of that enemy is a legal landing
 ///      spot. The action's own `can_move_to` validation is the
 ///      authority; we just propose.
@@ -7840,18 +7861,39 @@ fn try_wild_heal(
 /// the target's own footprint so a Huge creature's ring is measured
 /// from its far edge rather than its origin tile. Anything that lands
 /// footprint-adjacent is acceptable — there is no "better" adjacency
-/// for a monk, only reachable and not.
-fn try_shadow_step(
+/// here, only reachable and not.
+///
+/// The blinks themselves are `SELF_TELEPORT_APPROACHES`. It carried
+/// exactly one name — `find_action("shadow step")`, spelled inline —
+/// until a second arrived, which is the point at which one name in a
+/// function body becomes a table beside its sibling.
+fn try_teleport_approach(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
+    for name in SELF_TELEPORT_APPROACHES {
+        if let Some(aei) = try_one_teleport_approach(encounter, actor_id, name) {
+            return Some(aei);
+        }
+    }
+    None
+}
+
+/// One row of `try_teleport_approach`'s walk: propose a landing spot
+/// for the blink named `name`, or `None` if the actor does not carry
+/// it, has nothing to arrive at, or is walled in.
+fn try_one_teleport_approach(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    name: &str,
+) -> Option<ActionExecutionInfo> {
     /// Landing spots to run through `validate` before giving up. The
-    /// ring around a Medium target is eight tiles; past that the monk
+    /// ring around a Medium target is eight tiles; past that the actor
     /// is walled in well enough that walking is the better answer.
     const MAX_VALIDATIONS: usize = 12;
 
     let actor = encounter.actors.get(&actor_id)?;
-    let action = actor.find_action("shadow step")?;
+    let action = actor.find_action(name)?;
     let reach = action.reach_tiles()?;
     if any_enemy_within(encounter, actor_id, 1) {
         return None;
@@ -15584,6 +15626,76 @@ mod tests {
         assert!(
             try_teleport_escape(&e, barb).is_none(),
             "a melee actor that blinks away only has to walk back"
+        );
+    }
+
+    /// The approach lane's own registry: a cloud goliath with nothing
+    /// in reach blinks *onto* the nearest enemy rather than walking.
+    ///
+    /// The rung existed before this and could only ever fire for one
+    /// subclass, because the action it reached for was a string spelled
+    /// inline. `SELF_TELEPORT_APPROACHES` is what made it a lane.
+    #[test]
+    fn the_approach_lane_blinks_a_goliath_into_contact() {
+        use crate::actors::creatures::goliaths::CLOUD_GOLIATH_TEMPLATE;
+        use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+        // No goblins from the fixture — this test wants one placed at a
+        // known distance rather than in contact.
+        let (mut e, g) = pinned_caster(&CLOUD_GOLIATH_TEMPLATE, 0);
+        let here = e.actors[&g].location();
+        // The generated map has walls, so walk outward until a spawn
+        // takes. Six tiles out is inside the jaunt's twelve-tile
+        // envelope and well outside the greatclub's reach.
+        let goblin = (4..=10)
+            .flat_map(|d: isize| {
+                [
+                    Coordinate::new(here.x + d, here.y),
+                    Coordinate::new(here.x - d, here.y),
+                    Coordinate::new(here.x, here.y + d),
+                    Coordinate::new(here.x, here.y - d),
+                ]
+            })
+            .find_map(|at| {
+                e.instantiate_creature(
+                    &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+                    at,
+                    1,
+                    0,
+                )
+                .ok()
+            })
+            .expect("somewhere within ten tiles holds a goblin");
+        assert!(
+            !any_enemy_within(&e, g, 1),
+            "the goliath starts out of its own reach"
+        );
+
+        let aei = try_teleport_approach(&e, g).expect("a reachable enemy is worth a jaunt");
+        assert_eq!(aei.action().name(), "cloud's jaunt");
+        let dest = aei.target_locations().as_ref().unwrap()[0];
+        let my_size = get_tiles_from_size(e.actors[&g].size());
+        let goblin_actor = &e.actors[&goblin];
+        assert!(
+            footprint_chebyshev(
+                dest,
+                my_size,
+                goblin_actor.location(),
+                get_tiles_from_size(goblin_actor.size()),
+            ) <= 1,
+            "the blink has to land in swinging distance"
+        );
+
+        // Gate 1: something already in reach, and the bonus action is
+        // worth more elsewhere.
+        let (e, g) = pinned_caster(&CLOUD_GOLIATH_TEMPLATE, 1);
+        assert!(
+            any_enemy_within(&e, g, 1),
+            "the fixture's single goblin starts in contact"
+        );
+        assert!(
+            try_teleport_approach(&e, g).is_none(),
+            "nothing to arrive at that the goliath is not already next to"
         );
     }
 
