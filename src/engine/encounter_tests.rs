@@ -15157,6 +15157,53 @@ fn strong_wind_grounds_a_flier_at_the_end_of_its_turn() {
     );
 }
 
+/// …and it takes off again on its own turn. RAW grounds a flier at the
+/// end of *its* turn, which is a window and not a sentence: the wind
+/// costs the creature the air between its turns and nothing more.
+///
+/// The half worth pinning, because getting it wrong is silent and
+/// permanent — an `Earthbound` whose timer never fires is a wyvern that
+/// walks for the rest of the fight, and no other test would notice.
+#[test]
+fn a_grounded_flier_gets_its_air_back_when_its_turn_comes_round() {
+    use crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE;
+    use crate::engine::weather::Weather;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    e.set_weather(Weather::StrongWind);
+    let owl = e
+        .instantiate_creature(&GIANT_OWL_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(16, 16), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    for _ in 0..4 {
+        e.advance_initiative();
+    }
+    assert!(
+        e.actors[&owl].has_condition(Condition::Earthbound),
+        "the wind has the owl on the ground"
+    );
+    // Around to the owl's own turn again, which is what clears an
+    // `UntilStartOfNextTurn` timer.
+    for _ in 0..8 {
+        e.advance_initiative();
+        e.pop_prompt();
+        e.process_stack();
+        if !e.actors[&owl].has_condition(Condition::Earthbound) {
+            break;
+        }
+    }
+    assert!(
+        !e.actors[&owl].has_condition(Condition::Earthbound),
+        "and lets go of it at the top of the owl's next turn"
+    );
+    assert!(
+        e.actors[&owl].is_airborne(),
+        "so the owl is free to be back in the air"
+    );
+}
+
 /// SRD 5.2 **Earthbind**: *"the target's flying speed (if any) becomes 0
 /// feet for the duration"* — and "if any" reaches a flying speed a spell
 /// granted as surely as one a creature was born with.

@@ -7448,6 +7448,18 @@ impl EncounterInstance {
         if fights_close == engaged {
             return None;
         }
+        // Both footprints and the enemy's anchor are fixed for the whole
+        // scan, so they are read once rather than 625 times — the window
+        // is 25 tiles on a side and the loop body is otherwise two map
+        // lookups and a raycast.
+        let span = get_tiles_from_size(self.actors.get(&actor_id)?.size());
+        let (enemy_at, enemy_span) = {
+            let enemy = self.actors.get(&enemy_id)?;
+            (enemy.location(), get_tiles_from_size(enemy.size()))
+        };
+        // Closing wants the smaller gap and withdrawing the larger, so
+        // both lanes maximise one score and the loop has one comparison.
+        let score_of = |reach: isize| if fights_close { -reach } else { reach };
         let mut best: Option<(isize, Coordinate)> = None;
         for dy in -BLINK_STEP_TILES..=BLINK_STEP_TILES {
             for dx in -BLINK_STEP_TILES..=BLINK_STEP_TILES {
@@ -7458,26 +7470,17 @@ impl EncounterInstance {
                 if !self.has_line_of_sight(origin, candidate) {
                     continue;
                 }
-                let Some(enemy) = self.actors.get(&enemy_id) else {
-                    continue;
-                };
                 // Measured from the candidate tile rather than by moving
                 // the actor there first: `footprint_chebyshev` takes two
                 // anchors and two footprints, so the question can be
                 // asked about a tile nobody is standing on.
-                let reach = crate::engine::util::footprint_chebyshev(
+                let score = score_of(footprint_chebyshev(
                     candidate,
-                    crate::engine::util::get_tiles_from_size(
-                        self.actors.get(&actor_id)?.size(),
-                    ),
-                    enemy.location(),
-                    crate::engine::util::get_tiles_from_size(enemy.size()),
-                );
-                // Closing wants the smaller number and withdrawing the
-                // larger, so both lanes maximise one score.
-                let score = if fights_close { -reach } else { reach };
-                let current = if fights_close { -gap } else { gap };
-                if score > current && best.is_none_or(|(b, _)| score > b) {
+                    span,
+                    enemy_at,
+                    enemy_span,
+                ));
+                if score > score_of(gap) && best.is_none_or(|(b, _)| score > b) {
                     best = Some((score, candidate));
                 }
             }
