@@ -1836,7 +1836,19 @@ fn try_make_light(
     // The torch is a carried consumable, so it is reachable only
     // through the `available_actions()` lookup — `try_self_action`
     // searches the template list, where a torch has never been.
-    try_self_action_inc_items(encounter, actor_id, "light torch")
+    //
+    // And it is skipped outright in weather that puts open flames out.
+    // The engine already refuses to keep such a torch lit
+    // (`add_light_source` snuffs it on the spot), so without this gate
+    // the rung would spend a bonus action *and burn the torch itself* —
+    // it is a consumable — on a light that never survives the strike.
+    // The Light cantrip and Continual Flame below are magic and stay
+    // lit, so the chain falls through to them rather than giving up.
+    // See `engine::weather`.
+    let flames_hold = !encounter.weather().snuffs_open_flames();
+    flames_hold
+        .then(|| try_self_action_inc_items(encounter, actor_id, "light torch"))
+        .flatten()
         .or_else(|| try_self_action(encounter, actor_id, "light"))
         .or_else(|| try_continual_flame(encounter, actor_id))
 }
@@ -13217,6 +13229,87 @@ mod tests {
             e.actors[&paladin].location(),
             e.actors[&steed].location(),
             "and rides where it stands"
+        );
+    }
+
+    /// A gale is not a reason to strike a match.
+    ///
+    /// The torch is a *consumable*: `light torch` spends the item out of
+    /// the fighter's pack. In weather that puts open flames out, the
+    /// engine snuffs it the instant it is lit — so a rung that reached
+    /// for it anyway would burn the bonus action and the torch itself
+    /// for a light nobody ever sees, once per turn, for the rest of the
+    /// fight.
+    ///
+    /// What the gate must *not* do is give up: the cleric's Light
+    /// cantrip is magic and stays lit, so the chain has to fall through
+    /// to it rather than returning `None`.
+    #[test]
+    fn nobody_reaches_for_a_torch_in_weather_that_puts_it_out() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::engine::lighting::AmbientLight;
+        use crate::engine::types::Coordinate;
+        use crate::engine::weather::Weather;
+        use crate::actors::actor_template::CreatureTemplate;
+
+        /// The action the light rung picks for `template`, on an unlit
+        /// board with a zombie close enough to be worth revealing.
+        fn light_pick(template: &'static CreatureTemplate, weather: Weather) -> Option<String> {
+            let tp = TerrainGenParams {
+                width: 20,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(11)).unwrap();
+            e.set_ambient_light(AmbientLight::Darkness);
+            e.set_weather(weather);
+            let seeker = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+                .unwrap();
+            // The rung asks whether the action is affordable, and an
+            // actor whose turn has never opened has no slots to spend.
+            // The torch is a pack item rather than a template action,
+            // so it has to be in the pack before it can be reached for.
+            let carrier = e.actors.get_mut(&seeker).unwrap();
+            carrier.reset_for_new_round();
+            carrier.pickup_item(&crate::items::item_template::TORCH);
+            super::try_make_light(&e, seeker).map(|aei| aei.action().name().to_string())
+        }
+
+        assert_eq!(
+            light_pick(&FIGHTER_TEMPLATE, Weather::Calm).as_deref(),
+            Some("light torch"),
+            "in still air the torch is the cheap answer — a bonus action, not an Action"
+        );
+        assert_eq!(
+            light_pick(&FIGHTER_TEMPLATE, Weather::StrongWind),
+            None,
+            "and in a gale the fighter has no answer at all rather than a wasted one"
+        );
+        assert_eq!(
+            light_pick(&FIGHTER_TEMPLATE, Weather::HeavyPrecipitation),
+            None,
+            "rain carries the same clause"
+        );
+        // A sorcerer rather than a cleric, and the reason is the rung's
+        // own docstring: a creature with darkvision never reaches it,
+        // because anything close enough to be worth revealing is
+        // already visible to it. The cleric sees 60 ft in the dark.
+        assert_eq!(
+            light_pick(&SORCERER_TEMPLATE, Weather::StrongWind).as_deref(),
+            Some("light"),
+            "the gate skips the torch rather than the rung: magic stays lit"
         );
     }
 
