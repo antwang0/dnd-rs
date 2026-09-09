@@ -2735,6 +2735,65 @@ pub fn install_condition_with_damage_type(
     out
 }
 
+/// Record the slot level a condition-anchored spell was cast at, on the
+/// creature that is carrying the condition.
+///
+/// The third member of the payload family beside `SetConditionLink` and
+/// `SetConditionDamageType`, and it exists for the same reason: the
+/// flag and the number that qualifies it have to be installed together
+/// or not at all. Reach it through `install_condition_at_slot_level`
+/// rather than emitting it by hand.
+pub struct SetConditionSlotLevel {
+    pub target_id: usize,
+    pub condition: crate::conditions::Condition,
+    pub level: Option<u32>,
+}
+
+impl ApplicableSideEffect for SetConditionSlotLevel {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_condition_slot_level(self.condition, self.level);
+        }
+    }
+}
+
+/// Install a condition together with the slot level it was cast at: an
+/// `ApplyCondition` on the target, plus the `SetConditionSlotLevel`.
+///
+/// The mirror of `install_condition_with_link` and
+/// `install_condition_with_damage_type`, and it exists for their
+/// reason: a site that writes the flag and the payload separately is a
+/// site a future edit can drop half of. Half of this one is a spell
+/// that quietly collapses to its base level — see
+/// `ActorInstance::slot_level_of` for why that failure is invisible.
+///
+/// Unlike its two siblings there is no membership list to check
+/// against. `LINKED_CONDITIONS` and `TYPED_CHOICE_CONDITIONS` exist
+/// because those two payloads are installed from *shared* helpers that
+/// do not know which condition they are carrying; a slot level is only
+/// ever recorded by the one spell that is about to read it back, so the
+/// caller already knows the answer and a list would be a second place
+/// to keep it.
+pub fn install_condition_at_slot_level(
+    condition: crate::conditions::Condition,
+    target_id: usize,
+    level: u32,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    vec![
+        Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition,
+            timer,
+        }),
+        Box::new(SetConditionSlotLevel {
+            target_id,
+            condition,
+            level: Some(level),
+        }),
+    ]
+}
+
 /// Grant `count` Mirror Image decoys to the target. Re-application
 /// overwrites the existing pool (5e: recasting refreshes the duplicates).
 /// Pair with ApplyCondition (MirroredImages) so the engine knows the

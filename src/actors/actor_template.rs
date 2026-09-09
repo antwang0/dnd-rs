@@ -5170,6 +5170,37 @@ pub struct ActorInstance {
     /// install-side counterpart, the way `LINKED_CONDITIONS` is for the
     /// table above.
     condition_damage_types: HashMap<Condition, DamageType>,
+    /// The spell slot a condition-anchored spell was cast at, keyed by
+    /// the condition — the third sibling of the two tables above,
+    /// carrying a slot level where those carry an actor id and a damage
+    /// type.
+    ///
+    /// 5e's upcasting is one sentence repeated three hundred times —
+    /// *"the damage increases by 1d8 for each spell slot level above
+    /// 3"* — and the engine answers it well for every spell that
+    /// resolves in the instant it is cast: `action_overrides::cast_level`
+    /// reads the slot off the override set, and `side_effects()` scales
+    /// the dice on the spot. What it had no answer for is the spell
+    /// whose damage is rolled *later*, on a turn where the override set
+    /// is long gone.
+    ///
+    /// Spirit Guardians is the case that forced the table. Its aura
+    /// re-rolls its dice at the end of every round out of a hook that
+    /// knows only "this creature has `SpiritGuarding`", so a 3rd-level
+    /// cast and a 9th-level one hit for exactly the same 3d8 forever —
+    /// the entire upcast was silently free, on a spell whose upcast
+    /// clause is the only reason a cleric ever spends a high slot on it.
+    ///
+    /// Keyed by condition for the reason both tables above are: it makes
+    /// the teardown structural. `remove_condition` drops
+    /// `condition_slot_levels[&c]` on the same line it drops the other
+    /// two, so a level cannot outlive the condition it qualifies and the
+    /// next install of the same condition cannot inherit it. The read
+    /// accessor (`slot_level_of`) closes the other direction by
+    /// answering `None` unless the condition is actually held — so a
+    /// consumer's `unwrap_or(base)` lands on the printed level rather
+    /// than on a stale one.
+    condition_slot_levels: HashMap<Condition, u32>,
     /// The lair's repertoire, copied off the template. Empty for
     /// everything that isn't the resident of somewhere.
     lair_actions: &'static [crate::engine::lair_actions::LairAction],
@@ -5572,6 +5603,7 @@ impl ActorInstance {
             mirror_images: 0,
             condition_links: HashMap::new(),
             condition_damage_types: HashMap::new(),
+            condition_slot_levels: HashMap::new(),
             lair_actions: ct.lair_actions,
             legendary_actions: ct.legendary_actions,
             last_lair_action: None,
@@ -5780,6 +5812,42 @@ impl ActorInstance {
             }
             None => {
                 self.condition_damage_types.remove(&c);
+            }
+        }
+    }
+
+    /// The slot level `c` was installed at, or `None` if `c` isn't
+    /// currently held or was installed by something with no level to
+    /// record.
+    ///
+    /// The `has_condition` guard is `linked_by`'s and `damage_type_of`'s,
+    /// for their reason: every consumer wants "how big is the aura this
+    /// creature is *currently* carrying", and a bare table read would
+    /// answer off a row whose condition had already lapsed. Consumers
+    /// spell it `slot_level_of(X).unwrap_or(BASE)`, which lands on the
+    /// spell's printed level whenever nothing recorded one — so an
+    /// install site that forgets the payload under-powers the effect
+    /// rather than crashing or over-powering it.
+    pub fn slot_level_of(&self, c: Condition) -> Option<u32> {
+        if !self.has_condition(c) {
+            return None;
+        }
+        self.condition_slot_levels.get(&c).copied()
+    }
+
+    /// Record the slot level `c` was cast at (or clear it with `None`).
+    ///
+    /// Callers normally reach this through the `SetConditionSlotLevel`
+    /// side effect rather than directly, so the level travels with the
+    /// `ApplyCondition` that installs the flag — see
+    /// `engine::side_effects::install_condition_at_slot_level`.
+    pub fn set_condition_slot_level(&mut self, c: Condition, level: Option<u32>) {
+        match level {
+            Some(l) => {
+                self.condition_slot_levels.insert(c, l);
+            }
+            None => {
+                self.condition_slot_levels.remove(&c);
             }
         }
     }
@@ -8203,6 +8271,10 @@ impl ActorInstance {
             // lapsed must not leave "…against fire" behind for the next
             // install of the same condition to inherit silently.
             self.condition_damage_types.remove(&c);
+            // And the slot-level table, which is the same shape again:
+            // a Spirit Guardians cast at 9th that has lapsed must not
+            // leave a 9 behind for the next 3rd-level cast to inherit.
+            self.condition_slot_levels.remove(&c);
             if c == Condition::MirroredImages {
                 self.mirror_images = 0;
             }

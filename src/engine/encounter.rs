@@ -16836,40 +16836,65 @@ impl EncounterInstance {
         }
     }
 
-    /// 5e Spirit Guardians aura: if `actor_id` has the `SpiritGuarding`
-    /// condition, every hostile creature within 6 tiles takes 3d8 radiant
-    /// damage (WIS save for half). Called at round-end for each actor.
+    /// 5e Spirit Guardians aura: if `caster_id` has the `SpiritGuarding`
+    /// condition, every hostile creature inside the Emanation takes the
+    /// aura's dice in radiant damage, Wisdom save for half. Called at
+    /// round-end for each actor.
+    ///
+    /// The radius, the dice and the DC are all the spell's to state —
+    /// see `SPIRIT_GUARDIANS_RADIUS`, `spirit_guardians_dice` and
+    /// `spirit_guardians_dc`. This hook used to restate all three, and
+    /// two of the three had drifted: the pulse rolled a flat `3d8` where
+    /// the opening burst honoured nothing at all (so the upcast clause
+    /// bought a bigger slot and no more damage), and it computed its DC
+    /// off `best_spell_save_dc` where the cast used a flat Wisdom
+    /// lookup, so a Charisma-based holder's aura got harder to dodge the
+    /// moment it stopped being the opening burst.
+    ///
+    /// The level is read back off the condition rather than off the
+    /// caster's sheet, because there is nothing on the sheet that says
+    /// what slot was spent — see `ActorInstance::slot_level_of`. A
+    /// missing payload falls back to the printed level, which
+    /// under-powers the aura rather than inventing dice for it.
     fn apply_spirit_guardians_aura(&mut self, caster_id: usize) {
+        use crate::actions::spells::{
+            SPIRIT_GUARDIANS_BASE_LEVEL, SPIRIT_GUARDIANS_RADIUS, spirit_guardians_dc,
+            spirit_guardians_dice,
+        };
         use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
         use crate::engine::types::AbilityScoreType;
-        let has = self
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.has_condition(Condition::SpiritGuarding) && a.is_combat_active());
-        if !has {
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return;
+        };
+        if !caster.is_combat_active() || !caster.has_condition(Condition::SpiritGuarding) {
             return;
         }
-        let caster_loc = match self.actors.get(&caster_id) {
-            Some(a) => a.location(),
-            None => return,
-        };
-        let dc = self
-            .actors
-            .get(&caster_id)
-            .map(|a| a.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]))
-            .unwrap_or(13);
-        let targets = self.enemy_burst_targets(caster_id, caster_loc, 6);
+        let caster_loc = caster.location();
+        let level = caster
+            .slot_level_of(Condition::SpiritGuarding)
+            .unwrap_or(SPIRIT_GUARDIANS_BASE_LEVEL);
+        let dc = spirit_guardians_dc(self, caster_id);
+        let targets = self.enemy_burst_targets(caster_id, caster_loc, SPIRIT_GUARDIANS_RADIUS);
         if targets.is_empty() {
             return;
         }
-        let dmg = self.roll(&Dice::new(3, 8));
+        let dice = spirit_guardians_dice(level);
+        // The same caster-aware roller the opening burst uses, so
+        // Empowered Spell and Potent Spellcasting reach the pulses too
+        // rather than only the first one.
+        let dmg = self.roll_empowered_sum(caster_id, dice, 8);
         let caster_name = self.actor_name(caster_id);
         self.log(format!(
-            "  {}'s spirit guardians lash out: 3d8({}) radiant",
-            caster_name, dmg
+            "  {}'s spirit guardians lash out: {}d8({}) radiant",
+            caster_name, dice, dmg
         ));
         for tid in targets {
-            let save = self.roll_save(tid, AbilityScoreType::Wisdom, dc);
+            let save = self.roll_save_against_caster(
+                tid,
+                AbilityScoreType::Wisdom,
+                dc,
+                caster_id,
+            );
             let actual = if save.passed() { dmg / 2 } else { dmg };
             if actual > 0 {
                 DealDamage {

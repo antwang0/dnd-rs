@@ -6474,23 +6474,88 @@ impl Action for DivineFavor {
 
 pub static DIVINE_FAVOR: LazyLock<DivineFavor> = LazyLock::new(|| DivineFavor {});
 
-/// Spirit Guardians — level-3 conjuration, concentration. Caster is
-/// surrounded by a 15ft-radius aura of spectral guardians; each enemy
-/// that starts its turn in the aura makes a WIS save vs the caster's
-/// spell save DC. Pass = half, fail = full of 3d8 radiant. We model the
-/// aura via a one-shot burst centered on the caster at cast time
-/// (immediate damage on cast); the per-turn re-pulse requires
-/// per-actor concentration tick we don't have today, so the spell's
-/// flavor is collapsed to a powerful single-cast radiant burst that
-/// matches a typical first-round application. Concentration tracks the
-/// cast so re-casting drops cleanly.
-/// Spirit Guardians — level-3 conjuration, concentration. On cast, deals
-/// 3d8 radiant (WIS save for half) to nearby enemies. Then installs the
-/// SpiritGuarding condition on the caster: at every round-end, the aura
-/// repeats the damage to every hostile creature within 6 tiles. The
-/// recurring damage is processed by `apply_spirit_guardians_aura` in
-/// the round-end loop. Concentration-bound — dropping it ends the aura.
+/// **Spirit Guardians** — SRD 5.2 level-3 conjuration (Cleric), action,
+/// self, concentration up to 10 minutes.
+///
+/// > Protective spirits flit around you in a 15-foot Emanation for the
+/// > duration. … whenever a creature enters the Emanation or ends its
+/// > turn there, the creature must make a Wisdom saving throw. On a
+/// > failed save, the creature takes 3d8 Radiant damage … On a
+/// > successful save, the creature takes half as much damage.
+/// >
+/// > **Using a Higher-Level Spell Slot.** The damage increases by 1d8
+/// > for each spell slot level above 3.
+///
+/// On cast the aura fires once at every hostile inside it, then installs
+/// `Condition::SpiritGuarding` on the caster;
+/// `EncounterInstance::apply_spirit_guardians_aura` re-pulses it at the
+/// end of every round for as long as the concentration holds. The
+/// round-end tick rather than a per-victim trigger is one round of
+/// coarseness and no more: RAW bills a creature once per turn, and so
+/// does this.
+///
+/// The **slot level travels with the condition**, through
+/// `install_condition_at_slot_level`. That is not bookkeeping for its
+/// own sake — the pulse rolls its dice on a turn where the cast's
+/// override set no longer exists, so before the payload lane existed a
+/// 9th-level Spirit Guardians dealt 3d8 a round for the whole fight,
+/// exactly like a 3rd-level one, and the entire upcast clause was
+/// free. `SPIRIT_GUARDIANS_DICE` is the conversion, and both the
+/// opening burst and every pulse read it.
+///
+/// **Two RAW clauses are absent and named here rather than dropped.**
+///
+///   - *"Any other creature's Speed is halved in the Emanation."* The
+///     engine's movement surcharges all live on the tile — terrain, or
+///     a zone laid over it — and this one lives on a *body* that walks
+///     around carrying it. Expressing it means a per-step query against
+///     every actor on the board on the hottest path in the engine, to
+///     model a clause whose tactical effect (it costs you a turn to
+///     leave) the damage already charges for.
+///   - *"3d8 Necrotic damage (if you are evil)."* The engine has no
+///     alignment, and the damage type is the only thing that hangs off
+///     it. Radiant is the branch every SRD cleric stat block would take.
 pub struct SpiritGuardians {}
+
+/// The slot Spirit Guardians is printed at, and the floor every upcast
+/// is measured from.
+pub const SPIRIT_GUARDIANS_BASE_LEVEL: u32 = 3;
+
+/// RAW's 15-foot Emanation as a footprint gap on the 2.5-ft grid.
+///
+/// Named because two sites measure it — the opening burst in
+/// `SpiritGuardians::side_effects` and the round-end pulse in
+/// `EncounterInstance::apply_spirit_guardians_aura` — and a bare `6` at
+/// each is two places for the radius to drift apart.
+pub const SPIRIT_GUARDIANS_RADIUS: isize = 6;
+
+/// The aura's damage pool at `level`: *"3d8 … the damage increases by
+/// 1d8 for each spell slot level above 3."*
+///
+/// One function for the same reason the radius is one constant: the
+/// opening burst and every later pulse are the same clause, and the
+/// pulse is the one that reads its level back off the condition rather
+/// than out of the override set. See `ActorInstance::slot_level_of`.
+pub fn spirit_guardians_dice(level: u32) -> u32 {
+    SPIRIT_GUARDIANS_BASE_LEVEL + level.saturating_sub(SPIRIT_GUARDIANS_BASE_LEVEL)
+}
+
+/// The aura's save DC for a given caster.
+///
+/// `best_spell_save_dc` rather than a flat Wisdom lookup, because
+/// Spirit Guardians is a cleric spell that other chassis pick up —
+/// RAW's DC is "your spellcasting ability", and for a Charisma caster
+/// holding it that is not Wisdom. Named and shared for the reason the
+/// radius is: the cast used to compute one DC and the round-end pulse
+/// another, so a Charisma-based holder's aura got steadily harder to
+/// dodge the moment it stopped being the opening burst.
+pub fn spirit_guardians_dc(encounter: &EncounterInstance, caster_id: usize) -> i32 {
+    encounter
+        .actors
+        .get(&caster_id)
+        .map(|a| a.best_spell_save_dc([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]))
+        .unwrap_or(13)
+}
 
 impl Action for SpiritGuardians {
     /// Queues a `StartConcentration`. Declared so the AI's
@@ -6527,9 +6592,12 @@ impl Action for SpiritGuardians {
         _c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(3)
+        action_and_slot(crate::engine::action_overrides::cast_level(
+            overrides,
+            SPIRIT_GUARDIANS_BASE_LEVEL,
+        ))
     }
     fn custom_validate_input(
         &self,
@@ -6550,37 +6618,46 @@ impl Action for SpiritGuardians {
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
         let caster_loc = caster.location();
-        let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
+        let level = crate::engine::action_overrides::cast_level(
+            overrides,
+            SPIRIT_GUARDIANS_BASE_LEVEL,
+        );
+        let dice = spirit_guardians_dice(level);
+        let dc = spirit_guardians_dc(encounter, caster_id);
         // Roll through the shared caster-aware chokepoint rather than
         // `roll` directly — Empowered Spell, Empowered Evocation and
         // Potent Spellcasting all live there, and a bare `roll` skips
         // all three silently.
-        let raw = encounter.roll_empowered_sum(caster_id, 3, 8);
+        let raw = encounter.roll_empowered_sum(caster_id, dice, 8);
         encounter.log(format!(
-            "  spirit guardians: 3d8({}) = {} radiant area",
-            raw, raw
+            "  spirit guardians: {}d8({}) = {} radiant area",
+            dice, raw, raw
         ));
         let mut effs = crate::actions::action_template::resolve_burst_save_damage(
             encounter,
             caster_id,
             caster_loc,
-            6,
+            SPIRIT_GUARDIANS_RADIUS,
             AbilityScoreType::Wisdom,
             dc,
             raw,
             DamageType::Radiant,
         );
-        effs.push(Box::new(ApplyCondition {
-            actor_id: caster_id,
-            condition: Condition::SpiritGuarding,
-            timer: ConditionTimer::Rounds(100),
-        }));
+        // The level rides the condition, because the round-end pulse
+        // rolls its dice long after this override set is gone. See
+        // `ActorInstance::slot_level_of`.
+        effs.extend(crate::engine::side_effects::install_condition_at_slot_level(
+            Condition::SpiritGuarding,
+            caster_id,
+            level,
+            ConditionTimer::Rounds(100),
+        ));
         effs.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::with_conditions(

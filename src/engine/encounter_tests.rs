@@ -93559,3 +93559,132 @@ fn passwall_reaches_across_the_room_and_takes_the_wider_bite() {
         "the passage closes and the wall comes back"
     );
 }
+
+// ---------------------------------------------------------------------
+// The slot a condition remembers.
+//
+// `ActorInstance::condition_slot_levels` is the third payload lane
+// beside the back-link and the chosen damage type, and Spirit Guardians
+// is what it was built for: an aura that rolls its dice at the end of
+// every round, out of a hook that never sees the override set the cast
+// was made with.
+// ---------------------------------------------------------------------
+
+/// A cleric, a slot, and the number the aura remembers.
+fn cleric_with_guardians(level: u32) -> (EncounterInstance, usize, usize) {
+    use crate::actions::spells::SPIRIT_GUARDIANS;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::trolls::TROLL_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // A troll rather than something the opening burst would kill: the
+    // pulse has nobody to hit in an empty aura, and a 9th-level cast
+    // clears a zombie's whole hit-point pool on the way in.
+    let troll = e
+        .instantiate_creature(&TROLL_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+        .unwrap();
+    let overrides = std::collections::HashSet::from([ActionOverride::CastLevel(level)]);
+    for eff in SPIRIT_GUARDIANS.side_effects(&mut e, cleric, None, None, Some(&overrides)) {
+        eff.apply(&mut e);
+    }
+    (e, cleric, troll)
+}
+
+/// Cast at 3rd and at 7th, and the aura's later pulses know which.
+///
+/// The log line is the assertion rather than the damage, because the
+/// damage is a die roll and the whole bug was that the *pool* never
+/// changed: 7d8 and 3d8 overlap, and a run that happened to roll low on
+/// seven dice would have passed a "the big one hurt more" test while
+/// the upcast was still doing nothing.
+#[test]
+fn an_upcast_spirit_guardians_pulses_at_the_slot_it_was_cast_with() {
+    use crate::conditions::Condition;
+
+    let (mut e, cleric, _) = cleric_with_guardians(7);
+    assert_eq!(
+        e.actors[&cleric].slot_level_of(Condition::SpiritGuarding),
+        Some(7),
+        "the slot rides the condition, because the pulse has nowhere else to read it"
+    );
+
+    let before = e.messages().len();
+    // Two skips = one round wrap = one round-end pulse.
+    e.skip_turn();
+    e.skip_turn();
+    let pulses: Vec<&String> = e.messages()[before..]
+        .iter()
+        .filter(|m| m.contains("spirit guardians lash out"))
+        .collect();
+    assert!(!pulses.is_empty(), "the aura should have pulsed");
+    assert!(
+        pulses.iter().all(|m| m.contains("7d8")),
+        "a 7th-level aura pulses 7d8, not 3d8: {:?}",
+        pulses
+    );
+}
+
+/// And the base cast is unchanged — the payload is a record of what was
+/// spent, not a bonus for recording it.
+#[test]
+fn a_base_level_spirit_guardians_still_pulses_three_dice() {
+    let (mut e, _, _) = cleric_with_guardians(3);
+    let before = e.messages().len();
+    e.skip_turn();
+    e.skip_turn();
+    assert!(
+        e.messages()[before..]
+            .iter()
+            .filter(|m| m.contains("spirit guardians lash out"))
+            .all(|m| m.contains("3d8")),
+        "the printed level is three dice"
+    );
+}
+
+/// The payload dies with the condition, which is what keeps a second
+/// cast from inheriting the first one's slot.
+#[test]
+fn a_lapsed_aura_leaves_no_slot_behind_for_the_next_one() {
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let (mut e, cleric, _) = cleric_with_guardians(9);
+    assert_eq!(
+        e.actors[&cleric].slot_level_of(Condition::SpiritGuarding),
+        Some(9)
+    );
+    e.actors
+        .get_mut(&cleric)
+        .unwrap()
+        .remove_condition(Condition::SpiritGuarding);
+    assert_eq!(
+        e.actors[&cleric].slot_level_of(Condition::SpiritGuarding),
+        None,
+        "a level must not outlive the condition it qualifies"
+    );
+
+    // Re-installed bare — the way anything that isn't this spell would
+    // do it — the reader falls back rather than inheriting the 9.
+    e.actors
+        .get_mut(&cleric)
+        .unwrap()
+        .add_condition(Condition::SpiritGuarding, ConditionTimer::Rounds(3));
+    assert_eq!(
+        e.actors[&cleric].slot_level_of(Condition::SpiritGuarding),
+        None,
+        "an install that recorded no level reports none"
+    );
+    let before = e.messages().len();
+    e.skip_turn();
+    e.skip_turn();
+    assert!(
+        e.messages()[before..]
+            .iter()
+            .filter(|m| m.contains("spirit guardians lash out"))
+            .all(|m| m.contains("3d8")),
+        "a missing payload falls back to the printed level"
+    );
+}
