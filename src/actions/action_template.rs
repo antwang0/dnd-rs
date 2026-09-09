@@ -2396,6 +2396,17 @@ impl ActionExecutionInfo {
         self.target_locations.as_deref()
     }
 
+    /// The override set this invocation carries, or `None` for the
+    /// ordinary cast that bends nothing.
+    ///
+    /// Read by the prompt's own tests and by anything that needs to see
+    /// *what was asked for* rather than what it costs — `cost()` folds
+    /// the overrides into a resource list and cannot be asked which of
+    /// them was an upcast.
+    pub fn overrides(&self) -> Option<&HashSet<ActionOverride>> {
+        self.overrides.as_ref()
+    }
+
     /// Resolved costs of this specific invocation (uses the stored
     /// target/loc args, not None placeholders) — useful for the engine
     /// log filter and the UI's cost-label / affordability display.

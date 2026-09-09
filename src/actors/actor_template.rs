@@ -11316,6 +11316,28 @@ impl ActorInstance {
         (1..=9).find(|lvl| self.spell_slot_manager.spell_slots(*lvl).spell_slots > 0)
     }
 
+    /// The cheapest slot this caster still has that is at least `min` —
+    /// which is to say, the level a spell printed at `min` can actually
+    /// be cast at right now.
+    ///
+    /// 5e lets any spell be cast with a slot of its own level *or
+    /// higher*, and the engine prices a cast at exactly one level
+    /// (`Resource::SpellSlot`), so a wizard out of third-level slots and
+    /// holding a fifth is refused a Fireball by
+    /// `can_consume_resource` — correctly, because the cast they are
+    /// asking for is the third-level one. What they have to do instead
+    /// is ask for the fifth-level cast, and this is the question "which
+    /// one is that" — read by the target line, so a player looking at a
+    /// greyed-out spell is told which slot would buy it rather than
+    /// being left to count.
+    ///
+    /// Distinct from `lowest_available_spell_slot`, which asks the same
+    /// question with no floor and is about whether the caster has
+    /// anything left at all.
+    pub fn lowest_available_spell_slot_at_least(&self, min: u32) -> Option<u32> {
+        (min.max(1)..=9).find(|lvl| self.spell_slot_manager.spell_slots(*lvl).spell_slots > 0)
+    }
+
     /// Set or clear a Help grant on this actor.
     /// `Some(g)` overwrites any prior grant; `None` clears all grants.
     pub fn set_help_grant(&mut self, grant: Option<HelpGrant>) {

@@ -1,7 +1,10 @@
+use std::collections::HashSet;
+
 use crate::{
     actions::action_template::{Action, ActionExecutionInfo},
     engine::{
-        encounter::EncounterInstance, errors::ParseError, types::Coordinate, util::parse_coord,
+        action_overrides::ActionOverride, encounter::EncounterInstance, errors::ParseError,
+        side_effects::spell_slot_level, types::Coordinate, util::parse_coord,
     },
 };
 
@@ -189,6 +192,44 @@ impl Prompt {
         Err(format!("unknown or unavailable action {:?}", tokens[0]))
     }
 
+    /// The cast-level token, if `token` is one.
+    ///
+    /// Two forms for one clause, mirroring the two `id:N` / `#N` forms
+    /// the target parser already offers:
+    ///
+    /// - `lvl:5` — cast at level 5, whatever the spell's own level is.
+    /// - `+2` — cast two slot levels above the spell's own.
+    ///
+    /// `base` is the spell's printed level, which the caller reads off
+    /// the action's own unmodified `cost()`; the relative form is
+    /// resolved against it here so that a player who has not memorised
+    /// which level a spell is printed at can still ask for "one bigger".
+    ///
+    /// Neither form can collide with a target argument. A coordinate is
+    /// `x,y` or a run of `r`/`l`/`u`/`d` plus digits, an actor is `id:N`
+    /// or `#N` or a name — nothing in the grammar starts with `+`, and
+    /// nothing else uses the `lvl:` prefix.
+    ///
+    /// Returns `None` for a token that is not a cast level at all, and
+    /// `Some(Err(..))` for one that is trying to be and is malformed —
+    /// so `lvl:x` is a parse error rather than being silently offered to
+    /// the target parser, which would reject it with a much less useful
+    /// message.
+    #[allow(clippy::result_unit_err)]
+    pub(crate) fn parse_cast_level(token: &str, base: u32) -> Option<Result<u32, ()>> {
+        if let Some(rest) = token.strip_prefix("lvl:") {
+            return Some(rest.parse::<u32>().map_err(|_| ()));
+        }
+        if let Some(rest) = token.strip_prefix('+') {
+            return Some(
+                rest.parse::<u32>()
+                    .map_err(|_| ())
+                    .map(|bump| base.saturating_add(bump)),
+            );
+        }
+        None
+    }
+
     pub fn process_input(
         &self,
         input: &str,
@@ -209,10 +250,47 @@ impl Prompt {
 
         let mut target_ids: Vec<usize> = Vec::new();
         let mut target_locations: Vec<Coordinate> = Vec::new();
+        let mut cast_level: Option<u32> = None;
+
+        // The spell's printed level, for the relative `+N` form. Asked
+        // of the action with no overrides at all, which is what "the
+        // level it is printed at" means; `None` for everything that is
+        // not a leveled spell, and a cast-level token on one of those is
+        // refused below rather than quietly ignored.
+        let base_level = spell_slot_level(&action.cost(
+            encounter_instance,
+            self.actor_id,
+            None,
+            None,
+            None,
+        ));
 
         let rest: Vec<&str> = tokens[consumed..].to_vec();
         let mut at = 0usize;
         while at < rest.len() {
+            if let Some(parsed) = Self::parse_cast_level(rest[at], base_level.unwrap_or(0)) {
+                let Ok(level) = parsed else {
+                    return Err(ParseError::with_input(
+                        format!("could not read a spell level from {:?}", rest[at]),
+                        input,
+                    ));
+                };
+                let Some(base) = base_level else {
+                    return Err(ParseError::with_input(
+                        format!("{} is not cast from a spell slot", action.name()),
+                        input,
+                    ));
+                };
+                if level < base {
+                    return Err(ParseError::with_input(
+                        format!("{} is a level-{} spell", action.name(), base),
+                        input,
+                    ));
+                }
+                cast_level = Some(level);
+                at += 1;
+                continue;
+            }
             match Self::parse_target_run(&rest[at..], encounter_instance, actor.location()) {
                 Some((n, TargetArg::Actor(id))) => {
                     target_ids.push(id);
@@ -244,7 +322,7 @@ impl Prompt {
             } else {
                 Some(target_locations)
             },
-            None,
+            cast_level.map(|lvl| HashSet::from([ActionOverride::CastLevel(lvl)])),
         );
 
         if !aei.validate(encounter_instance) {
@@ -830,5 +908,96 @@ mod tests {
         );
     }
 
-}
+    /// A player can ask for a bigger slot, in both of the two forms.
+    ///
+    /// `ActionOverride::CastLevel` has existed since the override enum
+    /// did, and until this syntax nothing outside the test suite could
+    /// produce one: the prompt passed `None` for the override set, and
+    /// the AI has never built one. Every "the damage increases by 1d6
+    /// for each spell slot level above 3" clause in the spell file was
+    /// unreachable in a real game.
+    #[test]
+    fn a_player_can_ask_for_a_bigger_slot() {
+        use super::Prompt;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::action_overrides::ActionOverride;
+        use crate::engine::types::Coordinate;
 
+        let mut e = ei();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let prompt = Prompt::new(wizard, e.actors[&wizard].available_actions());
+
+        let at_five = ActionOverride::CastLevel(5);
+        // Absolute: "cast it at level 5".
+        let aei = prompt
+            .process_input("fireball lvl:5 8,5", &e)
+            .expect("a fifth-level fireball is a legal cast");
+        assert_eq!(aei.action().name(), "fireball");
+        assert!(aei.overrides().is_some_and(|o| o.contains(&at_five)));
+
+        // Relative: "two levels above the one it is printed at", which
+        // for a level-3 spell is the same cast.
+        let bumped = prompt
+            .process_input("fireball +2 8,5", &e)
+            .expect("+2 reads against the spell's own level");
+        assert!(bumped.overrides().is_some_and(|o| o.contains(&at_five)));
+
+        // The level may sit on either side of the tile — it is not a
+        // target argument and does not queue behind them.
+        assert!(prompt.process_input("fireball 8,5 lvl:5", &e).is_ok());
+
+        // And a plain cast still carries no override at all, so a spell
+        // that reads the set gets its printed level.
+        let plain = prompt.process_input("fireball 8,5", &e).unwrap();
+        assert!(plain.overrides().is_none());
+    }
+
+    /// The three ways of asking wrongly, each refused with its own
+    /// reason rather than falling through to "could not parse argument".
+    #[test]
+    fn a_malformed_cast_level_is_refused_on_its_own_terms() {
+        use super::Prompt;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = ei();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let prompt = Prompt::new(wizard, e.actors[&wizard].available_actions());
+
+        // Not a number.
+        let Err(err) = prompt.process_input("fireball lvl:x 8,5", &e) else {
+            panic!("expected a refusal");
+        };
+        assert!(
+            err.message().contains("spell level"),
+            "expected a level-parse message: {}",
+            err.message()
+        );
+
+        // Below the spell's own level — a level-3 spell cannot be cast
+        // with a level-1 slot, and saying so beats "insufficient
+        // resources".
+        let Err(err) = prompt.process_input("fireball lvl:1 8,5", &e) else {
+            panic!("expected a refusal");
+        };
+        assert!(
+            err.message().contains("level-3"),
+            "expected the printed level in the refusal: {}",
+            err.message()
+        );
+
+        // And a cantrip has no slot to raise.
+        let Err(err) = prompt.process_input("fire bolt lvl:3 #0", &e) else {
+            panic!("expected a refusal");
+        };
+        assert!(
+            err.message().contains("spell slot"),
+            "expected a not-a-leveled-spell message: {}",
+            err.message()
+        );
+    }
+}

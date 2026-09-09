@@ -560,11 +560,12 @@ impl App {
     /// non-area action, an unparseable coordinate — which is the common
     /// case and costs the renderer a `HashSet::is_empty`.
     ///
-    /// The coordinate is read off the *last* whitespace-separated token
-    /// of the input, because the prompt's own parser accepts an action
-    /// name in front of it (`cone of cold 20,14`) and the tile is
-    /// always the tail. Parsed relative to the actor, so the `r3u2`
-    /// forms `parse_coord` supports preview too.
+    /// The coordinate is the *last* whitespace-separated token of the
+    /// input that parses as one, because the prompt's own parser
+    /// accepts an action name in front of it (`cone of cold 20,14`) and
+    /// a cast level on either side of it (`fireball +2 20,14`). Parsed
+    /// relative to the actor, so the `r3u2` forms `parse_coord`
+    /// supports preview too.
     ///
     /// And when the input names an action, *that* is the action
     /// previewed — resolved through the same `Prompt::resolve_action`
@@ -592,18 +593,20 @@ impl App {
             return empty;
         };
         let tokens: Vec<&str> = self.input_str.split_whitespace().collect();
-        let Some(token) = tokens.last() else {
-            return empty;
-        };
-        let Some(aim) = crate::engine::util::parse_coord(token, actor.location()) else {
+        let Some((index, aim)) = tokens.iter().enumerate().rev().find_map(|(i, t)| {
+            crate::engine::util::parse_coord(t, actor.location()).map(|c| (i, c))
+        }) else {
             return empty;
         };
         // Everything before the tile is the action, if there is
-        // anything. An unresolvable or ambiguous name previews nothing
-        // rather than falling back to the selection: the cast is going
-        // to be refused, and shading an area for a spell that will not
-        // be cast is worse than shading none.
-        let named = &tokens[..tokens.len() - 1];
+        // anything — `resolve_action` takes the longest prefix that
+        // names one, so a cast level sitting between the name and the
+        // tile is simply not part of the prefix that matched. An
+        // unresolvable or ambiguous name previews nothing rather than
+        // falling back to the selection: the cast is going to be
+        // refused, and shading an area for a spell that will not be
+        // cast is worse than shading none.
+        let named = &tokens[..index];
         let action = if named.is_empty() {
             self.selected_action()
         } else {
@@ -617,7 +620,37 @@ impl App {
         let Some(shape) = action.targeting_schema().area_shape() else {
             return empty;
         };
-        let aei = ActionExecutionInfo::new(action, prompt.actor_id(), None, Some(vec![aim]), None);
+        // The cast level the line asks for, if it asks for one. Threaded
+        // into the preview rather than dropped, because the validate
+        // below is the promise this shading makes: a caster out of
+        // third-level slots typing `fireball +2 20,14` is about to make
+        // a legal cast, and shading nothing would say otherwise.
+        let base_level = crate::engine::side_effects::spell_slot_level(&action.cost(
+            &self.encounter,
+            prompt.actor_id(),
+            None,
+            None,
+            None,
+        ));
+        let overrides = tokens
+            .iter()
+            .find_map(|t| {
+                crate::engine::prompt::Prompt::parse_cast_level(t, base_level.unwrap_or(0))
+            })
+            .and_then(|parsed| parsed.ok())
+            .filter(|lvl| base_level.is_some_and(|base| *lvl >= base))
+            .map(|lvl| {
+                std::collections::HashSet::from([
+                    crate::engine::action_overrides::ActionOverride::CastLevel(lvl),
+                ])
+            });
+        let aei = ActionExecutionInfo::new(
+            action,
+            prompt.actor_id(),
+            None,
+            Some(vec![aim]),
+            overrides,
+        );
         if !aei.validate(&self.encounter) {
             return empty;
         }
@@ -713,8 +746,29 @@ impl App {
                     .actors
                     .get(&caster_id)
                     .is_some_and(|a| a.action_slots() <= a.restricted_action_slots());
+            // 5e: a spell can be cast with a slot of its own level or
+            // higher. The engine prices a cast at exactly one level, so
+            // a wizard out of third-level slots holding a fifth is
+            // correctly refused *this* cast — and can make the
+            // fifth-level one instead, by typing the cast level. Naming
+            // the slot that would work turns a dead end into a
+            // keystroke; without it the panel says "no level-3 spell
+            // slot" beside a sheet showing two level-5s.
+            let upcast_hint = |c: &crate::engine::side_effects::Resource| match c {
+                crate::engine::side_effects::Resource::SpellSlot(lvl) => self
+                    .encounter
+                    .actors
+                    .get(&caster_id)
+                    .and_then(|a| a.lowest_available_spell_slot_at_least(lvl + 1))
+                    .map(|higher| format!(" — type 'lvl:{}' to cast it with one", higher)),
+                _ => None,
+            };
             let reason = if let Some(c) = unaffordable_cost {
-                c.lack_description()
+                format!(
+                    "{}{}",
+                    c.lack_description(),
+                    upcast_hint(c).unwrap_or_default()
+                )
             } else if blocked_by_haste {
                 "only haste's action is left (attack, dash, disengage or hide)".to_string()
             } else {
@@ -1329,4 +1383,98 @@ mod tests {
         assert!(app.previewed_area().is_empty());
     }
 
+    /// A caster out of the printed slot is told which one *would* work.
+    ///
+    /// 5e lets any spell be cast with a slot of its own level or
+    /// higher, and the engine prices a cast at exactly one level — so
+    /// "no level-3 spell slot" is a correct refusal of the wrong
+    /// question, printed beside a sheet that still shows two level-5s.
+    /// The hint names the slot the player can actually ask for.
+    #[test]
+    fn a_spent_slot_names_the_bigger_one_that_would_still_cast_it() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut app = app_with_empty_board();
+        let wizard = app
+            .encounter
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .expect("the wizard fits");
+        spawn(&mut app, 1, Coordinate::new(7, 5));
+        app.encounter.process_stack();
+
+        // Spend every third-level slot, leaving the higher ones alone.
+        while app.encounter.actors[&wizard].can_consume_resource(Resource::SpellSlot(3)) {
+            app.encounter
+                .actors
+                .get_mut(&wizard)
+                .unwrap()
+                .consume_resource(Resource::SpellSlot(3));
+        }
+        let higher = app.encounter.actors[&wizard]
+            .lowest_available_spell_slot_at_least(4)
+            .expect("a level-9 wizard still has something bigger");
+
+        // Point the selection at a level-3 single-target spell the
+        // wizard can no longer afford.
+        let idx = app
+            .encounter
+            .peek_prompt()
+            .expect("the wizard is up")
+            .actions()
+            .iter()
+            .position(|a| a.name() == "vampiric touch")
+            .expect("the wizard carries it");
+        app.selected_action_idx = idx;
+
+        let line = app.target_line().expect("an unaffordable spell says why");
+        assert!(
+            line.contains("no level-3 spell slot"),
+            "the refusal should still name the slot it wanted: {line}"
+        );
+        assert!(
+            line.contains(&format!("lvl:{}", higher)),
+            "and the slot that would work: {line}"
+        );
+    }
+
+    /// And it stays quiet when there is nothing bigger to offer — a
+    /// caster with no slots at all is not helped by being told to try a
+    /// slot they also do not have.
+    #[test]
+    fn a_caster_with_nothing_left_is_offered_nothing() {
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::side_effects::Resource;
+
+        let mut app = app_with_empty_board();
+        let wizard = app
+            .encounter
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .expect("the wizard fits");
+        spawn(&mut app, 1, Coordinate::new(7, 5));
+        app.encounter.process_stack();
+
+        for lvl in 1..=9 {
+            while app.encounter.actors[&wizard].can_consume_resource(Resource::SpellSlot(lvl)) {
+                app.encounter
+                    .actors
+                    .get_mut(&wizard)
+                    .unwrap()
+                    .consume_resource(Resource::SpellSlot(lvl));
+            }
+        }
+        let idx = app
+            .encounter
+            .peek_prompt()
+            .expect("the wizard is up")
+            .actions()
+            .iter()
+            .position(|a| a.name() == "vampiric touch")
+            .expect("the wizard carries it");
+        app.selected_action_idx = idx;
+
+        let line = app.target_line().expect("an unaffordable spell says why");
+        assert!(line.contains("no level-3 spell slot"), "got: {line}");
+        assert!(!line.contains("lvl:"), "nothing to suggest: {line}");
+    }
 }
