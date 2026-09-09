@@ -34687,3 +34687,339 @@ impl Action for ControlWater {
 }
 
 pub static CONTROL_WATER: LazyLock<ControlWater> = LazyLock::new(|| ControlWater {});
+
+// ---------------------------------------------------------------------
+// The doorway spells.
+//
+// SRD 5.2 prints two spells whose entire effect is a hole in a wall —
+// **Stone Shape** ("you could make a small passage through a wall that
+// is 5 feet thick") and **Passwall** ("a passage appears at a point
+// that you can see on a wooden, plaster, or stone surface"). Neither
+// deals damage, neither imposes a condition, and neither targets a
+// creature. What they do is edit the map.
+//
+// That is a lane this engine has had since `conjured_terrain` and has
+// only ever run in one direction. Wall of Stone, Wall of Force and Wall
+// of Ice all *add* solid tiles; Control Water is the sole spell that
+// takes tiles away, and it takes water. `ConjuredTerrain`'s own
+// docstring names the missing case in so many words — "`Floor` written
+// over `Wall` would be a doorway" — and these two spells are that
+// sentence.
+//
+// **Why a hole is worth a spell slot here.** The generator lays BSP
+// rooms: a floor, two walls, and a door punched in each. Walls are the
+// only terrain in the engine that stops both movement *and* line of
+// sight, so the shape of a generated map is the shape of its doorways,
+// and every ranged exchange in a dungeon fight is decided by which side
+// of a wall each creature is standing on. A spell that makes a second
+// door changes a fight the way no buff does — it opens a lane the
+// pathfinder could not find and a shot the LOS walk could not take.
+//
+// **What separates the two.** RAW's differences are range (touch vs 30
+// feet), duration (instantaneous vs 1 hour) and the size of the bite (5
+// feet of stone vs a tunnel up to 20 feet deep). Two of the three
+// survive the translation intact. The third — depth — does not: a
+// generated wall is one tile thick, so a passage 20 feet deep is a
+// passage through the same single tile as one 5 feet deep. That clause
+// is spent on the only axis this board has instead, which is width; see
+// `Passwall::RADIUS`.
+// ---------------------------------------------------------------------
+
+/// Every sight-blocking tile within `radius` of `point` — the stone a
+/// doorway spell can actually take out.
+///
+/// Asked identically by the validator and by the resolver, for the same
+/// reason `ControlWater::water_tiles` is one function: "would this open
+/// anything" and "what does this open" are the same sentence, and a
+/// copy at each site is a copy that can drift.
+///
+/// Reads `TerrainType::blocks_sight` rather than testing for
+/// `TerrainType::Wall` by name. That is the property both spells are
+/// about — RAW's "wooden, plaster, or stone surface" is a list of
+/// things you cannot see through — and it is the predicate that will
+/// still be right when a second opaque terrain lands. Deliberately
+/// *not* `!is_passable`: `ForceWall` is impassable and transparent, and
+/// it is somebody's live 5th-level spell rather than masonry. A
+/// transmutation that quietly deleted a Wall of Force would be a much
+/// bigger rule than either of these spells prints.
+fn opaque_tiles_around(
+    encounter: &EncounterInstance,
+    point: Coordinate,
+    radius: isize,
+) -> Vec<Coordinate> {
+    let mut tiles = Vec::new();
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            let c = point + Coordinate::new(dx, dy);
+            if encounter
+                .terrain_at(c)
+                .is_some_and(|t| t.terrain_type.blocks_sight())
+            {
+                tiles.push(c);
+            }
+        }
+    }
+    tiles
+}
+
+/// **Stone Shape** — SRD 5.2 level-4 transmutation (Cleric, Druid,
+/// Wizard), action, touch, **instantaneous**.
+///
+/// > You touch a stone object of Medium size or smaller or a section of
+/// > stone no more than 5 feet in any dimension and form it into any
+/// > shape you like. … you could make a small passage through a wall
+/// > that is 5 feet thick.
+///
+/// The cheap half of the doorway pair, and the one whose result is
+/// permanent. RAW's duration is Instantaneous — the stone is *shaped*,
+/// not held — so the hole this opens is a change to the map rather than
+/// a patch laid over it, and it is written straight through
+/// `EncounterInstance::set_terrain_at` with no ledger and no expiry.
+/// That is the difference from every other terrain-writing spell in
+/// this file, all of which hand their tiles back: nothing takes a
+/// shaped wall back, including the caster, including Dispel Magic,
+/// including the end of the fight.
+///
+/// **Touch range is the whole cost.** A caster who wants this door has
+/// to walk to the wall and stand against it, which on a board where the
+/// wall is the thing keeping them alive is a real decision. Passwall
+/// buys the same hole from thirty feet away for one more slot level.
+///
+/// **Three tiles wide, not two.** RAW's five feet is two tiles on this
+/// grid, and two is the one width a point-centred square cannot be. A
+/// Chebyshev radius of 0 takes a single 2.5-ft tile — too narrow for
+/// the 2×2 footprint of the Medium creature casting it, so the spell
+/// would open a passage nobody could use. Radius 1 takes a 3×3 bite:
+/// 7.5 feet where the book says 5, and the smallest hole this geometry
+/// can express that anybody can actually walk through.
+///
+/// The one RAW clause with no surface here is the rest of the spell —
+/// "shape a large rock into a weapon, statue, or coffer", "shape a
+/// stone door or its frame to seal the door shut". The engine has no
+/// objects and no doors that open and shut, so the sculpture half of
+/// the spell has nothing to sculpt. Sealing a passage *is* expressible
+/// (write `Wall` over `Floor`) and is deliberately not offered: Wall of
+/// Stone is the spell for that, one slot level up, and giving a level-4
+/// transmutation a second mode that duplicates a level-5 evocation
+/// would make the choice between them a formality.
+pub struct StoneShape {}
+
+impl StoneShape {
+    /// Half-width of the passage, in tiles. See the type docs for why
+    /// this is 1 and not 0.
+    const RADIUS: isize = 1;
+}
+
+impl Action for StoneShape {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "stone shape"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["shape-stone", "sshape"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW is Touch, and the wall is the thing being touched.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn requires_los(&self) -> bool {
+        // A wall you are standing against is a wall you can see, and
+        // the LOS walk stops *at* an opaque tile rather than short of
+        // it — so this gate is satisfied by the very tile the spell is
+        // aimed at. Left on rather than waived, because a caster on the
+        // far side of a second wall genuinely cannot reach this one.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Nothing to shape is a refused cast rather than a spent slot,
+        // the same way Control Water refuses on a dry board.
+        first_target_location(target_locations)
+            .is_some_and(|p| !opaque_tiles_around(encounter, p, Self::RADIUS).is_empty())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let tiles = opaque_tiles_around(encounter, point, Self::RADIUS);
+        for coord in &tiles {
+            encounter.set_terrain_at(*coord, TerrainType::Floor);
+        }
+        encounter.log(format!(
+            "  stone shape opens {} tiles of wall — permanently.",
+            tiles.len()
+        ));
+        Vec::new()
+    }
+}
+
+pub static STONE_SHAPE: LazyLock<StoneShape> = LazyLock::new(|| StoneShape {});
+
+/// **Passwall** — SRD 5.2 level-5 transmutation (Wizard), action, 30
+/// feet, 1 hour.
+///
+/// > A passage appears at a point that you can see on a wooden,
+/// > plaster, or stone surface (such as a wall, ceiling, or floor)
+/// > within range and lasts for the duration. You choose the opening's
+/// > dimensions: up to 5 feet wide, 8 feet tall, and 20 feet deep.
+///
+/// Stone Shape's expensive sibling, and the trade between them is
+/// range against permanence. This one is cast from across the room —
+/// which is the point, because the reason a wall matters in a fight is
+/// that you cannot get to the other side of it, and a spell that
+/// requires you to already be standing there answers the wrong half of
+/// the problem. What it costs is that the passage closes: a patch on
+/// the `conjured_terrain` layer, handed back when the hour is up.
+///
+/// **The depth clause, and where it went.** RAW's opening is up to 20
+/// feet deep, and depth is the axis this board does not have: a
+/// generated wall is one tile thick, so a tunnel 20 feet long and a
+/// hole 5 feet long both come out as the same single retyped tile. The
+/// clause is spent on width instead — `RADIUS` 2, a 5×5 bite where
+/// Stone Shape takes 3×3 — which is the same *quantity* of masonry
+/// removed and puts it where the geometry can show it. A 12.5-ft
+/// breach takes the corner out of a room; that is what a 20-ft tunnel
+/// does to a dungeon whose walls are 5 feet thick.
+///
+/// **No concentration**, which is RAW and is most of what makes the
+/// spell worth a 5th-level slot. A wizard opens the lane and then
+/// spends the rest of the fight casting something else through it.
+///
+/// RAW's closing sentence — "any creatures or objects still in the
+/// passage are safely ejected" when it disappears — has no surface,
+/// and cannot have one that means anything: `conjure_terrain` refuses
+/// to write impassable terrain onto an occupied tile, so a creature
+/// standing in the breach when the hour ends keeps the tile and the
+/// wall closes around them. That is a creature-shaped gap rather than
+/// an ejection, and it is the same simplification every wall spell in
+/// the engine already makes at the other end.
+pub struct Passwall {}
+
+impl Passwall {
+    /// Half-width of the breach, in tiles. See the type docs for why
+    /// this is 2 where Stone Shape's is 1.
+    const RADIUS: isize = 2;
+
+    /// Rounds the passage stands. RAW is 1 hour, which is 600 rounds
+    /// and therefore longer than every fight this engine has ever run;
+    /// 100 is the number the file already uses for "the rest of the
+    /// encounter" (see Spirit Guardians' timer) and is honest about
+    /// being a stand-in rather than a conversion.
+    const ROUNDS: u32 = 100;
+}
+
+impl Action for Passwall {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "passwall"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pass-wall", "pwall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(tiles_from_feet(30) as isize)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "at a point that you can see". The LOS walk stops at the
+        // opaque tile rather than before it, so the wall you are aiming
+        // at is always visible and a wall behind it never is — which is
+        // exactly the rule.
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(5)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        first_target_location(target_locations)
+            .is_some_and(|p| !opaque_tiles_around(encounter, p, Self::RADIUS).is_empty())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let tiles = opaque_tiles_around(encounter, point, Self::RADIUS);
+        if tiles.is_empty() {
+            return Vec::new();
+        }
+        vec![Box::new(ConjureTerrain {
+            patch: ConjuredTerrain::new(
+                "passwall",
+                caster_id,
+                TerrainType::Floor,
+                tiles,
+                Self::ROUNDS,
+                false,
+            )
+            .with_verb("opens a passage through"),
+        })]
+    }
+}
+
+pub static PASSWALL: LazyLock<Passwall> = LazyLock::new(|| Passwall {});

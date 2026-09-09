@@ -447,6 +447,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // swarms instead of a single-element shield. Force-typed
     // retaliation chips through almost any creature's defenses.
     actions.push(&*crate::actions::spells::INVESTITURE_OF_STONE);
+    // The doorway pair, both on the wizard's RAW list and both new to
+    // the engine's map-editing lane — which until now only ever added
+    // walls. Stone Shape (lv4, touch, permanent) is the cheap one you
+    // have to walk to; Passwall (lv5, 30 ft, no concentration) is the
+    // one that opens a lane across the room and leaves the wizard's
+    // concentration free to hold something through it. Both refuse to
+    // be cast at anything that is not a wall.
+    actions.push(&*crate::actions::spells::STONE_SHAPE);
+    actions.push(&*crate::actions::spells::PASSWALL);
     // Tasha's Caustic Brew — lv1 evocation, 30ft line, 2d4 acid initial +
     // 2d4 acid drip per round until the target wipes it off or the caster
     // drops concentration. Sustained-DoT differentiator at the lv1 tier

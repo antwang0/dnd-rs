@@ -1026,6 +1026,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3h''''. The doorway spells — Passwall / Stone Shape at the
+        //         wall the fight is on the other side of. Beside
+        //         Control Water because it is the same kind of decision
+        //         (one action spent on the map rather than on a
+        //         creature) and below it because the gate here is
+        //         strictly narrower: this rung declines the moment the
+        //         caster can see a single hostile, so nothing above it
+        //         in the ladder is ever displaced by a turn spent
+        //         digging. What it displaces is walking, which is what
+        //         a caster with no line of sight to anybody would
+        //         otherwise do.
+        if let Some(aei) = try_open_a_wall(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3i. Foresight — level-9 single-target ally apex buff. Lay it
         //     on the toughest ally before they engage. Highest priority
         //     of the support-buff lane because the slot is precious.
@@ -8527,6 +8542,119 @@ fn try_control_water(
         }
     }
     best.map(|(_, _, aei)| aei)
+}
+
+/// The doorway spells, cheapest first.
+///
+/// Order is the whole of the choice between them, and first-that-
+/// validates is the whole of the rule. Stone Shape costs a 4th-level
+/// slot and has to be touched; Passwall costs a 5th and reaches thirty
+/// feet. A caster standing against the wall can cast either and should
+/// spend the cheaper one; a caster across the room can only cast the
+/// dearer. Trying them in this order gets both sentences with no reach
+/// arithmetic here — `validate` refuses Stone Shape for anybody too far
+/// away, and the walk falls through to Passwall.
+///
+/// Both are absent from `AREA_CONTROL_SPELLS` and from the AoE picker,
+/// and could not be on either: they catch no bodies, so the scorer both
+/// of those rungs share ranks every placement at zero.
+const DOORWAY_SPELLS: [&str; 2] = ["stone shape", "passwall"];
+
+/// **The doorway spells** — cut a hole in the wall the fight is on the
+/// other side of.
+///
+/// The narrowest rung in the file, because the board state it wants is
+/// specific and unmistakable: the caster can see *nobody* on the other
+/// side, and the reason is a wall on the straight line to the nearest
+/// one. That is the only case either spell is worth an action in a
+/// fight, and it is a case the rest of the ladder handles badly — every
+/// attack rung declines for want of a target, and what is left is
+/// walking, which on a BSP map means going the long way round through
+/// whichever door the generator happened to punch.
+///
+/// **Why the straight line and not the pathfinder.** "Is there a route
+/// at all" is the question this rung looks like it should ask, and
+/// `path_to` cannot answer it: that walk is bounded by the actor's
+/// remaining movement, so it says "no" about a room two turns away
+/// exactly as loudly as about a sealed one. The straight line is a
+/// weaker test and a true one — a wall standing between the caster and
+/// the nearest enemy is a wall worth a door whether or not some longer
+/// route exists, because the longer route costs turns and the door
+/// costs one.
+///
+/// **The first wall on the line, not the nearest wall.** A hole in the
+/// wall beside you that opens onto the same room you are already in is
+/// worth nothing. The tile this aims at is the first opaque tile the
+/// line to the enemy crosses, which is the one thing standing in the
+/// way by construction.
+///
+/// Nearest hostile by footprint gap, ties broken on the lowest id, so a
+/// seeded run reproduces.
+fn try_open_a_wall(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::encounter::tiles_between;
+    use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+
+    // Cheapest gate first: a caster holding neither spell has nothing to
+    // decide, and the sweep below walks the whole actor table.
+    let doorways: Vec<&'static (dyn crate::actions::action_template::Action + Send + Sync)> =
+        DOORWAY_SPELLS
+            .iter()
+            .filter_map(|name| actor.find_action(name))
+            .collect();
+    if doorways.is_empty() {
+        return None;
+    }
+
+    let mut nearest: Option<(isize, usize, Coordinate)> = None;
+    for other_id in encounter.sorted_actor_ids() {
+        let Some(other) = encounter.actors.get(&other_id) else {
+            continue;
+        };
+        if other.team() == my_team || !other.is_combat_active() {
+            continue;
+        }
+        // One visible enemy anywhere and this rung is the wrong answer
+        // — whatever the caster wants to do about them, it can be done
+        // through the air they are already standing in.
+        if encounter.actor_has_line_of_sight(actor_id, other_id) {
+            return None;
+        }
+        let gap = footprint_chebyshev(
+            my_loc,
+            my_size,
+            other.location(),
+            get_tiles_from_size(other.size()),
+        );
+        if nearest
+            .as_ref()
+            .is_none_or(|(best_gap, _, _)| gap < *best_gap)
+        {
+            nearest = Some((gap, other_id, other.location()));
+        }
+    }
+    let (_, _, target_loc) = nearest?;
+
+    // The first thing on the line that is actually in the way. Endpoints
+    // are excluded by `tiles_between`, which is right at both ends: the
+    // caster is not standing in a wall, and neither is the enemy.
+    let wall = tiles_between(my_loc, target_loc).find(|c| {
+        encounter
+            .terrain_at(*c)
+            .is_some_and(|t| t.terrain_type.blocks_sight())
+    })?;
+
+    doorways.into_iter().find_map(|action| {
+        let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![wall]), None);
+        aei.validate(encounter).then_some(aei)
+    })
 }
 
 /// Shared "where do I drop this burst?" search, used by both burst
@@ -19871,5 +19999,91 @@ mod tests {
             .add_condition(Condition::Poisoned, ConditionTimer::Rounds(3));
         let aei = try_self_cleanse(&e, fighter).expect("poison is what the potion is for");
         assert_eq!(aei.action().name(), "drink potion of vitality");
+    }
+
+    /// A flat board with one full-height wall column, a wizard on the
+    /// near side and a goblin on the far one — the exact shape
+    /// `try_open_a_wall` is looking for.
+    ///
+    /// Floor is written tile by tile rather than handed in, because the
+    /// generator's own scenery would otherwise decide the answer: a
+    /// second wall anywhere on the line is a different test.
+    fn board_split_by_a_wall(caster_x: isize) -> (EncounterInstance, usize, usize) {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        for x in 0..30 {
+            for y in 0..20 {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+            }
+        }
+        for y in 0..20 {
+            e.set_terrain_at(Coordinate::new(15, y), TerrainType::Wall);
+        }
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(caster_x, 10), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 1)
+            .unwrap();
+        (e, wizard, goblin)
+    }
+
+    /// The rung's whole job: a fight on the other side of a wall, and
+    /// the wizard cuts a door through the tile that is in the way.
+    ///
+    /// The aimed-at tile is asserted as well as the spell, because
+    /// "cast a doorway spell somewhere" is not the behaviour — a hole
+    /// in the wall behind you opens onto the room you are already in.
+    #[test]
+    fn the_ai_cuts_a_door_through_the_wall_the_fight_is_behind() {
+        // Far enough back that only Passwall reaches: the cheaper spell
+        // is tried first, fails its touch range, and the walk falls
+        // through to the one that can be cast from here.
+        let (e, wiz, _) = board_split_by_a_wall(5);
+        let aei = try_open_a_wall(&e, wiz).expect("a wall between the wizard and the goblin");
+        assert_eq!(aei.action().name(), "passwall");
+        assert_eq!(
+            aei.target_locations().and_then(|l| l.first().copied()),
+            Some(Coordinate::new(15, 10)),
+            "the door goes in the tile that is in the way, not the nearest one"
+        );
+
+        // Standing against the wall, the cheaper slot is in reach and
+        // wins on registry order.
+        let (e, wiz, _) = board_split_by_a_wall(13);
+        let aei = try_open_a_wall(&e, wiz).expect("touching the wall is still a wall");
+        assert_eq!(
+            aei.action().name(),
+            "stone shape",
+            "a caster who can touch the wall spends the cheaper slot"
+        );
+    }
+
+    /// And it declines the moment there is anybody to look at. A caster
+    /// with a target has better things to do with the action than dig,
+    /// which is why this rung can sit as high in the ladder as it does.
+    #[test]
+    fn the_ai_does_not_dig_while_it_can_see_anybody() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let (mut e, wiz, _) = board_split_by_a_wall(5);
+        // A second goblin on the wizard's own side of the wall.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 2)
+            .unwrap();
+        assert!(
+            try_open_a_wall(&e, wiz).is_none(),
+            "one visible enemy anywhere and the door is the wrong answer"
+        );
+
+        // Nobody left standing is the other end of the same gate.
+        let (mut e, wiz, goblin) = board_split_by_a_wall(5);
+        e.actors.get_mut(&goblin).unwrap().take_damage(1_000);
+        assert!(
+            try_open_a_wall(&e, wiz).is_none(),
+            "a door to an empty room is not worth a fifth-level slot"
+        );
     }
 }

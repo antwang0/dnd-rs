@@ -55,6 +55,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // party from the water, this parts it. Declines to be cast on a dry
     // board, so it costs a cleric nothing to carry.
     actions.push(&*crate::actions::spells::CONTROL_WATER);
+    // Stone Shape (lv4) — the cleric is the third class RAW puts it on,
+    // and the one whose other 4th-level options are all buffs. A hole
+    // in a wall is the cheapest way a divine caster ever gets to change
+    // where the fight is being fought. Touch range, and the passage is
+    // permanent.
+    actions.push(&*crate::actions::spells::STONE_SHAPE);
     actions.push(&*FAERIE_FIRE);
     actions.push(&*BANE);
     actions.push(&*SPIRITUAL_WEAPON);

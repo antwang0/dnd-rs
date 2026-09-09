@@ -93403,3 +93403,159 @@ fn the_bearded_devils_beard_seals_the_wound_it_opens() {
         "forty seeds should land at least one beard on a fighter"
     );
 }
+
+// ---------------------------------------------------------------------
+// The doorway spells — Stone Shape and Passwall.
+//
+// Both write `Floor` over `Wall`, which is the one direction the
+// map-editing lane had never run in. What separates them is range,
+// width and whether the hole ever closes, and each of the three gets a
+// test below.
+// ---------------------------------------------------------------------
+
+/// A column of wall across the middle of the board, and a wizard
+/// standing against it with an enemy on the far side. The board every
+/// doorway test wants.
+fn walled_board(caster_x: isize) -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    for y in 0..30 {
+        e.set_terrain_at(Coordinate::new(15, y), TerrainType::Wall);
+    }
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(caster_x, 10), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 1)
+        .unwrap();
+    (e, wizard, goblin)
+}
+
+/// Stone Shape's whole point: the hole is a change to the map, not a
+/// patch laid over it. Nothing holds it up and nothing takes it back.
+#[test]
+fn stone_shape_opens_a_permanent_passage_and_leaves_the_rest_of_the_wall_standing() {
+    use crate::actions::spells::STONE_SHAPE;
+
+    // A Medium body is 2x2, so an anchor of 13 puts the wizard's far
+    // edge on column 14 — against the wall and not inside it.
+    let (mut e, wizard, goblin) = walled_board(13);
+    assert!(
+        !e.actor_has_line_of_sight(wizard, goblin),
+        "the wall is doing its job before the spell"
+    );
+
+    let aim = Coordinate::new(15, 10);
+    assert!(
+        STONE_SHAPE.validate_input(&e, wizard, None, Some(&vec![aim]), None),
+        "a wizard standing against the wall can touch it"
+    );
+    for eff in STONE_SHAPE.side_effects(&mut e, wizard, None, Some(&vec![aim]), None) {
+        eff.apply(&mut e);
+    }
+
+    // Three tiles of the column are gone — the 3x3 bite, of which only
+    // the column itself was ever wall.
+    for y in 9..=11 {
+        assert_eq!(
+            e.terrain_at(Coordinate::new(15, y)).unwrap().terrain_type,
+            TerrainType::Floor,
+            "the passage should be three tiles tall"
+        );
+    }
+    // And no more than three. The wall either side is untouched.
+    for y in [8, 12, 20] {
+        assert_eq!(
+            e.terrain_at(Coordinate::new(15, y)).unwrap().terrain_type,
+            TerrainType::Wall,
+            "the rest of the wall is still standing"
+        );
+    }
+    assert!(
+        e.actor_has_line_of_sight(wizard, goblin),
+        "the door is a shot the LOS walk could not take before"
+    );
+
+    // Instantaneous: nothing on the conjured-terrain layer, so there is
+    // no timer to run out, nothing for a dropped concentration to hand
+    // back, and nothing for Dispel Magic to find.
+    assert!(
+        e.conjured_terrain().is_empty(),
+        "a shaped wall is a change to the map, not a patch laid over it"
+    );
+}
+
+/// Both spells refuse rather than spending the slot. The gate is the
+/// same one Control Water uses on a dry board — a cast with nothing to
+/// bite is a refused cast, not a wasted turn.
+#[test]
+fn a_doorway_spell_declines_to_be_cast_at_open_floor() {
+    use crate::actions::spells::{PASSWALL, STONE_SHAPE};
+
+    // Each spell is offered a point it can comfortably reach whose
+    // whole bite is bare floor — one tile behind a wizard standing
+    // against the wall for Stone Shape's 3x3, and open ground well
+    // short of the wall for Passwall's wider 5x5.
+    let (e, wizard, _) = walled_board(13);
+    assert!(
+        !STONE_SHAPE.validate_input(&e, wizard, None, Some(&vec![Coordinate::new(12, 10)]), None),
+        "there is no stone here to shape"
+    );
+    let (far, far_wizard, _) = walled_board(5);
+    let open = vec![Coordinate::new(10, 10)];
+    assert!(
+        !PASSWALL.validate_input(&far, far_wizard, None, Some(&open), None),
+        "and no surface for a passage to appear on"
+    );
+}
+
+/// Passwall's two differences from its cheaper sibling, in one test:
+/// it reaches across the room, and it takes a wider bite when it gets
+/// there.
+#[test]
+fn passwall_reaches_across_the_room_and_takes_the_wider_bite() {
+    use crate::actions::spells::{PASSWALL, STONE_SHAPE};
+
+    // Ten tiles short of the wall — 25 ft, inside Passwall's 30 and
+    // nowhere near touch.
+    let (mut e, wizard, _) = walled_board(5);
+    let aim = vec![Coordinate::new(15, 10)];
+    assert!(
+        !STONE_SHAPE.validate_input(&e, wizard, None, Some(&aim), None),
+        "Stone Shape is a spell you have to walk to"
+    );
+    assert!(PASSWALL.validate_input(&e, wizard, None, Some(&aim), None));
+
+    for eff in PASSWALL.side_effects(&mut e, wizard, None, Some(&aim), None) {
+        eff.apply(&mut e);
+    }
+    for y in 8..=12 {
+        assert_eq!(
+            e.terrain_at(Coordinate::new(15, y)).unwrap().terrain_type,
+            TerrainType::Floor,
+            "the breach is five tiles of column, not three"
+        );
+    }
+    assert_eq!(
+        e.terrain_at(Coordinate::new(15, 7)).unwrap().terrain_type,
+        TerrainType::Wall
+    );
+
+    // Unlike Stone Shape, this one is holding the tiles and will hand
+    // them back — which is also what makes it dispellable.
+    let patch = e
+        .conjured_terrain()
+        .iter()
+        .find(|p| p.name == "passwall")
+        .expect("passwall lays a patch");
+    let id = patch.id;
+    assert!(!patch.concentration, "RAW asks for no concentration");
+    assert!(e.dispel_conjured_terrain(id));
+    assert_eq!(
+        e.terrain_at(Coordinate::new(15, 10)).unwrap().terrain_type,
+        TerrainType::Wall,
+        "the passage closes and the wall comes back"
+    );
+}

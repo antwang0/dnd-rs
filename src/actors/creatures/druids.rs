@@ -247,6 +247,14 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the druid's Wall of Stone and Spike Stones. Mutually exclusive
     // with Investiture of Ice via the concentration short-circuit.
     actions.push(&*crate::actions::spells::INVESTITURE_OF_STONE);
+    // Stone Shape (lv4) — the druid's half of the doorway pair, and the
+    // list it is most at home on: a druid who has spent the fight
+    // laying Spike Growth and Wall of Stone across the ground is
+    // already the class that decides where the walls are. Touch range,
+    // instantaneous, and the hole never closes. Refuses to be cast at
+    // anything that is not a wall, so it costs nothing to carry on an
+    // open board.
+    actions.push(&*crate::actions::spells::STONE_SHAPE);
     // Latest druid additions (XGtE):
     //   - lv4 **Watery Sphere** (conjuration): single-target STR-save
     //     restraint. Water-themed sister to Maximilian's Earthen Grasp
