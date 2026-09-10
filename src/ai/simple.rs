@@ -10570,6 +10570,14 @@ fn best_melee_damage_if_closed(
 ) -> Option<f32> {
     let actor = encounter.actors.get(&actor_id)?;
     let mut best: Option<f32> = None;
+    // `actor.actions`, and deliberately — see
+    // `no_item_in_the_loot_pool_grants_a_weapon_attack`. The pickers that
+    // ask "what could I *do*" read `available_actions`, because a potion,
+    // a scroll and a staff's spell menu are all things a creature can do
+    // and none of them is on a stat block. This one asks "what could I
+    // *swing*", and nothing the loot table hands out is a swing: a magic
+    // weapon in this engine is a bonus on the template's own attack, not
+    // an attack of its own.
     for action in actor.actions.iter() {
         if !action.is_harmful()
             || !action.deals_damage()
@@ -18866,6 +18874,60 @@ mod tests {
         assert!(
             super::try_resistance_ward(&e, cleric).is_none(),
             "nobody in reach still needs one"
+        );
+    }
+
+    /// Nothing on the loot table is a weapon attack, which is what lets
+    /// half the AI go on reading the stat block's own action list.
+    ///
+    /// The pickers split on a question the two lists answer differently.
+    /// "What could I *do* this turn" is `available_actions` — template
+    /// plus pack — because a potion, a scroll and a staff's spell menu
+    /// are all things a creature can do and none of them is on a stat
+    /// block. "What could I *swing*" is `actor.actions`, and the reason
+    /// that is not a bug is this invariant: a magic weapon in this engine
+    /// is a bonus on the template's own attack (`ItemBonuses`), a rider
+    /// keyed off a condition (`ON_HIT_RIDERS`), or a prime that arms one
+    /// — never an attack of its own.
+    ///
+    /// The day an item ships an actual swing, `best_damage_per_lane`,
+    /// `best_melee_damage_if_closed`, `try_step_away_from_threats`' reach
+    /// scan and `try_pry_attachment`'s comparison all start
+    /// under-reporting, silently and only for whoever picked the thing
+    /// up. This is the test that says so first.
+    #[test]
+    fn no_item_in_the_loot_pool_grants_a_weapon_attack() {
+        use crate::items::item_template::LOOT_POOL;
+
+        let mut swings: Vec<String> = Vec::new();
+        for item in LOOT_POOL {
+            for action in item.on_use {
+                // A weapon attack is a harmful, damaging, single-target
+                // action with a reach — the shape every swing-estimating
+                // lane filters for. A staff's Fireball is harmful and
+                // damaging and is not one; a staff's prime deals no
+                // damage at all.
+                if action.is_harmful()
+                    && action.deals_damage()
+                    && action.is_weapon_attack()
+                {
+                    swings.push(format!("{} offers `{}`", item.name, action.name()));
+                }
+            }
+        }
+        assert!(
+            swings.is_empty(),
+            "an item now grants a weapon attack, and four AI lanes read the \
+             stat block's list on the assumption that none does:\n  {}",
+            swings.join("\n  ")
+        );
+        // The control. `is_weapon_attack` defaults to false, so a sweep
+        // that only ever asked it would pass for an empty loot table, a
+        // renamed accessor, or a day the predicate stopped meaning
+        // anything.
+        assert!(
+            crate::actions::monster_attacks::GREATSWORD.is_weapon_attack(),
+            "the predicate this sweep is built on no longer identifies a swing"
         );
     }
 
