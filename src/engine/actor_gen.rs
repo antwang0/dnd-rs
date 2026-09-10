@@ -115,19 +115,24 @@ pub fn generate_actors(
     // piranhas drown in air, so they come in through
     // `get_random_water_spawn` and nothing else.
     //
-    // The flag is the same monotone-narrowing trick `full_widths` is,
-    // one axis over. A board either has an unoccupied pool big enough
-    // for a body or it does not, and the answer only gets more negative
-    // as the fight fills up — so the first failure settles the question
-    // for the rest of the generation, and the whole cohort leaves the
-    // draw rather than being re-asked once per try until `MAX_TRIES`
-    // runs out.
+    // Recorded exactly as `full_widths` is, and for the same two
+    // reasons. It is a monotone narrowing — a board either has an
+    // unoccupied pool big enough for a body or it does not, and the
+    // answer only gets more negative as the fight fills up — so the
+    // first failure settles the question instead of being re-asked once
+    // per try until `MAX_TRIES` runs out. And it is recorded per
+    // *width*, with the same upward generalisation: no pool wide enough
+    // for a Large shark means no pool wide enough for a Huge one, and a
+    // pool too small for either can still be exactly right for a
+    // Tiny seahorse. A single flag would have taken every water
+    // breather on the roster off the table because a giant shark was
+    // drawn first.
     //
     // Dropping them is the *right* answer rather than a fallback. A
     // reef shark anchored in a dry corridor is not an encounter; it is
     // a six-round countdown to a corpse nobody fought, which is exactly
     // why the clause could not ship before the generator could say no.
-    let mut no_water_room = false;
+    let mut dry_widths: Vec<usize> = Vec::new();
     let is_aquatic =
         |t: &CreatureTemplate| t.features.contains(crate::actions::class_features::AQUATIC_ONLY_TAG);
     for team_id in params.start_team..params.n_teams {
@@ -154,7 +159,10 @@ pub fn generate_actors(
                 affordable_templates(template_pool, params.cr_target - cr_total)
                     .into_iter()
                     .filter(|&i| !width_is_full(&full_widths, template_pool[i].size))
-                    .filter(|&i| !(no_water_room && is_aquatic(template_pool[i])))
+                    .filter(|&i| {
+                        !(is_aquatic(template_pool[i])
+                            && width_is_full(&dry_widths, template_pool[i].size))
+                    })
                     .collect();
             // Everything the budget could still buy is too big for what
             // is left of the map. That is a board that has run out of
@@ -181,12 +189,12 @@ pub fn generate_actors(
                 }
                 Err(_) if aquatic => {
                     // A failed *water* spawn proves nothing about dry
-                    // ground, so it narrows the aquatic cohort rather
-                    // than the width. Recording it on `full_widths`
-                    // would take every Large creature on the roster off
-                    // the table because a giant shark could not find a
-                    // pool.
-                    no_water_room = true;
+                    // ground, so it narrows the water cohort's widths
+                    // rather than the board's. Recording it on
+                    // `full_widths` would take every Large creature on
+                    // the roster off the table because a giant shark
+                    // could not find a pool.
+                    dry_widths.push(get_tiles_from_size(creature_template.size));
                     continue;
                 }
                 Err(_) => {
@@ -375,6 +383,46 @@ mod tests {
             wet_boards > 0,
             "forty seeds and not one shark — the fixture is not exercising the lane"
         );
+
+        // A pool that is too small for one water breather is not too
+        // small for all of them. The narrowing is per width, with the
+        // same upward generalisation `full_widths` uses, so a board
+        // that turns away a Huge giant shark can still field the
+        // Medium reef sharks the same pool has room for — a single flag
+        // would have emptied the cohort on the first failure whatever
+        // was drawn.
+        {
+            use crate::actors::creatures::giant_sharks::GIANT_SHARK_TEMPLATE;
+
+            let mixed: Vec<&'static CreatureTemplate> =
+                vec![&GIANT_SHARK_TEMPLATE, &REEF_SHARK_TEMPLATE];
+            let both_affordable = ActorGenParams {
+                cr_target: 6.0,
+                n_teams: 2,
+                pc_template: None,
+                start_team: 1,
+            };
+            let mut small_fry = 0;
+            for seed in 0..40u64 {
+                let mut e = EncounterInstance::empty(&tp, Some(seed));
+                if generate_actors(&mut e, &both_affordable, &mixed).is_err() {
+                    continue;
+                }
+                for id in e.sorted_actor_ids() {
+                    let name = e.actors[&id].name();
+                    if name.starts_with("Reef Shark") || name.starts_with("Giant Shark") {
+                        if name.starts_with("Reef Shark") {
+                            small_fry += 1;
+                        }
+                        assert!(e.is_immersed(id), "seed {seed} beached {name}");
+                    }
+                }
+            }
+            assert!(
+                small_fry > 0,
+                "no reef shark in forty seeds — a Huge failure is emptying the whole cohort"
+            );
+        }
 
         // And the dry board: a map with the water scrubbed out draws no
         // shark at all, rather than draining `MAX_TRIES` re-asking a

@@ -7155,6 +7155,16 @@ impl ActorInstance {
                     self.remove_condition(c);
                 }
             }
+            // …and the charge ledger, on the same "unless another copy
+            // still grants it" rule. A ledger entry outliving the last
+            // copy of its item is not wrong today — `spend_item_use`
+            // asks `has_item_named` first — but it would become wrong
+            // the moment anything dropped a half-spent wand and picked
+            // it back up, which would add a fresh seven to the four it
+            // was carrying.
+            if !self.has_item_named(name) {
+                self.item_charges.remove(name);
+            }
             true
         } else {
             false
