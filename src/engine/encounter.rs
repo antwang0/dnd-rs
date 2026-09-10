@@ -10797,6 +10797,66 @@ impl EncounterInstance {
         true
     }
 
+    /// Pick the damage type, from `candidates`, that lands the most raw
+    /// HP on `target_id`. Vulnerability beats nothing beats resistance
+    /// beats immunity. Ties prefer the earlier entry in `candidates` for
+    /// deterministic logs. Returns the first listed type if the target
+    /// isn't found (silent fallback).
+    ///
+    /// The **offensive** half of the pair whose other half is
+    /// `likeliest_incoming_damage_type` below. This one asks *what hurts
+    /// them most* and reads the answer off one creature's sheet; that
+    /// one asks *what is coming at me* and has to go looking for it.
+    ///
+    /// It lived as a free function in `spells.rs` while only spells
+    /// picked a type — Chromatic Orb's six, Sorcerous Burst's seven,
+    /// Dragon's Breath's five. A conjured pact weapon picks one too
+    /// (SRD 5.2 Pact of the Blade: *"you can cause the weapon to deal
+    /// Necrotic, Psychic, or Radiant damage or its normal damage
+    /// type"*), and a weapon has no business reaching into the spell
+    /// module for it. Here it sits beside its mirror, where the next
+    /// caller will find it without having to know which file the first
+    /// one happened to be in.
+    pub fn pick_damage_type_against_target(
+        &self,
+        target_id: usize,
+        candidates: &[crate::engine::types::DamageType],
+    ) -> crate::engine::types::DamageType {
+        use crate::engine::types::DamageModifier;
+        let Some(target) = self.actors.get(&target_id) else {
+            return candidates[0];
+        };
+        // Score: vuln = 2, none = 1, resist = 0, immune = -1, absorbed = -2.
+        // Higher wins. Absorption sits below immunity rather than beside it
+        // because the two are not equally bad to pick: an immune type wastes
+        // the orb, and an absorbed one hands the target hit points.
+        let score = |dt: &&crate::engine::types::DamageType| -> i32 {
+            match target.damage_modifier(**dt) {
+                Some(DamageModifier::Vulnerability) => 2,
+                None => 1,
+                Some(DamageModifier::Resistance) => 0,
+                Some(DamageModifier::Immunity) => -1,
+                Some(DamageModifier::Absorption) => -2,
+            }
+        };
+        candidates
+            .iter()
+            // `max_by_key` keeps the *last* maximum, and this function
+            // has always promised the first — the sentence above, and
+            // the comment at Chromatic Orb's call site naming acid as
+            // the preferred tie. It did the opposite for as long as it
+            // existed: six candidate types with no relevant modifier
+            // scored 1 apiece and the orb came out Thunder, every time,
+            // against most of the bestiary. The reversed walk is how
+            // `likeliest_incoming_damage_type` below already spelled
+            // the same fix; the two are now the same rule read from
+            // both ends.
+            .rev()
+            .max_by_key(score)
+            .copied()
+            .unwrap_or(candidates[0])
+    }
+
     /// Which entry of `menu` the creatures currently trying to kill
     /// `actor_id` are most likely to deal, or `None` when none of them
     /// threatens any of it.

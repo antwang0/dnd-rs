@@ -20546,49 +20546,13 @@ impl Action for VitriolicSphere {
 pub static VITRIOLIC_SPHERE: LazyLock<VitriolicSphere> =
     LazyLock::new(|| VitriolicSphere {});
 
-/// Pick the damage type, from `candidates`, that lands the most raw HP on
-/// `target_id`. Vulnerability beats nothing beats resistance beats immunity.
-/// Ties prefer the earlier entry in `candidates` for deterministic logs.
-/// Returns the first listed type if the target isn't found (silent fallback).
-///
-/// Used by Chromatic Orb to pick from its six-element damage menu, but
-/// shaped generically so future "caster picks a damage type" spells
-/// (Elemental Bane, Elemental Affinity sorcerer) can reuse it.
-fn pick_damage_type_against_target(
-    encounter: &EncounterInstance,
-    target_id: usize,
-    candidates: &[DamageType],
-) -> DamageType {
-    use crate::engine::types::DamageModifier;
-    let Some(target) = encounter.actors.get(&target_id) else {
-        return candidates[0];
-    };
-    // Score: vuln = 2, none = 1, resist = 0, immune = -1, absorbed = -2.
-    // Higher wins. Absorption sits below immunity rather than beside it
-    // because the two are not equally bad to pick: an immune type wastes
-    // the orb, and an absorbed one hands the target hit points.
-    let score = |dt: &&DamageType| -> i32 {
-        match target.damage_modifier(**dt) {
-            Some(DamageModifier::Vulnerability) => 2,
-            None => 1,
-            Some(DamageModifier::Resistance) => 0,
-            Some(DamageModifier::Immunity) => -1,
-            Some(DamageModifier::Absorption) => -2,
-        }
-    };
-    candidates
-        .iter()
-        .max_by_key(score)
-        .copied()
-        .unwrap_or(candidates[0])
-}
-
 /// Chromatic Orb — level-1 evocation (sorcerer / wizard). The caster hurls
 /// a sphere of energy at a single target within 90 ft (36 tiles) for 3d8
 /// damage of their choice from acid, cold, fire, lightning, poison, or
 /// thunder. RAW: ranged spell attack (d20 + INT / CHA vs AC). On hit:
 /// damage; on miss: nothing. We pick the type that maximizes effective
-/// damage against the target (`pick_damage_type_against_target`) — the
+/// damage against the target
+/// (`EncounterInstance::pick_damage_type_against_target`) — the
 /// caster's signature flexibility is exactly its strength.
 pub struct ChromaticOrb {}
 
@@ -20661,8 +20625,7 @@ impl Action for ChromaticOrb {
         // Pick the damage type that maximizes effective damage on the
         // target. Acid first (most creatures resist nothing; some oozes
         // are immune which the picker handles).
-        let dt = pick_damage_type_against_target(
-            encounter,
+        let dt = encounter.pick_damage_type_against_target(
             target_id,
             &[
                 DamageType::Acid,
@@ -23089,7 +23052,7 @@ impl Action for SorcerousBurst {
         );
         let max_exploding = caster.ability_modifier(ability).max(0) as u32;
         let damage_type =
-            pick_damage_type_against_target(encounter, target_id, SORCEROUS_BURST_TYPES);
+            encounter.pick_damage_type_against_target(target_id, SORCEROUS_BURST_TYPES);
         spell_attack_outcome_exploding(
             encounter,
             caster_id,
@@ -23208,7 +23171,8 @@ pub static ARMS_OF_HADAR: LazyLock<ArmsOfHadar> = LazyLock::new(|| ArmsOfHadar {
 /// Every enemy in the area makes a DEX save vs the caster's INT/CHA-based
 /// spell DC: pass = half, fail = full. Damage type is picked by the
 /// caster's best-vs-target pick (acid by default if the target table is
-/// empty); we route through the existing `pick_damage_type_against_target`
+/// empty); we route through the existing
+/// `EncounterInstance::pick_damage_type_against_target`
 /// helper using the closest enemy as the reference target.
 pub struct DragonsBreath {}
 
@@ -23284,7 +23248,7 @@ impl Action for DragonsBreath {
             .enemy_burst_targets(caster_id, center, 2)
             .first()
             .copied()
-            .map(|ref_tid| pick_damage_type_against_target(encounter, ref_tid, &menu))
+            .map(|ref_tid| encounter.pick_damage_type_against_target(ref_tid, &menu))
             .unwrap_or(DamageType::Fire);
         let label = format!("dragon's breath ({:?})", dt);
         let (effects, _saves) = enemy_burst_save_for_half(
