@@ -6057,8 +6057,15 @@ impl ActorInstance {
     /// against you" — is not here, because Magic Resistance has no such
     /// clause. It is read at the spell-attack chokepoint through
     /// `wards_against_spell_attacks`.
+    ///
+    /// The item leg used to *be* `wards_against_spell_attacks()`,
+    /// deriving the save clause from the attack one. That held while
+    /// the Spellguard Shield was the only warded item in the file and
+    /// broke the moment a second one existed: the Mantle of Spell
+    /// Resistance grants the save half alone, and reading it off the
+    /// attack flag would have handed it nothing at all.
     pub fn has_magic_resistance(&self) -> bool {
-        self.has_magic_resistance || self.wards_against_spell_attacks()
+        self.has_magic_resistance || self.items.iter().any(|i| i.grants_spell_save_advantage)
     }
 
     /// True while the actor holds something that gives spell attack
@@ -6069,7 +6076,9 @@ impl ActorInstance {
     /// deliberately nowhere else: RAW's clause names spell attack rolls,
     /// so a longsword swung at the shield-bearer rolls straight.
     pub fn wards_against_spell_attacks(&self) -> bool {
-        self.items.iter().any(|i| i.grants_spell_ward)
+        self.items
+            .iter()
+            .any(|i| i.imposes_spell_attack_disadvantage)
     }
 
     /// True if this actor emits the Paladin's Aura of Protection

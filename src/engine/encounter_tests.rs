@@ -94188,6 +94188,71 @@ fn the_spellguard_shield_wards_spells_and_not_swords() {
     assert!(!e.actors[&fighter].wards_against_spell_attacks());
 }
 
+/// The Mantle of Spell Resistance is the Spellguard Shield's first
+/// clause and only its first clause, which is the case the old single
+/// `grants_spell_ward` flag could not express.
+///
+/// The flag's docstring justified pairing the two halves on the grounds
+/// that splitting them "would invite an item that is warded against one
+/// and not the other, which no SRD item is" — and the Mantle is exactly
+/// that item. Worse, the coupling ran through
+/// `has_magic_resistance`, whose item leg *was* the attack-ward
+/// predicate: a Mantle written against the old shape would have granted
+/// nothing whatsoever, silently, because the only item flag the save
+/// lane could see was the one the Mantle does not set.
+#[test]
+fn the_mantle_wards_saves_without_warding_against_spell_attacks() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::MANTLE_OF_SPELL_RESISTANCE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&MANTLE_OF_SPELL_RESISTANCE);
+    assert!(
+        e.actors[&fighter].has_magic_resistance(),
+        "the whole of RAW's sentence: advantage on saves against spells"
+    );
+    assert!(
+        !e.actors[&fighter].wards_against_spell_attacks(),
+        "and not a word about attack rolls — the half the shield adds"
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .remove_item_by_name(MANTLE_OF_SPELL_RESISTANCE.name);
+    assert!(!e.actors[&fighter].has_magic_resistance());
+}
+
+/// Nothing on the loot table imposes the attack ward without also
+/// granting the save ward.
+///
+/// The asymmetry is RAW's and it is worth pinning rather than
+/// commenting: Magic Resistance — the archmage's trait, the Mantle — is
+/// the save clause standing alone, and no SRD item is the attack clause
+/// standing alone. A future item that set only
+/// `imposes_spell_attack_disadvantage` would be a fourth state nobody
+/// in the book occupies, and far likelier to be a dropped line in a
+/// struct literal than a citation.
+#[test]
+fn no_item_wards_against_spell_attacks_without_warding_saves() {
+    use crate::items::item_template::LOOT_POOL;
+
+    for item in LOOT_POOL {
+        if item.imposes_spell_attack_disadvantage {
+            assert!(
+                item.grants_spell_save_advantage,
+                "{} turns spell attacks aside and lets their saves through",
+                item.name
+            );
+        }
+    }
+}
+
 /// Gloves of Missile Snaring catch an arrow and do nothing about a
 /// sword.
 ///

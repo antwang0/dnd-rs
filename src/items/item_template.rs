@@ -186,25 +186,41 @@ pub struct Item {
     /// of non-magical-in-the-relevant-sense plate, and would have to be
     /// reinstalled after every long rest.
     pub blunts_critical_hits: bool,
-    /// True when holding this item wards its bearer against magic
-    /// itself — 5e's Spellguard Shield: "you have Advantage on saving
-    /// throws against spells and other magical effects, and spell attack
-    /// rolls have Disadvantage against you."
+    /// True when carrying this item gives its bearer Advantage on
+    /// saving throws against spells — the Spellguard Shield's first
+    /// clause, and the whole of the Mantle of Spell Resistance.
     ///
-    /// One flag for both halves because RAW writes them as one sentence
-    /// about one object, and because they are the same idea pointed at
-    /// the two ways a spell can reach you. Splitting them would invite
-    /// an item that is warded against one and not the other, which no
-    /// SRD item is.
+    /// Joins `ActorInstance::has_magic_resistance`, the same predicate
+    /// the archmage's and the pixie's Magic Resistance trait rides, so a
+    /// shield-bearer and an archmage answer the save lane identically —
+    /// which is what RAW's shared wording asks for.
     ///
-    /// The save half joins `ActorInstance::has_magic_resistance`, the
-    /// same predicate the archmage's and the pixie's Magic Resistance
-    /// trait rides — so a shield-bearer and an archmage answer the save
-    /// lane identically, which is what RAW's shared wording asks for.
-    /// The attack half is read at the spell-attack chokepoint only:
-    /// RAW's clause says *spell* attack rolls, and a longsword swung by
-    /// a wizard is not one.
-    pub grants_spell_ward: bool,
+    /// This used to be half of one `grants_spell_ward` flag, whose
+    /// docstring justified the pairing on the grounds that splitting it
+    /// "would invite an item that is warded against one and not the
+    /// other, which no SRD item is". The Mantle of Spell Resistance is
+    /// precisely that item — *"you have Advantage on saving throws
+    /// against spells"*, and not a word about attack rolls — so the
+    /// pairing was a claim about the book that the book contradicts,
+    /// and the two clauses are two fields.
+    pub grants_spell_save_advantage: bool,
+    /// True when carrying this item gives *spell attack rolls*
+    /// Disadvantage against its bearer — the Spellguard Shield's second
+    /// clause, and nothing else on the loot table.
+    ///
+    /// Read at the spell-attack chokepoint in `actions::spells` through
+    /// `ActorInstance::wards_against_spell_attacks`, and deliberately
+    /// nowhere else: RAW's clause names spell attack rolls, so a
+    /// longsword swung at the shield-bearer rolls straight.
+    ///
+    /// Note which way the asymmetry runs. Magic Resistance — the
+    /// creature trait, the Mantle — is the save clause without this
+    /// one; nothing in the SRD is this clause without the save. That is
+    /// why the fields are separate rather than one enum with three
+    /// arms: the shape is "a save ward, sometimes with an attack ward
+    /// on top", and two independent booleans say that without inventing
+    /// a fourth state nobody occupies.
+    pub imposes_spell_attack_disadvantage: bool,
 }
 
 impl Item {
@@ -229,7 +245,8 @@ impl Item {
         grants_silvered_attacks: false,
         grants_unfettered_breathing: false,
         blunts_critical_hits: false,
-        grants_spell_ward: false,
+        grants_spell_save_advantage: false,
+        imposes_spell_attack_disadvantage: false,
     };
 }
 
@@ -2962,10 +2979,11 @@ pub static ADAMANTINE_ARMOR: Item = Item {
 /// against you."
 ///
 /// A shield, so it carries the plain `SHIELD`'s +2 AC on top of its own
-/// clause. Both halves of that clause ride `grants_spell_ward`; see the
-/// flag for how each reaches the engine, and `has_magic_resistance` for
-/// why the save half is answered by the same predicate an archmage's
-/// Magic Resistance is.
+/// clause. The two halves of that clause are two flags — see
+/// `grants_spell_save_advantage` for why they had to come apart, and
+/// `has_magic_resistance` for why the save half is answered by the same
+/// predicate an archmage's Magic Resistance is. The Spellguard Shield
+/// is the only item on the table that sets both.
 ///
 /// It is the only defensive item in the file whose value depends
 /// entirely on what the party is fighting. Against a room full of orcs
@@ -2977,7 +2995,31 @@ pub static SPELLGUARD_SHIELD: Item = Item {
         ac: 2,
         ..ItemBonuses::ZERO
     },
-    grants_spell_ward: true,
+    grants_spell_save_advantage: true,
+    imposes_spell_attack_disadvantage: true,
+    ..Item::DEFAULTS
+};
+
+/// **Mantle of Spell Resistance** (Wondrous item, Rare) — *"While
+/// wearing this cloak, you have Advantage on saving throws against
+/// spells."*
+///
+/// The item that broke the one-flag pairing, and the reason it is worth
+/// having beside the Spellguard Shield rather than instead of it. RAW's
+/// sentence is the shield's first clause and stops there: no attack
+/// ward, no AC, and no shield slot occupied — so a two-handed
+/// greatsword fighter, who can never hold the shield at all, has an
+/// answer to a caster for the first time.
+///
+/// The save clause is *the* clause on this lane. It reaches every
+/// Fireball, every Hold Person and every dragon's breath, where the
+/// shield's attack half touches only the handful of spells that roll to
+/// hit — which is why RAW is happy to sell the save half alone at a
+/// lower rarity and never sells the attack half alone at all.
+pub static MANTLE_OF_SPELL_RESISTANCE: Item = Item {
+    name: "Mantle of Spell Resistance",
+    glyph: 'c',
+    grants_spell_save_advantage: true,
     ..Item::DEFAULTS
 };
 
@@ -3874,6 +3916,9 @@ pub static LOOT_POOL: &[&Item] = &[
     // an ambush), and finding the one that matches the room is the
     // point.
     &SPELLGUARD_SHIELD,
+    // The shield's save clause without the shield, and the one a
+    // greatsword fighter can actually wear.
+    &MANTLE_OF_SPELL_RESISTANCE,
     &GOGGLES_OF_NIGHT,
     &GLOVES_OF_MISSILE_SNARING,
     &CLOAK_OF_ARACHNIDA,
