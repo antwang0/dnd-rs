@@ -47270,10 +47270,107 @@ fn wand_of_magic_missiles_damages_target_and_consumes() {
         hp_before,
         hp_after
     );
-    assert!(
-        e.actors[&caster].items().is_empty(),
-        "wand should be consumed on use"
+    // Six charges left of seven — the wand is a wand now, not a
+    // scroll wearing one. See `Item::charges`.
+    assert_eq!(
+        e.actors[&caster].item_charges_remaining(WAND_OF_MAGIC_MISSILES.name),
+        6,
+        "one charge of seven"
     );
+}
+
+/// The two loot models, side by side at the one chokepoint that has to
+/// tell them apart.
+///
+/// A scroll has no charges: one use is the whole object, so spending it
+/// drops it, which is what `remove_item_by_name` has always done and
+/// what every consumable in the file relied on. A wand has seven: six
+/// of the spends leave it in the pack and the seventh takes it out. The
+/// action firing either one does not know which it is holding —
+/// `spend_item_use` is the only thing that does.
+#[test]
+fn a_wand_is_spent_a_charge_at_a_time_and_a_scroll_all_at_once() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{SCROLL_OF_FIREBALL, WAND_OF_FIREBALLS};
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let a = e.actors.get_mut(&id).unwrap();
+    a.pickup_item(&WAND_OF_FIREBALLS);
+    a.pickup_item(&SCROLL_OF_FIREBALL);
+
+    assert_eq!(a.item_charges_remaining(WAND_OF_FIREBALLS.name), 7);
+    assert_eq!(
+        a.item_charges_remaining(SCROLL_OF_FIREBALL.name),
+        0,
+        "a scroll never had charges — the object is the charge"
+    );
+
+    // The scroll goes on its first use.
+    assert!(a.spend_item_use(SCROLL_OF_FIREBALL.name));
+    assert!(!a.has_item_named(SCROLL_OF_FIREBALL.name));
+    assert!(
+        !a.spend_item_use(SCROLL_OF_FIREBALL.name),
+        "and a second use of something you no longer carry is refused"
+    );
+
+    // The wand survives six.
+    for expected in (1..=6).rev() {
+        assert!(a.spend_item_use(WAND_OF_FIREBALLS.name));
+        assert_eq!(a.item_charges_remaining(WAND_OF_FIREBALLS.name), expected);
+        assert!(a.has_item_named(WAND_OF_FIREBALLS.name));
+    }
+    // …and leaves on the seventh.
+    assert!(a.spend_item_use(WAND_OF_FIREBALLS.name));
+    assert_eq!(a.item_charges_remaining(WAND_OF_FIREBALLS.name), 0);
+    assert!(
+        !a.has_item_named(WAND_OF_FIREBALLS.name),
+        "an object nothing can do anything with should not keep occupying the sheet"
+    );
+    assert!(!a.spend_item_use(WAND_OF_FIREBALLS.name));
+}
+
+/// Two wands of the same name are two wands, not one.
+///
+/// The charge ledger is keyed on the item's name rather than on a
+/// per-copy handle — `items` is a `Vec<&'static Item>` and two copies
+/// are two pointers to the same static — so the arithmetic has to be
+/// additive or the second pickup would silently reset the first back to
+/// full.
+#[test]
+fn picking_up_a_second_wand_adds_its_charges_rather_than_replacing_them() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::WAND_OF_FIREBALLS;
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let a = e.actors.get_mut(&id).unwrap();
+    a.pickup_item(&WAND_OF_FIREBALLS);
+    for _ in 0..3 {
+        a.spend_item_use(WAND_OF_FIREBALLS.name);
+    }
+    assert_eq!(a.item_charges_remaining(WAND_OF_FIREBALLS.name), 4);
+    a.pickup_item(&WAND_OF_FIREBALLS);
+    assert_eq!(
+        a.item_charges_remaining(WAND_OF_FIREBALLS.name),
+        11,
+        "four left plus a fresh seven"
+    );
+    assert_eq!(a.items().len(), 2, "two objects, one pool");
+
+    // And the pool running dry takes *both* objects. Leaving the spare
+    // behind would leave a charge-bearing item with no ledger entry,
+    // which `spend_item_use` would then read as a plain one-shot and
+    // cash in for a free cast.
+    for _ in 0..11 {
+        assert!(a.spend_item_use(WAND_OF_FIREBALLS.name));
+    }
+    assert!(a.items().is_empty(), "eleven charges, eleven casts, no spare");
+    assert!(!a.spend_item_use(WAND_OF_FIREBALLS.name));
 }
 
 /// Wand of Magic Missiles: without the wand in inventory, the
@@ -47428,10 +47525,14 @@ fn wand_of_fireballs_damages_burst_and_consumes() {
         z1_after < z1_hp || z2_after < z2_hp,
         "wand of fireballs should have damaged at least one zombie"
     );
+    // One charge of seven, so the wand is still in the pack — and the
+    // count went down. Before `Item::charges` this assertion read
+    // `items().is_empty()`.
     assert!(
-        e.actors[&caster].items().is_empty(),
-        "wand should be consumed on use"
+        e.actors[&caster].has_item_named(WAND_OF_FIREBALLS.name),
+        "a seven-charge wand survives its first cast"
     );
+    assert_eq!(e.actors[&caster].item_charges_remaining(WAND_OF_FIREBALLS.name), 6);
 }
 
 /// Wand of Lightning Bolts: 10d6 lightning burst, DEX save. Same
@@ -47485,9 +47586,10 @@ fn wand_of_lightning_bolts_damages_burst_and_consumes() {
         caster_hp,
         "caster outside the burst takes no damage"
     );
-    assert!(
-        e.actors[&caster].items().is_empty(),
-        "wand should be consumed on use"
+    assert_eq!(
+        e.actors[&caster].item_charges_remaining(WAND_OF_LIGHTNING_BOLTS.name),
+        6,
+        "one charge of seven"
     );
 }
 

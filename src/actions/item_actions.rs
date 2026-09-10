@@ -556,13 +556,20 @@ fn caster_holds(
         .is_some_and(|a| a.has_item_named(item_name))
 }
 
-/// Pop one copy of `item_name` from the caster's inventory and return
-/// true on success. Used at the head of every consumable's
-/// `side_effects` to consume the item before the spell-style effect
-/// rolls fire. Returns false (and the caller short-circuits with
+/// Spend one *use* of `item_name` from the caster's inventory and
+/// return true on success. Used at the head of every consumable's
+/// `side_effects` to bill the item before the spell-style effect rolls
+/// fire. Returns false (and the caller short-circuits with
 /// `Vec::new()`) when the caster vanished or the item was already
-/// consumed elsewhere — guards against a duplicate queued use slipping
+/// spent elsewhere — guards against a duplicate queued use slipping
 /// past the validator.
+///
+/// One use is not always one object. A scroll, a potion and an oil are
+/// dropped here; a wand loses a charge and stays in the pack until its
+/// last one. Which of those happens is `ActorInstance::spend_item_use`'s
+/// business and deliberately not this lane's: every consumable action
+/// in this file bills through one call, so a charge-bearing item works
+/// everywhere the moment it declares `Item::charges`.
 fn consume_caster_item(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -571,7 +578,7 @@ fn consume_caster_item(
     encounter
         .actors
         .get_mut(&caster_id)
-        .is_some_and(|a| a.remove_item_by_name(item_name))
+        .is_some_and(|a| a.spend_item_use(item_name))
 }
 
 /// Potion of Healing — 2d4+2 self-heal, Action. Fires through the shared

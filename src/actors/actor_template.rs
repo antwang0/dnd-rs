@@ -5091,6 +5091,22 @@ pub struct ActorInstance {
     /// and `feature_available` reads this map's value, not its keys.
     features_remaining: HashMap<&'static str, u32>,
     features_max: HashMap<&'static str, u32>,
+    /// Charges currently unspent on each charge-bearing item this actor
+    /// carries, keyed by the item's own name.
+    ///
+    /// The item lane's answer to the same question `features_remaining`
+    /// answers for class features, and a separate map for the same
+    /// reason the two cohorts are separate everywhere else: a wand is
+    /// not a feature, its key is an item name rather than a tag, and
+    /// folding them would make every sweep over one of them quietly
+    /// read the other.
+    ///
+    /// Absent for an item that has no charges, which is the default and
+    /// the whole of the pre-existing loot model: a scroll, a potion and
+    /// an oil are one use *and* one object, so "spend a use" and "drop
+    /// the item" are the same event. A wand is the case where they come
+    /// apart — see `Item::charges` and `spend_item_use`.
+    item_charges: HashMap<&'static str, u32>,
     /// Bless / Resistance flat to-hit and save bonuses. Independent of the
     /// `Blessed` condition flag for stacking flexibility.
     attack_bonus_buff: i32,
@@ -5646,6 +5662,7 @@ impl ActorInstance {
             damage_from_inside_this_turn: 0,
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
+            item_charges: HashMap::new(),
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
             damage_bonus_buff: 0,
@@ -7000,6 +7017,18 @@ impl ActorInstance {
 
     pub fn pickup_item(&mut self, item: &'static Item) {
         self.items.push(item);
+        // A charge-bearing item arrives full — RAW's wands and staves
+        // are found with their charges on them, and the engine has no
+        // "found half-spent" state to represent anything else.
+        //
+        // Added rather than assigned, so a second wand of the same name
+        // is a second wand: seven charges plus seven is fourteen, which
+        // is what carrying two of them means. `remove_item_by_name`
+        // does not run this backwards for the same reason it does not
+        // un-drink a potion — a wand is dropped empty or not at all.
+        if item.charges > 0 {
+            *self.item_charges.entry(item.name).or_insert(0) += item.charges;
+        }
         // Install passive-condition trinket buffs (Slippers of Spider
         // Climbing, Winged Boots, etc.). Each entry is installed with
         // `Permanent` timer; the install gate honors immunities (so a
@@ -7009,6 +7038,68 @@ impl ActorInstance {
         for &c in item.passive_conditions {
             self.add_condition(c, ConditionTimer::Permanent);
         }
+    }
+
+    /// How many charges are left on the carried copy of `name`, or `0`
+    /// for an item that has none — which covers both "this is a scroll"
+    /// and "this wand is spent".
+    ///
+    /// The two are distinguished by whether the item is still in the
+    /// inventory at all: a spent wand is removed by `spend_item_use`,
+    /// so a `0` here for something `has_item_named` still says yes to
+    /// means the item was never charge-bearing.
+    pub fn item_charges_remaining(&self, name: &str) -> u32 {
+        self.item_charges.get(name).copied().unwrap_or(0)
+    }
+
+    /// Spend one *use* of the carried item named `name`, and report
+    /// whether there was one to spend.
+    ///
+    /// The chokepoint every consumable action bills through, and the
+    /// one place the engine's two loot models meet:
+    ///
+    ///   - **A scroll, a potion, an oil** has no charges. One use is
+    ///     the whole object, so this drops the item, exactly as
+    ///     `remove_item_by_name` always did.
+    ///   - **A wand or a staff** has charges. One use is one charge,
+    ///     and the object survives until the last of them — at which
+    ///     point it leaves the inventory, because an item nothing can
+    ///     do anything with should not keep occupying the sheet.
+    ///
+    /// RAW's wands mostly *don't* crumble at zero — they sit inert
+    /// until dawn — and the difference has no surface here: the engine's
+    /// clock starts at initiative and ends with the fight, so "inert
+    /// until dawn" and "gone" are the same object for as long as anyone
+    /// can see it. Dropping it keeps `has_item_named` honest as the
+    /// gate every one of these actions validates on.
+    pub fn spend_item_use(&mut self, name: &str) -> bool {
+        if !self.has_item_named(name) {
+            return false;
+        }
+        let Some(remaining) = self.item_charges.get_mut(name) else {
+            return self.remove_item_by_name(name);
+        };
+        if *remaining == 0 {
+            // Defensive: a charge map that has fallen out of step with
+            // the inventory. Treat the object as spent rather than
+            // letting it be used for free.
+            self.item_charges.remove(name);
+            return self.remove_item_by_name(name);
+        }
+        *remaining -= 1;
+        if *remaining == 0 {
+            self.item_charges.remove(name);
+            // *Every* copy, not one. The ledger is keyed on the name and
+            // is additive across pickups — two wands of the same name
+            // are one pool of fourteen — so the copies are
+            // indistinguishable and the pool running dry empties all of
+            // them. Popping a single copy here would leave a
+            // charge-bearing item in the pack with no ledger entry, and
+            // the `None` arm above would then read it as a plain
+            // one-shot and hand out a free cast per spare wand.
+            while self.remove_item_by_name(name) {}
+        }
+        true
     }
 
     pub fn has_item_named(&self, name: &str) -> bool {

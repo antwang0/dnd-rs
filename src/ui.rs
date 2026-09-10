@@ -1008,10 +1008,19 @@ pub fn render_sideinfo(
         // Show carried items as a compact comma-joined list. Bonuses are
         // already folded into HP/AC/Movement above, so this is a "what's
         // attributable to gear" callout rather than per-item detail.
+        // A charge-bearing item — a wand — carries its remaining count,
+        // because that number is the whole decision the player makes
+        // about it and there is nowhere else on the panel to read it. A
+        // scroll or a potion shows nothing: for those the object *is*
+        // the charge, and "Scroll of Fireball (1)" would be noise on
+        // every line of the list.
         let names: Vec<String> = curr_actor
             .items()
             .iter()
-            .map(|i| i.name.to_string())
+            .map(|i| match curr_actor.item_charges_remaining(i.name) {
+                0 => i.name.to_string(),
+                n => format!("{} ({})", i.name, n),
+            })
             .collect();
         stats_lines.push(Line::from(Span::styled(
             format!("Items: {}", names.join(", ")),

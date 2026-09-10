@@ -221,6 +221,31 @@ pub struct Item {
     /// on top", and two independent booleans say that without inventing
     /// a fourth state nobody occupies.
     pub imposes_spell_attack_disadvantage: bool,
+    /// How many times this item can be used before it leaves the
+    /// inventory. `0` — the default — means the object *is* the use.
+    ///
+    /// The whole of the engine's loot model used to be that zero. A
+    /// scroll, a potion and an oil are genuinely one-and-done, so
+    /// "spend a use" and "drop the item" were the same event and
+    /// `consume_caster_item` could be a call to `remove_item_by_name`.
+    /// That was fine until it wasn't: SRD 5.2 prints seven charges on
+    /// every attack wand in the book, and three files in a row said so
+    /// in a docstring while shipping a one-shot — *"5e RAW: the wand has
+    /// 7 charges … we collapse to a single-shot consumable for the
+    /// engine's charge-less loot model"*. A wand is the case where one
+    /// use and one object come apart, and there was nowhere to say it.
+    ///
+    /// Read only through `ActorInstance::spend_item_use`, which is what
+    /// keeps the two models one code path: an item with no charges is
+    /// dropped on use and one with charges is decremented, and the
+    /// action firing it does not know or care which it is holding.
+    ///
+    /// RAW's other half — "regains 1d6+1 expended charges daily at
+    /// dawn" — has no surface. The engine's clock starts at initiative
+    /// and stops with the fight; a wand recharging tomorrow is a wand
+    /// that recharges after the only thing that was ever going to
+    /// happen to it.
+    pub charges: u32,
 }
 
 impl Item {
@@ -247,6 +272,7 @@ impl Item {
         blunts_critical_hits: false,
         grants_spell_save_advantage: false,
         imposes_spell_attack_disadvantage: false,
+        charges: 0,
     };
 }
 
@@ -758,40 +784,55 @@ pub static SCROLL_OF_CONE_OF_COLD: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Wand of Magic Missiles — single-use 5-dart variant of the Magic
-/// Missile spell. Each dart deals 1d4+1 force damage at one enemy in
+/// Wand of Magic Missiles — **7 charges**, one per cast, of the 5-dart
+/// Magic Missile. Each dart deals 1d4+1 force damage at one enemy in
 /// line-of-sight (range 30 tiles), auto-hit / no save. Mirrors
 /// `SCROLL_OF_MAGIC_MISSILE` (which fires 3 darts) — the wand is the
-/// upgraded loot slot. 5e RAW: the wand has 7 charges and casts at level
-/// 1-3; we collapse to a single-shot consumable for the engine's
-/// charge-less loot model, sized at the level-2 cast (5 darts) so it
-/// lands between the scroll's 3 darts and a level-3 wizard's 5 darts.
+/// upgraded loot slot, sized at the level-2 cast so it lands between
+/// the scroll's 3 darts and a level-3 wizard's 5.
+///
+/// The seven are RAW's, and they used to be a docstring apologising for
+/// their own absence: *"we collapse to a single-shot consumable for the
+/// engine's charge-less loot model."* There is a charge model now — see
+/// `Item::charges` — and this is one of the three wands whose effect is
+/// RAW's own, unaltered, and which can therefore take RAW's charge
+/// count without compounding a divergence. See `WAND_OF_PARALYSIS` for
+/// the other side of that rule.
 pub static WAND_OF_MAGIC_MISSILES: Item = Item {
     name: "Wand of Magic Missiles",
     glyph: 'D',
     on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MAGIC_MISSILES),
+    charges: 7,
     ..Item::DEFAULTS
 };
 
-/// Wand of Fireballs — single-use 8d6 fire burst (Action, 60-ft range,
-/// 4-tile radius, DEX save vs DC 15 for half). Sits a tier above the
-/// `SCROLL_OF_FIREBALL` (6d6) — same shape, bigger payload. The wand
-/// is consumed after one click; no charges tracked.
+/// Wand of Fireballs — **7 charges**, one per 8d6 fire burst (Action,
+/// 60-ft range, 4-tile radius, DEX save vs DC 15 for half). Sits a tier
+/// above the `SCROLL_OF_FIREBALL` (6d6) — same shape, bigger payload,
+/// and now the seven casts the book prints instead of one.
+///
+/// RAW spends 1 to 3 charges per cast for a bigger blast; the engine
+/// fires one payload at one price, which is the same collapse every
+/// upcast-optional consumable here makes. What it no longer collapses
+/// is the wand into a scroll.
 pub static WAND_OF_FIREBALLS: Item = Item {
     name: "Wand of Fireballs",
     glyph: 'F',
     on_use: Some(&crate::actions::item_actions::USE_WAND_OF_FIREBALLS),
+    charges: 7,
     ..Item::DEFAULTS
 };
 
-/// Wand of Lightning Bolts — single-use 10d6 lightning burst (Action,
-/// 100-ft range, 2-tile radius, DEX save vs DC 15 for half). Sits a tier
-/// above `SCROLL_OF_LIGHTNING_BOLT` (8d6) — same shape, bigger payload.
-/// Sibling to `WAND_OF_FIREBALLS` for the lightning lane.
+/// Wand of Lightning Bolts — **7 charges**, one per 10d6 lightning
+/// burst (Action, 100-ft range, 2-tile radius, DEX save vs DC 15 for
+/// half). Sits a tier above `SCROLL_OF_LIGHTNING_BOLT` (8d6) — same
+/// shape, bigger payload. Sibling to `WAND_OF_FIREBALLS` for the
+/// lightning lane, down to the charge count.
 pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
     name: "Wand of Lightning Bolts",
     glyph: 'Z',
     on_use: Some(&crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS),
+    charges: 7,
     ..Item::DEFAULTS
 };
 
@@ -1114,12 +1155,29 @@ pub static PIPES_OF_HAUNTING: Item = Item {
 };
 
 /// Wand of Paralysis — single-use single-target, CON save vs DC 15,
-/// fail = Paralyzed for 10 rounds. 5e RAW: 7 charges firing a line of
-/// paralysis at one creature; we collapse to a one-shot beam — no
-/// charges tracked. Paralyzed is one of the engine's hardest CC
-/// envelopes (zero movement, action economy blocked, auto-fail
-/// STR/DEX saves, melee crits land automatically), so the consumable
-/// sits in the rare half of the loot pool.
+/// fail = Paralyzed for 10 rounds. Paralyzed is one of the engine's
+/// hardest CC envelopes (zero movement, action economy blocked,
+/// auto-fail STR/DEX saves, melee crits land automatically), so the
+/// consumable sits in the rare half of the loot pool.
+///
+/// **RAW's seven charges deliberately do not ship here**, and this is
+/// the item that draws the line the charge model runs along. The three
+/// wands that took RAW's count — Fireballs, Lightning Bolts, Magic
+/// Missiles — cast RAW's spell unaltered: roll damage, save for half,
+/// done. This one does not. RAW's paralysis is a level-5 Hold Monster
+/// with concentration and a save at the end of every one of the
+/// target's turns, and the engine's consumable envelope drops both for
+/// a flat ten rounds. That is already a trade of RAW's escape hatches
+/// for the simplicity of a one-shot item, and importing RAW's charge
+/// count on top of it would be compounding two divergences in the same
+/// direction: seven un-escapable ten-round paralyses is not a rules
+/// translation, it is a different item.
+///
+/// The rule generalises to the rest of the wand shelf, which is why it
+/// is written down here rather than on each of the twenty: **an item
+/// whose effect is RAW's, unaltered, may take RAW's charges; an item
+/// whose effect the engine strengthened to fit the consumable model
+/// keeps the one shot that paid for it.**
 pub static WAND_OF_PARALYSIS: Item = Item {
     name: "Wand of Paralysis",
     glyph: ')',
