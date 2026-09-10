@@ -18432,7 +18432,7 @@ fn owlbear_multiattack_lands_two_swings() {
 
 #[test]
 fn wisp_is_immune_to_lightning() {
-    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
+    use crate::actors::creatures::wisps::WISP_TEMPLATE;
     use crate::engine::side_effects::DealDamage;
     let mut e = ei_with_terrain(15, 15, &[]);
     let wisp = e
@@ -18454,7 +18454,7 @@ fn wisp_is_immune_to_lightning() {
 
 #[test]
 fn wisp_is_resistant_to_fire() {
-    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
+    use crate::actors::creatures::wisps::WISP_TEMPLATE;
     let e = ei_with_terrain(15, 15, &[]);
     let mut e = e;
     let wisp = e
@@ -86999,7 +86999,7 @@ fn a_wyvern_is_already_in_the_air_when_the_fight_starts() {
 /// hanging serenely in the sky.
 #[test]
 fn a_wyvern_put_to_sleep_falls_and_a_will_o_wisp_does_not() {
-    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
+    use crate::actors::creatures::wisps::WISP_TEMPLATE;
     use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
     use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
 

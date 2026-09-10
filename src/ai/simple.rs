@@ -3364,28 +3364,28 @@ fn try_self_buff_pick(
 ///      clause plus a speed of zero plus disadvantage on the target's
 ///      own swings. Ahead of every maneuver below because it strictly
 ///      contains what they buy.
-///   4b. `charge staff of withering` — 2d10 necrotic and a DC 15 CON
+///   5. `charge staff of withering` — 2d10 necrotic and a DC 15 CON
 ///      save against `Withered`, for one of the staff's three charges.
-///      The only rows on this lane that arrive on an *item* rather than
-///      a stat block, and the first withering is ahead of striking for
-///      the reason Fire Rune is ahead of the maneuvers: it pays twice,
-///      and its pool is three charges deep, so a charge held back is a
-///      third of the staff left unused.
-///   4c. `charge staff of striking` — 3d6 force for three of ten. Pure
+///      With the row below it, the only two entries on this lane that
+///      arrive on an *item* rather than a stat block. Withering is ahead
+///      of striking for the reason Fire Rune is ahead of the maneuvers:
+///      it pays twice, and its pool is three charges deep, so a charge
+///      held back is a third of the staff left unused.
+///   6. `charge staff of striking` — 3d6 force for three of ten. Pure
 ///      damage, no save, and the deeper pool, so it is the one to fall
 ///      through to.
-///   5. `trip attack` — prone is the strongest maneuver rider: it
+///   7. `trip attack` — prone is the strongest maneuver rider: it
 ///      hands every melee ally advantage against the target *and*
 ///      costs the target its movement.
-///   6. `menacing attack` — Frightened sticks on tough-STR monsters
+///   8. `menacing attack` — Frightened sticks on tough-STR monsters
 ///      that shrug off the trip, but only disadvantages the target's
 ///      own swings rather than enabling the party's.
-///   7. `disarming attack` — attacker disadvantage, which bites
+///   9. `disarming attack` — attacker disadvantage, which bites
 ///      hardest on ranged and multiattack threats but lasts a single
 ///      round in this engine.
-///   8. `pushing attack` — pure displacement, no accuracy or save
+///  10. `pushing attack` — pure displacement, no accuracy or save
 ///      rider attached; the finisher when nothing above is available.
-///   9. `goading attack` — the tank-anchor. Last because its value is
+///  11. `goading attack` — the tank-anchor. Last because its value is
 ///      conditional on the fighter *wanting* to be attacked, which is
 ///      the situation left over once the debuff riders are spent.
 ///
