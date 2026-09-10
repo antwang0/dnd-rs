@@ -34307,9 +34307,14 @@ fn no_two_summoning_spells_share_an_instance_id() {
     // ids above it — Conjure Woodland Beings' four satyrs are 130
     // through 133 — so the bands have to be walked, not just the
     // bases compared.
+    //
+    // The width is `instance_id_span`, not `count`: a count-scaling
+    // summon's band is as wide as its largest legal cast, and a
+    // collision that only appears once somebody upcasts is a collision
+    // this sweep would otherwise report green on forever.
     let mut claimed: HashMap<usize, &str> = HashMap::new();
     for spell in all_summon_spells() {
-        for offset in 0..spell.count {
+        for offset in 0..spell.instance_id_span() {
             let id = spell.base_instance_id + offset;
             if let Some(other) = claimed.insert(id, spell.name()) {
                 panic!(
@@ -94701,9 +94706,10 @@ fn a_stat_block_summon_ignores_the_slot_it_was_called_with() {
     );
 }
 
-/// The scaling is declared per spell rather than inferred, so the two
-/// answers have to stay tied to the two shapes: an expression block
-/// scales, a bestiary block does not.
+/// The scaling is declared per spell rather than inferred, so the
+/// answers have to stay tied to the shapes RAW writes: an expression
+/// block grows, a bestiary block with a cohort clause multiplies, and a
+/// bestiary block without one does neither.
 #[test]
 fn every_summon_declares_whether_its_block_is_an_expression() {
     use crate::actions::spells::{SummonScaling, all_summon_spells};
@@ -94714,7 +94720,9 @@ fn every_summon_declares_whether_its_block_is_an_expression() {
         // declaration is a lie that reads like a feature.
         if scales {
             assert!(
-                spell.scaling.ac_per_level > 0 || spell.scaling.hp_per_level > 0,
+                spell.scaling.ac_per_level > 0
+                    || spell.scaling.hp_per_level > 0
+                    || spell.scaling.count_per_level > 0,
                 "{} claims to scale and gains nothing",
                 spell.name()
             );
@@ -94725,6 +94733,93 @@ fn every_summon_declares_whether_its_block_is_an_expression() {
             spell.scaling.ac_per_level >= 0 && spell.scaling.hp_per_level >= 0,
             "{} shrinks when upcast",
             spell.name()
+        );
+        // The two halves are exclusive in every declaration the book
+        // licenses: a stat block prints its defences as an expression
+        // *or* its cohort as a ladder, never both. A spell carrying
+        // both is far likelier to be a copied line than a citation.
+        if spell.scaling.count_per_level > 0 {
+            assert_eq!(
+                (spell.scaling.ac_per_level, spell.scaling.hp_per_level),
+                (0, 0),
+                "{} grows its bodies and its cohort at once — no summon in the book does",
+                spell.name()
+            );
+        }
+    }
+}
+
+/// Animate Dead's upcast clause is *more skeletons*, and it used to buy
+/// nothing at all.
+///
+/// The failure this pins was silent in the worst way: `count` was a
+/// constant, so a wizard spending a level-6 slot on Animate Dead raised
+/// exactly the one skeleton a level-3 slot raises, paid three levels
+/// for it, and got no line in the log saying six had been dropped. RAW
+/// is "two additional Undead creatures for each spell slot level above
+/// 3" — so level 3 is one, level 4 is three, level 6 is seven.
+#[test]
+fn animate_dead_raises_two_more_skeletons_for_each_slot_above_its_own() {
+    use crate::actions::spells::ANIMATE_DEAD;
+
+    let (_, base) = summon_at_level(&ANIMATE_DEAD, 3);
+    assert_eq!(base.len(), 1, "the printed cast raises one skeleton");
+
+    let (_, one_up) = summon_at_level(&ANIMATE_DEAD, 4);
+    assert_eq!(one_up.len(), 3, "one level up is two more bodies");
+
+    let (_, three_up) = summon_at_level(&ANIMATE_DEAD, 6);
+    assert_eq!(three_up.len(), 7, "three levels up is six more bodies");
+}
+
+/// Every body a count-scaling summon can ever raise gets its own
+/// instance id.
+///
+/// The band-width sweep next door proves the *declarations* don't
+/// overlap; this proves the declaration matches what the spell
+/// actually hands out, which is the half that would rot if
+/// `resolved_count` and `instance_id_span` ever stopped agreeing.
+#[test]
+fn a_full_strength_animate_dead_stays_inside_its_declared_id_band() {
+    use crate::actions::spells::ANIMATE_DEAD;
+
+    let (e, spawned) = summon_at_level(&ANIMATE_DEAD, 9);
+    let span = ANIMATE_DEAD.instance_id_span();
+    assert_eq!(span, 13, "one body plus two for each of six levels");
+    // The board is what limits the cohort, not the declaration — the
+    // spawn walk stops at the first ring it cannot fill — so the
+    // assertion is that the band is wide enough, not that it is full.
+    assert!(
+        spawned.len() <= span,
+        "a level-9 cast raised {} bodies out of a {}-wide band",
+        spawned.len(),
+        span
+    );
+    // The id band is only ever visible as the display suffix — that is
+    // the whole reason a collision matters — so that is what the test
+    // reads.
+    let mut names: Vec<String> = spawned.iter().map(|id| e.actor_name(*id)).collect();
+    let unique = {
+        let mut n = names.clone();
+        n.sort();
+        n.dedup();
+        n.len()
+    };
+    assert_eq!(
+        unique,
+        spawned.len(),
+        "two skeletons on one board answered to the same name: {names:?}"
+    );
+    names.sort();
+    for name in &names {
+        let suffix: usize = name
+            .rsplit(' ')
+            .next()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_else(|| panic!("{name} carries no instance suffix"));
+        assert!(
+            (150..150 + span).contains(&suffix),
+            "a skeleton landed outside animate dead's band: {name}"
         );
     }
 }

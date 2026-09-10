@@ -1447,12 +1447,25 @@ fn ally_aura_concentration_effects(
 /// design is a ladder of slot level against body size is the one clause
 /// that most needed to work.
 ///
-/// Two fields rather than a general stat-delta bag, because these are
-/// the two lines RAW actually scales. Every summon in the book leaves
+/// Three fields rather than a general stat-delta bag, because these are
+/// the three lines RAW actually scales. Every summon in the book leaves
 /// its ability scores, its speed, its senses and its damage dice alone;
-/// what a higher slot buys is a body that is harder to hit and takes
-/// longer to remove. A future stat block that scales a third line adds
-/// a third field here rather than a second mechanism.
+/// what a higher slot buys is either a body that is harder to hit and
+/// takes longer to remove, or *more of them*. A future stat block that
+/// scales a fourth line adds a fourth field here rather than a second
+/// mechanism.
+///
+/// The two halves are deliberately exclusive in every declaration the
+/// engine ships, and RAW is why: a spell whose block prints its
+/// defences as an expression ("AC 11 + the spell's level") closes with
+/// *"use the spell slot's level for the spell's level in the stat
+/// block"*, and a spell whose block is a stat block closes with *"you
+/// animate … two additional Undead creatures for each spell slot level
+/// above 3"*. No summon in the book does both, because the two
+/// sentences are two different ways of answering the same question.
+/// Nothing here enforces the exclusivity — a stat block that one day
+/// prints both would work — but a declaration carrying both is far more
+/// likely to be a mistake than a citation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SummonScaling {
     /// Armor class gained per slot level above the spell's base — `1`
@@ -1460,17 +1473,39 @@ pub struct SummonScaling {
     pub ac_per_level: i32,
     /// Hit points gained per slot level above the spell's base.
     pub hp_per_level: i32,
+    /// Extra bodies per slot level above the spell's base — `2` for
+    /// Animate Dead's "two additional Undead creatures for each spell
+    /// slot level above 3", `1` for Create Undead's ghoul-per-rung
+    /// ladder.
+    ///
+    /// The field that was missing, and the one whose absence was
+    /// invisible. `SummonSpell::count` is a constant, so upcasting
+    /// Animate Dead spent a level-5 slot, raised one skeleton, and
+    /// logged nothing to say the other four had been dropped on the
+    /// floor — the same failure `ac_per_level` was added to close, one
+    /// lane over. `NONE`'s own docstring even asserted the opposite in
+    /// so many words ("buys *more bodies* … which the `count` field
+    /// already says"), which it did not: `count` says how many the
+    /// spell raises at its printed level and had no channel for the
+    /// clause underneath it.
+    ///
+    /// Read at cast time by `SummonSpell::resolved_count`, and at
+    /// declaration time by `SummonSpell::instance_id_span`, which is
+    /// what keeps the widened id band from colliding with the next
+    /// summon along.
+    pub count_per_level: usize,
 }
 
 impl SummonScaling {
-    /// A summon whose stat block is a stat block: Animate Dead's
-    /// skeleton, Find Steed's warhorse, the phantom steed, the faithful
-    /// hound. None of the four prints an expression, and RAW's upcast
-    /// clause for them (where they have one at all) buys *more bodies*
-    /// rather than a bigger one — which the `count` field already says.
+    /// A summon a bigger slot buys nothing at all: Find Steed's
+    /// warhorse, the phantom steed, the faithful hound, the four
+    /// one-off conjurations. Their bodies are creatures the world
+    /// contains, printed as numbers, and RAW gives them no upcast
+    /// clause of either kind.
     pub const NONE: Self = Self {
         ac_per_level: 0,
         hp_per_level: 0,
+        count_per_level: 0,
     };
 
     /// The pair SRD 5.2 prints most often: +1 AC and +10 hit points per
@@ -1478,7 +1513,24 @@ impl SummonScaling {
     pub const STANDARD: Self = Self {
         ac_per_level: 1,
         hp_per_level: 10,
+        count_per_level: 0,
     };
+
+    /// The other kind of upcast: `n` more bodies per slot level above
+    /// the spell's own, each one the same creature the base cast
+    /// raises.
+    ///
+    /// A constructor rather than two more associated constants because
+    /// the number genuinely differs per spell — Animate Dead's two,
+    /// Create Undead's one — and a `COHORT_OF_TWO` / `COHORT_OF_ONE`
+    /// pair would name the arithmetic instead of the rule.
+    pub const fn bodies(n: usize) -> Self {
+        Self {
+            ac_per_level: 0,
+            hp_per_level: 0,
+            count_per_level: n,
+        }
+    }
 }
 
 /// Grow every body in `spawned` to the slot the open cast frame was
@@ -1496,13 +1548,18 @@ impl SummonScaling {
 /// an arithmetic guard: `cast_level` already refuses to return less
 /// than a spell's base, and the `saturating_sub` keeps a level-0
 /// feature frame from wrapping into a very large body.
+///
+/// Deliberately blind to `SummonScaling::count_per_level`: how many
+/// bodies appear is settled before any of them exists, by
+/// `SummonSpell::resolved_count`, and a function that grows a list it
+/// has already been handed cannot be the one that decides its length.
 fn scale_summons_to_slot(
     encounter: &mut EncounterInstance,
     spawned: &[usize],
     scaling: SummonScaling,
     base_level: u32,
 ) {
-    if scaling == SummonScaling::NONE || spawned.is_empty() {
+    if (scaling.ac_per_level == 0 && scaling.hp_per_level == 0) || spawned.is_empty() {
         return;
     }
     let level = encounter.current_cast().map(|c| c.level).unwrap_or(0);
@@ -15541,12 +15598,22 @@ pub static HAIL_OF_THORNS: LazyLock<HailOfThorns> = LazyLock::new(|| HailOfThorn
 /// SKELETON_TEMPLATE instance at a footprint-free tile next to the
 /// caster (closest spawnable diagonal / orthogonal neighbor).
 ///
-/// The one summon spell that holds no concentration, and the exception
-/// is RAW's: a raised skeleton is a *made thing*, not a rented one, and
+/// A summon spell that holds no concentration, and the exception is
+/// RAW's: a raised skeleton is a *made thing*, not a rented one, and
 /// nothing about it depends on the necromancer still thinking about it.
-/// That makes Animate Dead the only way in the engine to buy a
+/// That makes Animate Dead the cheapest way in the engine to buy a
 /// permanent body with a slot, and the reason a Necromancy wizard can
 /// hold Web *and* keep a skeleton — see `SummonSpell::concentration`.
+///
+/// **The upcast is two more skeletons per level**, which is RAW's exact
+/// sentence — *"You animate or reassert control over two additional
+/// Undead creatures for each spell slot level above 3"* — and which the
+/// spell shipped without for as long as `count` was the only channel
+/// there was. A wizard who spent a level-5 slot on it got one skeleton
+/// and no indication that four had gone missing. At a level-9 slot the
+/// cohort is thirteen, which is a great many skeletons and is what the
+/// book says; the board itself is the limit that bites first, since
+/// `spawn_adjacent_summons` stops at the first ring it cannot fill.
 pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
     display_name: "animate dead",
     aliases: &["raise"],
@@ -15557,9 +15624,13 @@ pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
     count: 1,
     // Touch range: RAW raises a corpse the caster can reach.
     search_radius: 2,
-    base_instance_id: 99,
+    // A thirteen-wide band at a level-9 cast, which is why it moved off
+    // 99: the old id sat one below the Tasha's family's 100, and every
+    // skeleton past the first would have collided with a summoned
+    // spirit. See `SummonSpell::instance_id_span`.
+    base_instance_id: 150,
     concentration: None,
-    scaling: SummonScaling::NONE,
+    scaling: SummonScaling::bodies(2),
 };
 
 /// Confusion — 5e level-4 enchantment, concentration, action. Targets a
@@ -17093,19 +17164,28 @@ pub struct SummonSpell {
     pub template: &'static LazyLock<crate::actors::actor_template::CreatureTemplate>,
     /// The summon's footprint, which decides what counts as a free tile.
     pub size: crate::engine::types::Size,
-    /// How many appear. Best-effort: the validator only insists on the
-    /// *first* one fitting, and a cast that finds room for one of two
-    /// wolves still resolves with one wolf rather than refunding the
-    /// slot.
+    /// How many appear **at the spell's printed level**. Best-effort:
+    /// the validator only insists on the *first* one fitting, and a
+    /// cast that finds room for one of two wolves still resolves with
+    /// one wolf rather than refunding the slot.
+    ///
+    /// What a bigger slot adds to this rides
+    /// `SummonScaling::count_per_level`; `resolved_count` is the number
+    /// the cast actually uses.
     pub count: usize,
     /// How far from the caster to look for free tiles. Sized to the
     /// spell's RAW range, and widened for large footprints — each spawn
     /// occupies its anchor, so the second minion needs a wider ring than
     /// the first.
     pub search_radius: isize,
-    /// Instance-id band, kept distinct per spell so two summons on one
-    /// board don't collide. Summon *spells* live at 80+; the per-rest
-    /// feature summons live below 80.
+    /// First instance id of the band this spell hands out, kept
+    /// distinct per spell so two summons on one board don't collide.
+    /// Summon *spells* live at 80+; the per-rest feature summons live
+    /// below 80.
+    ///
+    /// The band is `instance_id_span()` wide, not `count` wide — a
+    /// count-scaling summon claims every id its largest legal cast
+    /// could reach, whether or not any particular board reaches it.
     pub base_instance_id: usize,
     /// The concentration anchor's display name, or `None` for a summon
     /// that holds no concentration.
@@ -17116,21 +17196,72 @@ pub struct SummonSpell {
     /// untagging them), and the caster starts concentrating on this
     /// name. `None` means neither — the minion is permanent for the
     /// encounter and the caster's concentration stays free for something
-    /// else. Animate Dead is the only `None` today, and RAW agrees:
-    /// nothing about a raised skeleton depends on the necromancer still
-    /// thinking about it.
+    /// else. The `None`s are the summons RAW writes no concentration
+    /// duration for: Animate Dead and Create Undead make a thing rather
+    /// than renting one, and the three steeds answer to a bond rather
+    /// than to attention.
     pub concentration: Option<&'static str>,
-    /// How the body grows when the spell is cast with a bigger slot —
-    /// see `SummonScaling`. `SummonScaling::NONE` for the four summons
-    /// whose stat block is a stat block rather than an expression.
+    /// What the cohort gains when the spell is cast with a bigger slot
+    /// — see `SummonScaling`. `SummonScaling::NONE` for the summons RAW
+    /// gives no upcast clause at all.
     pub scaling: SummonScaling,
 }
 
+/// The highest slot any caster in the engine can spend, and the ceiling
+/// `SummonSpell::instance_id_span` prices a count-scaling summon's id
+/// band against.
+///
+/// Nine is a rules constant rather than a tuning knob: 5e's slot table
+/// stops there, `Resource::SpellSlot` is only ever asked for levels 1
+/// through 9, and a tenth-level slot would be a different game. It sits
+/// here rather than in `engine::types` because this is the only place
+/// that needs to reason about the *largest* legal cast rather than the
+/// one in front of it.
+const MAX_SLOT_LEVEL: u32 = 9;
+
+impl SummonSpell {
+    /// How many bodies this cast raises, given the slot on the open
+    /// frame.
+    ///
+    /// Reads `current_cast()` for the same reason `scale_summons_to_slot`
+    /// does: `Action::execute` opens the frame before `side_effects`
+    /// runs and stamps it with the slot the caster actually spent, so
+    /// an `ActionOverride::CastLevel` upcast arrives here already
+    /// resolved. A frame at level 0 — a per-rest feature summon
+    /// borrowing this chassis — scales by nothing, which is right:
+    /// there is no slot to have paid more of.
+    fn resolved_count(&self, encounter: &EncounterInstance) -> usize {
+        if self.scaling.count_per_level == 0 {
+            return self.count;
+        }
+        let level = encounter.current_cast().map(|c| c.level).unwrap_or(0);
+        let steps = level.saturating_sub(self.slot_level) as usize;
+        self.count + steps * self.scaling.count_per_level
+    }
+
+    /// How many consecutive instance ids this spell can ever claim,
+    /// counting from `base_instance_id`.
+    ///
+    /// The number the id-collision sweep has to walk, and the reason it
+    /// is a method rather than `count`: a count-scaling summon's band
+    /// is as wide as its *largest* cast, and a board where somebody
+    /// eventually spends a level-9 slot on Animate Dead is not a
+    /// different engine from one where nobody does. Pricing the band at
+    /// the printed count instead would leave the collision latent —
+    /// green on every run of the suite, and a map with two "Skeleton
+    /// 101"s on it the first time a necromancer upcasts.
+    pub fn instance_id_span(&self) -> usize {
+        let steps = MAX_SLOT_LEVEL.saturating_sub(self.slot_level) as usize;
+        self.count + steps * self.scaling.count_per_level
+    }
+}
+
 impl Action for SummonSpell {
-    /// True for the summons whose stat block RAW prints as an
-    /// expression — see `SummonScaling`, which is what a bigger slot
-    /// buys here. False for the ones whose body is a creature the world
-    /// contains, which a bigger slot does not change.
+    /// True for the summons RAW writes an upcast clause for — the ones
+    /// whose stat block is printed as an expression, and the ones whose
+    /// clause buys more bodies. False for the ones whose body is a
+    /// creature the world contains and whose cohort is a fixed size,
+    /// which a bigger slot does not change.
     fn scales_with_slot(&self) -> bool {
         self.scaling != SummonScaling::NONE
     }
@@ -17197,18 +17328,23 @@ impl Action for SummonSpell {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // The first half of the upcast: how many bodies. Settled before
+        // any of them exists, because the cohort's size is an argument
+        // to the spawn loop rather than something that can be applied
+        // to its output — see `resolved_count`.
+        let count = self.resolved_count(encounter);
         let spawned = spawn_adjacent_summons(
             encounter,
             caster_id,
             self.template,
             self.size,
-            self.count,
+            count,
             self.search_radius,
             self.base_instance_id,
             self.display_name,
         );
-        // The upcast, applied to the bodies rather than to the dice.
-        // Reads the resolved slot off the open cast frame — see
+        // The other half, applied to the bodies rather than to the
+        // dice. Reads the resolved slot off the open cast frame — see
         // `scale_summons_to_slot`.
         scale_summons_to_slot(encounter, &spawned, self.scaling, self.slot_level);
         // A summon that found no room burns the slot but must not burn
