@@ -7102,6 +7102,64 @@ impl ActorInstance {
         true
     }
 
+    /// Top every carried charge-bearing item back up, and report what
+    /// came back — `(item name, charges regained)`, in inventory order,
+    /// skipping the items that were already full.
+    ///
+    /// RAW's *"regains 1d6+1 expended charges daily at dawn"*, and the
+    /// engine's dawn is the end of a long rest. The roll is capped at
+    /// what the item is short, so a rest is a top-up and never a bonus:
+    /// a Staff of Fire with nine of ten left comes back with one.
+    ///
+    /// **Capacity is the pooled printed total**, matching `pickup_item`:
+    /// the ledger is keyed by item name and additive across copies, so
+    /// two Wands of Fireballs are one pool of fourteen and a rest fills
+    /// toward fourteen.
+    ///
+    /// Rolls once per distinct item, not once per copy — the pool is one
+    /// pool, and rolling per copy would make the second wand worth more
+    /// as a battery than as a wand.
+    ///
+    /// A spent item is not here to be refilled: `spend_item_use` drops a
+    /// wand on its last charge, and only the staves — which stay in the
+    /// pack at zero, see `Resource::ItemCharges` — can come back from
+    /// nothing.
+    pub fn regain_item_charges(
+        &mut self,
+        roller: &mut impl crate::engine::dice::Roller,
+    ) -> Vec<(&'static str, u32)> {
+        // Capacity first, in one pass, so the roll below can be capped
+        // without re-walking the inventory per item.
+        let mut capacity: HashMap<&'static str, u32> = HashMap::new();
+        let mut recharge: Vec<(&'static str, crate::engine::dice::DiceExpr)> = Vec::new();
+        for item in &self.items {
+            *capacity.entry(item.name).or_insert(0) += item.charges;
+            if let Some(expr) = item.recharge
+                && !recharge.iter().any(|(n, _)| *n == item.name)
+            {
+                recharge.push((item.name, expr));
+            }
+        }
+
+        let mut regained: Vec<(&'static str, u32)> = Vec::new();
+        for (name, expr) in recharge {
+            let full = capacity.get(name).copied().unwrap_or(0);
+            let have = self.item_charges_remaining(name);
+            let short = full.saturating_sub(have);
+            if short == 0 {
+                continue;
+            }
+            let rolled = expr.eval(roller).max(0) as u32;
+            let back = rolled.min(short);
+            if back == 0 {
+                continue;
+            }
+            *self.item_charges.entry(name).or_insert(0) += back;
+            regained.push((name, back));
+        }
+        regained
+    }
+
     pub fn has_item_named(&self, name: &str) -> bool {
         self.items.iter().any(|i| i.name == name)
     }

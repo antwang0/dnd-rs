@@ -1,3 +1,5 @@
+use crate::engine::dice::DiceExpr;
+
 /// Flat sum of every passive bonus an actor gets from carried items.
 /// Each `ActorInstance` aggregates one of these on demand from its
 /// inventory. Keeping this a single struct (rather than per-stat lookups)
@@ -253,11 +255,27 @@ pub struct Item {
     /// action firing it does not know or care which it is holding.
     ///
     /// RAW's other half — "regains 1d6+1 expended charges daily at
-    /// dawn" — has no surface. The engine's clock starts at initiative
-    /// and stops with the fight; a wand recharging tomorrow is a wand
-    /// that recharges after the only thing that was ever going to
-    /// happen to it.
+    /// dawn" — is `recharge` below.
     pub charges: u32,
+    /// Charges this item gets back at the end of a long rest — RAW's
+    /// *"regains 1d6+1 expended charges daily at dawn"*, and `2d8+4` on
+    /// the Staff of Power. `None` for an item that has no charges, or
+    /// has them and never gets them back.
+    ///
+    /// This field used to be a paragraph on `charges` explaining why the
+    /// clause had no surface: *"the engine's clock starts at initiative
+    /// and stops with the fight; a wand recharging tomorrow is a wand
+    /// that recharges after the only thing that was ever going to happen
+    /// to it."* That was true of one encounter and false of the game.
+    /// `App::start_next_encounter` is a dungeon run: it long-rests the
+    /// surviving party and walks them into the next fight, carrying
+    /// their pack. Without this, a Staff of Power emptied in the first
+    /// room is a `+2` quarterstaff for the rest of the run.
+    ///
+    /// Capped at the printed pool, which is what makes a rest a top-up
+    /// rather than a bonus — see `ActorInstance::regain_item_charges`,
+    /// the one place it is read.
+    pub recharge: Option<crate::engine::dice::DiceExpr>,
 }
 
 impl Item {
@@ -285,8 +303,17 @@ impl Item {
         grants_spell_save_advantage: false,
         imposes_spell_attack_disadvantage: false,
         charges: 0,
+        recharge: None,
     };
 }
+
+/// *"Regains 1d6+1 expended charges daily at dawn"* — the recharge line
+/// RAW prints on every charge-bearing item in the SRD except the Staff
+/// of Power, which rolls `2d8+4`. Named once because nine items say it.
+const DAILY_1D6_PLUS_1: DiceExpr = DiceExpr {
+    dice: Some(crate::engine::dice::Dice::new(1, 6)),
+    constant: 1,
+};
 
 pub static RING_OF_PROTECTION: Item = Item {
     name: "Ring of Protection",
@@ -815,6 +842,7 @@ pub static WAND_OF_MAGIC_MISSILES: Item = Item {
     glyph: 'D',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_MAGIC_MISSILES],
     charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -832,6 +860,7 @@ pub static WAND_OF_FIREBALLS: Item = Item {
     glyph: 'F',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_FIREBALLS],
     charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -845,6 +874,7 @@ pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
     glyph: 'Z',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS],
     charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3320,6 +3350,7 @@ pub static STAFF_OF_FIRE: Item = Item {
     ],
     damage_resistances: &[crate::engine::types::DamageType::Fire],
     charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3341,6 +3372,7 @@ pub static STAFF_OF_FROST: Item = Item {
     ],
     damage_resistances: &[crate::engine::types::DamageType::Cold],
     charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3361,6 +3393,7 @@ pub static STAFF_OF_HEALING: Item = Item {
         &crate::actions::staves::STAFF_OF_HEALING_MASS_CURE_WOUNDS,
     ],
     charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3381,6 +3414,7 @@ pub static STAFF_OF_SWARMING_INSECTS: Item = Item {
         &crate::actions::staves::STAFF_OF_SWARMING_INSECTS_INSECT_PLAGUE,
     ],
     charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3403,6 +3437,7 @@ pub static STAFF_OF_CHARMING: Item = Item {
         &crate::actions::staves::STAFF_OF_CHARMING_COMMAND,
     ],
     charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3432,6 +3467,7 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
     ],
     grants_magical_attacks: true,
     charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
     ..Item::DEFAULTS
 };
 
@@ -3480,6 +3516,10 @@ pub static STAFF_OF_POWER: Item = Item {
     ],
     grants_magical_attacks: true,
     charges: 20,
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(2, 8)),
+        constant: 4,
+    }),
     ..Item::DEFAULTS
 };
 

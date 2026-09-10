@@ -96126,3 +96126,152 @@ fn a_spell_cast_from_a_staff_is_not_a_cantrip() {
          and the negative half above is vacuous"
     );
 }
+
+/// A rest tops a charge pool up, and never past what the object holds.
+///
+/// RAW's *"regains 1d6+1 expended charges daily at dawn"*, with the roll
+/// capped at what the item is short. The cap is the half that matters:
+/// without it a party could rest twice in a row and walk into the next
+/// room with a fourteen-charge Staff of Fire.
+#[test]
+fn a_long_rest_tops_a_staff_up_and_never_past_full() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::STAFF_OF_FIRE;
+
+    // Every seed of the recharge die, so the cap is exercised from both
+    // sides rather than at whatever one roll happens to be.
+    for seed in 0..25u64 {
+        let mut e = ei_with_terrain_seeded(10, 10, &[], seed);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&id).unwrap();
+            a.pickup_item(&STAFF_OF_FIRE);
+            assert!(a.consume_resource(Resource::ItemCharges {
+                item: STAFF_OF_FIRE.name,
+                count: 9,
+            }));
+            assert_eq!(a.item_charges_remaining(STAFF_OF_FIRE.name), 1);
+        }
+        e.long_rest();
+        let after = e.actors[&id].item_charges_remaining(STAFF_OF_FIRE.name);
+        assert!(
+            (3..=8).contains(&after),
+            "seed {seed}: 1d6+1 on top of one is 3..=8, got {after}"
+        );
+
+        // More rests fill it and then stop. Six is more than enough —
+        // the die's floor is two a night — and the point of resting past
+        // full is that the cap, not the die, is what ends it.
+        for _ in 0..6 {
+            e.long_rest();
+            assert!(
+                e.actors[&id].item_charges_remaining(STAFF_OF_FIRE.name) <= 10,
+                "seed {seed}: a rest took the staff past its printed ten"
+            );
+        }
+        assert_eq!(
+            e.actors[&id].item_charges_remaining(STAFF_OF_FIRE.name),
+            10,
+            "seed {seed}: and it does reach full"
+        );
+    }
+}
+
+/// A full pool is not rolled for, and an item with no recharge line
+/// never gets one.
+///
+/// The negative half of the rule above. `regain_item_charges` reports
+/// what came back, and reporting nothing is how the log stays quiet
+/// about the staff the party never used.
+#[test]
+fn a_rest_is_silent_about_what_it_did_not_refill() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::{SCROLL_OF_FIREBALL, STAFF_OF_FIRE};
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let id = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let a = e.actors.get_mut(&id).unwrap();
+    a.pickup_item(&STAFF_OF_FIRE);
+    a.pickup_item(&SCROLL_OF_FIREBALL);
+
+    let mut roller = FastRandRoller::with_seed(7);
+    assert!(
+        a.regain_item_charges(&mut roller).is_empty(),
+        "a staff at ten of ten has nothing coming back, and a scroll has \
+         no charges to come back to"
+    );
+    assert_eq!(a.item_charges_remaining(STAFF_OF_FIRE.name), 10);
+}
+
+/// Two staves of the same name are one pool, and one roll fills it.
+///
+/// The ledger is keyed on the item's name and additive across pickups,
+/// so two Staves of Fire are twenty charges — which means the cap has to
+/// be the pooled total or a rest would stop filling at ten, and the roll
+/// has to be per *item* or the second stick would be worth more as a
+/// battery than as a staff.
+#[test]
+fn a_second_copy_deepens_the_pool_a_rest_fills() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::STAFF_OF_FIRE;
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let id = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let a = e.actors.get_mut(&id).unwrap();
+    a.pickup_item(&STAFF_OF_FIRE);
+    a.pickup_item(&STAFF_OF_FIRE);
+    assert_eq!(a.item_charges_remaining(STAFF_OF_FIRE.name), 20);
+    assert!(a.consume_resource(Resource::ItemCharges {
+        item: STAFF_OF_FIRE.name,
+        count: 20,
+    }));
+
+    let mut roller = FastRandRoller::with_seed(3);
+    let regained = a.regain_item_charges(&mut roller);
+    assert_eq!(regained.len(), 1, "one roll for one pool: {regained:?}");
+    let (_, back) = regained[0];
+    assert!(
+        (2..=7).contains(&back),
+        "one 1d6+1, not two — got {back} back"
+    );
+    assert_eq!(a.item_charges_remaining(STAFF_OF_FIRE.name), back);
+}
+
+/// Every charge-bearing item on the loot table says whether it comes
+/// back, and every item that comes back has charges to come back to.
+///
+/// Both directions, because both silently do nothing. An item with
+/// charges and no `recharge` is one the party stops carrying after the
+/// first room and never finds out why; a `recharge` on an item with no
+/// charges is a die rolled into a pool that does not exist.
+#[test]
+fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
+    use crate::items::item_template::LOOT_POOL;
+
+    let mut wrong: Vec<String> = Vec::new();
+    for item in LOOT_POOL {
+        match (item.charges, item.recharge) {
+            (0, Some(expr)) => wrong.push(format!(
+                "{} recharges {} and has no charges to put them in",
+                item.name, expr
+            )),
+            (n, None) if n > 0 => wrong.push(format!(
+                "{} carries {} charges and nothing gives them back — a night \
+                 in the dungeon should",
+                item.name, n
+            )),
+            _ => {}
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n  "));
+}

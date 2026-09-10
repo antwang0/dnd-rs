@@ -131,9 +131,15 @@ impl App {
             return false;
         }
         let mut rested: Vec<ActorInstance> = pcs;
-        for pc in &mut rested {
-            pc.long_rest();
-        }
+        // The full rest, off the outgoing encounter's seeded roller —
+        // hit points and slots back, staves topped up, and the XP the
+        // party banked in the last room cashed in for levels. This used
+        // to be a bare `ActorInstance::long_rest` per PC, which is the
+        // first of those three and neither of the others: a run could
+        // bank every point of XP the dungeon paid out and never level,
+        // because the only long rest a playthrough reaches is this one.
+        // See `EncounterInstance::long_rest_party`.
+        let rest_lines = self.encounter.long_rest_party(&mut rested);
         // Bump the CR budget for this fight only; keep `actor_params` as the
         // base so future scaling stays anchored to the original difficulty.
         let mut scaled_params = self.actor_params.clone();
@@ -148,6 +154,13 @@ impl App {
         match EncounterInstance::with_pcs(&self.terrain_params, &scaled_params, None, rested) {
             Ok(mut next) => {
                 next.set_ambient_light(ambient);
+                // Into the *new* log, not the old one. The rest happens
+                // between two maps and the encounter it happened in is
+                // about to be dropped, so a level-up announced there is
+                // one the player never sees.
+                for line in rest_lines {
+                    next.log(line);
+                }
                 self.encounter = next;
                 self.encounter_number += 1;
                 self.input_str.clear();
@@ -1045,6 +1058,68 @@ mod tests {
         app.encounter
             .instantiate_creature(&GOBLIN_TEMPLATE, at, team, team)
             .expect("the goblin fits")
+    }
+
+    /// The party that walks into the next room has rested properly:
+    /// levelled for the XP it banked, and holding a staff with charges
+    /// back on it.
+    ///
+    /// Both halves are things the between-encounters rest did not do.
+    /// `start_next_encounter` called `ActorInstance::long_rest` on each
+    /// surviving PC, which restores hit points and slots and nothing
+    /// else — so the XP `kill` awards, under a comment reading "leveling
+    /// happens on long rest", was banked by every party in every run and
+    /// spent by none of them, and a staff emptied in the first room
+    /// stayed empty for the dungeon.
+    #[test]
+    fn the_party_levels_and_recharges_on_the_way_to_the_next_room() {
+        use crate::items::item_template::STAFF_OF_FIRE;
+
+        let mut app = app_with_empty_board();
+        let pc = spawn(&mut app, 0, Coordinate::new(5, 5));
+        let (level_before, charges_before) = {
+            let a = app.encounter.actors.get_mut(&pc).unwrap();
+            a.pickup_item(&STAFF_OF_FIRE);
+            // Down to two of ten, and enough XP banked for exactly one
+            // level (the curve is `level * 300`).
+            assert!(a.consume_resource(crate::engine::side_effects::Resource::ItemCharges {
+                item: STAFF_OF_FIRE.name,
+                count: 8,
+            }));
+            a.award_xp(a.xp_threshold_for_next_level());
+            (a.level(), a.item_charges_remaining(STAFF_OF_FIRE.name))
+        };
+        assert_eq!(charges_before, 2);
+
+        assert!(app.start_next_encounter(), "the next room generates");
+
+        let pc = *app
+            .encounter
+            .actors
+            .iter()
+            .find(|(_, a)| a.team() == 0)
+            .expect("the party came through")
+            .0;
+        let a = &app.encounter.actors[&pc];
+        assert_eq!(
+            a.level(),
+            level_before + 1,
+            "the XP the last room paid out should have bought a level"
+        );
+        let after = a.item_charges_remaining(STAFF_OF_FIRE.name);
+        assert!(
+            (3..=10).contains(&after),
+            "1d6+1 back on top of two, capped at ten (got {after})"
+        );
+        // And the player is told, in the log they are about to read
+        // rather than in the one that just got dropped.
+        assert!(
+            app.encounter
+                .messages()
+                .iter()
+                .any(|m| m.contains("reaches level")),
+            "the level-up should be announced in the new encounter's log"
+        );
     }
 
     /// The player cleared the board: the banner says so and offers the

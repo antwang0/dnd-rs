@@ -13301,10 +13301,14 @@ impl EncounterInstance {
     }
 
     /// Long rest every actor still in the encounter — full HP, all spell
-    /// slots restored, conditions and concentration cleared. PCs (team 0)
-    /// also try to cash in accumulated XP for one or more level-ups in a
-    /// loop until they're below the next threshold; we then re-restore
-    /// HP so the bonus from the level applies cleanly.
+    /// slots restored, conditions and concentration cleared, charges
+    /// topped up, and PCs' banked XP cashed in for however many levels
+    /// it pays for.
+    ///
+    /// The party that walks out of a won fight and into the next one does
+    /// not come through here — it is not in this encounter any more by
+    /// the time it rests. That path is `long_rest_party`, and both are
+    /// one `rest_one` call so the two cannot drift.
     pub fn long_rest(&mut self) {
         // Everybody gets off their horse. A rest is not a thing you take
         // in the saddle, and — more to the point — a rider is off the
@@ -13321,24 +13325,44 @@ impl EncounterInstance {
         // shuffle who rolls first across runs).
         let ids = self.sorted_actor_ids();
         for id in ids {
-            let mut announcements: Vec<String> = Vec::new();
-            if let Some(actor) = self.actors.get_mut(&id) {
-                actor.long_rest();
-                if actor.team() == 0 {
-                    while let Some(new_level) = actor.try_level_up(&mut self.roller) {
-                        announcements.push(format!(
-                            "{} reaches level {}! (HP up to {})",
-                            actor.name(),
-                            new_level,
-                            actor.max_hitpoints()
-                        ));
-                    }
-                }
-            }
+            let announcements = match self.actors.get_mut(&id) {
+                Some(actor) => rest_one(actor, &mut self.roller),
+                None => Vec::new(),
+            };
             for line in announcements {
                 self.log(line);
             }
         }
+    }
+
+    /// Long rest a party that has already left this encounter for the
+    /// next one, and hand back the lines the new encounter's log should
+    /// open with.
+    ///
+    /// `App::start_next_encounter` clones the surviving PCs out, rests
+    /// them and builds a fresh map around them, so by the time the rest
+    /// happens they are `ActorInstance`s in a `Vec` and not actors on
+    /// any board. It used to call `ActorInstance::long_rest` on each of
+    /// them directly, which is *most* of a rest and was missing the two
+    /// halves that need a die:
+    ///
+    ///   - **the level-up**, which is the whole reason XP is awarded.
+    ///     `kill`'s own comment says "leveling happens on long rest", and
+    ///     the only long rest a real playthrough ever reaches was this
+    ///     one — so a party could clear a dungeon banking every point of
+    ///     it and never once level;
+    ///   - **the recharge**, which is what makes a staff worth carrying
+    ///     into the second room.
+    ///
+    /// It takes `&mut self` for the roller alone: the outgoing
+    /// encounter's seeded stream is the only one in scope between two
+    /// maps, and rolling off it keeps a run reproducible by seed.
+    pub fn long_rest_party(&mut self, party: &mut [ActorInstance]) -> Vec<String> {
+        let mut lines: Vec<String> = Vec::new();
+        for actor in party.iter_mut() {
+            lines.extend(rest_one(actor, &mut self.roller));
+        }
+        lines
     }
 
     /// Short rest every actor still in the encounter — partial HP
@@ -18984,6 +19008,46 @@ impl EncounterInstance {
             current_player.available_actions(), // base actions + carried-consumable actions
         )));
     }
+}
+
+/// One actor's long rest, whole — the actor-side reset, the charges the
+/// night gives back, and, for a PC, however many levels their banked XP
+/// pays for. Returns the lines the caller should log.
+///
+/// A free function rather than a method because its two callers hold the
+/// actor differently: `EncounterInstance::long_rest` reaches into
+/// `self.actors`, and `long_rest_party` is handed a slice of actors that
+/// are not in any encounter at all. Both need the same roller and the
+/// same three steps, and the version of this that lived inline in one of
+/// them was the version the other one silently did not have.
+///
+/// Order matters once: the level-up loop runs after
+/// `ActorInstance::long_rest` has restored hit points, because a level
+/// raises the maximum and the actor should walk into the next fight at
+/// the new one rather than at the old.
+fn rest_one(actor: &mut ActorInstance, roller: &mut FastRandRoller) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    actor.long_rest();
+    for (item, back) in actor.regain_item_charges(roller) {
+        lines.push(format!(
+            "{}'s {} regains {} charge{}.",
+            actor.name(),
+            item,
+            back,
+            if back == 1 { "" } else { "s" }
+        ));
+    }
+    if actor.team() == 0 {
+        while let Some(new_level) = actor.try_level_up(roller) {
+            lines.push(format!(
+                "{} reaches level {}! (HP up to {})",
+                actor.name(),
+                new_level,
+                actor.max_hitpoints()
+            ));
+        }
+    }
+    lines
 }
 
 #[cfg(test)]
