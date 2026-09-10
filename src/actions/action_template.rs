@@ -1068,8 +1068,18 @@ pub fn weapon_expected_damage_named(
         + damage_ability
             .map(|a| caster.ability_modifier(a) as f32)
             .unwrap_or(0.0);
-    let extra_attack =
-        u32::from(cost_resource == Resource::Action && caster.has_extra_attack());
+    // Weapon-scoped, because Extra Attack is: a warlock's Thirsting
+    // Blade chains a second swing for the pact weapon and not for the
+    // dagger on the same sheet, and Devouring Blade chains two. An
+    // estimate that answered for the whole sheet would rank the two
+    // weapons identically and the picker would swing whichever came
+    // first in the list — which is the bug this estimate exists to fix
+    // for every other pair of weapons.
+    let extra_attack = if cost_resource == Resource::Action {
+        caster.extra_attack_swings(weapon_name)
+    } else {
+        0
+    };
     let swings = 1 + extra_attack + extra_swings;
     // A damage modifier deep enough to zero a swing (a Strength penalty
     // on a small die) shouldn't make the weapon read as *negative* and

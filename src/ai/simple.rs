@@ -434,6 +434,31 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3c''''''. Pact of the Blade — the warlock's bonus-action
+        //          conjuring, and the exact twin of the rung above it:
+        //          a weapon that is not in the action list until it is
+        //          summoned, summoned once, free, and worth more the
+        //          earlier it is up. Same approach band for the same
+        //          reason — the warlock is the one walking into
+        //          contact, and a blade conjured on arrival cost the
+        //          bonus action Hex wanted on the turn the warlock
+        //          could have been swinging with it.
+        //
+        //          Ranked above Hex deliberately. Hex is a rider on
+        //          damage the warlock has yet to deal; the blade is
+        //          the damage. A Thirsting Blade warlock's first turn
+        //          in contact is worth two swings with a Charisma
+        //          weapon or one Hex, and the swings compound for the
+        //          rest of the fight while the rider does not.
+        if let Some(aei) = try_self_action_when_enemy_within(
+            encounter,
+            actor_id,
+            BLADESONG_ENGAGE_GAP,
+            "pact of the blade",
+        ) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c'. Bladesong — the Bladesinger's bonus-action trance. Sits
         //      beside Rage because it is the same kind of decision: a
         //      once-per-rest, bonus-action, whole-fight defensive
@@ -9802,7 +9827,11 @@ fn mastery_damage_bonus(
     let Some(actor) = encounter.actors.get(&actor_id) else {
         return 0.0;
     };
-    let another_swing_coming = actor.has_extra_attack();
+    // Asked of *this* weapon rather than of the sheet: Thirsting Blade
+    // chains a second swing for the pact weapon only, so a mastery
+    // clause worth more when another swing is coming is worth more with
+    // that weapon and not with the dagger beside it.
+    let another_swing_coming = actor.extra_attack_swings(action.name()) > 0;
     match mastery {
         WeaponMastery::Cleave => {
             if actor.once_per_turn_used(CLEAVE_TAG)
@@ -17978,7 +18007,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 57] = [
+        let cases: [(&CreatureTemplate, &str); 59] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -17989,6 +18018,16 @@ mod tests {
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
             (&BLADESINGER_WIZARD_TEMPLATE, "bladesong"),
             (&UNDEAD_WARLOCK_TEMPLATE, "form of dread"),
+            // The conjuring, and the weapon it puts in the list. The
+            // second row is the interesting one for the same reason
+            // Astral Arms' is: `PACT_WEAPON` is a `SimpleWeapon` gated
+            // on a self-condition, so seeing the ordinary attack picker
+            // choose it proves the summon and the swing are wired to
+            // each other and not merely each to the engine. Devouring
+            // Blade rides that swing rather than printing a line of its
+            // own; the count is pinned engine-side.
+            (&UNDEAD_WARLOCK_TEMPLATE, "pact of the blade"),
+            (&UNDEAD_WARLOCK_TEMPLATE, "pact weapon"),
             (&KENSEI_MONK_TEMPLATE, "kensei's shot"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "giant's might"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "fire rune"),

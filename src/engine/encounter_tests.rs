@@ -14863,6 +14863,193 @@ fn gift_of_the_protectors_catches_the_warlock_who_wrote_it() {
     );
 }
 
+/// SRD 5.2 **Pact of the Blade**: the weapon is not there until a
+/// bonus action puts it there, and then it is.
+///
+/// The gate is the invocation's first clause, and it is what stops the
+/// conjured weapon being simply a better dagger the warlock was always
+/// carrying.
+#[test]
+fn a_pact_weapon_cannot_be_swung_until_it_is_conjured() {
+    use crate::actions::class_features::{CONJURE_PACT_WEAPON, PACT_WEAPON};
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+
+    let swing = ActionExecutionInfo::new(&PACT_WEAPON, warlock, Some(vec![ogre]), None, None);
+    assert!(
+        !swing.validate(&e),
+        "an unconjured weapon is a weapon the warlock is not holding"
+    );
+
+    let conjure = ActionExecutionInfo::new(&*CONJURE_PACT_WEAPON, warlock, None, None, None);
+    assert!(conjure.validate(&e));
+    e.push_action(conjure);
+    e.process_stack();
+    assert!(e.actors[&warlock].has_condition(Condition::PactWeapon));
+
+    let swing = ActionExecutionInfo::new(&PACT_WEAPON, warlock, Some(vec![ogre]), None, None);
+    assert!(swing.validate(&e), "and now it is");
+
+    // RAW: the bond ends when the warlock conjures *again*, which means
+    // a second bonus action on the same weapon buys nothing — and the
+    // AI would spend one every round of the fight if it validated.
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    let again = ActionExecutionInfo::new(&*CONJURE_PACT_WEAPON, warlock, None, None, None);
+    assert!(
+        !again.validate(&e),
+        "a warlock already holding the weapon does not re-conjure it"
+    );
+}
+
+/// SRD 5.2 **Pact of the Blade**, the clause that makes the weapon
+/// worth conjuring rather than merely worth having: *"you can cause the
+/// weapon to deal Necrotic, Psychic, or Radiant damage or its normal
+/// damage type."*
+///
+/// Asserted through the menu rather than through a damage roll, because
+/// the choice is the whole feature and a roll would only show one
+/// branch of it. Against a creature with no opinion the weapon is a
+/// longsword; against a skeleton — SRD 5.2 gives every skeleton
+/// bludgeoning vulnerability and nothing to say about slashing, but
+/// piercing and slashing resistance is the classic shape — the picker
+/// takes the branch the target is least able to shrug off.
+#[test]
+fn the_pact_weapon_picks_the_damage_type_its_target_likes_least() {
+    use crate::actions::class_features::{PACT_WEAPON, PACT_WEAPON_DAMAGE_TYPES};
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+    use crate::engine::types::{DamageModifier, DamageType};
+
+    assert!(
+        PACT_WEAPON.chooses_damage_type(),
+        "the weapon carries a menu and says so"
+    );
+    assert_eq!(PACT_WEAPON.damage_types(), PACT_WEAPON_DAMAGE_TYPES.to_vec());
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    e.instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    assert_eq!(
+        e.pick_damage_type_against_target(ogre, PACT_WEAPON_DAMAGE_TYPES),
+        DamageType::Slashing,
+        "against a creature with no opinion, a pact weapon is a sword"
+    );
+
+    // Give the ogre the resistance a skeleton has and the branch moves.
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .set_damage_modifier(DamageType::Slashing, DamageModifier::Resistance);
+    assert_ne!(
+        e.pick_damage_type_against_target(ogre, PACT_WEAPON_DAMAGE_TYPES),
+        DamageType::Slashing,
+        "and against one that shrugs steel off, it stops being steel"
+    );
+}
+
+/// SRD 5.2 **Thirsting Blade** — *"You gain the Extra Attack feature
+/// for your pact weapon only"* — and **Devouring Blade** — *"confers
+/// two extra attacks rather than one."*
+///
+/// The "only" is the half a boolean could not carry: the same warlock
+/// swings its dagger once. Asserted at `extra_attack_swings`, which is
+/// where both clauses actually live, rather than by counting log lines
+/// — the count is the rule and the chain is one loop over it.
+#[test]
+fn the_blade_invocations_count_swings_for_the_pact_weapon_alone() {
+    use crate::actions::class_features::PACT_WEAPON;
+    use crate::actors::creatures::warlocks::{
+        FIEND_WARLOCK_TEMPLATE, UNDEAD_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE,
+    };
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let baseline = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let thirsting = e
+        .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+        .unwrap();
+    let devouring = e
+        .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(8, 2), 0, 2)
+        .unwrap();
+    let pact = PACT_WEAPON.display_name;
+
+    assert_eq!(
+        e.actors[&baseline].extra_attack_swings(pact),
+        0,
+        "a warlock with no blade invocation swings once at everything"
+    );
+    assert_eq!(
+        e.actors[&thirsting].extra_attack_swings(pact),
+        1,
+        "Thirsting Blade is one extra"
+    );
+    assert_eq!(
+        e.actors[&devouring].extra_attack_swings(pact),
+        2,
+        "and Devouring Blade is two, not three — it replaces rather than adds"
+    );
+    for id in [thirsting, devouring] {
+        assert_eq!(
+            e.actors[&id].extra_attack_swings("dagger"),
+            0,
+            "and neither invocation touches the dagger on the same sheet"
+        );
+    }
+}
+
+/// The chain honours the count: a Devouring Blade warlock's Action
+/// spends three swings of the pact weapon and no more.
+///
+/// Counted off the log, because the loop is the thing being tested and
+/// `extra_attack_swings` is asserted directly above. The target is
+/// given enough hit points to survive all three, so the count is not
+/// cut short by the ogre falling.
+#[test]
+fn devouring_blade_lands_three_swings_in_one_action() {
+    use crate::actions::class_features::{CONJURE_PACT_WEAPON, PACT_WEAPON};
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(7, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    let conjure = ActionExecutionInfo::new(&*CONJURE_PACT_WEAPON, warlock, None, None, None);
+    e.push_action(conjure);
+    e.process_stack();
+
+    let before = e.messages().len();
+    let swing = ActionExecutionInfo::new(&PACT_WEAPON, warlock, Some(vec![target]), None, None);
+    assert!(swing.validate(&e));
+    e.push_action(swing);
+    e.process_stack();
+    let chained = e.messages()[before..]
+        .iter()
+        .filter(|l| l.contains("Extra Attack:"))
+        .count();
+    assert_eq!(chained, 2, "one swing plus two chained is three");
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

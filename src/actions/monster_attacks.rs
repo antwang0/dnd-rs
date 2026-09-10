@@ -685,11 +685,12 @@ impl Action for SingleTargetSaveDamage {
 }
 
 
-/// On an Action-cost weapon swing, conditionally run a second swing if
-/// the caster has Extra Attack and this invocation isn't already inside
-/// a `Multiattack` / `CompoundAttack` expansion. Logs `"  Extra Attack:"`
-/// before the chained swing and extends `effects` with whatever it
-/// returns. No-op when either gate fails.
+/// On an Action-cost weapon swing, run as many further swings as the
+/// caster's Extra Attack grants for *this weapon*, unless this
+/// invocation is already inside a `Multiattack` / `CompoundAttack`
+/// expansion. Logs `"  Extra Attack:"` before each chained swing and
+/// extends `effects` with whatever it returns. No-op when either gate
+/// fails.
 ///
 /// Centralizes the recurring 7-line tail block on every WeaponWith*
 /// chassis's `side_effects` impl (`SimpleWeapon`, `WeaponWithRider`,
@@ -697,15 +698,21 @@ impl Action for SingleTargetSaveDamage {
 /// `WeaponWithCondition`). Before extraction, the same
 /// `!in_multiattack() && actor.has_extra_attack()` gate and the same
 /// `effects.extend(swing(encounter))` chain were re-stamped at five
-/// chassis sites — a future tweak to chain semantics (e.g. a third
-/// swing for a hypothetical "Extra Attack (Improved)" feat, gating on
-/// a per-swing resource other than `has_extra_attack`, or a different
-/// log prefix on the chained line) now lands in one place instead of
-/// being scattered across the chassis impls. The
+/// chassis sites. The docstring used to name "a third swing for a
+/// hypothetical *Extra Attack (Improved)* feat" as the change this
+/// centralization would make cheap; SRD 5.2's **Devouring Blade**
+/// turned out to be that feat, and the change landed here and at
+/// `ActorInstance::extra_attack_swings` and nowhere else. The
 /// `Multiattack` / `CompoundAttack` chassis themselves still gate the
 /// chain off via the `in_multiattack()` depth counter so a 3-claw
 /// Compound on a creature that also has Extra Attack doesn't silently
 /// promote to 6 swings.
+///
+/// `weapon_name` is what makes a weapon-scoped Extra Attack possible —
+/// RAW's Thirsting Blade is *"for your pact weapon only"*, and a
+/// warlock's dagger has to keep swinging once. Every caller has its
+/// own `display_name` at hand; the bespoke `impl Action` swings that
+/// have no struct pass the same literal they hand `AttackParams`.
 ///
 /// The closure form (`FnMut(&mut EncounterInstance) -> Vec<...>`) lets
 /// each chassis package its swing-and-rider chain — including the
@@ -716,6 +723,7 @@ impl Action for SingleTargetSaveDamage {
 pub fn maybe_chain_extra_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
+    weapon_name: &str,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     mut swing: impl FnMut(&mut EncounterInstance) -> Vec<Box<dyn ApplicableSideEffect>>,
 ) {
@@ -727,15 +735,15 @@ pub fn maybe_chain_extra_attack(
     if encounter.in_multiattack() {
         return;
     }
-    if !encounter
+    let extra = encounter
         .actors
         .get(&caster_id)
-        .is_some_and(|a| a.has_extra_attack())
-    {
-        return;
+        .map(|a| a.extra_attack_swings(weapon_name))
+        .unwrap_or(0);
+    for _ in 0..extra {
+        encounter.log("  Extra Attack:");
+        effects.extend(swing(encounter));
     }
-    encounter.log("  Extra Attack:");
-    effects.extend(swing(encounter));
 }
 
 /// Resolve a single weapon swing whose attack and damage modifiers both
@@ -889,6 +897,16 @@ fn simple_weapon_swing(
         }
         _ => weapon.damage_dice,
     };
+    // SRD 5.2 Pact of the Blade's "you can cause the weapon to deal
+    // Necrotic, Psychic, or Radiant damage or its normal damage type" —
+    // a choice made per swing, resolved the same way every spell menu
+    // in the engine is. Read here for the same reason `bloodied_dice`
+    // is: it is a property of the weapon, and it has to be settled
+    // before `AttackParams` is built.
+    let damage_type = match weapon.damage_type_menu {
+        Some(menu) => encounter.pick_damage_type_against_target(target_id, menu),
+        None => weapon.damage_type,
+    };
     crate::engine::attack::resolve_attack_with_rider(
         encounter,
         AttackParams {
@@ -898,7 +916,7 @@ fn simple_weapon_swing(
             attack_bonus,
             damage_dice,
             damage_bonus,
-            damage_type: weapon.damage_type,
+            damage_type,
             is_melee: weapon.is_melee,
             long_range: weapon.normal_range,
             min_range: weapon.min_effective_range,
@@ -1333,6 +1351,38 @@ pub struct SimpleWeapon {
     /// `escalating_vs_bloodied()` builder, for the same reason
     /// `mastery` and `is_light` are.
     pub bloodied_dice: Option<Dice>,
+    /// The damage types this weapon's wielder may choose between at the
+    /// moment of the swing, or `None` for every weapon in the armoury —
+    /// a longsword is slashing and there is nothing to decide.
+    ///
+    /// One carrier: SRD 5.2 Pact of the Blade's conjured weapon, whose
+    /// text is *"you can cause the weapon to deal Necrotic, Psychic, or
+    /// Radiant damage or its normal damage type."* Four options, chosen
+    /// per swing, and a warlock at the table chooses by looking at what
+    /// is in front of them.
+    ///
+    /// So does the engine: `simple_weapon_swing` runs
+    /// `EncounterInstance::pick_damage_type_against_target` over the
+    /// menu and takes whichever entry the target is least able to shrug
+    /// off. That is the same resolution Chromatic Orb, Sorcerous Burst
+    /// and Dragon's Breath already get, and it is why the field is a
+    /// menu rather than a fixed second type: a bundle would land all
+    /// four at once, which is not a choice and would be four times the
+    /// weapon RAW prints.
+    ///
+    /// The menu's first entry is the weapon's `damage_type`, so a
+    /// target with no relevant modifiers takes the ordinary damage and
+    /// the log reads as an ordinary swing. Nothing enforces that — it
+    /// is a convention of the one row, and the tie-break in the picker
+    /// is what makes it hold.
+    ///
+    /// Surfaced on the trait through `damage_types` and
+    /// `chooses_damage_type`, so the AI's attack picker scores the
+    /// weapon on its best branch rather than on its worst — which is
+    /// the difference between a warlock swinging its pact weapon at a
+    /// skeleton and a warlock deciding the swing is resisted and
+    /// walking away.
+    pub damage_type_menu: Option<&'static [DamageType]>,
 }
 
 impl SimpleWeapon {
@@ -1397,6 +1447,7 @@ impl SimpleWeapon {
             is_light: false,
             mastery: None,
             bloodied_dice: None,
+            damage_type_menu: None,
         }
     }
 
@@ -1440,6 +1491,7 @@ impl SimpleWeapon {
             is_light: false,
             mastery: None,
             bloodied_dice: None,
+            damage_type_menu: None,
         }
     }
 
@@ -1480,6 +1532,7 @@ impl SimpleWeapon {
             is_light: false,
             mastery: None,
             bloodied_dice: None,
+            damage_type_menu: None,
         }
     }
 
@@ -1554,6 +1607,19 @@ impl SimpleWeapon {
     pub const fn escalating_vs_bloodied(self, bloodied_dice: Dice) -> Self {
         Self {
             bloodied_dice: Some(bloodied_dice),
+            ..self
+        }
+    }
+
+    /// Const builder that hands a weapon a menu of damage types its
+    /// wielder chooses between per swing — `SimpleWeapon::melee(...)
+    /// .damage_type_menu(&PACT_WEAPON_DAMAGE_TYPES)`.
+    ///
+    /// See the field for the one carrier and for why the menu's first
+    /// entry should be the weapon's own `damage_type`.
+    pub const fn damage_type_menu(self, menu: &'static [DamageType]) -> Self {
+        Self {
+            damage_type_menu: Some(menu),
             ..self
         }
     }
@@ -1676,6 +1742,22 @@ impl Action for SimpleWeapon {
     fn weapon_mastery(&self) -> Option<WeaponMastery> {
         self.mastery
     }
+    /// The weapon's own type, or its whole menu when it has one.
+    ///
+    /// Read with `chooses_damage_type` below, which says which of the
+    /// two this list is: a menu of four is scored on its best entry and
+    /// a bundle of four would be scored on its worst.
+    fn damage_types(&self) -> Vec<DamageType> {
+        match self.damage_type_menu {
+            Some(menu) => menu.to_vec(),
+            None => vec![self.damage_type],
+        }
+    }
+    /// A weapon carrying a menu picks one entry per swing; every other
+    /// weapon in the armoury lands the one type it has.
+    fn chooses_damage_type(&self) -> bool {
+        self.damage_type_menu.is_some()
+    }
     fn requires_los(&self) -> bool {
         self.requires_los
     }
@@ -1688,9 +1770,6 @@ impl Action for SimpleWeapon {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         vec![self.cost_resource]
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        vec![self.damage_type]
     }
     /// A weapon that has to be summoned before it can be swung — see
     /// `requires_condition`. Ungated weapons (every one but the Astral
@@ -1746,7 +1825,7 @@ impl Action for SimpleWeapon {
         // `has_extra_attack()` gates uniformly across every WeaponWith*
         // chassis.
         if self.cost_resource == Resource::Action {
-            maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
+            maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
         }
         effects
     }
@@ -2030,7 +2109,7 @@ impl Action for WeaponWithRider {
             )
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
+        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
         effects
     }
 }
@@ -2328,7 +2407,7 @@ impl Action for WeaponWithSaveCondition {
             effects
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
+        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
         effects
     }
 }
@@ -2732,7 +2811,7 @@ impl Action for WeaponWithSaveDamage {
             effects
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
+        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
         effects
     }
 }
@@ -3239,7 +3318,7 @@ impl Action for WeaponWithCondition {
             effects
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, &mut effects, swing);
+        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
         effects
     }
 }
@@ -3780,6 +3859,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     is_light: false,
     mastery: Some(WeaponMastery::Vex),
     bloodied_dice: None,
+    damage_type_menu: None,
 };
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
@@ -19907,6 +19987,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     is_light: false,
     mastery: None,
     bloodied_dice: None,
+    damage_type_menu: None,
 };
 
 /// Violet Fungus Multiattack — 3 rotting touches per Action. RAW: "The
@@ -21300,6 +21381,7 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     is_light: false,
     mastery: None,
     bloodied_dice: None,
+    damage_type_menu: None,
 };
 
 /// The elephant's trample as the elephant has it: the stomp above,

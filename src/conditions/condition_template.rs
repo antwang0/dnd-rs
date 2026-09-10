@@ -2641,6 +2641,31 @@ pub enum Condition {
     /// `caster_gate`: the extra martial-arts die is a property of the
     /// arms being up, not of the monk carrying the feature.
     AstralArms,
+    /// SRD 5.2 Warlock Eldritch Invocation **Pact of the Blade**: a
+    /// weapon conjured into the warlock's hand with a bonus action, and
+    /// bonded until they conjure another one or die.
+    ///
+    /// The sibling of `AstralArms` above, and the same construction for
+    /// the same reason: the condition stores nothing, and everything
+    /// that makes a pact weapon a pact weapon — Charisma to hit and to
+    /// damage, a 1d8, a four-way damage menu — is ordinary weapon data
+    /// on `PACT_WEAPON`, which refuses to validate without this flag.
+    /// A form is a condition; the thing the form lets you do is an
+    /// action that is not there until you have it.
+    ///
+    /// Read by two more things than the monk's arms are, both of them
+    /// counting swings: Thirsting Blade and Devouring Blade are Extra
+    /// Attack scoped to "your pact weapon only", and the weapon's
+    /// identity is what they gate on rather than this condition — the
+    /// condition is what put the weapon in the list to be swung.
+    ///
+    /// `Permanent`, unlike every other conjured-form flag in the
+    /// engine. RAW gives the bond no duration that a fight can run out:
+    /// it ends when the warlock conjures again, when the weapon is more
+    /// than five feet away for a minute, or when they die. The last of
+    /// those the engine enforces by the actor leaving the board; the
+    /// first two have no surface here.
+    PactWeapon,
     /// 5e Peace Domain Cleric **Emboldening Bond** (subclass level 1):
     /// a bonded creature "can roll a d4 and add the number rolled to
     /// the attack roll, ability check, or saving throw" once per turn.
@@ -3252,6 +3277,7 @@ impl Condition {
             Condition::ArcaneShotShadow => "shadow arrow nocked",
             Condition::Enfeebled => "enfeebled",
             Condition::AstralArms => "arms of the astral self",
+            Condition::PactWeapon => "bonded to a pact weapon",
             Condition::TransmutedSpelling => "primed with transmuted spell",
             Condition::CunningStrikePoison => "primed with cunning poison",
             Condition::CunningStrikeTrip => "primed with cunning trip",
@@ -3496,6 +3522,12 @@ impl Condition {
                 // attack off the board entirely and drops them back to
                 // a weaker punch at half the reach.
                 | Condition::AstralArms
+                // SRD 5.2 Pact of the Blade. RAW conjures the weapon
+                // out of nothing, which makes it exactly the kind of
+                // magical self-buff a Dispel Magic ends — and ending
+                // it takes the weapon out of the warlock's hand,
+                // since `PACT_WEAPON` refuses to validate without it.
+                | Condition::PactWeapon
                 | Condition::FormOfDread
                 | Condition::HolyAuraed
                 | Condition::Foreseen

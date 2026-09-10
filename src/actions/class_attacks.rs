@@ -972,6 +972,7 @@ impl Action for BeastFormClaws {
         crate::actions::monster_attacks::maybe_chain_extra_attack(
             encounter,
             caster_id,
+            "beast claws",
             &mut effects,
             swing,
         );
@@ -1134,6 +1135,7 @@ impl Action for BeastNaturalWeapon {
         crate::actions::monster_attacks::maybe_chain_extra_attack(
             encounter,
             caster_id,
+            self.name,
             &mut effects,
             &mut swing,
         );

@@ -10219,14 +10219,216 @@ pub const ELDRITCH_INVOCATION_TAGS: &[&str] = &[
     AGONIZING_BLAST_TAG,
     ASPECT_OF_THE_MOON_TAG,
     DEVILS_SIGHT_TAG,
+    DEVOURING_BLADE_TAG,
     ELDRITCH_MIND_TAG,
     GIFT_OF_THE_DEPTHS_TAG,
     GIFT_OF_THE_PROTECTORS_TAG,
     GRASP_OF_HADAR_TAG,
     LANCE_OF_LETHARGY_TAG,
+    PACT_OF_THE_BLADE_TAG,
     REPELLING_BLAST_TAG,
+    THIRSTING_BLADE_TAG,
     WITCH_SIGHT_TAG,
 ];
+
+/// Warlock Eldritch Invocation — **Pact of the Blade**: *"As a Bonus
+/// Action, you can conjure a pact weapon in your hand… Whenever you
+/// attack with the bonded weapon, you can use your Charisma modifier
+/// for the attack and damage rolls instead of using Strength or
+/// Dexterity; and you can cause the weapon to deal Necrotic, Psychic,
+/// or Radiant damage or its normal damage type."*
+///
+/// The pact boon that turns a d8-hit-die caster into something that can
+/// stand in the front rank, and the root of a small family: Thirsting
+/// Blade, Devouring Blade, Eldritch Smite and Lifedrinker all print
+/// "Prerequisite: … Pact of the Blade Invocation" and all of them do
+/// nothing without a blade to do it with.
+///
+/// **Shipped as a weapon that has to be summoned**, which is the shape
+/// the engine already had for exactly this: the Way of the Astral Self
+/// Monk's spectral arms are a `SimpleWeapon` carrying
+/// `requires_condition`, absent from the action list until a bonus
+/// action puts them there. `PACT_WEAPON` is the same construction, and
+/// the two RAW clauses that make it a *pact* weapon are two fields:
+/// `attack_ability: Charisma` and a `damage_type_menu` the swing picks
+/// from per target.
+///
+/// **Not the Hexblade's Hex Warrior.** That feature is a different
+/// sentence with the same effect on one axis — RAW bonds the weapon at
+/// the end of a long rest, with no action to spend and no conjuring —
+/// so `PACT_BLADE` is ungated and this one is not. A hexblade who also
+/// takes this invocation carries both, and the difference between them
+/// is one bonus action and the damage menu.
+///
+/// **The 1d8 is the "Simple or Martial Melee weapon of your choice"
+/// resolved to the obvious pick.** RAW lets the warlock name any of
+/// them; a longsword is what a CHA-primary caster with no martial
+/// training and one hand free actually conjures, and picking it here
+/// rather than offering a menu keeps the invocation one action instead
+/// of two.
+pub const PACT_OF_THE_BLADE_TAG: &str = "warlock.pact_of_the_blade";
+
+/// Warlock Eldritch Invocation — **Thirsting Blade**: *"You gain the
+/// Extra Attack feature for your pact weapon only. With that feature,
+/// you can attack twice with the weapon instead of once when you take
+/// the Attack action on your turn."*
+///
+/// The first Extra Attack in the engine that belongs to a *weapon*
+/// rather than to a creature, and the reason `has_extra_attack` grew a
+/// sibling: a bool on the actor cannot say "twice, but only with that
+/// one". `ActorInstance::extra_attack_swings` takes the weapon's name
+/// and answers a count, and `maybe_chain_extra_attack` loops it.
+///
+/// It does not stack with a class Extra Attack, per 5e's standing rule
+/// that Extra Attack features do not — the count is a `max`, not a
+/// sum, so a hypothetical fighter/warlock swinging a pact weapon still
+/// swings twice.
+pub const THIRSTING_BLADE_TAG: &str = "warlock.thirsting_blade";
+
+/// Warlock Eldritch Invocation — **Devouring Blade**: *"The Extra
+/// Attack of your Thirsting Blade invocation confers two extra attacks
+/// rather than one."*
+///
+/// Three swings a turn on a caster chassis, and the whole of the
+/// invocation is the number — which is why it needed the count and not
+/// a second flag. RAW gates it behind Thirsting Blade; the engine
+/// enforces that by arithmetic rather than by a check, since a `max`
+/// over the two rows makes the deeper one win whether or not the
+/// shallower is held, and a template carrying only this one is not a
+/// bug worth a runtime error.
+///
+/// Gated on the *pact weapon* exactly as Thirsting Blade is. A
+/// Devouring Blade warlock swings a dagger no more often than anybody
+/// else.
+pub const DEVOURING_BLADE_TAG: &str = "warlock.devouring_blade";
+
+/// The four types SRD 5.2's Pact of the Blade offers, in the order the
+/// picker breaks ties on: the weapon's own Slashing first, then RAW's
+/// three.
+///
+/// The order is the rule that keeps the log honest. A target with no
+/// relevant resistances takes Slashing and the line reads like an
+/// ordinary sword; the other three only ever surface against something
+/// that would have shrugged the first one off, which is exactly the
+/// decision RAW hands the warlock.
+pub const PACT_WEAPON_DAMAGE_TYPES: &[DamageType] = &[
+    DamageType::Slashing,
+    DamageType::Necrotic,
+    DamageType::Psychic,
+    DamageType::Radiant,
+];
+
+/// The conjured weapon of **Pact of the Blade**: 1d8, Charisma to hit
+/// and to damage, and a damage type chosen fresh on every swing.
+///
+/// Refuses to validate without `Condition::PactWeapon` — see
+/// `ConjurePactWeapon`, the bonus action that installs it. That gate is
+/// the whole engine cost of the invocation's first clause, and it is
+/// borrowed wholesale from `ASTRAL_ARMS_STRIKE`, which is the same idea
+/// wearing a monk's robes.
+///
+/// The damage menu is what makes this weapon different from every other
+/// weapon in the armoury rather than merely better than the warlock's
+/// dagger. A skeleton resists Slashing and a shadow resists it too; a
+/// pact weapon simply stops being a sword against them. Against
+/// anything with no opinion it is a longsword, which is what the tie-
+/// break in `PACT_WEAPON_DAMAGE_TYPES` is for.
+pub static PACT_WEAPON: crate::actions::monster_attacks::SimpleWeapon =
+    crate::actions::monster_attacks::SimpleWeapon::melee(
+        "pact weapon",
+        &["pactw", "pw"],
+        AbilityScoreType::Charisma,
+        Dice::new(1, 8),
+        DamageType::Slashing,
+    )
+    .gated_on(Condition::PactWeapon)
+    .damage_type_menu(PACT_WEAPON_DAMAGE_TYPES);
+
+/// Pact of the Blade's bonus action: *"As a Bonus Action, you can
+/// conjure a pact weapon in your hand."*
+///
+/// The twin of `ArmsOfTheAstralSelf` and deliberately so — both are a
+/// bonus action spent once at the top of a fight to put a weapon on the
+/// board that was not there before, and neither costs anything else.
+/// The differences are two: RAW's bond has no duration inside a single
+/// encounter (it ends when you conjure again, when the weapon is out of
+/// your hands for a minute, or when you die), so the timer is
+/// `Permanent` where the monk's is ten rounds; and the `!has_condition`
+/// gate is doing more work here, since a warlock re-conjuring a weapon
+/// it is already holding would spend the bonus action Hex wants.
+pub struct ConjurePactWeapon {}
+
+impl Action for ConjurePactWeapon {
+    fn name(&self) -> &str {
+        "pact of the blade"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        // Not "pact" or "blade": `PACT_WEAPON` and the Hexblade's
+        // `PACT_BLADE` claim tokens in that neighbourhood, and alias
+        // collisions resolve by list order rather than erroring — a
+        // hexblade who took this invocation would have three of its own
+        // actions fighting over one word.
+        vec!["conjure pact weapon", "potb"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && !a.has_condition(Condition::PactWeapon))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "  pact of the blade: a weapon takes shape in {}'s hand.",
+            name
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::PactWeapon,
+            // RAW's bond outlasts any fight: it ends when the warlock
+            // conjures again, loses the weapon for a minute, or dies.
+            // None of those is a round count, and the encounter is the
+            // whole of the engine's clock.
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub static CONJURE_PACT_WEAPON: LazyLock<ConjurePactWeapon> =
+    LazyLock::new(|| ConjurePactWeapon {});
 
 /// 5e Warlock — Otherworldly Patron **The Fiend**, level-1 feature
 /// **Dark One's Blessing**. Passive: whenever the warlock reduces a

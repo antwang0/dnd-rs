@@ -6688,6 +6688,50 @@ impl ActorInstance {
         self.has_extra_attack
     }
 
+    /// How many *extra* swings this actor gets when the Action-cost
+    /// attack it just made was with `weapon_name`. 0 for the
+    /// overwhelming majority of the bestiary, which has no Extra Attack
+    /// at all.
+    ///
+    /// `has_extra_attack` answers the same question with a bool, and
+    /// answered it for every weapon at once, which was true of every
+    /// carrier until SRD 5.2's warlock invocations arrived: **Thirsting
+    /// Blade** is Extra Attack *"for your pact weapon only"* and
+    /// **Devouring Blade** makes that one extra swing into two. Neither
+    /// sentence fits in a flag — the first needs the weapon's identity
+    /// and the second needs a number — so the flag became a count and
+    /// `maybe_chain_extra_attack` became a loop.
+    ///
+    /// **The rows combine with `max`, not `+`.** 5e's standing rule is
+    /// that Extra Attack features do not stack, and RAW says Devouring
+    /// Blade replaces Thirsting Blade's extra rather than adding to it.
+    /// A `max` gets both of those for free and also makes Devouring
+    /// Blade's *"Prerequisite: Thirsting Blade"* enforce itself: a
+    /// template that somehow carried only the deeper tag still swings
+    /// three times, which is what it asked for, rather than failing an
+    /// invariant nobody would have seen fail.
+    ///
+    /// The weapon is matched by name because that is what the caller
+    /// has. Every chassis that chains an Extra Attack knows its own
+    /// `display_name` and nothing else about itself at the call site,
+    /// and a pact weapon is one static with one name.
+    pub fn extra_attack_swings(&self, weapon_name: &str) -> u32 {
+        let base = if self.has_extra_attack { 1 } else { 0 };
+        if weapon_name != crate::actions::class_features::PACT_WEAPON.display_name {
+            return base;
+        }
+        let pact = if self
+            .has_passive_feature(crate::actions::class_features::DEVOURING_BLADE_TAG)
+        {
+            2
+        } else if self.has_passive_feature(crate::actions::class_features::THIRSTING_BLADE_TAG) {
+            1
+        } else {
+            0
+        };
+        base.max(pact)
+    }
+
     /// Number of bonus damage dice the actor adds to a critical melee
     /// hit (5e Barbarian Brutal Critical). 0 = no rider.
     pub fn brutal_critical_dice(&self) -> u32 {

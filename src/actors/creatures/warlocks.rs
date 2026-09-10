@@ -426,10 +426,24 @@ pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     //     balanced playable level, not lockstep PHB progression.
     let mut actions = WARLOCK_TEMPLATE.actions.clone();
     actions.push(&*crate::actions::class_features::HURL_THROUGH_HELL);
+    // SRD 5.2's **Pact of the Blade** and **Thirsting Blade** — the
+    // conjured weapon and the second swing with it. On this patron
+    // because Dark One's Blessing is the one feature in the warlock's
+    // whole roster that pays for *finishing* creatures: temp HP every
+    // time one drops. A blaster collects that occasionally; a warlock
+    // standing in contact with a 1d8 Charisma weapon and two swings a
+    // turn collects it as a rhythm, and the temp HP is what makes
+    // standing there survivable on a d8 hit die. The three features
+    // are one build, and this is the chassis that was missing two
+    // thirds of it.
+    actions.push(&*crate::actions::class_features::CONJURE_PACT_WEAPON);
+    actions.push(&crate::actions::class_features::PACT_WEAPON);
     let mut features = WARLOCK_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::DARK_ONES_BLESSING_TAG);
     features.insert(crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG);
     features.insert(crate::actions::class_features::HURL_THROUGH_HELL_TAG);
+    features.insert(crate::actions::class_features::PACT_OF_THE_BLADE_TAG);
+    features.insert(crate::actions::class_features::THIRSTING_BLADE_TAG);
     CreatureTemplate {
         name: "Fiend Warlock",
         glyph: 'F',
@@ -1250,8 +1264,29 @@ pub static UNDEAD_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     use crate::actions::class_features::{FORM_OF_DREAD, FORM_OF_DREAD_TAG};
     let mut actions = WARLOCK_TEMPLATE.actions.clone();
     actions.push(&*FORM_OF_DREAD);
+    // SRD 5.2's **Pact of the Blade** with both blade invocations on
+    // top of it — **Thirsting Blade** and **Devouring Blade**, three
+    // swings a turn with the conjured weapon.
+    //
+    // On this patron because Form of Dread is priced per turn and paid
+    // per *hit*: "once on each of your turns when you hit a creature,
+    // that creature must make a Wisdom save or be Frightened." A
+    // warlock with one swing a turn cashes that clause when the swing
+    // lands and not otherwise; a warlock with three cashes it nearly
+    // every turn of the fight, which is the difference between a fear
+    // effect and an attrition engine. The two invocations are the only
+    // thing in the book that makes the subclass's own arithmetic work.
+    //
+    // Devouring Blade's RAW prerequisite is Thirsting Blade and both
+    // ship here; see `extra_attack_swings` for why the pair combines
+    // with a `max` rather than a sum.
+    actions.push(&*crate::actions::class_features::CONJURE_PACT_WEAPON);
+    actions.push(&crate::actions::class_features::PACT_WEAPON);
     let mut features = WARLOCK_TEMPLATE.features.clone();
     features.insert(FORM_OF_DREAD_TAG);
+    features.insert(crate::actions::class_features::PACT_OF_THE_BLADE_TAG);
+    features.insert(crate::actions::class_features::THIRSTING_BLADE_TAG);
+    features.insert(crate::actions::class_features::DEVOURING_BLADE_TAG);
     CreatureTemplate {
         name: "Undead Warlock",
         glyph: 'W',
