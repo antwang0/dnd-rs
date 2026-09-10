@@ -17345,6 +17345,16 @@ impl Action for SummonSpell {
     fn summons_allies(&self) -> bool {
         true
     }
+    /// Read off the body rather than declared per spell: the clause
+    /// that stops a familiar swinging is a row on its template, and
+    /// asking the template is what keeps this answer from drifting away
+    /// from the creature it is about.
+    fn summons_combatants(&self) -> bool {
+        !self
+            .template
+            .features
+            .contains(crate::actions::class_features::CANNOT_ATTACK_TAG)
+    }
     fn holds_concentration(&self) -> bool {
         self.concentration.is_some()
     }
@@ -18073,6 +18083,63 @@ pub static FAITHFUL_HOUND: SummonSpell = SummonSpell {
     scaling: SummonScaling::NONE,
 };
 
+/// Find Familiar — SRD 5.2 level-1 conjuration (wizard), **no
+/// concentration**, instantaneous.
+///
+/// The cheapest body in the engine and the only one that cannot swing.
+/// RAW's clause is flat — *"A familiar can't attack, but it can take
+/// other actions as normal"* — and it is the whole of the spell's
+/// balance: one first-level slot buys an ally that will never deal a
+/// point of damage.
+///
+/// **What it does instead is Help.** The familiar's turn is an owl
+/// flying up to whatever the fighter is standing over, granting
+/// advantage on the next swing, and flying away again without provoking
+/// — Flyby is on the stat block and is the reason the owl is the form
+/// that ships. A first-level slot that buys one ally advantage per
+/// round for the rest of the fight is a genuinely good trade, and it is
+/// a *different* trade from every other summon on the lane, all of
+/// which buy damage. See `actors::creatures::familiars` for the body
+/// and for what the option table collapsed to.
+///
+/// The AI needed nothing to use it. `try_grant_help` is the bottom rung
+/// of the ladder — the one an actor reaches after declining every
+/// attack, approach and support rung — and a creature that is
+/// structurally incapable of attacking declines all of them by
+/// construction, every turn, and lands there. The rung was written for
+/// "the caster out of slots behind the line"; the familiar is the
+/// constituency it fits best.
+///
+/// **No concentration**, which is RAW's own reading: the duration is
+/// Instantaneous and the bond outlives the fight. That makes it the
+/// fifth `None` on `SummonSpell::concentration` and the cheapest — a
+/// level-1 wizard can put a body on the board and still hold Shield
+/// up, which no other summon in the engine allows at any price.
+///
+/// Two RAW clauses are dropped for reasons the engine has already
+/// settled. The **1-hour ritual casting time** goes the way Phantom
+/// Steed's and Tiny Hut's do: the engine's clock starts at initiative,
+/// and every ritual-tagged spell here ships as an ordinary action. The
+/// **one-familiar-at-a-time** cap is enforced in practice by
+/// `Condition::Summoner`, which the AI's summon rung reads and which
+/// already stops a caster spending a second slot while a cohort of
+/// theirs is up.
+///
+/// `search_radius` 4 is RAW's 10 feet on the 2.5-ft grid.
+pub static FIND_FAMILIAR: SummonSpell = SummonSpell {
+    display_name: "find familiar",
+    aliases: &["familiar", "findfamiliar"],
+    school: SpellSchool::Conjuration,
+    slot_level: 1,
+    template: &crate::actors::creatures::familiars::FAMILIAR_TEMPLATE,
+    size: crate::engine::types::Size::Tiny,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 180,
+    concentration: None,
+    scaling: SummonScaling::NONE,
+};
+
 /// Every spell in the Tasha's summon family, in ascending slot order.
 /// The list the sweeps read, and the one place a ninth has to be added
 /// for every invariant that holds across the family to cover it.
@@ -18141,6 +18208,7 @@ pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
         &CONJURE_FEY,
         &CONJURE_CELESTIAL,
         &FAITHFUL_HOUND,
+        &FIND_FAMILIAR,
         &GIANT_INSECT,
     ]);
     all

@@ -11410,12 +11410,22 @@ impl ActorInstance {
         self.conditions.keys().any(|c| c.blocks_spellcasting())
     }
 
-    /// True when a held condition forbids this actor any hostile action
-    /// — 5e's flat "the target can't attack". Read at the action layer
-    /// by `Action::validate_input`, gated on `Action::is_harmful`; see
-    /// `Condition::blocks_attacking` for the cohort and its scope.
+    /// True when this actor may take no hostile action at all — 5e's
+    /// flat "the target can't attack". Read at the action layer by
+    /// `Action::validate_input`, gated on `Action::is_harmful`.
+    ///
+    /// Two roads to the same answer, and they are different questions
+    /// about the same sentence. `Condition::blocks_attacking` is the
+    /// cohort of things done *to* an actor and undone again — Gaseous
+    /// Form's cloud, and its siblings. `CANNOT_ATTACK_TAG` is the
+    /// creature that was made unable to swing: Find Familiar's "a
+    /// familiar can't attack", the shrieker's whole stat block. A
+    /// permanent condition would have been the shorter spelling and the
+    /// wrong one, because every other thing in the condition system can
+    /// be removed.
     pub fn blocked_from_attacking(&self) -> bool {
         self.conditions.keys().any(|c| c.blocks_attacking())
+            || self.has_passive_feature(crate::actions::class_features::CANNOT_ATTACK_TAG)
     }
 
     pub fn lowest_available_spell_slot(&self) -> Option<u32> {

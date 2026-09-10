@@ -9380,14 +9380,25 @@ impl SummonTier {
 ///      shouldn't guess at — whether there is a free adjacent tile of
 ///      the right size to put the creature on.
 ///
-/// Candidates are tried **cheapest first** — among slotted ones the
-/// smaller slot first — falling back to the actor's own list order for a
-/// genuine tie. Cost is the only cross-summon metric worth having: there
-/// is no sense in which two wolves and a fire elemental can be compared
-/// on quality (they are good in different fights), but a smaller slot
-/// for a body is unambiguously the one to spend first. It is also what
-/// makes gate 2 above sit right — the cheap call goes out, and the
-/// bigger slots stay available for what else the fight asks for.
+/// Candidates are tried **fighters first, then cheapest** — among
+/// slotted ones the smaller slot first — falling back to the actor's
+/// own list order for a genuine tie. Cost is the only cross-summon
+/// metric worth having among bodies that fight: there is no sense in
+/// which two wolves and a fire elemental can be compared on quality
+/// (they are good in different fights), but a smaller slot for a body
+/// is unambiguously the one to spend first. It is also what makes gate
+/// 2 above sit right — the cheap call goes out, and the bigger slots
+/// stay available for what else the fight asks for.
+///
+/// `summons_combatants` is the key ahead of cost, and Find Familiar is
+/// why. It is the cheapest summon in the engine by two whole slot
+/// levels and its body cannot deal a point of damage, so on cost alone
+/// every wizard on every board would spend its one summon of the fight
+/// on a one-hit-point owl. Gate 2 is what makes that fatal rather than
+/// merely suboptimal: the rung fires once, so the cheap call is not
+/// first, it is instead. The familiar still gets cast — by a caster
+/// with nothing else to summon, which is the wizard it was written
+/// for.
 fn try_summon_allies(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -9399,7 +9410,7 @@ fn try_summon_allies(
     }
     let busy = actor.is_concentrating();
     let already_called = actor.has_condition(Condition::Summoner);
-    let mut candidates: Vec<(u32, usize, ActionExecutionInfo)> = actor
+    let mut candidates: Vec<(bool, u32, usize, ActionExecutionInfo)> = actor
         .actions
         .iter()
         .enumerate()
@@ -9419,14 +9430,16 @@ fn try_summon_allies(
             if already_called && slot > 0 {
                 return None;
             }
-            Some((slot, order, aei))
+            // Sorted before cost, so `false` — a body that fights —
+            // has to come first in the ascending order.
+            Some((!a.summons_combatants(), slot, order, aei))
         })
         .collect();
-    candidates.sort_by_key(|(slot, order, _)| (*slot, *order));
+    candidates.sort_by_key(|(cannot_fight, slot, order, _)| (*cannot_fight, *slot, *order));
     candidates
         .into_iter()
-        .find(|(_, _, aei)| aei.validate(encounter))
-        .map(|(_, _, aei)| aei)
+        .find(|(_, _, _, aei)| aei.validate(encounter))
+        .map(|(_, _, _, aei)| aei)
 }
 
 /// Climb onto an allied mount standing next to you (5e Mounted Combat,
@@ -11567,6 +11580,52 @@ mod tests {
         );
     }
 
+    /// A familiar's whole turn, and the reason Find Familiar needed no
+    /// new rung to be worth casting.
+    ///
+    /// The Help rung was written for "the caster out of slots standing
+    /// behind the line" — an actor that happens to have nothing to
+    /// swing with this turn. The familiar is the creature that is
+    /// *structurally* in that position: `CANNOT_ATTACK_TAG` makes every
+    /// attack rung above decline by construction, every turn, so the
+    /// ladder walks it down to Help on its own.
+    #[test]
+    fn a_familiar_spends_every_turn_helping_because_it_can_do_nothing_else() {
+        use crate::actors::creatures::familiars::FAMILIAR_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+        let mut e = empty_arena();
+        let familiar = e
+            .instantiate_creature(&FAMILIAR_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+
+        let aei = try_help_an_ally(&e, familiar).expect("the fighter is in contact and unhelped");
+        assert_eq!(aei.action().name(), "help");
+        assert_eq!(
+            aei.target_ids().and_then(|ids| ids.first().copied()),
+            Some(fighter)
+        );
+        // And the shove it is carrying off `DEFAULT_ACTIONS` is not an
+        // escape hatch: the clause is enforced at the action layer, so
+        // the familiar cannot take it against the ogre either.
+        let shove = e.actors[&familiar].find_action("shove").expect("shove");
+        let ogre = *e
+            .sorted_actor_ids()
+            .iter()
+            .find(|id| e.actors[id].team() == 1)
+            .unwrap();
+        assert!(
+            !ActionExecutionInfo::new(shove, familiar, Some(vec![ogre]), None, None).validate(&e),
+            "a familiar can't attack, and a shove is an attack"
+        );
+    }
+
     /// And an ally with nothing in reach is not worth the Action
     /// either: the grant lasts until the start of the helper's next
     /// turn, so advantage on a swing the ally cannot make expires
@@ -12751,6 +12810,66 @@ mod tests {
             e.actors[&druid].has_condition(Condition::Summoner),
             "the slotted call is the one that closes the lane"
         );
+    }
+
+    /// Cheapest-first is the right order among bodies that fight, and
+    /// the wrong one the moment a body that cannot fight is on the
+    /// list.
+    ///
+    /// The wizard's summon lane now runs from Find Familiar at level 1
+    /// to Summon Fiend at level 6, and gate 2 lets exactly one slotted
+    /// call out per fight. On cost alone the owl wins every time and
+    /// the fight is decided by a creature that will never roll a
+    /// damage die. Both halves are pinned here: the familiar is
+    /// genuinely the cheapest candidate, and it is genuinely not the
+    /// one that gets cast — until it is the only one left.
+    #[test]
+    fn the_summon_rung_takes_a_body_that_fights_over_a_cheaper_one_that_cannot() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0)
+            .unwrap();
+
+        // The premise: the familiar really is the cheapest summon the
+        // wizard owns, so the ordering is doing the work rather than
+        // the cost happening to agree.
+        let cheapest = e.actors[&wizard]
+            .actions
+            .iter()
+            .filter(|a| a.summons_allies())
+            .min_by_key(|a| {
+                crate::engine::side_effects::spell_slot_level(&a.cost(
+                    &e, wizard, None, None, None,
+                ))
+                .unwrap_or(0)
+            })
+            .expect("the wizard has summons");
+        assert_eq!(cheapest.name(), "find familiar");
+
+        let picked = try_summon_allies(&e, wizard, SummonTier::Slotted)
+            .expect("an engaged wizard should summon");
+        assert!(
+            picked.action().summons_combatants(),
+            "the rung spent the fight's one summon on {}",
+            picked.action().name()
+        );
+
+        // Strip the lane back to the familiar and it is cast, which is
+        // the half that makes the spell worth a wizard's first-level
+        // slot at all.
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .actions
+            .retain(|a| !a.summons_allies() || a.name() == "find familiar");
+        let fallback = try_summon_allies(&e, wizard, SummonTier::Slotted)
+            .expect("a caster with nothing else to call still calls the owl");
+        assert_eq!(fallback.action().name(), "find familiar");
     }
 
     /// The summon rung fires once per fight and then stops.
@@ -20142,6 +20261,12 @@ mod tests {
             // the entire reason to cast it over Summon Aberration at
             // the same slot — see `spells::FAITHFUL_HOUND`.
             ("faithful hound", false),
+            // The fifth and cheapest `None`, and RAW's own reading: the
+            // duration is Instantaneous and the bond outlives the
+            // fight. It is what makes a first-level slot buy a
+            // permanent ally with the caster's concentration still
+            // free — see `spells::FIND_FAMILIAR`.
+            ("find familiar", false),
             ("summon beast", true),
             ("summon fey", true),
             ("summon undead", true),

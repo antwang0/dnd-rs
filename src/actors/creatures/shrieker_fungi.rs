@@ -1,4 +1,4 @@
-use crate::actions::class_features::SHRIEKER_TAG;
+use crate::actions::class_features::{CANNOT_ATTACK_TAG, SHRIEKER_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -64,6 +64,12 @@ pub static SHRIEKER_FUNGUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // SRD 5.2 and is given none here — it moves five feet a round, it
     // screams once, and it dies. A hand-written swing to "make it a
     // monster" would be a monster this book does not have.
+    //
+    // An empty attack row is not the whole clause, though: Shove and
+    // Grapple ride `DEFAULT_ACTIONS`, and both are attacks in the sense
+    // RAW means. `CANNOT_ATTACK_TAG` below is what makes this file's
+    // opening claim — "the only creature in this bestiary that cannot
+    // attack anything" — true of those two as well.
     let actions = DEFAULT_ACTIONS.clone();
     CreatureTemplate {
         name: "Shrieker Fungus",
@@ -90,7 +96,7 @@ pub static SHRIEKER_FUNGUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // it a reaction with a trigger nothing on this board declares,
         // so it rides `EncounterInstance::dispatch_shrieks` off the
         // movement event instead, gated on this tag.
-        features: HashSet::from([SHRIEKER_TAG]),
+        features: HashSet::from([SHRIEKER_TAG, CANNOT_ATTACK_TAG]),
         condition_immunities: HashSet::from([
             Condition::Blinded,
             Condition::Charmed,

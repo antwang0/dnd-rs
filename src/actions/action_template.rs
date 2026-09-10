@@ -1630,6 +1630,31 @@ pub trait Action {
         false
     }
 
+    /// True when the bodies this action puts on the board can fight.
+    ///
+    /// Meaningless unless `summons_allies` is true, and true by default
+    /// because it was true of every summon in the engine until Find
+    /// Familiar: a wolf, a skeleton, a fire elemental and a phantom
+    /// watchdog are all things you summon *at* somebody.
+    ///
+    /// The AI's summon rung orders its candidates cheapest-slot-first,
+    /// on the argument that there is no sense in which two wolves and a
+    /// fire elemental can be compared on quality but a smaller slot for
+    /// a body is unambiguously the one to spend first. A familiar is
+    /// the case that argument does not cover. It is the cheapest summon
+    /// in the engine by two whole slot levels and it cannot deal a
+    /// point of damage, so cheapest-first would have every wizard on
+    /// every board spend its one summon of the fight on a one-hit-point
+    /// owl — the summon rung fires once per fight, so the cheap call is
+    /// not merely first, it is instead.
+    ///
+    /// So the rung sorts on this before it sorts on cost, and the
+    /// declaration lives here rather than as a name list in the AI for
+    /// the same reason `summons_allies` does.
+    fn summons_combatants(&self) -> bool {
+        true
+    }
+
     /// True if resolving this action puts the caster's concentration on
     /// the line — i.e. its side effects include a `StartConcentration`.
     ///

@@ -334,6 +334,7 @@ pub mod vultures;
 pub mod giant_weasels;
 pub mod giant_fire_beetles;
 pub mod faithful_hounds;
+pub mod familiars;
 
 use crate::actors::actor_template::CreatureTemplate;
 

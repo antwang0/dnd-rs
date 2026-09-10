@@ -1302,6 +1302,36 @@ pub const ASSASSINATE_TAG: &str = "rogue.assassinate";
 /// pool. See `EncounterInstance::dispatch_shrieks`.
 pub const SHRIEKER_TAG: &str = "monster.shrieker";
 
+/// "This creature cannot attack" as a property of the body rather than
+/// as a status it is under.
+///
+/// The permanent member of a cohort that was otherwise entirely
+/// conditions. `ActorInstance::blocked_from_attacking` reads
+/// `Condition::blocks_attacking` — Gaseous Form's "the target can't
+/// attack or cast spells" and its siblings — and every row of it is
+/// something done *to* an actor and undone again. Find Familiar's
+/// "**A familiar can't attack**, but it can take other actions as
+/// normal" is the same sentence about a creature that was made that
+/// way, and there was nowhere to put it: a condition that can never be
+/// removed is a lie about the condition system, and leaving the
+/// template's attack row empty says nothing about Shove and Grapple,
+/// which live on `DEFAULT_ACTIONS` and are attacks in exactly the sense
+/// RAW means.
+///
+/// So it is a flag on the template, read at the same chokepoint and
+/// gated the same way — on `Action::is_harmful`, which is what leaves
+/// Dash, Dodge, Disengage, Hide and **Help** alone. Help is the one
+/// that matters: a familiar's whole combat contribution in this engine
+/// is standing next to something and granting an ally advantage, and
+/// the AI's bottom rung already reaches for it when nothing else is
+/// available (see `try_grant_help`).
+///
+/// Also carried by the Shrieker Fungus, whose own docstring claimed to
+/// be "the only creature in this bestiary that cannot attack anything"
+/// on the strength of an empty action row. It is now true of the shove
+/// and the grapple as well.
+pub const CANNOT_ATTACK_TAG: &str = "monster.cannot_attack";
+
 /// One of the three things RAW lets a bonus action buy in place of a
 /// full Action: cover ground, leave without being hit, or disappear.
 ///

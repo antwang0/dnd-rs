@@ -673,6 +673,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // buys a rooted body with a 4d8 bite instead of a mobile one; see
     // `spells::FAITHFUL_HOUND` for why that trade is the spell.
     actions.push(&crate::actions::spells::FAITHFUL_HOUND);
+    // lv1 **Find Familiar** — the bottom of the whole summon lane, and
+    // the only body on it that cannot attack. RAW's clause is flat, and
+    // it is what the first-level price buys: an owl that flies up to
+    // whatever the fighter is standing over, grants advantage on the
+    // next swing, and leaves without provoking. No concentration
+    // either, so a level-1 wizard gets a permanent ally and still holds
+    // Shield. See `spells::FIND_FAMILIAR`.
+    actions.push(&crate::actions::spells::FIND_FAMILIAR);
     // lv3 **Phantom Steed** (illusion) — the arcane mount, and the
     // reason `engine::mounts` is reachable by a class other than the
     // paladin. No concentration, so the wizard rides it *and* casts
