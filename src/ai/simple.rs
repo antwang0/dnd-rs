@@ -309,13 +309,40 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3b***. Water Walk — level-3 transmutation, ally burst. A
-        //        movement buff rather than a sight one, so it ranks
-        //        below both: being slowed by a lake is a worse turn,
-        //        not a worse fight. Gated on the water being between
-        //        the party and the enemy, which is the only
-        //        configuration where the slot pays for itself.
+        // 3b***. Water Breathing — level-3 transmutation, ally burst,
+        //        no concentration. Above the two buffs below it and
+        //        above most of what follows, because it is the only
+        //        rung on this stretch answering a clock that is
+        //        already running: `engine::breath` puts a level of
+        //        exhaustion on every submerged creature without gills
+        //        at the end of every round, and exhaustion does not
+        //        come back inside a fight. Fires only when somebody on
+        //        this side is already immersed and already failing to
+        //        breathe.
+        if let Some(aei) = try_water_breathing(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3b****. Water Walk — level-3 transmutation, ally burst. A
+        //         movement buff rather than a sight one, so it ranks
+        //         below both: being slowed by a lake is a worse turn,
+        //         not a worse fight. Gated on the water being between
+        //         the party and the enemy, which is the only
+        //         configuration where the slot pays for itself.
         if let Some(aei) = try_water_walk(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3b*****. Alter Self (Aquatic Adaptation) — level-2
+        //          transmutation, self, concentration. The one-creature
+        //          answer to the same lake, for a caster who has no
+        //          Water Breathing on the sheet or has already spent
+        //          it. Ranked last of the three because it is the only
+        //          one that costs concentration and the only one that
+        //          reaches a single body — and it is still worth a rung,
+        //          because for that body it buys all three water rules
+        //          at once rather than one of them.
+        if let Some(aei) = try_alter_self(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -6939,6 +6966,83 @@ fn try_water_walk(encounter: &EncounterInstance, actor_id: usize) -> Option<Acti
         return None;
     }
     try_self_action(encounter, actor_id, "water walk")
+}
+
+/// True when anyone on `actor_id`'s side — the caster included — is in
+/// the water with the suffocation clock already running on them.
+///
+/// The shared gate under the two drowning rungs, and it asks the two
+/// questions `engine::breath` asks at round end rather than
+/// approximating them: `is_immersed` for "is this creature in the
+/// lake", `can_breathe` for "does anything already answer that". A
+/// lizardfolk standing at the bottom of a pool is immersed and fine,
+/// and does not make the party's caster reach for a slot.
+fn anyone_on_our_side_is_drowning(encounter: &EncounterInstance, actor_id: usize) -> bool {
+    let Some(team) = encounter.actors.get(&actor_id).map(|a| a.team()) else {
+        return false;
+    };
+    encounter.actors.iter().any(|(id, other)| {
+        other.team() == team
+            && other.is_combat_active()
+            && encounter.is_immersed(*id)
+            && !encounter.can_breathe(*id)
+    })
+}
+
+/// Water Breathing — level-3 transmutation, ally burst, **no
+/// concentration**. Fires when somebody on the caster's side is already
+/// underwater and already on the clock.
+///
+/// The spell has been on the druid, ranger, sorcerer and wizard lists
+/// since it was written and no AI-driven caster had ever cast it: it
+/// targets nobody, deals no damage and holds no concentration, so every
+/// picker in the ladder passed straight over it. Meanwhile
+/// `engine::breath` was ticking exhaustion onto the party once a round
+/// with nothing in the engine reaching for the answer.
+///
+/// Gated on the problem existing *now* rather than on the board being
+/// wet. That is the difference between this rung and `try_water_walk`
+/// next door, and it is the right difference: Water Walk is a
+/// speculative buff about crossing, so it has to guess whether the lake
+/// is in the way, while drowning is a fact about a creature that is
+/// already true or already false. `can_breathe` is the same predicate
+/// the round-end clock reads, so the rung fires exactly when the clock
+/// would otherwise bite.
+fn try_water_breathing(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    encounter.actors.get(&actor_id)?.find_action("water breathing")?;
+    if !anyone_on_our_side_is_drowning(encounter, actor_id) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "water breathing")
+}
+
+/// Alter Self (Aquatic Adaptation) — level-2 transmutation, self,
+/// concentration. Fires when the caster is the one in the water.
+///
+/// Below Water Breathing, and the ordering is the whole judgement. A
+/// caster holding both is drowning either way; Water Breathing costs no
+/// concentration and covers the party's whole side of the board, and
+/// this covers one creature and spends the attention the caster might
+/// want for a Web. So it is the rung a caster reaches when the cheaper
+/// answer is gone or was never on the sheet — and when it fires it buys
+/// strictly more for that one creature, since a swimming speed also
+/// waives the movement surcharge and Underwater Combat's melee
+/// disadvantage.
+///
+/// The caster's *own* immersion is the trigger rather than the party's,
+/// because RAW's range is Self: an ally at the bottom of the pool gains
+/// nothing from the wizard growing gills. The action's own validator
+/// owns the rest — a dry board, a caster already concentrating, and
+/// anyone the swim cohort already answers yes for.
+fn try_alter_self(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
+    encounter.actors.get(&actor_id)?.find_action("alter self")?;
+    if !encounter.is_immersed(actor_id) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "alter self")
 }
 
 /// Bard Bardic Inspiration — bonus action giving an ally a +3 die for
@@ -18547,6 +18651,107 @@ mod tests {
             super::try_water_walk(&e, druid).is_some(),
             "the lake is now between the druid and the fight"
         );
+    }
+
+    /// Water Breathing fires when the clock is already running and not
+    /// merely because there is a lake on the board.
+    ///
+    /// That is the difference between this rung and the Water Walk one
+    /// above it, and it is why the gate is `can_breathe` rather than
+    /// `has_water`: drowning is a fact about a creature that is already
+    /// true or already false, where crossing is a guess about where the
+    /// fight is going. The spell has been on four class lists since it
+    /// was written and no AI-driven caster had ever cast it — it
+    /// targets nobody, deals no damage and holds no concentration, so
+    /// every picker in the ladder passed over it while the round-end
+    /// clock put exhaustion on the party.
+    #[test]
+    fn the_water_breathing_picker_waits_for_somebody_to_actually_be_drowning() {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        // A pool on the far side of the room, with nobody in it.
+        for x in 12..=16isize {
+            for y in 12..=16isize {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+            }
+        }
+        assert!(
+            super::try_water_breathing(&e, druid).is_none(),
+            "a lake nobody is standing in is not a reason to spend a slot"
+        );
+
+        // A lizardfolk ally at the bottom of it still is not: the
+        // gate asks `can_breathe`, which is the same predicate the
+        // round-end clock reads, and it says yes for a creature whose
+        // stat block prints the clause.
+        e.instantiate_creature(&LIZARDFOLK_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+            .unwrap();
+        assert!(
+            super::try_water_breathing(&e, druid).is_none(),
+            "a lizardfolk underwater is a lizardfolk at home"
+        );
+
+        // A fighter in the same pool is on the clock, and the slot is
+        // now worth spending.
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(13, 13), 0, 1)
+            .unwrap();
+        assert!(!e.can_breathe(fighter));
+        let pick = super::try_water_breathing(&e, druid)
+            .expect("somebody on this side is drowning");
+        assert_eq!(pick.action().name(), "water breathing");
+    }
+
+    /// Alter Self is the self-only answer, so the caster's own footing
+    /// is the trigger — an ally at the bottom of the pool gains nothing
+    /// from the wizard growing gills.
+    ///
+    /// It also sits below Water Breathing on the ladder, which the
+    /// second half pins: a wizard standing in the water reaches for the
+    /// spell that costs no concentration and covers everybody before
+    /// the one that costs concentration and covers one body.
+    #[test]
+    fn alter_self_fires_for_the_caster_in_the_water_and_yields_to_water_breathing() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = empty_arena();
+        for x in 12..=16isize {
+            for y in 12..=16isize {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+            }
+        }
+        let dry_wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        let drowning_ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(13, 13), 0, 0)
+            .unwrap();
+        assert!(!e.can_breathe(drowning_ally));
+        assert!(
+            super::try_alter_self(&e, dry_wizard).is_none(),
+            "RAW's range is Self — somebody else's lake is not the trigger"
+        );
+
+        let wet_wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(14, 14), 0, 1)
+            .unwrap();
+        assert!(
+            super::try_alter_self(&e, wet_wizard).is_some(),
+            "the caster is the one in the water"
+        );
+        // And the cheaper, wider answer outranks it on the ladder.
+        let pick = super::try_water_breathing(&e, wet_wizard)
+            .expect("the wizard carries both");
+        assert_eq!(pick.action().name(), "water breathing");
     }
 
     /// The Resistance rung waits until the concentration is genuinely
