@@ -3090,6 +3090,78 @@ pub static POTION_OF_WATER_BREATHING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Cloak of the Manta Ray** (Wondrous item, Uncommon) — *"While
+/// wearing this cloak with its hood up, you can breathe underwater, and
+/// you have a Swim Speed of 60 feet."*
+///
+/// Both halves of the water layer in one item, and the first thing in
+/// the engine other than a spell that hands out a swimming speed. The
+/// Potion of Water Breathing two entries up answers the breath clock
+/// and nothing else; a party that drinks one still swims at double cost
+/// and still swings at disadvantage down there. This is the drop that
+/// makes the flooded board playable rather than merely survivable.
+///
+/// **RAW's 60 feet is not modeled and cannot be.** The engine's swim
+/// model is binary — `has_swim_speed` waives the surcharge and
+/// satisfies Underwater Combat's melee escape clause, and nothing
+/// anywhere reads a number of feet — so the cloak and the Ring of
+/// Swimming's 30 land in the same place. That is a real flattening and
+/// it is the same one `Condition::Swimming` makes for Alter Self; the
+/// alternative is a second speed lane on `ActorInstance` that exactly
+/// one rule would ever consult.
+///
+/// Two `passive_conditions` rather than the `grants_unfettered_breathing`
+/// flag the Necklace of Adaptation uses, and the difference is RAW's:
+/// the necklace breathes "normally in any environment" and this cloak
+/// breathes water. `Condition::WaterBreathing` is the narrower grant
+/// and the one the sentence actually makes.
+pub static CLOAK_OF_THE_MANTA_RAY: Item = Item {
+    name: "Cloak of the Manta Ray",
+    glyph: '~',
+    passive_conditions: &[
+        crate::conditions::Condition::Swimming,
+        crate::conditions::Condition::WaterBreathing,
+    ],
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Swimming** (Ring, Uncommon) — *"you have a Swim Speed of
+/// 30 feet."*
+///
+/// The cloak's cheaper half. One clause instead of two: the wearer
+/// crosses water for free and keeps their edge in a melee down there,
+/// and drowns on exactly the same schedule as everybody else. That
+/// split is the whole reason both items are worth having — 5e's three
+/// water rules are three rules, and the loot table now has an item that
+/// answers each of the first two separately and one that answers both.
+pub static RING_OF_SWIMMING: Item = Item {
+    name: "Ring of Swimming",
+    glyph: '~',
+    passive_conditions: &[crate::conditions::Condition::Swimming],
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Water Walking** (Ring, Uncommon) — *"you can stand on and
+/// move across any liquid surface as if it were solid ground."*
+///
+/// The third answer, and the one that is not a swimming speed at all.
+/// A water-walker is *on* the lake: the surcharge is waived like the
+/// ring above, and `EncounterInstance::is_immersed` says no, so every
+/// Underwater Combat penalty switches off together — and so does the
+/// fire resistance being submerged would have bought, which a creature
+/// standing on the surface has no business claiming.
+///
+/// The permanent, no-slot version of `spells::WATER_WALK`, riding the
+/// same `Condition::WaterWalking` the spell installs. What the ring
+/// costs by comparison is that it is one wearer rather than the whole
+/// party.
+pub static RING_OF_WATER_WALKING: Item = Item {
+    name: "Ring of Water Walking",
+    glyph: '~',
+    passive_conditions: &[crate::conditions::Condition::WaterWalking],
+    ..Item::DEFAULTS
+};
+
 /// **Gem of Seeing** (Wondrous item, Rare) — Truesight for the fight.
 /// See `item_actions::USE_GEM_OF_SEEING`.
 pub static GEM_OF_SEEING: Item = Item {
@@ -3814,6 +3886,14 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_VITALITY,
     &POTION_OF_WATER_BREATHING,
     &POTION_OF_WATER_BREATHING,
+    // The three water trinkets, at the low single-entry weight the
+    // other permanent rings carry. Worth nothing on a dry board and a
+    // fight-decider on a flooded one, which is the same shape the Torch
+    // has — but a torch is three entries because a dark board is
+    // playable-or-not and a flooded one is merely harder.
+    &CLOAK_OF_THE_MANTA_RAY,
+    &RING_OF_SWIMMING,
+    &RING_OF_WATER_WALKING,
 ];
 
 #[cfg(test)]

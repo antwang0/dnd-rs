@@ -52714,6 +52714,83 @@ fn carpet_of_flying_installs_flying_on_pickup() {
     );
 }
 
+/// The three water trinkets, and the reason they are three items and
+/// not one.
+///
+/// 5e's water layer is three separate rules — what crossing it costs,
+/// whether your weapon works down there, and whether you can breathe —
+/// and no two of them have the same answer for the same creature. The
+/// loot table now has an item for each shape: the ring that swims, the
+/// ring that walks on the surface, and the cloak that does the first
+/// and breathes as well.
+#[test]
+fn the_water_trinkets_each_answer_a_different_one_of_the_three_rules() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::terrain::TerrainType;
+    use crate::items::item_template::{
+        CLOAK_OF_THE_MANTA_RAY, RING_OF_SWIMMING, RING_OF_WATER_WALKING,
+    };
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let mut swimmer = None;
+    let mut walker = None;
+    let mut diver = None;
+    for (n, slot) in [&mut swimmer, &mut walker, &mut diver].into_iter().enumerate() {
+        *slot = Some(
+            e.instantiate_creature(
+                &FIGHTER_TEMPLATE,
+                Coordinate::new(3 + n as isize * 2, 3),
+                0,
+                n,
+            )
+            .unwrap(),
+        );
+    }
+    let (swimmer, walker, diver) = (swimmer.unwrap(), walker.unwrap(), diver.unwrap());
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .pickup_item(&RING_OF_SWIMMING);
+    e.actors
+        .get_mut(&walker)
+        .unwrap()
+        .pickup_item(&RING_OF_WATER_WALKING);
+    e.actors
+        .get_mut(&diver)
+        .unwrap()
+        .pickup_item(&CLOAK_OF_THE_MANTA_RAY);
+
+    // The ring that swims: crossing is free, the melee clause is
+    // waived, and the wearer is still in the lake and still drowning.
+    assert!(e.actors[&swimmer].has_swim_speed());
+    assert!(e.actors[&swimmer].swims_freely());
+    assert!(e.is_immersed(swimmer), "a swimmer is in the water");
+    assert!(
+        !e.can_breathe(swimmer),
+        "and RAW's sentence grants a speed, not a set of gills"
+    );
+
+    // The ring that walks: crossing is free for a different reason,
+    // and the wearer is out of the water entirely — which is why the
+    // breath clock never starts for them either.
+    assert!(
+        !e.actors[&walker].has_swim_speed(),
+        "standing on a lake is not swimming in it"
+    );
+    assert!(e.actors[&walker].swims_freely());
+    assert!(!e.is_immersed(walker));
+
+    // The cloak: both halves of the first two rules at once.
+    assert!(e.actors[&diver].has_swim_speed());
+    assert!(e.is_immersed(diver), "a manta ray is in the water");
+    assert!(e.can_breathe(diver), "and breathing it is the other clause");
+}
+
 /// Talisman of Pure Good: passive +1 AC / +2 save trinket. Verifies
 /// the bonuses route through `ItemBonuses` summation onto the
 /// holder's `armor_class()` and save-roll path.
