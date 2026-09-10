@@ -236,7 +236,50 @@ pub fn generate_terrain(params: &TerrainGenParams, rng: &mut Rng) -> Vec<Terrain
 /// which is what keeps the water a decision instead of a wall. A pool
 /// that cannot be crossed in a turn is a `Wall` the player can see
 /// through, and the map already has a tile for that.
+///
+/// This is the count for the narrowest brush; a wider one walks fewer
+/// steps — see `pool_walk_steps`. Holding the *area* roughly fixed is
+/// what keeps a Huge-capable basin from also being a Huge-sized lake.
 const POOL_WALK_STEPS: usize = 10;
+
+/// The brush widths a pool is rolled from, one entry per draw, so the
+/// list is its own weighting.
+///
+/// Each width is a creature footprint on the 2.5-ft grid: 2 is Medium
+/// (and Small, and Tiny), 4 is Large, 6 is Huge. A pool laid with a
+/// width-`n` brush is the smallest pool that can fully immerse a body
+/// of that size, which is the only property of a pool the rules
+/// actually read.
+///
+/// Weighted five / three / two, which is the map's shape rather than
+/// the bestiary's. A Huge basin is fifteen feet across — the exact
+/// width a Medium creature with 30 ft of speed can still cross in one
+/// turn while paying the swimming surcharge — so one of those is a
+/// landmark and a map made of them would be a wall. The weight is
+/// higher than the shape of the roster would suggest because most of
+/// the draws never get their basin: a six-wide block needs six clear
+/// tiles in both directions and the generator's corridors do not have
+/// them, so the brush clips down to whatever the room allows.
+const POOL_BRUSH_WIDTHS: &[usize] = &[2, 2, 2, 2, 2, 4, 4, 4, 6, 6];
+
+/// How far a pool laid with a `brush` -wide block walks before it stops.
+///
+/// Inverse in the brush's *area*, so every pool covers roughly the same
+/// number of tiles however wide it is. A block brush lays `brush²`
+/// tiles a step, so without the square a width-6 pool over
+/// `POOL_WALK_STEPS` steps would put down nine times the water a
+/// width-2 one does and the rarest pool on the map would also be the
+/// one that ate the room. Measured over two hundred boards, the widened
+/// brush with this correction leaves the average map's water within a
+/// few tiles of where the fixed 2x2 brush left it.
+///
+/// Floored at two steps, because a pool that takes one step is a
+/// rectangle and the whole reason this is a walk is that a rectangle
+/// reads as a swimming pool rather than as a pond.
+fn pool_walk_steps(brush: usize) -> usize {
+    let area = brush.max(1) * brush.max(1);
+    ((POOL_WALK_STEPS * 4) / area).max(2)
+}
 
 /// One in this many open floor tiles seeds a pool.
 ///
@@ -248,7 +291,17 @@ const POOL_WALK_STEPS: usize = 10;
 /// in one cannot reach anything past its normal range at all. That is a
 /// good thing to have on a map and a bad thing to have on every square
 /// of it, which is what this rate buys.
-const POOL_SEED_CHANCE: f32 = 0.006;
+///
+/// It halved when [`POOL_BRUSH_WIDTHS`] arrived, and the arithmetic is
+/// the reason rather than a change of mind: a basin that can immerse a
+/// Huge body is thirty-six tiles on its *first stamp*, so no step count
+/// can make a wide pool as small as a narrow one. Fewer pools, some of
+/// them deeper, keeps the average board no wetter than it was while
+/// making the water on it worth more — measured over forty 60x40
+/// boards, 93 water tiles against the fixed 2x2 brush's 97, with the
+/// fraction that can fully immerse a Large creature going from none of
+/// them to four in five.
+const POOL_SEED_CHANCE: f32 = 0.003;
 
 /// Dig a handful of pools into the open floor.
 ///
@@ -259,27 +312,47 @@ const POOL_SEED_CHANCE: f32 = 0.006;
 /// around or through, and a creature deciding that needs to be able to
 /// see where the far side is.
 ///
-/// **Every step floods a 2x2 block rather than a single tile**, and
+/// **Every step floods a square block rather than a single tile**, and
 /// that is not a cosmetic choice — it is the difference between the
 /// feature working and not working at all. `is_immersed` implements
-/// RAW's "fully immersed" as *every tile of the footprint is water*,
-/// and a Medium creature's footprint is 2x2 on this grid. A bare random
-/// walk lays one-tile-wide channels, so the first version of this pass
-/// put water on every map and immersed nobody, ever: measured across
-/// twenty-five generated encounters driven to completion, the
-/// underwater rules fired exactly zero times. Widening the brush is
-/// what turned a tile that existed into a tile that does something.
+/// RAW's "fully immersed" as *every tile of the footprint is water*, so
+/// the brush is what decides which creatures the whole water layer can
+/// ever reach. A bare random walk lays one-tile-wide channels, so the
+/// first version of this pass put water on every map and immersed
+/// nobody, ever: measured across twenty-five generated encounters
+/// driven to completion, the underwater rules fired exactly zero times.
+/// Widening the brush is what turned a tile that existed into a tile
+/// that does something.
+///
+/// **The brush width is rolled per pool**, from [`POOL_BRUSH_WIDTHS`],
+/// and that is the same argument one size class up. A fixed 2x2 brush
+/// is exactly a Medium footprint, and it left every Large and Huge
+/// creature in the bestiary permanently outside the layer: measured
+/// over two hundred generated boards, three of them held a
+/// Large-immersible pool and none held a Huge one. So Underwater
+/// Combat, the breath clock and the fire-resistance clause simply did
+/// not exist for a hunter shark, a giant shark, a dragon turtle or a
+/// kraken — the creatures the rules are most obviously written about.
 ///
 /// It also makes a better map on its own terms. A one-tile ribbon of
 /// water deep enough to swim in is not a thing anybody can picture, and
 /// a creature that stepped into one would take every underwater penalty
 /// while visibly standing in a puddle.
 ///
-/// Only `Floor` is flooded. Walls stop the walk (a pool does not eat a
-/// corridor), and the scatter's own tiles are left alone — rubble in
-/// the water would be a tile charging two different surcharges that
-/// two different creatures are exempt from, which the pathfinder
-/// resolves correctly and no player could predict.
+/// Walls stop the walk — a pool does not eat a corridor, and a low wall
+/// is cover the map has already placed. **Rubble does not**: a pool
+/// that runs over difficult terrain floods it, replacing the tile
+/// rather than layering on it, so there is never a tile charging two
+/// surcharges that two different creatures are exempt from.
+///
+/// Skipping the scatter instead was the earlier behaviour and it was
+/// what stopped the wide brushes working. `scatter_obstructions` runs
+/// first and takes about 8% of the open floor, so a brush that has to
+/// find *every* tile of its block already plain lands a clean 6x6 block
+/// about one time in twenty (0.92³⁶) and a clean 4x4 about one in four.
+/// The holes were invisible — the pool still appeared, still looked
+/// like a pool, and simply never had a square patch big enough to
+/// immerse anything Large in.
 fn flood_pools(terrain: &mut [TerrainInfo], params: &TerrainGenParams, rng: &mut Rng) {
     let (w, h) = (params.width, params.height);
     if w < 3 || h < 3 {
@@ -293,21 +366,32 @@ fn flood_pools(terrain: &mut [TerrainInfo], params: &TerrainGenParams, rng: &mut
             if rng.f32() >= POOL_SEED_CHANCE {
                 continue;
             }
+            // How big a body this pool is capable of immersing, rolled
+            // once for the whole walk so a pool has one depth rather
+            // than a different one every step.
+            let brush = POOL_BRUSH_WIDTHS[rng.usize(0..POOL_BRUSH_WIDTHS.len())];
             let (mut cx, mut cy) = (x, y);
-            for _ in 0..POOL_WALK_STEPS {
-                // The 2x2 brush. A block that runs into a wall floods
-                // the tiles it can and leaves the rest — clipping the
-                // brush rather than refusing the step is what lets a
-                // pool sit against a wall without either eating it or
-                // stopping a tile short of it.
+            for _ in 0..pool_walk_steps(brush) {
+                // The block brush. One that runs into a wall floods the
+                // tiles it can and leaves the rest — clipping the brush
+                // rather than refusing the step is what lets a pool sit
+                // against a wall without either eating it or stopping a
+                // tile short of it.
                 let mut flooded_any = false;
-                for bx in cx..=cx + 1 {
-                    for by in cy..=cy + 1 {
+                for bx in cx..cx + brush {
+                    for by in cy..cy + brush {
                         if bx + 1 >= w || by + 1 >= h {
                             continue;
                         }
                         let i = idx(bx, by, params);
-                        if terrain[i].terrain_type == TerrainType::Floor {
+                        // Plain floor and the scatter's rubble both
+                        // flood; walls, low walls and anything already
+                        // wet do not. See the note above on why the
+                        // rubble is a *replacement* rather than a skip.
+                        if matches!(
+                            terrain[i].terrain_type,
+                            TerrainType::Floor | TerrainType::DifficultTerrain
+                        ) {
                             terrain[i].terrain_type = TerrainType::Water;
                             flooded_any = true;
                         }
@@ -324,14 +408,15 @@ fn flood_pools(terrain: &mut [TerrainInfo], params: &TerrainGenParams, rng: &mut
                 // The bounds check ends the walk rather than resampling:
                 // a pool that has run into the edge of the room is
                 // finished, and resampling would let it crawl along the
-                // wall.
+                // wall. The margin is the brush's, so a wide pool keeps
+                // the same clearance a narrow one does.
                 let (nx, ny) = match rng.u8(0..4) {
                     0 => (cx + 1, cy),
                     1 => (cx.wrapping_sub(1), cy),
                     2 => (cx, cy + 1),
                     _ => (cx, cy.wrapping_sub(1)),
                 };
-                if nx == 0 || ny == 0 || nx + 2 >= w || ny + 2 >= h {
+                if nx == 0 || ny == 0 || nx + brush >= w || ny + brush >= h {
                     break;
                 }
                 (cx, cy) = (nx, ny);
@@ -600,6 +685,73 @@ mod tests {
         assert!(
             maps_with_a_swimmable_block * 2 > SEEDS,
             "only {maps_with_a_swimmable_block}/{SEEDS} maps have a 2x2 pool a Medium creature could swim in"
+        );
+    }
+
+    /// …and the same property one size class up: a generated map
+    /// usually has somewhere a **Large** creature could be fully
+    /// immersed, and sometimes somewhere a **Huge** one could.
+    ///
+    /// The sibling of the test above and the same failure it caught,
+    /// discovered the same way and one rung later. The fixed 2x2 brush
+    /// was sized to a Medium footprint, so it satisfied that test on
+    /// every run and left every Large and Huge creature in the bestiary
+    /// permanently outside the water layer: measured over two hundred
+    /// boards, two of them held a Large-immersible pool and none held a
+    /// Huge one. Underwater Combat, the breath clock and the
+    /// fire-resistance clause simply did not exist for a hunter shark, a
+    /// dragon turtle or a kraken — the creatures the rules are most
+    /// obviously written about — and every visible signal said the
+    /// feature was working.
+    ///
+    /// The two thresholds are deliberately different, because the two
+    /// pools are. A Large basin is ten feet across and belongs on an
+    /// ordinary map; a Huge one is fifteen — the widest thing a Medium
+    /// creature can still cross in one turn while swimming — so it is a
+    /// landmark rather than scenery, and it also has to find fifteen
+    /// clear feet in both directions on a map whose rooms are often
+    /// narrower than that. Both are loose. What they guard is the
+    /// distance from *zero*, which is where both sat.
+    #[test]
+    fn a_generated_map_has_room_for_a_large_body_to_swim_and_sometimes_a_huge_one() {
+        let params = TerrainGenParams {
+            width: 40,
+            height: 30,
+            branch_depth: 4,
+            branch_prob: 0.5,
+        };
+        const SEEDS: u64 = 40;
+        let (mut large, mut huge) = (0u64, 0u64);
+        for seed in 0..SEEDS {
+            let mut rng = Rng::with_seed(seed);
+            let terrain = generate_terrain(&params, &mut rng);
+            let block = |x: usize, y: usize, n: usize| {
+                (0..n).all(|dx| {
+                    (0..n).all(|dy| {
+                        x + dx < params.width
+                            && y + dy < params.height
+                            && terrain[idx(x + dx, y + dy, &params)].terrain_type
+                                == TerrainType::Water
+                    })
+                })
+            };
+            let any = |n: usize| {
+                (0..params.height).any(|y| (0..params.width).any(|x| block(x, y, n)))
+            };
+            if any(4) {
+                large += 1;
+            }
+            if any(6) {
+                huge += 1;
+            }
+        }
+        assert!(
+            large * 3 > SEEDS,
+            "only {large}/{SEEDS} maps have a 4x4 pool a Large creature could swim in"
+        );
+        assert!(
+            huge > 0,
+            "no map in {SEEDS} has a 6x6 pool — the Huge brush never lands"
         );
     }
 

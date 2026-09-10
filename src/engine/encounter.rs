@@ -7229,14 +7229,10 @@ impl EncounterInstance {
                     if !self.is_spawnable(coord + offset) {
                         continue 'coord_loop;
                     }
-                    if require_water
-                        && !self
-                            .terrain_at(coord + offset)
-                            .is_some_and(|t| t.terrain_type.is_water())
-                    {
-                        continue 'coord_loop;
-                    }
                 }
+            }
+            if require_water && !self.footprint_is_water(coord, size) {
+                continue 'coord_loop;
             }
             return Ok(coord);
         }
@@ -7462,8 +7458,25 @@ impl EncounterInstance {
         if actor.is_airborne() || actor.has_condition(Condition::WaterWalking) {
             return false;
         }
-        let anchor = actor.location();
-        let width = get_tiles_from_size(actor.size()) as isize;
+        self.footprint_is_water(actor.location(), actor.size())
+    }
+
+    /// True if every tile of a `size` footprint anchored at `anchor` is
+    /// water.
+    ///
+    /// "Fully immersed" means every tile, not any tile — RAW's own
+    /// wording on the fire-resistance clause, and the reading the whole
+    /// water layer uses. Three callers ask it about three different
+    /// moments and all three have to agree, which is why it is a
+    /// method rather than a loop written out three times: `is_immersed`
+    /// asks about where a creature *is*, `get_random_spawn_matching`
+    /// about where one may arrive, and the pathfinder about where one
+    /// may step. A gate that checked only the anchor tile would let a
+    /// Large shark put one corner in the pool and three on the beach —
+    /// not immersed, therefore drowning, therefore no longer gated, and
+    /// away it walks.
+    pub(crate) fn footprint_is_water(&self, anchor: Coordinate, size: Size) -> bool {
+        let width = get_tiles_from_size(size) as isize;
         (0..width).all(|dx| {
             (0..width).all(|dy| {
                 self.terrain_at(anchor + Coordinate::new(dx, dy))
@@ -11729,6 +11742,7 @@ impl EncounterInstance {
         // being there. Resolved once out here for the same reason the
         // two surcharge waivers are.
         let water_bound = body.breathes_only_underwater() && self.is_immersed(body_id);
+        let body_size = body.size();
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -11803,8 +11817,13 @@ impl EncounterInstance {
                     // once, which is where it showed.
                     let tile = self.terrain_at(next).map(|t| t.terrain_type);
                     // The lake's edge, for the things that cannot cross
-                    // it — see `water_bound` above.
-                    if water_bound && !tile.is_some_and(|t| t.is_water()) {
+                    // it — see `water_bound` above. Measured over the
+                    // whole footprint rather than the anchor tile,
+                    // because `is_immersed` is: a Large shark allowed to
+                    // put one corner in the pool and three on the beach
+                    // would stop being immersed, and the gate would
+                    // switch itself off behind it.
+                    if water_bound && !self.footprint_is_water(next, body_size) {
                         continue;
                     }
                     let waived = if tile.is_some_and(|t| t.is_water()) {

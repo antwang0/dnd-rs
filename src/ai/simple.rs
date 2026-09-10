@@ -14724,7 +14724,27 @@ mod tests {
             pc_template: None,
             start_team: 0,
         };
-        EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap()
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        // Dry, and named for it. "Empty arena" means the board itself
+        // does nothing to a fight unless the test asks it to, and a
+        // generated pool is not nothing: it is a movement surcharge, two
+        // attack-roll clauses, a fire resistance and a suffocation
+        // clock, arriving under tests that are about none of those. It
+        // also makes every one of them hostage to the terrain
+        // generator's random stream — a pool the generator starts laying
+        // one tile further left is a picker test that fails for reasons
+        // nobody will look for. Tests that want water set it themselves.
+        for x in 0..tp.width as isize {
+            for y in 0..tp.height as isize {
+                let c = Coordinate::new(x, y);
+                if e.terrain_at(c)
+                    .is_some_and(|t| t.terrain_type.is_water())
+                {
+                    e.set_terrain_at(c, crate::engine::terrain::TerrainType::Floor);
+                }
+            }
+        }
+        e
     }
 
     /// A recharge burst that is not called a breath still gets used.

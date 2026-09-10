@@ -85658,6 +85658,66 @@ fn a_shark_paths_inside_its_pool_and_a_beached_one_may_still_move() {
     );
 }
 
+/// A Large water-breather may not put one corner in the pool and three
+/// on the beach.
+///
+/// The hole an anchor-tile gate would have left, and it closes itself
+/// behind you: `is_immersed` is a whole-footprint question, so a shark
+/// standing half out of the water is *not* immersed — which means it is
+/// drowning **and** no longer gated, and the next step takes it
+/// anywhere. All three sites route through `footprint_is_water` for
+/// exactly that reason.
+///
+/// A Large body is four tiles on a side on the 2.5-ft grid, so the pool
+/// has to be comfortably bigger than that for the test to be about the
+/// edge rather than about the shark not fitting.
+#[test]
+fn a_large_shark_cannot_step_half_out_of_its_pool() {
+    use crate::actors::creatures::hunter_sharks::HUNTER_SHARK_TEMPLATE;
+    use crate::engine::types::Size;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // An 8x8 pool from (2,2) to (9,9), with dry floor east of x=9.
+    for x in 2..=9isize {
+        for y in 2..=9isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let shark = e
+        .instantiate_creature(&HUNTER_SHARK_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    assert_eq!(e.actors[&shark].size(), Size::Large);
+    assert!(e.is_immersed(shark));
+    e.start_turn_for(shark);
+
+    // Anchor (6,2) covers x 6..=9 — the eastmost 2x2-of-Large that is
+    // still entirely wet.
+    assert!(
+        e.footprint_is_water(Coordinate::new(6, 2), Size::Large),
+        "the fixture's wet anchor has to actually be wet"
+    );
+    assert!(
+        e.path_to(shark, Coordinate::new(6, 2)).is_some(),
+        "the far side of its own pool is still the pool"
+    );
+
+    // Anchor (7,2) covers x 7..=10, and x=10 is floor. The anchor tile
+    // itself is water, so an anchor-only gate would have allowed it.
+    assert!(
+        e.terrain_at(Coordinate::new(7, 2))
+            .is_some_and(|t| t.terrain_type.is_water()),
+        "the straddling anchor's own tile is wet — that is the trap"
+    );
+    assert!(
+        !e.footprint_is_water(Coordinate::new(7, 2), Size::Large),
+        "…and the body it anchors is not"
+    );
+    assert!(
+        e.path_to(shark, Coordinate::new(7, 2)).is_none(),
+        "half in the pool is out of the pool"
+    );
+}
+
 /// 5e Storm Herald Barbarian **Storm Soul (Sea)**: *"you gain
 /// resistance to lightning damage, and you can breathe underwater. You
 /// also gain a swimming speed."*

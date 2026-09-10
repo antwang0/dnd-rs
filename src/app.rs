@@ -1017,8 +1017,27 @@ mod tests {
             pc_template: None,
             start_team: 0,
         };
-        let encounter = EncounterInstance::from_params(&terrain_params, &actor_params, Some(0))
-            .expect("an empty board generates");
+        let mut encounter =
+            EncounterInstance::from_params(&terrain_params, &actor_params, Some(0))
+                .expect("an empty board generates");
+        // Dry. "Empty" here means nothing happens on this board unless a
+        // test makes it happen, and a generated pool is not nothing: a
+        // creature standing in one is on `engine::breath`'s suffocation
+        // clock, so the stalemate test below — two goblins who never act,
+        // for as many rounds as it takes — would end with a drowned
+        // goblin instead of a draw. The tests in this module are about
+        // banners and prompts; the water layer has its own.
+        for x in 0..terrain_params.width as isize {
+            for y in 0..terrain_params.height as isize {
+                let c = Coordinate::new(x, y);
+                if encounter
+                    .terrain_at(c)
+                    .is_some_and(|t| t.terrain_type.is_water())
+                {
+                    encounter.set_terrain_at(c, crate::engine::terrain::TerrainType::Floor);
+                }
+            }
+        }
         App::new(encounter, terrain_params, actor_params)
     }
 
