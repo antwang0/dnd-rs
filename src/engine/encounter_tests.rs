@@ -15396,6 +15396,129 @@ fn fiendish_vigor_takes_the_die_at_its_maximum() {
     );
 }
 
+/// SRD 5.2 **Magic Circle**: *"The creature has Disadvantage on attack
+/// rolls against targets within the cylinder."*
+///
+/// Protection from Evil and Good drawn on the floor, which is the whole
+/// difference between the two spells: one slot wards everyone standing
+/// in a ten-foot circle rather than one touched ally, for an hour
+/// rather than a minute, and without concentration.
+///
+/// So the test is about the *area*: the ally who never asked for it
+/// picks the ward up by standing there, and the one outside does not.
+#[test]
+fn a_magic_circle_wards_everyone_standing_in_it() {
+    use crate::actions::spells::MAGIC_CIRCLE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::dice::RollMode;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let inside = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 10), 0, 1)
+        .unwrap();
+    let outside = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(22, 10), 0, 2)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+
+    let cast = ActionExecutionInfo::new(
+        &*MAGIC_CIRCLE,
+        cleric,
+        None,
+        Some(vec![e.actors[&cleric].location()]),
+        None,
+    );
+    assert!(cast.validate(&e), "the circle goes down under the caster");
+    e.push_action(cast);
+    e.process_stack();
+
+    for id in [cleric, inside] {
+        assert!(
+            e.actors[&id].has_condition(Condition::Warded),
+            "everyone standing in the circle is warded"
+        );
+    }
+    assert!(
+        !e.actors[&outside].has_condition(Condition::Warded),
+        "and nobody outside it is"
+    );
+    assert!(
+        matches!(
+            e.compute_attack_mode(zombie, inside, true),
+            RollMode::Disadvantage
+        ),
+        "an undead swinging into the circle rolls at disadvantage"
+    );
+    assert!(
+        matches!(e.compute_attack_mode(zombie, outside, true), RollMode::Normal),
+        "and swinging at the fighter outside it does not"
+    );
+    assert!(
+        !e.actors[&cleric].is_concentrating(),
+        "RAW's hour costs no concentration — that is what a level-3 slot buys \
+         over Protection from Evil and Good's level-1"
+    );
+}
+
+/// The circle is a place, so walking out of it stops warding you.
+///
+/// `ZoneContact::afflicts` with `UntilStartOfNextTurn` is the layer's
+/// way of saying "while you are in here": the zone renews the flag at
+/// the top of every turn spent inside, and a creature that has left
+/// simply stops being renewed. One tick behind RAW, and the alternative
+/// is a ward stamped on at cast time that follows the fighter across
+/// the room.
+#[test]
+fn the_wards_of_a_magic_circle_lapse_for_whoever_walks_out() {
+    use crate::actions::spells::MAGIC_CIRCLE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 10), 0, 1)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    let cast = ActionExecutionInfo::new(
+        &*MAGIC_CIRCLE,
+        cleric,
+        None,
+        Some(vec![e.actors[&cleric].location()]),
+        None,
+    );
+    e.push_action(cast);
+    e.process_stack();
+    assert!(e.actors[&fighter].has_condition(Condition::Warded));
+
+    // Off the far side of the board, then round the clock: the flag has
+    // nothing renewing it out there.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .set_location(Coordinate::new(25, 25));
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .reset_for_new_round();
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::Warded),
+        "a fighter who left the circle left the ward in it"
+    );
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

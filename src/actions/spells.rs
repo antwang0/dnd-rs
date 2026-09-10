@@ -5643,6 +5643,147 @@ impl Action for ProtectionFromEvilAndGood {
 pub static PROTECTION_FROM_EVIL_AND_GOOD: LazyLock<ProtectionFromEvilAndGood> =
     LazyLock::new(|| ProtectionFromEvilAndGood {});
 
+/// Magic Circle — SRD 5.2 level-3 abjuration (bard, cleric, paladin,
+/// warlock, wizard). *"Choose one or more of the following types of
+/// creatures: Celestials, Elementals, Fey, Fiends, or Undead. The
+/// circle affects a creature of the chosen type in the following
+/// ways… The creature has Disadvantage on attack rolls against targets
+/// within the cylinder. Targets within the cylinder can't be Charmed,
+/// Frightened, or possessed by the creature."*
+///
+/// **Protection from Evil and Good, drawn on the floor.** Those last
+/// two clauses are word for word the two `Condition::Warded` already
+/// carries, and the whole of what makes this a different spell is that
+/// it is a *place* rather than a creature: one slot wards everyone
+/// standing in a ten-foot circle, for an hour, without concentration,
+/// instead of one touched ally for a minute with it.
+///
+/// So it lands on the zone layer, as `ZoneContact::afflicts` — the
+/// constructor whose own docstring calls this shape "a condition that
+/// lasts *while you are in here*". The circle re-installs the ward at
+/// the top of every turn spent inside and it lapses on its own for
+/// anyone who has walked out, one tick later than RAW and infinitely
+/// closer than a flag stamped on at cast time.
+///
+/// **Friend-or-foe blind, and that is RAW here rather than a
+/// concession.** The layer wards everything standing in the circle;
+/// RAW's sentence is *"targets within the cylinder"* and names no
+/// side. A fiend that steps into its own party's circle is protected
+/// from the party's undead ally exactly as the party is.
+///
+/// **Two clauses are not modeled**, and both are honest gaps rather
+/// than approximations:
+///
+///   - *"The creature can't willingly enter the cylinder by nonmagical
+///     means."* The engine's pathfinder has no per-creature-type
+///     forbidden tile, and the barrier-facing-inward option RAW offers
+///     — the half that makes this a summoning trap — needs the same
+///     machinery pointed the other way.
+///   - **The type choice.** RAW picks one or more of five types and the
+///     ward covers exactly those; `Warded` is Protection from Evil and
+///     Good's flag and covers RAW's six, aberrations included. The
+///     circle is therefore slightly *stronger* than a one-type casting
+///     and exactly right for the five-type one, and sharing the flag is
+///     what keeps the two spells' shared sentences from being two
+///     implementations that can disagree.
+pub struct MagicCircle {}
+
+impl MagicCircle {
+    /// RAW's 10-foot radius, in tile-gaps on the 2.5 ft grid.
+    const RADIUS: isize = 4;
+    /// RAW's hour, which is longer than any encounter — the same round
+    /// count Mage Armor and Freedom of Movement use to say so.
+    const ROUNDS: u32 = 100;
+}
+
+impl Action for MagicCircle {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "magic circle"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mc", "circle"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW's 10 ft of casting range, which is the one number that
+        // makes this spell awkward to place: the circle goes down
+        // almost under the caster's feet.
+        Some(4)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        // Wards whoever is standing in it, whichever side they are on.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    /// The whole spell is one condition, which is what lets the AI's
+    /// area rungs tell a circle drawn over an already-warded party from
+    /// one that would change something.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Warded)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "magic circle",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::hazard(ZoneContact::afflicts(
+                    Condition::Warded,
+                    ConditionTimer::UntilStartOfNextTurn,
+                )),
+                rounds_remaining: Self::ROUNDS,
+                // RAW: one hour, no concentration. The circle outlives
+                // whatever else the caster is holding up, which is most
+                // of why a party spends a level-3 slot on it.
+                concentration: false,
+                motion: ZoneMotion::Fixed,
+                revealed: false,
+            },
+            // Everyone already standing on the ground it is drawn on is
+            // warded at once; the timer they pick up lapses at the top
+            // of their next turn, when the circle renews it if they are
+            // still inside.
+            catch_present: true,
+        })]
+    }
+}
+
+pub static MAGIC_CIRCLE: LazyLock<MagicCircle> = LazyLock::new(|| MagicCircle {});
+
 /// Dispel Evil and Good — SRD 5.2 level-5 abjuration (cleric, paladin),
 /// Range: Self, concentration up to 1 minute.
 ///

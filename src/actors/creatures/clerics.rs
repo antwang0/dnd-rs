@@ -73,6 +73,12 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*HEROISM);
     actions.push(&*MASS_HEALING_WORD);
     actions.push(&*PROTECTION_FROM_EVIL_AND_GOOD);
+    // SRD 5.2 **Magic Circle** — the same ward drawn on the floor
+    // instead of on one ally: a ten-foot circle that protects everyone
+    // standing in it, for an hour, with no concentration. It is the
+    // level-3 answer to the fights the level-1 ward is not enough for,
+    // and the cleric is the class that carries both.
+    actions.push(&*crate::actions::spells::MAGIC_CIRCLE);
     actions.push(&*COMMAND);
     actions.push(&*DIVINE_FAVOR);
     actions.push(&*SPIRIT_GUARDIANS);

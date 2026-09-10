@@ -1132,6 +1132,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3j'. Magic Circle — the ward on the floor. Directly below the
+        //      cohort it shares a condition with and above the rest of
+        //      the ladder, because it costs no concentration: a cleric
+        //      that draws the circle has given up nothing it wanted for
+        //      Spirit Guardians, which is most of the argument for
+        //      spending a level-3 slot on it. Its own type gate is what
+        //      keeps it off every fight that is not against fiends or
+        //      undead — see `try_magic_circle`.
+        if let Some(aei) = try_magic_circle(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3k. Invoke Duplicity — Trickery Domain Cleric Channel
         //     Divinity (Action, once per short rest). Ten rounds of
         //     advantage on every attack roll the cleric makes. Sits
@@ -5408,6 +5420,67 @@ fn try_self_buff_concentration(
         return None;
     }
     try_self_action(encounter, actor_id, action_name)
+}
+
+/// Magic Circle — the level-3 ward drawn on the ground under the
+/// caster's own feet.
+///
+/// A rung of its own rather than a row on `SELF_BUFFS_ABOVE_DUPLICITY`,
+/// even though it shares that cohort's `Warded` marker and its type
+/// gate, because it differs from every row there on the two things the
+/// cohort's walker assumes: it holds no concentration (so the walker's
+/// short-circuit would be wrong about it in both directions), and it is
+/// a `Burst` rather than a self-target (so `try_self_action`, which
+/// passes no aim point, could never validate it).
+///
+/// **Aimed at the caster's own tile**, which is a deliberate
+/// simplification of a placement problem. RAW lets the circle go
+/// anywhere within ten feet, and the best spot is wherever the most
+/// allies are standing; the caster's own square is where a cleric
+/// already is, is within RAW's range by construction, and catches the
+/// caster — who is the one creature guaranteed to still be there next
+/// round.
+///
+/// **The type gate is the spell.** Every clause of Magic Circle is
+/// scoped to Celestials, Elementals, Fey, Fiends and Undead, so against
+/// a room of goblins it is a level-3 slot spent on nothing. Measured
+/// over the ward's own reach rather than over the circle's radius: a
+/// fiend thirty feet away is a fiend that will be adjacent next round,
+/// and the circle lasts an hour.
+///
+/// The `Warded` gate stops a cleric re-drawing a circle it is already
+/// standing in — which it otherwise would, every turn, because the
+/// zone renews the condition at the top of each turn and the spell has
+/// no other resource to run out of.
+fn try_magic_circle(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    /// How far out a protected-type enemy still argues for the circle.
+    /// 30 ft on the 2.5 ft grid — a round's walk for most of the
+    /// bestiary.
+    const WATCH_GAP: isize = 12;
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Warded) {
+        return None;
+    }
+    if !enemy_of_type_within(
+        encounter,
+        actor_id,
+        WATCH_GAP,
+        crate::engine::types::CreatureType::affected_by_protection,
+    ) {
+        return None;
+    }
+    let action = actor.find_action("magic circle")?;
+    let aei = ActionExecutionInfo::new(
+        action,
+        actor_id,
+        None,
+        Some(vec![actor.location()]),
+        None,
+    );
+    aei.validate(encounter).then_some(aei)
 }
 
 /// Starry Form — Circle of Stars Druid bonus action, once per short
@@ -11309,6 +11382,59 @@ mod tests {
         assert!(
             try_close_for_the_better_weapon(&e, wiz).is_none(),
             "an unannotated Fire Bolt is not a reason to go and use the dagger"
+        );
+    }
+
+    /// Magic Circle is a level-3 slot against fiends and undead and a
+    /// level-3 slot on nothing against anything else, so its rung asks
+    /// what is in the room before it draws.
+    ///
+    /// The gate is the same one Dispel Evil and Good's row on
+    /// `SELF_BUFFS_ABOVE_DUPLICITY` carries, and it exists for the same
+    /// reason: every clause of both spells is scoped to
+    /// `CreatureType::affected_by_protection`, so against a room of
+    /// ogres the cast is worse than doing nothing.
+    #[test]
+    fn a_cleric_draws_a_magic_circle_for_the_undead_and_not_for_an_ogre() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let arena = |enemy: &'static crate::actors::actor_template::CreatureTemplate| {
+            let mut e = empty_arena();
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.instantiate_creature(enemy, Coordinate::new(12, 5), 1, 0)
+                .unwrap();
+            (e, cleric)
+        };
+
+        let (e, cleric) = arena(&WIGHT_TEMPLATE);
+        assert!(
+            try_magic_circle(&e, cleric).is_some(),
+            "an undead in the room is what the circle is for"
+        );
+
+        let (e, cleric) = arena(&OGRE_TEMPLATE);
+        assert!(
+            try_magic_circle(&e, cleric).is_none(),
+            "and an ogre is not — every clause of the spell would be inert"
+        );
+
+        // A cleric already standing in a circle does not draw another.
+        // The zone renews the ward every turn and the spell has no
+        // other resource to run out of, so without this the rung would
+        // fire for the rest of the fight.
+        let (mut e, cleric) = arena(&WIGHT_TEMPLATE);
+        e.actors
+            .get_mut(&cleric)
+            .unwrap()
+            .add_condition(Condition::Warded, ConditionTimer::UntilStartOfNextTurn);
+        assert!(
+            try_magic_circle(&e, cleric).is_none(),
+            "already warded is already done"
         );
     }
 
@@ -20837,6 +20963,8 @@ mod tests {
         );
     }
 }
+
+
 
 
 
