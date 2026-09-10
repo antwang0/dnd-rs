@@ -5866,7 +5866,7 @@ impl EncounterInstance {
         let helper_name = self.actor_name(helper_id);
         let rolled_name = self.actor_name(actor_id);
         self.log(format!(
-            "  flash of genius: {} adds {:+} to {}'s {} \u{2014} it holds after all",
+            "  flash of genius: {} adds {:+} to {}'s check \u{2014} the {} turns",
             helper_name, bonus, rolled_name, label
         ));
         true

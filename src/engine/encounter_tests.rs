@@ -96669,3 +96669,49 @@ fn the_astral_arms_lend_a_monk_their_wisdom_on_strength_and_nowhere_else() {
          they make other creatures roll"
     );
 }
+
+/// The other side of a contest can be rescued too, and the boolean flips.
+///
+/// A contest has one loser and `roll_contest` reports only whether the
+/// *challenger* won, so the defender's failure is the easy one to forget:
+/// the shoved ogre with an artificer beside it failed an ability check
+/// just as surely as the fighter would have. Ties count as the defender
+/// failing, because the comparison gives them to the challenger.
+#[test]
+fn the_defender_of_a_contest_gets_the_same_rescue() {
+    use crate::actors::creatures::artificers::ARTIFICER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::types::Skill;
+
+    const ATHLETICS: &[(AbilityScoreType, Skill)] =
+        &[(AbilityScoreType::Strength, Skill::Athletics)];
+
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+            .unwrap();
+        // The artificer is on the *ogre's* side this time.
+        e.instantiate_creature(&ARTIFICER_TEMPLATE, Coordinate::new(7, 4), 1, 1)
+            .unwrap();
+
+        let before = e.messages().len();
+        let won = e.roll_contest("shove", fighter, ATHLETICS, ogre, ATHLETICS);
+        if e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("flash of genius"))
+        {
+            assert!(
+                !won,
+                "seed {seed}: the ogre's artificer paid for a rescue and the \
+                 shove landed anyway"
+            );
+            return;
+        }
+    }
+    panic!("eighty seeds and the defender-side rescue never fired");
+}
