@@ -1740,6 +1740,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 8a''. Help — hand the Action to somebody who can use it.
+        //       Every creature in the game carries this action and the
+        //       ladder had never selected it once; see
+        //       `try_help_an_ally` for why that was right everywhere
+        //       except here, and why here it is not.
+        //
+        //       Above Dodge because it is strictly better for the actor
+        //       that reaches this far: Dodge pays out only if something
+        //       swings at the actor, and an actor that has just
+        //       declined every attack rung has no particular reason to
+        //       expect it to.
+        if let Some(aei) = try_help_an_ally(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8b. We have an Action but no offensive option — Dodge is strictly
         //    better than Skip (imposes disadvantage on incoming attacks).
         if let Some(aei) = try_dodge(encounter, actor_id) {
@@ -4339,8 +4354,8 @@ fn try_insightful_fighting(
     try_single_target_class_feature_hostile(encounter, actor_id, "insightful fighting", 12)
 }
 
-/// Master of Tactics — Mastermind Rogue lv3 bonus action. The Help
-/// action at 30 ft, handed to an ally.
+/// Hand an ally advantage on their next swing, with whichever of the
+/// engine's two Help-shaped actions `action_name` names.
 ///
 /// Two gates beyond the action's own. The ally must have a hostile
 /// inside their own melee reach, because the grant is consumed by their
@@ -4351,15 +4366,21 @@ fn try_insightful_fighting(
 /// Among the allies that qualify, the pick is the one with the most hit
 /// points remaining. That is a proxy for "the ally most likely to still
 /// be standing when their turn comes", which is what the grant needs —
-/// it lasts until the start of the rogue's next turn, so an ally who
+/// it lasts until the start of the helper's next turn, so an ally who
 /// drops before acting wastes it. Ties break on the sorted id order the
 /// seeded sweeps rely on.
-fn try_master_of_tactics(
+///
+/// The reach difference between the two callers is not a parameter
+/// because it does not need to be: `Help` reaches five feet and
+/// **Master of Tactics** reaches thirty, and both numbers are on the
+/// actions themselves, where `aei.validate` reads them.
+fn try_grant_help(
     encounter: &EncounterInstance,
     actor_id: usize,
+    action_name: &str,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let action = actor.find_action("master of tactics")?;
+    let action = actor.find_action(action_name)?;
     let my_team = actor.team();
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
     for ally_id in encounter.sorted_actor_ids() {
@@ -4400,6 +4421,48 @@ fn try_master_of_tactics(
         }
     }
     best.map(|(_, aei)| aei)
+}
+
+/// Master of Tactics — Mastermind Rogue lv3 bonus action. The Help
+/// action at 30 ft, handed to an ally, and the reason the rogue's
+/// Cunning Action is worth anything from the back rank.
+fn try_master_of_tactics(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_grant_help(encounter, actor_id, "master of tactics")
+}
+
+/// **Help** — the default action every creature in the game carries,
+/// and which nothing in this ladder had ever selected.
+///
+/// That is the whole reason the rung exists. `HELP` is on
+/// `DEFAULT_ACTIONS`, so every actor on every board has had it since
+/// the engine was written, and no AI-driven creature had taken it once:
+/// it targets an ally, so the attack pickers never saw it; it deals no
+/// damage, so the focus-fire lane filtered it out; and `try_support_heal`
+/// excludes it by name because an attack-advantage rider is not a heal.
+/// An action nobody selects looks exactly like an action nobody needed.
+///
+/// **The reason it was right to skip is also the reason it is right to
+/// keep here.** Help costs the whole Action to give somebody else
+/// advantage on one swing, which is almost always worse than swinging
+/// yourself — so the rung sits at the bottom of the ladder, one step
+/// above Dodge, where "almost always" has already been ruled out by
+/// every attack, approach and support rung declining in turn. What is
+/// left there is an actor with an Action, no attack it can make, and an
+/// ally in contact with something. For that actor Help is strictly
+/// better than Dodge: Dodge pays out only if the actor is attacked, and
+/// nothing that just declined to attack has reason to think it will be.
+///
+/// Its natural constituencies are the creature whose weapon cannot
+/// reach, the caster out of slots standing behind the line, and
+/// anything the board has left without a swing.
+fn try_help_an_ally(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_grant_help(encounter, actor_id, "help")
 }
 
 /// Steady Aim — Tasha's Rogue lv3 bonus action. Installs an advantage-
@@ -11453,6 +11516,79 @@ mod tests {
         assert!(
             try_magic_circle(&e, cleric).is_none(),
             "already warded is already done"
+        );
+    }
+
+    /// The Help action, which every creature in the game carries and
+    /// which the ladder had never once selected.
+    ///
+    /// It targets an ally, so no attack picker saw it; it deals no
+    /// damage, so focus-fire filtered it out; and `try_support_heal`
+    /// excludes it by name. The rung is at the bottom of the ladder
+    /// because Help is almost always the wrong Action — and this test
+    /// is both halves of "almost": an actor standing next to an ally
+    /// who is in contact hands the swing over, and the same actor with
+    /// nobody to hand it to does not.
+    #[test]
+    fn a_creature_with_nothing_to_swing_at_helps_the_ally_who_has() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = empty_arena();
+        // The wizard is beside the fighter; the fighter is in contact
+        // with the ogre and the wizard is not.
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+
+        let aei = try_help_an_ally(&e, wizard).expect("the fighter is in contact and unhelped");
+        assert_eq!(aei.action().name(), "help");
+        assert_eq!(
+            aei.target_ids().and_then(|ids| ids.first().copied()),
+            Some(fighter),
+            "the grant goes to the ally who can spend it"
+        );
+
+        // An ally already carrying the grant is not worth a second one.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::Helped, ConditionTimer::UntilStartOfNextTurn);
+        assert!(
+            try_help_an_ally(&e, wizard).is_none(),
+            "a second grant on top of the first buys nothing"
+        );
+    }
+
+    /// And an ally with nothing in reach is not worth the Action
+    /// either: the grant lasts until the start of the helper's next
+    /// turn, so advantage on a swing the ally cannot make expires
+    /// unspent.
+    #[test]
+    fn help_is_not_offered_to_an_ally_with_nothing_in_reach() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 1)
+            .unwrap();
+        // The ogre is across the room from both of them.
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+            .unwrap();
+        assert!(
+            try_help_an_ally(&e, wizard).is_none(),
+            "nobody here has a swing for the advantage to ride"
         );
     }
 
