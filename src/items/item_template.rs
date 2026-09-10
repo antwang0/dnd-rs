@@ -61,8 +61,8 @@ impl std::ops::Add for ItemBonuses {
 }
 
 /// A piece of equipment. Items split implicitly into "passive trinket"
-/// (only `bonuses` populated, `on_use = None`) and "consumable"
-/// (`on_use` references a static action). Consumables don't grant
+/// (only `bonuses` populated, `on_use` empty) and "consumable"
+/// (`on_use` names at least one static action). Consumables don't grant
 /// passive bonuses today — if a future item needs both, it just sets
 /// both fields. Items are referenced via `&'static Item` so cloning an
 /// inventory is cheap and definitions stay single-sourced.
@@ -74,11 +74,23 @@ pub struct Item {
     /// (uppercase letters).
     pub glyph: char,
     pub bonuses: ItemBonuses,
-    /// If `Some`, the actor carrying this item gets this action added to
-    /// their available-actions list. Using the action consumes one copy
-    /// of this item (action's own logic handles the removal). `None` for
-    /// passive-only trinkets like rings and cloaks.
-    pub on_use: Option<&'static (dyn crate::actions::action_template::Action + Send + Sync)>,
+    /// Actions the carrier gets for holding this item, appended to their
+    /// available-actions list by `ActorInstance::available_actions`.
+    /// Using one bills the item (the action's own logic handles the
+    /// spend). Empty for passive-only trinkets like rings and cloaks.
+    ///
+    /// A slice rather than one optional action, because a staff is not a
+    /// potion. Every consumable in the book — a scroll, an oil, a wand of
+    /// one spell — offers exactly one thing to do with it, and the field
+    /// said so for as long as that was the whole loot table. SRD 5.2's
+    /// staves are the shape that does not fit: *"expend 1 or more of its
+    /// charges to cast one of the following spells"*, three to nine of
+    /// them on one stick at different prices, and no way to write the
+    /// second one down. Widening the field is the smaller change of the
+    /// two available — the alternative was one item per spell, which
+    /// would put three Staves of Fire in the pack and let a player drop
+    /// the Fireball half.
+    pub on_use: &'static [&'static (dyn crate::actions::action_template::Action + Send + Sync)],
     /// Conditions the wearer is immune to while carrying this item.
     /// Folded into `ActorInstance::effectively_immune_to_condition` so
     /// trinkets like the Necklace of Adaptation (Poisoned-immune) and
@@ -261,7 +273,7 @@ impl Item {
         name: "",
         glyph: ' ',
         bonuses: ItemBonuses::ZERO,
-        on_use: None,
+        on_use: &[],
         condition_immunities: &[],
         damage_resistances: &[],
         damage_immunities: &[],
@@ -335,35 +347,35 @@ pub static BRACERS_OF_DEFENSE: Item = Item {
 pub static TORCH: Item = Item {
     name: "Torch",
     glyph: 't',
-    on_use: Some(&crate::actions::item_actions::LIGHT_TORCH),
+    on_use: &[&crate::actions::item_actions::LIGHT_TORCH],
     ..Item::DEFAULTS
 };
 
 pub static POTION_OF_HEALING: Item = Item {
     name: "Potion of Healing",
     glyph: 'p',
-    on_use: Some(&crate::actions::item_actions::DRINK_HEALING_POTION),
+    on_use: &[&crate::actions::item_actions::DRINK_HEALING_POTION],
     ..Item::DEFAULTS
 };
 
 pub static POTION_OF_GREATER_HEALING: Item = Item {
     name: "Potion of Greater Healing",
     glyph: 'P',
-    on_use: Some(&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION),
+    on_use: &[&crate::actions::item_actions::DRINK_GREATER_HEALING_POTION],
     ..Item::DEFAULTS
 };
 
 pub static SCROLL_OF_FIREBALL: Item = Item {
     name: "Scroll of Fireball",
     glyph: 's',
-    on_use: Some(&crate::actions::item_actions::READ_FIREBALL_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FIREBALL_SCROLL],
     ..Item::DEFAULTS
 };
 
 pub static SCROLL_OF_MAGIC_MISSILE: Item = Item {
     name: "Scroll of Magic Missile",
     glyph: 'm',
-    on_use: Some(&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MAGIC_MISSILE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -394,7 +406,7 @@ pub static SHIELD: Item = Item {
 pub static ANTITOXIN: Item = Item {
     name: "Antitoxin",
     glyph: 'A',
-    on_use: Some(&crate::actions::item_actions::DRINK_ANTITOXIN),
+    on_use: &[&crate::actions::item_actions::DRINK_ANTITOXIN],
     ..Item::DEFAULTS
 };
 
@@ -404,7 +416,7 @@ pub static ANTITOXIN: Item = Item {
 pub static POTION_OF_SPEED: Item = Item {
     name: "Potion of Speed",
     glyph: '!',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_SPEED),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_SPEED],
     ..Item::DEFAULTS
 };
 
@@ -415,7 +427,7 @@ pub static POTION_OF_SPEED: Item = Item {
 pub static POTION_OF_HEROISM: Item = Item {
     name: "Potion of Heroism",
     glyph: 'H',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HEROISM),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_HEROISM],
     ..Item::DEFAULTS
 };
 
@@ -426,7 +438,7 @@ pub static POTION_OF_HEROISM: Item = Item {
 pub static POTION_OF_INVISIBILITY: Item = Item {
     name: "Potion of Invisibility",
     glyph: 'i',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_INVISIBILITY],
     ..Item::DEFAULTS
 };
 
@@ -454,7 +466,7 @@ pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
 pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
     name: "Scroll of Lightning Bolt",
     glyph: 'l',
-    on_use: Some(&crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_LIGHTNING_BOLT_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -465,7 +477,7 @@ pub static SCROLL_OF_LIGHTNING_BOLT: Item = Item {
 pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
     name: "Scroll of Cure Wounds",
     glyph: 'w',
-    on_use: Some(&crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CURE_WOUNDS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -547,7 +559,7 @@ pub static RING_OF_FREE_ACTION: Item = Item {
 pub static PEARL_OF_POWER: Item = Item {
     name: "Pearl of Power",
     glyph: 'q',
-    on_use: Some(&crate::actions::item_actions::USE_PEARL_OF_POWER),
+    on_use: &[&crate::actions::item_actions::USE_PEARL_OF_POWER],
     ..Item::DEFAULTS
 };
 
@@ -557,7 +569,7 @@ pub static PEARL_OF_POWER: Item = Item {
 pub static GREATER_PEARL_OF_POWER: Item = Item {
     name: "Greater Pearl of Power",
     glyph: 'E',
-    on_use: Some(&crate::actions::item_actions::USE_GREATER_PEARL_OF_POWER),
+    on_use: &[&crate::actions::item_actions::USE_GREATER_PEARL_OF_POWER],
     ..Item::DEFAULTS
 };
 
@@ -567,7 +579,7 @@ pub static GREATER_PEARL_OF_POWER: Item = Item {
 pub static SUPREME_PEARL_OF_POWER: Item = Item {
     name: "Supreme Pearl of Power",
     glyph: 'I',
-    on_use: Some(&crate::actions::item_actions::USE_SUPREME_PEARL_OF_POWER),
+    on_use: &[&crate::actions::item_actions::USE_SUPREME_PEARL_OF_POWER],
     ..Item::DEFAULTS
 };
 
@@ -610,7 +622,7 @@ pub static BOOTS_OF_THE_WINTERLANDS: Item = Item {
 pub static BOOTS_OF_SPEED: Item = Item {
     name: "Boots of Speed",
     glyph: 'V',
-    on_use: Some(&crate::actions::item_actions::WEAR_BOOTS_OF_SPEED),
+    on_use: &[&crate::actions::item_actions::WEAR_BOOTS_OF_SPEED],
     ..Item::DEFAULTS
 };
 
@@ -780,7 +792,7 @@ pub static RING_OF_PSYCHIC_RESISTANCE: Item = Item {
 pub static SCROLL_OF_CONE_OF_COLD: Item = Item {
     name: "Scroll of Cone of Cold",
     glyph: 'O',
-    on_use: Some(&crate::actions::item_actions::READ_CONE_OF_COLD_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CONE_OF_COLD_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -801,7 +813,7 @@ pub static SCROLL_OF_CONE_OF_COLD: Item = Item {
 pub static WAND_OF_MAGIC_MISSILES: Item = Item {
     name: "Wand of Magic Missiles",
     glyph: 'D',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MAGIC_MISSILES),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_MAGIC_MISSILES],
     charges: 7,
     ..Item::DEFAULTS
 };
@@ -818,7 +830,7 @@ pub static WAND_OF_MAGIC_MISSILES: Item = Item {
 pub static WAND_OF_FIREBALLS: Item = Item {
     name: "Wand of Fireballs",
     glyph: 'F',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_FIREBALLS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_FIREBALLS],
     charges: 7,
     ..Item::DEFAULTS
 };
@@ -831,7 +843,7 @@ pub static WAND_OF_FIREBALLS: Item = Item {
 pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
     name: "Wand of Lightning Bolts",
     glyph: 'Z',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS],
     charges: 7,
     ..Item::DEFAULTS
 };
@@ -844,7 +856,7 @@ pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
 pub static POTION_OF_FLYING: Item = Item {
     name: "Potion of Flying",
     glyph: '^',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_FLYING),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_FLYING],
     ..Item::DEFAULTS
 };
 
@@ -857,7 +869,7 @@ pub static POTION_OF_FLYING: Item = Item {
 pub static POTION_OF_CLIMBING: Item = Item {
     name: "Potion of Climbing",
     glyph: '*',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_CLIMBING),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_CLIMBING],
     ..Item::DEFAULTS
 };
 
@@ -868,7 +880,7 @@ pub static POTION_OF_CLIMBING: Item = Item {
 pub static POTION_OF_SUPERIOR_HEALING: Item = Item {
     name: "Potion of Superior Healing",
     glyph: 'X',
-    on_use: Some(&crate::actions::item_actions::DRINK_SUPERIOR_HEALING_POTION),
+    on_use: &[&crate::actions::item_actions::DRINK_SUPERIOR_HEALING_POTION],
     ..Item::DEFAULTS
 };
 
@@ -879,7 +891,7 @@ pub static POTION_OF_SUPERIOR_HEALING: Item = Item {
 pub static POTION_OF_STONESKIN: Item = Item {
     name: "Potion of Stoneskin",
     glyph: 'T',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_STONESKIN),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_STONESKIN],
     ..Item::DEFAULTS
 };
 
@@ -890,7 +902,7 @@ pub static POTION_OF_STONESKIN: Item = Item {
 pub static WAND_OF_CONE_OF_COLD: Item = Item {
     name: "Wand of Cone of Cold",
     glyph: 'Q',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD],
     ..Item::DEFAULTS
 };
 
@@ -901,7 +913,7 @@ pub static WAND_OF_CONE_OF_COLD: Item = Item {
 pub static SCROLL_OF_SHATTER: Item = Item {
     name: "Scroll of Shatter",
     glyph: 't',
-    on_use: Some(&crate::actions::item_actions::READ_SHATTER_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SHATTER_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -915,7 +927,7 @@ pub static SCROLL_OF_SHATTER: Item = Item {
 pub static SCROLL_OF_MASS_HEALING_WORD: Item = Item {
     name: "Scroll of Mass Healing Word",
     glyph: 'z',
-    on_use: Some(&crate::actions::item_actions::READ_MASS_HEALING_WORD_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MASS_HEALING_WORD_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1064,7 +1076,7 @@ pub static BELT_OF_GIANT_STRENGTH: Item = Item {
 pub static POTION_OF_SUPREME_HEALING: Item = Item {
     name: "Potion of Supreme Healing",
     glyph: '%',
-    on_use: Some(&crate::actions::item_actions::DRINK_SUPREME_HEALING_POTION),
+    on_use: &[&crate::actions::item_actions::DRINK_SUPREME_HEALING_POTION],
     ..Item::DEFAULTS
 };
 
@@ -1076,7 +1088,7 @@ pub static POTION_OF_SUPREME_HEALING: Item = Item {
 pub static POTION_OF_MAGE_ARMOR: Item = Item {
     name: "Potion of Mage Armor",
     glyph: 'N',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_MAGE_ARMOR),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_MAGE_ARMOR],
     ..Item::DEFAULTS
 };
 
@@ -1089,7 +1101,7 @@ pub static POTION_OF_MAGE_ARMOR: Item = Item {
 pub static POTION_OF_BLUR: Item = Item {
     name: "Potion of Blur",
     glyph: '?',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_BLUR),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_BLUR],
     ..Item::DEFAULTS
 };
 
@@ -1100,7 +1112,7 @@ pub static POTION_OF_BLUR: Item = Item {
 pub static GREATER_WAND_OF_MAGIC_MISSILES: Item = Item {
     name: "Greater Wand of Magic Missiles",
     glyph: '>',
-    on_use: Some(&crate::actions::item_actions::USE_GREATER_WAND_OF_MAGIC_MISSILES),
+    on_use: &[&crate::actions::item_actions::USE_GREATER_WAND_OF_MAGIC_MISSILES],
     ..Item::DEFAULTS
 };
 
@@ -1111,7 +1123,7 @@ pub static GREATER_WAND_OF_MAGIC_MISSILES: Item = Item {
 pub static SCROLL_OF_BURNING_HANDS: Item = Item {
     name: "Scroll of Burning Hands",
     glyph: '&',
-    on_use: Some(&crate::actions::item_actions::READ_BURNING_HANDS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BURNING_HANDS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1123,7 +1135,7 @@ pub static SCROLL_OF_BURNING_HANDS: Item = Item {
 pub static SCROLL_OF_THUNDERWAVE: Item = Item {
     name: "Scroll of Thunderwave",
     glyph: '@',
-    on_use: Some(&crate::actions::item_actions::READ_THUNDERWAVE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_THUNDERWAVE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1137,7 +1149,7 @@ pub static SCROLL_OF_THUNDERWAVE: Item = Item {
 pub static WAND_OF_WEB: Item = Item {
     name: "Wand of Web",
     glyph: '$',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_WEB),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_WEB],
     ..Item::DEFAULTS
 };
 
@@ -1150,7 +1162,7 @@ pub static WAND_OF_WEB: Item = Item {
 pub static PIPES_OF_HAUNTING: Item = Item {
     name: "Pipes of Haunting",
     glyph: '(',
-    on_use: Some(&crate::actions::item_actions::PLAY_PIPES_OF_HAUNTING),
+    on_use: &[&crate::actions::item_actions::PLAY_PIPES_OF_HAUNTING],
     ..Item::DEFAULTS
 };
 
@@ -1181,7 +1193,7 @@ pub static PIPES_OF_HAUNTING: Item = Item {
 pub static WAND_OF_PARALYSIS: Item = Item {
     name: "Wand of Paralysis",
     glyph: ')',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_PARALYSIS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_PARALYSIS],
     ..Item::DEFAULTS
 };
 
@@ -1194,7 +1206,7 @@ pub static WAND_OF_PARALYSIS: Item = Item {
 pub static WAND_OF_FEAR: Item = Item {
     name: "Wand of Fear",
     glyph: '[',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_FEAR),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_FEAR],
     ..Item::DEFAULTS
 };
 
@@ -1208,7 +1220,7 @@ pub static WAND_OF_FEAR: Item = Item {
 pub static SCROLL_OF_HOLD_PERSON: Item = Item {
     name: "Scroll of Hold Person",
     glyph: ']',
-    on_use: Some(&crate::actions::item_actions::READ_HOLD_PERSON_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HOLD_PERSON_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1219,7 +1231,7 @@ pub static SCROLL_OF_HOLD_PERSON: Item = Item {
 pub static SCROLL_OF_HOLD_MONSTER: Item = Item {
     name: "Scroll of Hold Monster",
     glyph: '{',
-    on_use: Some(&crate::actions::item_actions::READ_HOLD_MONSTER_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HOLD_MONSTER_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1232,7 +1244,7 @@ pub static SCROLL_OF_HOLD_MONSTER: Item = Item {
 pub static WAND_OF_CONFUSION: Item = Item {
     name: "Wand of Confusion",
     glyph: '}',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CONFUSION),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_CONFUSION],
     ..Item::DEFAULTS
 };
 
@@ -1244,7 +1256,7 @@ pub static WAND_OF_CONFUSION: Item = Item {
 pub static SCROLL_OF_HYPNOTIC_PATTERN: Item = Item {
     name: "Scroll of Hypnotic Pattern",
     glyph: '`',
-    on_use: Some(&crate::actions::item_actions::READ_HYPNOTIC_PATTERN_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HYPNOTIC_PATTERN_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1255,7 +1267,7 @@ pub static SCROLL_OF_HYPNOTIC_PATTERN: Item = Item {
 pub static SCROLL_OF_VITRIOLIC_SPHERE: Item = Item {
     name: "Scroll of Vitriolic Sphere",
     glyph: ':',
-    on_use: Some(&crate::actions::item_actions::READ_VITRIOLIC_SPHERE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_VITRIOLIC_SPHERE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1267,7 +1279,7 @@ pub static SCROLL_OF_VITRIOLIC_SPHERE: Item = Item {
 pub static ARCHMAGE_PEARL_OF_POWER: Item = Item {
     name: "Archmage Pearl of Power",
     glyph: ';',
-    on_use: Some(&crate::actions::item_actions::USE_ARCHMAGE_PEARL_OF_POWER),
+    on_use: &[&crate::actions::item_actions::USE_ARCHMAGE_PEARL_OF_POWER],
     ..Item::DEFAULTS
 };
 
@@ -1280,7 +1292,7 @@ pub static ARCHMAGE_PEARL_OF_POWER: Item = Item {
 pub static POTION_OF_SANCTUARY: Item = Item {
     name: "Potion of Sanctuary",
     glyph: ',',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_SANCTUARY),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_SANCTUARY],
     ..Item::DEFAULTS
 };
 
@@ -1292,7 +1304,7 @@ pub static POTION_OF_SANCTUARY: Item = Item {
 pub static WAND_OF_CURE_WOUNDS: Item = Item {
     name: "Wand of Cure Wounds",
     glyph: '"',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CURE_WOUNDS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_CURE_WOUNDS],
     ..Item::DEFAULTS
 };
 
@@ -1303,7 +1315,7 @@ pub static WAND_OF_CURE_WOUNDS: Item = Item {
 pub static SCROLL_OF_HEALING_WORD: Item = Item {
     name: "Scroll of Healing Word",
     glyph: '\'',
-    on_use: Some(&crate::actions::item_actions::READ_HEALING_WORD_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HEALING_WORD_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1316,7 +1328,7 @@ pub static SCROLL_OF_HEALING_WORD: Item = Item {
 pub static POTION_OF_GROWTH: Item = Item {
     name: "Potion of Growth",
     glyph: '<',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_GROWTH),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_GROWTH],
     ..Item::DEFAULTS
 };
 
@@ -1327,7 +1339,7 @@ pub static POTION_OF_GROWTH: Item = Item {
 pub static WAND_OF_GREATER_HEALING: Item = Item {
     name: "Wand of Greater Healing",
     glyph: 'K',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_GREATER_HEALING),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_GREATER_HEALING],
     ..Item::DEFAULTS
 };
 
@@ -1338,7 +1350,7 @@ pub static WAND_OF_GREATER_HEALING: Item = Item {
 pub static POTION_OF_LONGSTRIDER: Item = Item {
     name: "Potion of Longstrider",
     glyph: '>',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_LONGSTRIDER),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_LONGSTRIDER],
     ..Item::DEFAULTS
 };
 
@@ -1348,7 +1360,7 @@ pub static POTION_OF_LONGSTRIDER: Item = Item {
 pub static SCROLL_OF_BLESS: Item = Item {
     name: "Scroll of Bless",
     glyph: 'B',
-    on_use: Some(&crate::actions::item_actions::READ_BLESS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BLESS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1359,7 +1371,7 @@ pub static SCROLL_OF_BLESS: Item = Item {
 pub static SCROLL_OF_SHIELD_OF_FAITH: Item = Item {
     name: "Scroll of Shield of Faith",
     glyph: 'F',
-    on_use: Some(&crate::actions::item_actions::READ_SHIELD_OF_FAITH_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SHIELD_OF_FAITH_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1369,7 +1381,7 @@ pub static SCROLL_OF_SHIELD_OF_FAITH: Item = Item {
 pub static SCROLL_OF_BLINDNESS: Item = Item {
     name: "Scroll of Blindness",
     glyph: '!',
-    on_use: Some(&crate::actions::item_actions::READ_BLINDNESS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BLINDNESS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1379,7 +1391,7 @@ pub static SCROLL_OF_BLINDNESS: Item = Item {
 pub static SCROLL_OF_BANE: Item = Item {
     name: "Scroll of Bane",
     glyph: 'b',
-    on_use: Some(&crate::actions::item_actions::READ_BANE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BANE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1390,7 +1402,7 @@ pub static SCROLL_OF_BANE: Item = Item {
 pub static SCROLL_OF_FAERIE_FIRE: Item = Item {
     name: "Scroll of Faerie Fire",
     glyph: 'i',
-    on_use: Some(&crate::actions::item_actions::READ_FAERIE_FIRE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FAERIE_FIRE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1400,7 +1412,7 @@ pub static SCROLL_OF_FAERIE_FIRE: Item = Item {
 pub static WAND_OF_POLYMORPH: Item = Item {
     name: "Wand of Polymorph",
     glyph: 'p',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_POLYMORPH),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_POLYMORPH],
     ..Item::DEFAULTS
 };
 
@@ -1412,7 +1424,7 @@ pub static WAND_OF_POLYMORPH: Item = Item {
 pub static POTION_OF_BARKSKIN: Item = Item {
     name: "Potion of Barkskin",
     glyph: '+',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_BARKSKIN),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_BARKSKIN],
     ..Item::DEFAULTS
 };
 
@@ -1425,7 +1437,7 @@ pub static POTION_OF_BARKSKIN: Item = Item {
 pub static POTION_OF_FIRE_RESISTANCE: Item = Item {
     name: "Potion of Fire Resistance",
     glyph: 'F',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_FIRE_RESISTANCE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_FIRE_RESISTANCE],
     ..Item::DEFAULTS
 };
 
@@ -1435,7 +1447,7 @@ pub static POTION_OF_FIRE_RESISTANCE: Item = Item {
 pub static POTION_OF_COLD_RESISTANCE: Item = Item {
     name: "Potion of Cold Resistance",
     glyph: 'C',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_COLD_RESISTANCE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_COLD_RESISTANCE],
     ..Item::DEFAULTS
 };
 
@@ -1446,7 +1458,7 @@ pub static POTION_OF_COLD_RESISTANCE: Item = Item {
 pub static POTION_OF_HILL_GIANT_STRENGTH: Item = Item {
     name: "Potion of Hill Giant Strength",
     glyph: 'G',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HILL_GIANT_STRENGTH),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_HILL_GIANT_STRENGTH],
     ..Item::DEFAULTS
 };
 
@@ -1587,7 +1599,7 @@ pub static RING_OF_HEROISM: Item = Item {
 pub static WAND_OF_SLEEP: Item = Item {
     name: "Wand of Sleep",
     glyph: 'z',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_SLEEP),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_SLEEP],
     ..Item::DEFAULTS
 };
 
@@ -1601,7 +1613,7 @@ pub static WAND_OF_SLEEP: Item = Item {
 pub static SCROLL_OF_SLOW: Item = Item {
     name: "Scroll of Slow",
     glyph: 'l',
-    on_use: Some(&crate::actions::item_actions::READ_SLOW_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SLOW_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1615,7 +1627,7 @@ pub static SCROLL_OF_SLOW: Item = Item {
 pub static SCROLL_OF_STINKING_CLOUD: Item = Item {
     name: "Scroll of Stinking Cloud",
     glyph: 'c',
-    on_use: Some(&crate::actions::item_actions::READ_STINKING_CLOUD_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_STINKING_CLOUD_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1629,7 +1641,7 @@ pub static SCROLL_OF_STINKING_CLOUD: Item = Item {
 pub static SCROLL_OF_DEATH_WARD: Item = Item {
     name: "Scroll of Death Ward",
     glyph: 'W',
-    on_use: Some(&crate::actions::item_actions::READ_DEATH_WARD_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_DEATH_WARD_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1642,7 +1654,7 @@ pub static SCROLL_OF_DEATH_WARD: Item = Item {
 pub static SCROLL_OF_AID: Item = Item {
     name: "Scroll of Aid",
     glyph: 'A',
-    on_use: Some(&crate::actions::item_actions::READ_AID_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_AID_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1655,7 +1667,7 @@ pub static SCROLL_OF_AID: Item = Item {
 pub static WAND_OF_BINDING: Item = Item {
     name: "Wand of Binding",
     glyph: 'B',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_BINDING),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_BINDING],
     ..Item::DEFAULTS
 };
 
@@ -1668,7 +1680,7 @@ pub static WAND_OF_BINDING: Item = Item {
 pub static SCROLL_OF_BANISHMENT: Item = Item {
     name: "Scroll of Banishment",
     glyph: 'X',
-    on_use: Some(&crate::actions::item_actions::READ_BANISHMENT_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BANISHMENT_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1682,7 +1694,7 @@ pub static SCROLL_OF_BANISHMENT: Item = Item {
 pub static SCROLL_OF_FEAR: Item = Item {
     name: "Scroll of Fear",
     glyph: 'r',
-    on_use: Some(&crate::actions::item_actions::READ_FEAR_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FEAR_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1696,7 +1708,7 @@ pub static SCROLL_OF_FEAR: Item = Item {
 pub static SCROLL_OF_CHARM_PERSON: Item = Item {
     name: "Scroll of Charm Person",
     glyph: 'p',
-    on_use: Some(&crate::actions::item_actions::READ_CHARM_PERSON_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CHARM_PERSON_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1710,7 +1722,7 @@ pub static SCROLL_OF_CHARM_PERSON: Item = Item {
 pub static WAND_OF_CHARM_MONSTER: Item = Item {
     name: "Wand of Charm Monster",
     glyph: 'm',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_CHARM_MONSTER),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_CHARM_MONSTER],
     ..Item::DEFAULTS
 };
 
@@ -1723,7 +1735,7 @@ pub static WAND_OF_CHARM_MONSTER: Item = Item {
 pub static SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER: Item = Item {
     name: "Scroll of Tasha's Hideous Laughter",
     glyph: 'L',
-    on_use: Some(&crate::actions::item_actions::READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1739,7 +1751,7 @@ pub static SCROLL_OF_TASHAS_HIDEOUS_LAUGHTER: Item = Item {
 pub static SCROLL_OF_HEAT_METAL: Item = Item {
     name: "Scroll of Heat Metal",
     glyph: 'h',
-    on_use: Some(&crate::actions::item_actions::READ_HEAT_METAL_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HEAT_METAL_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1753,7 +1765,7 @@ pub static SCROLL_OF_HEAT_METAL: Item = Item {
 pub static SCROLL_OF_ICE_STORM: Item = Item {
     name: "Scroll of Ice Storm",
     glyph: 'I',
-    on_use: Some(&crate::actions::item_actions::READ_ICE_STORM_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_ICE_STORM_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1765,7 +1777,7 @@ pub static SCROLL_OF_ICE_STORM: Item = Item {
 pub static SCROLL_OF_WEB: Item = Item {
     name: "Scroll of Web",
     glyph: 'W',
-    on_use: Some(&crate::actions::item_actions::READ_WEB_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_WEB_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1780,7 +1792,7 @@ pub static SCROLL_OF_WEB: Item = Item {
 pub static POTION_OF_RESISTANCE: Item = Item {
     name: "Potion of Resistance",
     glyph: 'R',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_RESISTANCE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_RESISTANCE],
     ..Item::DEFAULTS
 };
 
@@ -1793,7 +1805,7 @@ pub static POTION_OF_RESISTANCE: Item = Item {
 pub static POTION_OF_VIGILANCE: Item = Item {
     name: "Potion of Vigilance",
     glyph: 'v',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_VIGILANCE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_VIGILANCE],
     ..Item::DEFAULTS
 };
 
@@ -1807,7 +1819,7 @@ pub static POTION_OF_VIGILANCE: Item = Item {
 pub static NECKLACE_OF_FIREBALLS: Item = Item {
     name: "Necklace of Fireballs",
     glyph: 'N',
-    on_use: Some(&crate::actions::item_actions::USE_NECKLACE_OF_FIREBALLS),
+    on_use: &[&crate::actions::item_actions::USE_NECKLACE_OF_FIREBALLS],
     ..Item::DEFAULTS
 };
 
@@ -1821,7 +1833,7 @@ pub static NECKLACE_OF_FIREBALLS: Item = Item {
 pub static DUST_OF_DISAPPEARANCE: Item = Item {
     name: "Dust of Disappearance",
     glyph: 'd',
-    on_use: Some(&crate::actions::item_actions::USE_DUST_OF_DISAPPEARANCE),
+    on_use: &[&crate::actions::item_actions::USE_DUST_OF_DISAPPEARANCE],
     ..Item::DEFAULTS
 };
 
@@ -1836,7 +1848,7 @@ pub static DUST_OF_DISAPPEARANCE: Item = Item {
 pub static WAND_OF_SUGGESTION: Item = Item {
     name: "Wand of Suggestion",
     glyph: 'u',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_SUGGESTION),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_SUGGESTION],
     ..Item::DEFAULTS
 };
 
@@ -1851,7 +1863,7 @@ pub static WAND_OF_SUGGESTION: Item = Item {
 pub static SCROLL_OF_CALM_EMOTIONS: Item = Item {
     name: "Scroll of Calm Emotions",
     glyph: 's',
-    on_use: Some(&crate::actions::item_actions::READ_CALM_EMOTIONS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CALM_EMOTIONS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1865,7 +1877,7 @@ pub static SCROLL_OF_CALM_EMOTIONS: Item = Item {
 pub static WAND_OF_BLINDNESS: Item = Item {
     name: "Wand of Blindness",
     glyph: 'b',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_BLINDNESS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_BLINDNESS],
     ..Item::DEFAULTS
 };
 
@@ -1881,7 +1893,7 @@ pub static WAND_OF_BLINDNESS: Item = Item {
 pub static SCROLL_OF_MASS_CURE_WOUNDS: Item = Item {
     name: "Scroll of Mass Cure Wounds",
     glyph: 'X',
-    on_use: Some(&crate::actions::item_actions::READ_MASS_CURE_WOUNDS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MASS_CURE_WOUNDS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1927,7 +1939,7 @@ pub static CLOAK_OF_ELVENKIND: Item = Item {
 pub static RING_OF_SPELL_STORING: Item = Item {
     name: "Ring of Spell Storing",
     glyph: 'S',
-    on_use: Some(&crate::actions::item_actions::USE_RING_OF_SPELL_STORING),
+    on_use: &[&crate::actions::item_actions::USE_RING_OF_SPELL_STORING],
     ..Item::DEFAULTS
 };
 
@@ -1941,7 +1953,7 @@ pub static RING_OF_SPELL_STORING: Item = Item {
 pub static SCROLL_OF_CLOUDKILL: Item = Item {
     name: "Scroll of Cloudkill",
     glyph: 'C',
-    on_use: Some(&crate::actions::item_actions::READ_CLOUDKILL_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CLOUDKILL_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1955,7 +1967,7 @@ pub static SCROLL_OF_CLOUDKILL: Item = Item {
 pub static SCROLL_OF_PRAYER_OF_HEALING: Item = Item {
     name: "Scroll of Prayer of Healing",
     glyph: 'P',
-    on_use: Some(&crate::actions::item_actions::READ_PRAYER_OF_HEALING_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_PRAYER_OF_HEALING_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1968,7 +1980,7 @@ pub static SCROLL_OF_PRAYER_OF_HEALING: Item = Item {
 pub static SCROLL_OF_GREATER_CURE_WOUNDS: Item = Item {
     name: "Scroll of Greater Cure Wounds",
     glyph: 'g',
-    on_use: Some(&crate::actions::item_actions::READ_GREATER_CURE_WOUNDS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_GREATER_CURE_WOUNDS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -1981,7 +1993,7 @@ pub static SCROLL_OF_GREATER_CURE_WOUNDS: Item = Item {
 pub static POTION_OF_HASTE: Item = Item {
     name: "Potion of Haste",
     glyph: 'H',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_HASTE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_HASTE],
     ..Item::DEFAULTS
 };
 
@@ -1995,7 +2007,7 @@ pub static POTION_OF_HASTE: Item = Item {
 pub static SCROLL_OF_FLESH_TO_STONE: Item = Item {
     name: "Scroll of Flesh to Stone",
     glyph: 'F',
-    on_use: Some(&crate::actions::item_actions::READ_FLESH_TO_STONE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FLESH_TO_STONE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2006,7 +2018,7 @@ pub static SCROLL_OF_FLESH_TO_STONE: Item = Item {
 pub static SCROLL_OF_SYNAPTIC_STATIC: Item = Item {
     name: "Scroll of Synaptic Static",
     glyph: 'y',
-    on_use: Some(&crate::actions::item_actions::READ_SYNAPTIC_STATIC_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SYNAPTIC_STATIC_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2018,7 +2030,7 @@ pub static SCROLL_OF_SYNAPTIC_STATIC: Item = Item {
 pub static SCROLL_OF_CIRCLE_OF_DEATH: Item = Item {
     name: "Scroll of Circle of Death",
     glyph: 'O',
-    on_use: Some(&crate::actions::item_actions::READ_CIRCLE_OF_DEATH_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CIRCLE_OF_DEATH_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2031,7 +2043,7 @@ pub static SCROLL_OF_CIRCLE_OF_DEATH: Item = Item {
 pub static POTION_OF_MIND_BLANK: Item = Item {
     name: "Potion of Mind Blank",
     glyph: 'M',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_MIND_BLANK),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_MIND_BLANK],
     ..Item::DEFAULTS
 };
 
@@ -2043,7 +2055,7 @@ pub static POTION_OF_MIND_BLANK: Item = Item {
 pub static SCROLL_OF_DISINTEGRATE: Item = Item {
     name: "Scroll of Disintegrate",
     glyph: 'D',
-    on_use: Some(&crate::actions::item_actions::READ_DISINTEGRATE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_DISINTEGRATE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2057,7 +2069,7 @@ pub static SCROLL_OF_DISINTEGRATE: Item = Item {
 pub static SCROLL_OF_FINGER_OF_DEATH: Item = Item {
     name: "Scroll of Finger of Death",
     glyph: 'X',
-    on_use: Some(&crate::actions::item_actions::READ_FINGER_OF_DEATH_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FINGER_OF_DEATH_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2069,7 +2081,7 @@ pub static SCROLL_OF_FINGER_OF_DEATH: Item = Item {
 pub static WAND_OF_HOLD_MONSTER: Item = Item {
     name: "Wand of Hold Monster",
     glyph: '!',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_HOLD_MONSTER),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_HOLD_MONSTER],
     ..Item::DEFAULTS
 };
 
@@ -2084,7 +2096,7 @@ pub static WAND_OF_HOLD_MONSTER: Item = Item {
 pub static POTION_OF_FORESIGHT: Item = Item {
     name: "Potion of Foresight",
     glyph: 'F',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_FORESIGHT),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_FORESIGHT],
     ..Item::DEFAULTS
 };
 
@@ -2098,7 +2110,7 @@ pub static POTION_OF_FORESIGHT: Item = Item {
 pub static NECKLACE_OF_PRAYER_BEADS: Item = Item {
     name: "Necklace of Prayer Beads",
     glyph: 'p',
-    on_use: Some(&crate::actions::item_actions::USE_NECKLACE_OF_PRAYER_BEADS),
+    on_use: &[&crate::actions::item_actions::USE_NECKLACE_OF_PRAYER_BEADS],
     ..Item::DEFAULTS
 };
 
@@ -2111,7 +2123,7 @@ pub static NECKLACE_OF_PRAYER_BEADS: Item = Item {
 pub static SCROLL_OF_HEAL: Item = Item {
     name: "Scroll of Heal",
     glyph: 'h',
-    on_use: Some(&crate::actions::item_actions::READ_HEAL_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HEAL_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2125,7 +2137,7 @@ pub static SCROLL_OF_HEAL: Item = Item {
 pub static SCROLL_OF_PHANTASMAL_KILLER: Item = Item {
     name: "Scroll of Phantasmal Killer",
     glyph: 'K',
-    on_use: Some(&crate::actions::item_actions::READ_PHANTASMAL_KILLER_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_PHANTASMAL_KILLER_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2139,7 +2151,7 @@ pub static SCROLL_OF_PHANTASMAL_KILLER: Item = Item {
 pub static POTION_OF_MIRROR_IMAGE: Item = Item {
     name: "Potion of Mirror Image",
     glyph: 'i',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_MIRROR_IMAGE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_MIRROR_IMAGE],
     ..Item::DEFAULTS
 };
 
@@ -2229,7 +2241,7 @@ pub static PERIAPT_OF_MIND_BLOCKING: Item = Item {
 pub static SCROLL_OF_HELLISH_REBUKE: Item = Item {
     name: "Scroll of Hellish Rebuke",
     glyph: 'h',
-    on_use: Some(&crate::actions::item_actions::READ_HELLISH_REBUKE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HELLISH_REBUKE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2242,7 +2254,7 @@ pub static SCROLL_OF_HELLISH_REBUKE: Item = Item {
 pub static WAND_OF_MIND_SPIKE: Item = Item {
     name: "Wand of Mind Spike",
     glyph: 'X',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MIND_SPIKE),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_MIND_SPIKE],
     ..Item::DEFAULTS
 };
 
@@ -2256,7 +2268,7 @@ pub static WAND_OF_MIND_SPIKE: Item = Item {
 pub static EYES_OF_CHARMING: Item = Item {
     name: "Eyes of Charming",
     glyph: 'e',
-    on_use: Some(&crate::actions::item_actions::USE_EYES_OF_CHARMING),
+    on_use: &[&crate::actions::item_actions::USE_EYES_OF_CHARMING],
     ..Item::DEFAULTS
 };
 
@@ -2269,7 +2281,7 @@ pub static EYES_OF_CHARMING: Item = Item {
 pub static GEM_OF_BRIGHTNESS: Item = Item {
     name: "Gem of Brightness",
     glyph: 'G',
-    on_use: Some(&crate::actions::item_actions::USE_GEM_OF_BRIGHTNESS),
+    on_use: &[&crate::actions::item_actions::USE_GEM_OF_BRIGHTNESS],
     ..Item::DEFAULTS
 };
 
@@ -2284,7 +2296,7 @@ pub static GEM_OF_BRIGHTNESS: Item = Item {
 pub static SCROLL_OF_RESILIENT_SPHERE: Item = Item {
     name: "Scroll of Resilient Sphere",
     glyph: 'O',
-    on_use: Some(&crate::actions::item_actions::READ_RESILIENT_SPHERE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_RESILIENT_SPHERE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2298,7 +2310,7 @@ pub static SCROLL_OF_RESILIENT_SPHERE: Item = Item {
 pub static SCROLL_OF_TELEKINESIS: Item = Item {
     name: "Scroll of Telekinesis",
     glyph: 'T',
-    on_use: Some(&crate::actions::item_actions::READ_TELEKINESIS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_TELEKINESIS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2310,7 +2322,7 @@ pub static SCROLL_OF_TELEKINESIS: Item = Item {
 pub static WAND_OF_TELEKINESIS: Item = Item {
     name: "Wand of Telekinesis",
     glyph: 'K',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_TELEKINESIS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_TELEKINESIS],
     ..Item::DEFAULTS
 };
 
@@ -2325,7 +2337,7 @@ pub static WAND_OF_TELEKINESIS: Item = Item {
 pub static SCROLL_OF_EARTHEN_GRASP: Item = Item {
     name: "Scroll of Earthen Grasp",
     glyph: 'E',
-    on_use: Some(&crate::actions::item_actions::READ_EARTHEN_GRASP_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_EARTHEN_GRASP_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2339,7 +2351,7 @@ pub static SCROLL_OF_EARTHEN_GRASP: Item = Item {
 pub static SCROLL_OF_SLEEP: Item = Item {
     name: "Scroll of Sleep",
     glyph: 'Z',
-    on_use: Some(&crate::actions::item_actions::READ_SLEEP_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SLEEP_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2353,7 +2365,7 @@ pub static SCROLL_OF_SLEEP: Item = Item {
 pub static SCROLL_OF_SACRED_FLAME: Item = Item {
     name: "Scroll of Sacred Flame",
     glyph: 'r',
-    on_use: Some(&crate::actions::item_actions::READ_SACRED_FLAME_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SACRED_FLAME_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2366,7 +2378,7 @@ pub static SCROLL_OF_SACRED_FLAME: Item = Item {
 pub static SCROLL_OF_MIND_SLIVER: Item = Item {
     name: "Scroll of Mind Sliver",
     glyph: 'y',
-    on_use: Some(&crate::actions::item_actions::READ_MIND_SLIVER_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MIND_SLIVER_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2380,7 +2392,7 @@ pub static SCROLL_OF_MIND_SLIVER: Item = Item {
 pub static SCROLL_OF_MOONBEAM: Item = Item {
     name: "Scroll of Moonbeam",
     glyph: 'm',
-    on_use: Some(&crate::actions::item_actions::READ_MOONBEAM_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MOONBEAM_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2394,7 +2406,7 @@ pub static SCROLL_OF_MOONBEAM: Item = Item {
 pub static SCROLL_OF_GUIDING_BOLT: Item = Item {
     name: "Scroll of Guiding Bolt",
     glyph: 'g',
-    on_use: Some(&crate::actions::item_actions::READ_GUIDING_BOLT_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_GUIDING_BOLT_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2406,7 +2418,7 @@ pub static SCROLL_OF_GUIDING_BOLT: Item = Item {
 pub static SCROLL_OF_ENHANCE_ABILITY: Item = Item {
     name: "Scroll of Enhance Ability",
     glyph: 'e',
-    on_use: Some(&crate::actions::item_actions::READ_ENHANCE_ABILITY_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_ENHANCE_ABILITY_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2419,7 +2431,7 @@ pub static SCROLL_OF_ENHANCE_ABILITY: Item = Item {
 pub static SCROLL_OF_BLINK: Item = Item {
     name: "Scroll of Blink",
     glyph: 'k',
-    on_use: Some(&crate::actions::item_actions::READ_BLINK_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BLINK_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2431,7 +2443,7 @@ pub static SCROLL_OF_BLINK: Item = Item {
 pub static SCROLL_OF_CONTAGION: Item = Item {
     name: "Scroll of Contagion",
     glyph: 'X',
-    on_use: Some(&crate::actions::item_actions::READ_CONTAGION_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CONTAGION_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2443,7 +2455,7 @@ pub static SCROLL_OF_CONTAGION: Item = Item {
 pub static SCROLL_OF_SPIDER_CLIMB: Item = Item {
     name: "Scroll of Spider Climb",
     glyph: 'C',
-    on_use: Some(&crate::actions::item_actions::READ_SPIDER_CLIMB_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SPIDER_CLIMB_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2455,7 +2467,7 @@ pub static SCROLL_OF_SPIDER_CLIMB: Item = Item {
 pub static SCROLL_OF_HEROISM: Item = Item {
     name: "Scroll of Heroism",
     glyph: 'H',
-    on_use: Some(&crate::actions::item_actions::READ_HEROISM_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_HEROISM_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2466,7 +2478,7 @@ pub static SCROLL_OF_HEROISM: Item = Item {
 pub static WAND_OF_BLESS: Item = Item {
     name: "Wand of Bless",
     glyph: 'b',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_BLESS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_BLESS],
     ..Item::DEFAULTS
 };
 
@@ -2477,7 +2489,7 @@ pub static WAND_OF_BLESS: Item = Item {
 pub static NECKLACE_OF_LIGHTNING_BOLTS: Item = Item {
     name: "Necklace of Lightning Bolts",
     glyph: 'N',
-    on_use: Some(&crate::actions::item_actions::USE_NECKLACE_OF_LIGHTNING_BOLTS),
+    on_use: &[&crate::actions::item_actions::USE_NECKLACE_OF_LIGHTNING_BOLTS],
     ..Item::DEFAULTS
 };
 
@@ -2490,7 +2502,7 @@ pub static NECKLACE_OF_LIGHTNING_BOLTS: Item = Item {
 pub static SCROLL_OF_MIND_BLANK: Item = Item {
     name: "Scroll of Mind Blank",
     glyph: 'M',
-    on_use: Some(&crate::actions::item_actions::READ_MIND_BLANK_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MIND_BLANK_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2505,7 +2517,7 @@ pub static SCROLL_OF_MIND_BLANK: Item = Item {
 pub static SCROLL_OF_MASS_BLESS: Item = Item {
     name: "Scroll of Mass Bless",
     glyph: '1',
-    on_use: Some(&crate::actions::item_actions::READ_MASS_BLESS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MASS_BLESS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2520,7 +2532,7 @@ pub static SCROLL_OF_MASS_BLESS: Item = Item {
 pub static BANNER_OF_VALOR: Item = Item {
     name: "Banner of Valor",
     glyph: '2',
-    on_use: Some(&crate::actions::item_actions::USE_BANNER_OF_VALOR),
+    on_use: &[&crate::actions::item_actions::USE_BANNER_OF_VALOR],
     ..Item::DEFAULTS
 };
 
@@ -2534,7 +2546,7 @@ pub static BANNER_OF_VALOR: Item = Item {
 pub static DRUM_OF_INSPIRATION: Item = Item {
     name: "Drum of Inspiration",
     glyph: '3',
-    on_use: Some(&crate::actions::item_actions::USE_DRUM_OF_INSPIRATION),
+    on_use: &[&crate::actions::item_actions::USE_DRUM_OF_INSPIRATION],
     ..Item::DEFAULTS
 };
 
@@ -2548,7 +2560,7 @@ pub static DRUM_OF_INSPIRATION: Item = Item {
 pub static WAND_OF_STUNNING: Item = Item {
     name: "Wand of Stunning",
     glyph: '4',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_STUNNING),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_STUNNING],
     ..Item::DEFAULTS
 };
 
@@ -2561,7 +2573,7 @@ pub static WAND_OF_STUNNING: Item = Item {
 pub static IRON_BANDS_OF_BILARRO: Item = Item {
     name: "Iron Bands of Bilarro",
     glyph: '5',
-    on_use: Some(&crate::actions::item_actions::USE_IRON_BANDS_OF_BILARRO),
+    on_use: &[&crate::actions::item_actions::USE_IRON_BANDS_OF_BILARRO],
     ..Item::DEFAULTS
 };
 
@@ -2574,7 +2586,7 @@ pub static IRON_BANDS_OF_BILARRO: Item = Item {
 pub static SCROLL_OF_SANCTUARY: Item = Item {
     name: "Scroll of Sanctuary",
     glyph: '6',
-    on_use: Some(&crate::actions::item_actions::READ_SANCTUARY_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_SANCTUARY_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2587,7 +2599,7 @@ pub static SCROLL_OF_SANCTUARY: Item = Item {
 pub static WAND_OF_MASS_CURE_WOUNDS: Item = Item {
     name: "Wand of Mass Cure Wounds",
     glyph: '7',
-    on_use: Some(&crate::actions::item_actions::USE_WAND_OF_MASS_CURE_WOUNDS),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_MASS_CURE_WOUNDS],
     ..Item::DEFAULTS
 };
 
@@ -2601,7 +2613,7 @@ pub static WAND_OF_MASS_CURE_WOUNDS: Item = Item {
 pub static SCROLL_OF_CRUSADERS_MANTLE: Item = Item {
     name: "Scroll of Crusader's Mantle",
     glyph: '8',
-    on_use: Some(&crate::actions::item_actions::READ_CRUSADERS_MANTLE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CRUSADERS_MANTLE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2612,7 +2624,7 @@ pub static SCROLL_OF_CRUSADERS_MANTLE: Item = Item {
 pub static SCROLL_OF_PYROTECHNICS: Item = Item {
     name: "Scroll of Pyrotechnics",
     glyph: '9',
-    on_use: Some(&crate::actions::item_actions::READ_PYROTECHNICS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_PYROTECHNICS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2625,7 +2637,7 @@ pub static SCROLL_OF_PYROTECHNICS: Item = Item {
 pub static SCROLL_OF_FLAME_ARROWS: Item = Item {
     name: "Scroll of Flame Arrows",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_FLAME_ARROWS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FLAME_ARROWS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2638,7 +2650,7 @@ pub static SCROLL_OF_FLAME_ARROWS: Item = Item {
 pub static POTION_OF_ASHARDALONS_STRIDE: Item = Item {
     name: "Potion of Ashardalon's Stride",
     glyph: 'a',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_ASHARDALONS_STRIDE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_ASHARDALONS_STRIDE],
     ..Item::DEFAULTS
 };
 
@@ -2652,7 +2664,7 @@ pub static POTION_OF_ASHARDALONS_STRIDE: Item = Item {
 pub static POTION_OF_OTHERWORLDLY_GUISE: Item = Item {
     name: "Potion of Otherworldly Guise",
     glyph: 'O',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_OTHERWORLDLY_GUISE),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_OTHERWORLDLY_GUISE],
     ..Item::DEFAULTS
 };
 
@@ -2666,7 +2678,7 @@ pub static POTION_OF_OTHERWORLDLY_GUISE: Item = Item {
 pub static HORN_OF_BLASTING: Item = Item {
     name: "Horn of Blasting",
     glyph: 'H',
-    on_use: Some(&crate::actions::item_actions::BLOW_HORN_OF_BLASTING),
+    on_use: &[&crate::actions::item_actions::BLOW_HORN_OF_BLASTING],
     ..Item::DEFAULTS
 };
 
@@ -2679,7 +2691,7 @@ pub static HORN_OF_BLASTING: Item = Item {
 pub static JAVELIN_OF_LIGHTNING: Item = Item {
     name: "Javelin of Lightning",
     glyph: 'J',
-    on_use: Some(&crate::actions::item_actions::THROW_JAVELIN_OF_LIGHTNING),
+    on_use: &[&crate::actions::item_actions::THROW_JAVELIN_OF_LIGHTNING],
     ..Item::DEFAULTS
 };
 
@@ -2692,7 +2704,7 @@ pub static JAVELIN_OF_LIGHTNING: Item = Item {
 pub static BEAD_OF_FORCE: Item = Item {
     name: "Bead of Force",
     glyph: 'q',
-    on_use: Some(&crate::actions::item_actions::THROW_BEAD_OF_FORCE),
+    on_use: &[&crate::actions::item_actions::THROW_BEAD_OF_FORCE],
     ..Item::DEFAULTS
 };
 
@@ -2704,7 +2716,7 @@ pub static BEAD_OF_FORCE: Item = Item {
 pub static SCROLL_OF_FLY: Item = Item {
     name: "Scroll of Fly",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_FLY_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_FLY_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2715,7 +2727,7 @@ pub static SCROLL_OF_FLY: Item = Item {
 pub static SCROLL_OF_BESTOW_CURSE: Item = Item {
     name: "Scroll of Bestow Curse",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_BESTOW_CURSE_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BESTOW_CURSE_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2728,7 +2740,7 @@ pub static SCROLL_OF_BESTOW_CURSE: Item = Item {
 pub static SCROLL_OF_CONJURE_ANIMALS: Item = Item {
     name: "Scroll of Conjure Animals",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_CONJURE_ANIMALS_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_CONJURE_ANIMALS_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2743,7 +2755,7 @@ pub static SCROLL_OF_CONJURE_ANIMALS: Item = Item {
 pub static SCROLL_OF_LONGSTRIDER: Item = Item {
     name: "Scroll of Longstrider",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_LONGSTRIDER_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_LONGSTRIDER_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2757,7 +2769,7 @@ pub static SCROLL_OF_LONGSTRIDER: Item = Item {
 pub static SCROLL_OF_BARKSKIN: Item = Item {
     name: "Scroll of Barkskin",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_BARKSKIN_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_BARKSKIN_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2772,7 +2784,7 @@ pub static SCROLL_OF_BARKSKIN: Item = Item {
 pub static SCROLL_OF_MAGNIFY_GRAVITY: Item = Item {
     name: "Scroll of Magnify Gravity",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_MAGNIFY_GRAVITY_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_MAGNIFY_GRAVITY_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2787,7 +2799,7 @@ pub static SCROLL_OF_MAGNIFY_GRAVITY: Item = Item {
 pub static SCROLL_OF_ELEMENTAL_WEAPON: Item = Item {
     name: "Scroll of Elemental Weapon",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_ELEMENTAL_WEAPON_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_ELEMENTAL_WEAPON_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2801,7 +2813,7 @@ pub static SCROLL_OF_ELEMENTAL_WEAPON: Item = Item {
 pub static SCROLL_OF_TRUE_SEEING: Item = Item {
     name: "Scroll of True Seeing",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_TRUE_SEEING_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_TRUE_SEEING_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2817,7 +2829,7 @@ pub static SCROLL_OF_TRUE_SEEING: Item = Item {
 pub static SCROLL_OF_PROTECTION_FROM_POISON: Item = Item {
     name: "Scroll of Protection from Poison",
     glyph: '0',
-    on_use: Some(&crate::actions::item_actions::READ_PROTECTION_FROM_POISON_SCROLL),
+    on_use: &[&crate::actions::item_actions::READ_PROTECTION_FROM_POISON_SCROLL],
     ..Item::DEFAULTS
 };
 
@@ -2914,7 +2926,7 @@ pub static SUN_BLADE: Item = Item {
         ..ItemBonuses::ZERO
     },
     grants_magical_attacks: true,
-    on_use: Some(&crate::actions::item_actions::DRAW_SUN_BLADE),
+    on_use: &[&crate::actions::item_actions::DRAW_SUN_BLADE],
     ..Item::DEFAULTS
 };
 
@@ -2954,7 +2966,7 @@ pub static FLAME_TONGUE: Item = Item {
     name: "Flame Tongue",
     glyph: 'f',
     grants_magical_attacks: true,
-    on_use: Some(&crate::actions::item_actions::LIGHT_FLAME_TONGUE),
+    on_use: &[&crate::actions::item_actions::LIGHT_FLAME_TONGUE],
     ..Item::DEFAULTS
 };
 
@@ -3175,7 +3187,7 @@ pub static WEAPON_OF_WARNING: Item = Item {
 pub static POTION_OF_VITALITY: Item = Item {
     name: "Potion of Vitality",
     glyph: 'v',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_VITALITY),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_VITALITY],
     ..Item::DEFAULTS
 };
 
@@ -3186,7 +3198,7 @@ pub static POTION_OF_VITALITY: Item = Item {
 pub static POTION_OF_WATER_BREATHING: Item = Item {
     name: "Potion of Water Breathing",
     glyph: 'w',
-    on_use: Some(&crate::actions::item_actions::DRINK_POTION_OF_WATER_BREATHING),
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_WATER_BREATHING],
     ..Item::DEFAULTS
 };
 
@@ -3267,7 +3279,7 @@ pub static RING_OF_WATER_WALKING: Item = Item {
 pub static GEM_OF_SEEING: Item = Item {
     name: "Gem of Seeing",
     glyph: '*',
-    on_use: Some(&crate::actions::item_actions::USE_GEM_OF_SEEING),
+    on_use: &[&crate::actions::item_actions::USE_GEM_OF_SEEING],
     ..Item::DEFAULTS
 };
 
@@ -4102,7 +4114,7 @@ mod tests {
                     item.name
                 );
                 assert!(
-                    item.on_use.is_some(),
+                    !item.on_use.is_empty(),
                     "{} arrives switched off and has no way to switch on",
                     item.name
                 );

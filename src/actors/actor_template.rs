@@ -7190,16 +7190,21 @@ impl ActorInstance {
         }
     }
 
-    /// Base actions plus one entry per unique consumable item the actor
-    /// is carrying (deduped by item name).
+    /// Base actions plus everything the carried items offer, deduped by
+    /// item name.
+    ///
+    /// The dedupe is per *item*, not per action: two Potions of Healing
+    /// are one row on the picker, and a staff that offers three spells
+    /// contributes all three of them once. Carrying a second copy of the
+    /// staff adds nothing, which is right — the charges pool by name
+    /// (see `pickup_item`), so the second stick is more fuel behind the
+    /// same three rows rather than three more rows.
     pub fn available_actions(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
         let mut out = self.actions.clone();
         let mut seen: HashSet<&'static str> = HashSet::new();
         for item in &self.items {
-            if let Some(action) = item.on_use
-                && seen.insert(item.name)
-            {
-                out.push(action);
+            if !item.on_use.is_empty() && seen.insert(item.name) {
+                out.extend(item.on_use.iter().copied());
             }
         }
         out

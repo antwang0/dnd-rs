@@ -21196,33 +21196,32 @@ mod tests {
         use crate::items::item_template::{LOOT_POOL, MAGIC_ARMOURY};
 
         for item in MAGIC_ARMOURY {
-            let Some(action) = item.on_use else {
-                continue;
-            };
-            assert!(
-                KINDLED_WEAPONS
-                    .iter()
-                    .any(|(known, _)| *known == action.name()),
-                "{} is drawn with `{}` and the AI has never heard of it",
-                item.name,
-                action.name()
-            );
+            for action in item.on_use {
+                assert!(
+                    KINDLED_WEAPONS
+                        .iter()
+                        .any(|(known, _)| *known == action.name()),
+                    "{} is drawn with `{}` and the AI has never heard of it",
+                    item.name,
+                    action.name()
+                );
+            }
         }
         // And the other direction: a row naming an action nothing ships
         // is a rung that can never fire.
         for (name, marker) in KINDLED_WEAPONS {
             let backing = MAGIC_ARMOURY
                 .iter()
-                .filter_map(|item| item.on_use)
+                .flat_map(|item| item.on_use.iter())
                 .any(|action| action.name() == *name);
             assert!(
                 backing,
                 "{name} is on the AI's list and no item in the armoury offers it"
             );
             assert!(
-                LOOT_POOL.iter().any(|item| item
-                    .on_use
-                    .is_some_and(|action| action.name() == *name)),
+                LOOT_POOL
+                    .iter()
+                    .any(|item| item.on_use.iter().any(|action| action.name() == *name)),
                 "{name} is wired end to end and nobody can find the weapon"
             );
             // The marker column has to be the one the blade actually
