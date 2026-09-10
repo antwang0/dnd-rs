@@ -96516,3 +96516,156 @@ fn a_caster_with_no_swing_cannot_charge_the_staff_of_striking() {
         "a shrieker has no attack at all and nothing to spend the charges on"
     );
 }
+
+/// Flash of Genius rescues an ability check, which is half of what RAW
+/// says it does and used to be none of it.
+///
+/// The artificer's reaction reads *"whenever you or another creature you
+/// can see within 30 feet of you makes an ability check or a saving
+/// throw"*, and only the save half was wired — under a docstring saying
+/// the check half could not be, because "this engine rolls saves, not
+/// checks". A Shove is a Strength (Athletics) check contested by the
+/// target's, which is two of them, and the loser of a contest is a
+/// creature who just failed an ability check.
+///
+/// Swept across seeds because the rescue only fires on a contest the
+/// artificer's +4 can actually turn: both directions are asserted on the
+/// seeds that produce them, and the sweep fails if neither ever does.
+#[test]
+fn an_artificer_can_flash_of_genius_a_failed_contest() {
+    use crate::actions::class_features::FLASH_OF_GENIUS_TAG;
+    use crate::actors::creatures::artificers::ARTIFICER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::types::Skill;
+
+    const ATHLETICS: &[(AbilityScoreType, Skill)] =
+        &[(AbilityScoreType::Strength, Skill::Athletics)];
+
+    let mut rescued = false;
+    let mut lost_anyway = false;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let artificer = e
+            .instantiate_creature(&ARTIFICER_TEMPLATE, Coordinate::new(5, 4), 0, 1)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+            .unwrap();
+        assert!(e.actors[&artificer].has_passive_feature(FLASH_OF_GENIUS_TAG));
+
+        let before = e.messages().len();
+        let won = e.roll_contest("shove", fighter, ATHLETICS, ogre, ATHLETICS);
+        let flashed = e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("flash of genius"));
+        if flashed {
+            assert!(
+                won,
+                "seed {seed}: the charge was spent and the contest still went the other way"
+            );
+            assert!(
+                !e.actors[&artificer]
+                    .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+                "seed {seed}: the rescue is a reaction and should have cost one"
+            );
+            rescued = true;
+        } else if !won {
+            // The gap was wider than +4, so the charge stays in hand —
+            // which is the other half of the rule and the reason the
+            // shortfall gate exists.
+            assert!(
+                e.actors[&artificer]
+                    .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+                "seed {seed}: a rescue that could not reach should not have been paid for"
+            );
+            lost_anyway = true;
+        }
+        if rescued && lost_anyway {
+            break;
+        }
+    }
+    assert!(rescued, "sixty seeds and the check half never fired");
+    assert!(
+        lost_anyway,
+        "sixty seeds and the artificer never once held the charge — the \
+         shortfall gate is not gating"
+    );
+}
+
+/// The Astral Self monk rolls Strength off Wisdom while the arms are up,
+/// and off Strength when they are not.
+///
+/// SRD 5.2's *"you can use your Wisdom modifier in place of your Strength
+/// modifier when making Strength checks and Strength saving throws"* —
+/// the clause `ASTRAL_ARMS_STRIKE`'s docstring called unmodelable
+/// because "the engine rolls no ability checks". It rolls plenty: a
+/// Shove is a Strength (Athletics) contest, and a monk with Wisdom 18
+/// and Strength 12 being hard to shove is what the sentence buys.
+///
+/// Four assertions, because the clause is scoped four ways and getting
+/// any of them wrong looks like the feature working: it moves Strength,
+/// it moves saves as well as checks, it leaves the other five abilities
+/// alone, and it leaves the monk's own spell save DC alone.
+#[test]
+fn the_astral_arms_lend_a_monk_their_wisdom_on_strength_and_nowhere_else() {
+    use crate::actions::class_features::ARMS_OF_THE_ASTRAL_SELF;
+    use crate::actors::creatures::monks::ASTRAL_SELF_MONK_TEMPLATE;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let monk = e
+        .instantiate_creature(&ASTRAL_SELF_MONK_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let str_mod = e.actors[&monk].ability_modifier(AbilityScoreType::Strength);
+    let wis_mod = e.actors[&monk].ability_modifier(AbilityScoreType::Wisdom);
+    assert!(
+        wis_mod > str_mod,
+        "the chassis has to put its best number in Wisdom for this to be \
+         testable at all (STR {str_mod}, WIS {wis_mod})"
+    );
+    let dc_before = e.actors[&monk].spell_save_dc(AbilityScoreType::Wisdom);
+    let save_before = e.actors[&monk].save_modifier(AbilityScoreType::Strength);
+    assert_eq!(
+        e.actors[&monk].check_and_save_ability_modifier(AbilityScoreType::Strength),
+        str_mod,
+        "bare-armed, a monk has their own Strength"
+    );
+
+    for ef in ARMS_OF_THE_ASTRAL_SELF.execute(&mut e, monk, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&monk].has_condition(Condition::AstralArms));
+
+    let a = &e.actors[&monk];
+    assert_eq!(
+        a.check_and_save_ability_modifier(AbilityScoreType::Strength),
+        wis_mod,
+        "with the arms up, Strength checks read off Wisdom"
+    );
+    assert_eq!(
+        a.save_modifier(AbilityScoreType::Strength),
+        save_before + (wis_mod - str_mod),
+        "and so do Strength saves"
+    );
+    for ability in [
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Charisma,
+    ] {
+        assert_eq!(
+            a.check_and_save_ability_modifier(ability),
+            a.ability_modifier(ability),
+            "the arms say nothing about {ability:?}"
+        );
+    }
+    assert_eq!(
+        a.spell_save_dc(AbilityScoreType::Wisdom),
+        dc_before,
+        "the substitution is about what the monk rolls, not about what \
+         they make other creatures roll"
+    );
+}

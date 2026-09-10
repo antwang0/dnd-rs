@@ -18684,8 +18684,13 @@ pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
 /// whether it helps; holding the charge for a roll it can save is the
 /// same courtesy the add-die cohort already extends.
 ///
-/// The ability-check half of RAW has no surface — this engine rolls
-/// saves, not checks.
+/// RAW's sentence names checks as well as saves, and both halves are
+/// live: `EncounterInstance::flash_of_genius_on_check` is the other one,
+/// reached from the contest lane, where a Grapple, a Shove and an escape
+/// attempt are each two ability checks against one another. This
+/// docstring used to say the check half "has no surface — this engine
+/// rolls saves, not checks", which was true of the save site it was
+/// written beside and not of the engine.
 pub const FLASH_OF_GENIUS_TAG: &str = "artificer.flash_of_genius";
 
 /// 5e **Feather Fall** (level-1 transmutation, reaction) — carried as a

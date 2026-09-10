@@ -5546,6 +5546,33 @@ pub struct ActorInstance {
     natural_melee_reflect: Option<crate::engine::attack::MeleeReflect>,
 }
 
+/// Conditions that let their holder read one ability's modifier off a
+/// *different* ability, for checks and saving throws only.
+///
+/// `(condition, the ability being rolled, the ability to read instead)`.
+///
+/// One row today, and a table because the shape recurs in the book
+/// rather than because the engine has two of them yet: SRD 5.2 writes
+/// "you can use your X modifier in place of your Y modifier" about a
+/// handful of subclass features, and every one of them is this row with
+/// different letters.
+///
+///   - **Arms of the Astral Self** (Way of the Astral Self Monk, lv3):
+///     *"While the spectral arms are present … you can use your Wisdom
+///     modifier in place of your Strength modifier when making Strength
+///     checks and Strength saving throws."* Gated on the arms rather
+///     than on the subclass tag, which is what RAW gates it on — a monk
+///     who has not spent the bonus action is a monk with their own
+///     Strength.
+///
+/// Read only by `ActorInstance::check_and_save_ability_modifier`; see
+/// there for why attack rolls and spell save DCs are not on the list.
+const ABILITY_SUBSTITUTIONS: &[(Condition, AbilityScoreType, AbilityScoreType)] = &[(
+    Condition::AstralArms,
+    AbilityScoreType::Strength,
+    AbilityScoreType::Wisdom,
+)];
+
 impl ActorInstance {
     pub fn from_creature_template(
         ct: &'static CreatureTemplate,
@@ -7066,12 +7093,21 @@ impl ActorInstance {
     ///     point it leaves the inventory, because an item nothing can
     ///     do anything with should not keep occupying the sheet.
     ///
-    /// RAW's wands mostly *don't* crumble at zero — they sit inert
-    /// until dawn — and the difference has no surface here: the engine's
-    /// clock starts at initiative and ends with the fight, so "inert
-    /// until dawn" and "gone" are the same object for as long as anyone
-    /// can see it. Dropping it keeps `has_item_named` honest as the
-    /// gate every one of these actions validates on.
+    /// RAW's wands mostly *don't* crumble at zero — they sit inert until
+    /// dawn — and dropping one here is a deliberate divergence rather
+    /// than an absence of one. The engine does have a dawn now
+    /// (`Item::recharge`, paid at a long rest), so an emptied wand kept
+    /// in the pack would come back; what it does not have is a second
+    /// gate. `has_item_named` is what every consumable action in the
+    /// file validates on, so an inert wand still in the inventory would
+    /// read as a usable one at a dozen call sites.
+    ///
+    /// The staves are the other answer, and the reason this one is
+    /// tolerable rather than universal: they bill through
+    /// `Resource::ItemCharges` instead, which asks the ledger rather than
+    /// the inventory, so they stay in the pack at zero and refill
+    /// overnight. A wand that wanted RAW's behaviour would move to that
+    /// lane rather than change this one.
     pub fn spend_item_use(&mut self, name: &str) -> bool {
         if !self.has_item_named(name) {
             return false;
@@ -10784,6 +10820,35 @@ impl ActorInstance {
         modifier_from_score(self.ability_score(ability))
     }
 
+    /// The ability modifier this actor brings to a **check or a saving
+    /// throw** of `ability` — `ability_modifier`, with any substitution
+    /// clause the actor is currently under folded in.
+    ///
+    /// SRD 5.2 keeps one shape of clause that no accessor could express:
+    /// *"you can use your Wisdom modifier in place of your Strength
+    /// modifier when making Strength checks and Strength saving
+    /// throws."* It is not a bonus and it is not a roll mode — it swaps
+    /// which of the six numbers on the sheet is read, and only on two of
+    /// the four d20 lanes.
+    ///
+    /// **Two lanes and not four.** Attack rolls and spell save DCs go on
+    /// reading `ability_modifier` directly, because RAW's sentence names
+    /// checks and saves and stops. An Astral Self monk's own DCs are
+    /// still their own.
+    ///
+    /// **The better of the two**, because RAW says *"you can use"* — an
+    /// option nobody would decline when it helps and nobody would take
+    /// when it hurts. `fold` over `max` rather than a first-match, so a
+    /// creature under two substitution clauses at once gets the best of
+    /// them instead of whichever row is higher up the table.
+    pub fn check_and_save_ability_modifier(&self, ability: AbilityScoreType) -> i32 {
+        ABILITY_SUBSTITUTIONS
+            .iter()
+            .filter(|(condition, asked, _)| *asked == ability && self.has_condition(*condition))
+            .map(|(_, _, substitute)| self.ability_modifier(*substitute))
+            .fold(self.ability_modifier(ability), i32::max)
+    }
+
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
         8 + self.proficiency_bonus() + self.ability_modifier(ability)
     }
@@ -10813,7 +10878,7 @@ impl ActorInstance {
         } else {
             0
         };
-        self.ability_modifier(ability)
+        self.check_and_save_ability_modifier(ability)
             + prof
             + self.item_save_bonus()
             + self.save_bonus_buff()

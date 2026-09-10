@@ -8254,11 +8254,16 @@ pub static DRACONIC_STRIKE: SimpleWeapon = SimpleWeapon::melee(
 ///
 /// Force is the rarest-resisted damage type in the bestiary, which
 /// means the arms also quietly solve the skeleton / zombie /
-/// elemental matchups that a bludgeoning fist is bad at. RAW's
-/// remaining lv3 clause — Wisdom in place of Strength on Strength
-/// checks and saves — has no surface here: the engine rolls no ability
-/// checks, and a save-ability substitution would be a lane of its own
-/// for one subclass.
+/// elemental matchups that a bludgeoning fist is bad at.
+///
+/// RAW's remaining lv3 clause — Wisdom in place of Strength on Strength
+/// checks and saves — is a row on `ABILITY_SUBSTITUTIONS`, gated on
+/// `Condition::AstralArms` the way RAW gates it on the arms being up.
+/// This docstring used to say it had no surface, "the engine rolls no
+/// ability checks", which was never true: a Grapple, a Shove and an
+/// escape attempt are each a contest of two of them, and being hard to
+/// shove is most of what a monk with Wisdom 18 and Strength 12 wants
+/// out of the clause.
 pub static ASTRAL_ARMS_STRIKE: SimpleWeapon = SimpleWeapon::reach_melee(
     "astral arms",
     &["arms", "aas"],

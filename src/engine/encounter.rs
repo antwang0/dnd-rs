@@ -5765,7 +5765,41 @@ impl EncounterInstance {
         total: i32,
     ) -> Option<crate::engine::saves::SaveOutcome> {
         use crate::engine::saves::SaveOutcome;
-        let shortfall = dc - total;
+        let (helper_id, bonus) = self.flash_of_genius_rescue(actor_id, dc - total)?;
+        let helper_name = self.actor_name(helper_id);
+        self.log(format!(
+            "  flash of genius: {} adds {:+} = {} vs DC {} \u{2014} pass",
+            helper_name,
+            bonus,
+            total + bonus,
+            dc
+        ));
+        Some(SaveOutcome::Pass)
+    }
+
+    /// Find an allied artificer who can close `shortfall` with their
+    /// Intelligence modifier, spend their charge and their reaction, and
+    /// report who paid and how much.
+    ///
+    /// The lookup and the spend, with no log line and no opinion about
+    /// what was being rolled — which is what lets RAW's *"an ability
+    /// check **or** a saving throw"* be one implementation. The save
+    /// lane is `try_flash_of_genius` directly above; the check lane is
+    /// `flash_of_genius_on_check`, and a contest is two checks so it
+    /// reaches the second one twice.
+    ///
+    /// `shortfall` is what the roll is *short by* — `dc - total` on a
+    /// save, the gap to the opposing total in a contest. A value of 0 or
+    /// less would be a roll that already succeeded and is refused, so a
+    /// caller cannot burn a charge on a rescue that was not needed.
+    fn flash_of_genius_rescue(
+        &mut self,
+        actor_id: usize,
+        shortfall: i32,
+    ) -> Option<(usize, i32)> {
+        if shortfall <= 0 {
+            return None;
+        }
         let target = self.actors.get(&actor_id)?;
         let team = target.team();
         let loc = target.location();
@@ -5811,15 +5845,31 @@ impl EncounterInstance {
         let helper = self.actors.get_mut(&helper_id)?;
         helper.spend_feature(crate::actions::class_features::FLASH_OF_GENIUS_TAG);
         helper.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        Some((helper_id, bonus))
+    }
+
+    /// The ability-check half of Flash of Genius: rescue `actor_id`'s
+    /// losing check if an allied artificer's Intelligence modifier
+    /// covers `shortfall`. True when one did.
+    ///
+    /// RAW's sentence names checks and saves in one breath, and for most
+    /// of this engine's history only the save half existed — under a
+    /// docstring on `FLASH_OF_GENIUS_TAG` saying *"the ability-check
+    /// half of RAW has no surface — this engine rolls saves, not
+    /// checks."* It rolls plenty of checks: a Grapple, a Shove and an
+    /// escape attempt are all contests of two of them, and an escape
+    /// that fails by one is exactly the roll this feature is for.
+    fn flash_of_genius_on_check(&mut self, actor_id: usize, shortfall: i32, label: &str) -> bool {
+        let Some((helper_id, bonus)) = self.flash_of_genius_rescue(actor_id, shortfall) else {
+            return false;
+        };
         let helper_name = self.actor_name(helper_id);
+        let rolled_name = self.actor_name(actor_id);
         self.log(format!(
-            "  flash of genius: {} adds {:+} = {} vs DC {} \u{2014} pass",
-            helper_name,
-            bonus,
-            total + bonus,
-            dc
+            "  flash of genius: {} adds {:+} to {}'s {} \u{2014} it holds after all",
+            helper_name, bonus, rolled_name, label
         ));
-        Some(SaveOutcome::Pass)
+        true
     }
 
     /// 5e Hunter Ranger **Multiattack Defense** (Defensive Tactics
@@ -6988,8 +7038,13 @@ impl EncounterInstance {
         // SRD 5.2 exhaustion's D20 Test tax, the third and last of the
         // three sites that sum a d20's flat terms — see
         // `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
-        let modifier =
-            actor.ability_modifier(ability) + prof + rider_bonus + actor.exhaustion_d20_penalty();
+        // `check_and_save_ability_modifier`, not `ability_modifier`: an
+        // Astral Self monk with the spectral arms up rolls Strength
+        // checks off Wisdom. See `ABILITY_SUBSTITUTIONS`.
+        let modifier = actor.check_and_save_ability_modifier(ability)
+            + prof
+            + rider_bonus
+            + actor.exhaustion_d20_penalty();
         let total = raw + modifier;
         let label = match &skill {
             Some(s) => format!(" ({:?})", s),
@@ -7139,7 +7194,22 @@ impl EncounterInstance {
             defender_roll,
             if won { "wins" } else { "loses" }
         ));
-        won
+        // SRD 5.2 Artificer **Flash of Genius**, the half of its sentence
+        // that is about checks. A contest has exactly one loser and both
+        // sides are creatures making an ability check, so the rescue is
+        // offered to whichever of them came up short — the challenger
+        // who failed to break a grapple, or the grappler who failed to
+        // hold one. Ties go to the defender's side of the comparison, so
+        // an exact tie is the *defender* failing by one.
+        if won {
+            let beaten = challenger_roll + 1 - defender_roll;
+            if self.flash_of_genius_on_check(defender_id, beaten, label) {
+                return false;
+            }
+            true
+        } else {
+            self.flash_of_genius_on_check(challenger_id, defender_roll - challenger_roll, label)
+        }
     }
 
     /// Actor ids sorted ascending. Use when iteration order matters for
