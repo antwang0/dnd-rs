@@ -1770,6 +1770,25 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5h. Close for the better weapon — the mirror of rung 2, and
+        //     the half the ladder never had. Rung 2 backs an actor out
+        //     of contact when the shot beats the swing; nothing walked
+        //     one *in* when the swing beats the shot, because
+        //     focus-fire sits below here and a ranged attack reaches
+        //     from anywhere. So a chassis whose ranged option is the
+        //     worse one it happens to own never used the better one.
+        //
+        //     Above focus-fire because that is the rung it has to
+        //     out-rank to do anything at all, and below every rung that
+        //     spends a resource: a step is the cheapest thing on the
+        //     ladder and it should not pre-empt a Channel Divinity.
+        //     Its own gates are strict — both lanes annotated, melee
+        //     strictly better, nothing already in reach — so the
+        //     overwhelming majority of turns fall straight through.
+        if let Some(aei) = try_close_for_the_better_weapon(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 6. Focus-fire: pick targets with advantage > normal > disadv;
         //    tie-break by lower HP (finish wounded).
         if let Some(aei) = try_attack_focus_fire(encounter, actor_id) {
@@ -10274,6 +10293,147 @@ fn best_attack_against(
     best.map(|(_, _, _, r, _, a)| (r, a))
 }
 
+/// The best `expected_damage` this actor could get out of a melee
+/// attack **if it were standing next to something** — the number
+/// `best_damage_per_lane` cannot report, because that one asks
+/// `validate` and a sword out of reach does not validate.
+///
+/// Everything except distance is still asked. The action has to be a
+/// harmful single-target melee attack, the actor has to be able to pay
+/// for it, and the action's own `custom_validate_input` has to pass —
+/// which is what keeps a conjured weapon honest: a warlock who has not
+/// spent the bonus action on Pact of the Blade has no pact weapon, and
+/// this must not price one.
+///
+/// `None` when the actor has no annotated melee attack at all, which is
+/// most of the bestiary. Callers must read that as "no opinion" rather
+/// than as zero, the same way `best_damage_per_lane`'s slots are read.
+fn best_melee_damage_if_closed(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    target_id: usize,
+) -> Option<f32> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let mut best: Option<f32> = None;
+    for action in actor.actions.iter() {
+        if !action.is_harmful()
+            || !action.deals_damage()
+            || !action.is_melee_attack()
+            || !matches!(action.targeting_schema(), TargetingSchema::SingleActor)
+        {
+            continue;
+        }
+        let targets = vec![target_id];
+        if !action
+            .cost(encounter, actor_id, Some(&targets), None, None)
+            .into_iter()
+            .all(|r| actor.can_consume_resource(r))
+        {
+            continue;
+        }
+        if !action.custom_validate_input(encounter, actor_id, Some(&targets), None, None) {
+            continue;
+        }
+        let Some(est) = action.expected_damage(encounter, actor_id) else {
+            continue;
+        };
+        best = Some(best.map_or(est, |b: f32| b.max(est)));
+    }
+    best
+}
+
+/// Walk toward the enemy because the weapon in hand is worth more than
+/// the one at range — the mirror of the kiting rung at the top of the
+/// ladder, and the half that was missing.
+///
+/// Rung 2 asks "should I back out of contact to shoot" and answers it
+/// by comparing the two lanes. Nothing asked the opposite question, and
+/// the ladder's shape meant nothing had to: focus-fire sits above the
+/// approach rung, a ranged attack reaches, so an actor with any working
+/// shot attacked from where it stood and the approach rung was
+/// unreachable for it. That is right for a wizard and wrong for every
+/// chassis whose ranged option is the worse one it happens to own — a
+/// Hexblade Warlock, whose subclass is a sword and whose docstring says
+/// it "wants contact", spent every fight at range.
+///
+/// Four gates, each of them narrowing:
+///
+///   1. **Nothing is already in melee reach.** If something is, the
+///      picker is already choosing between the two lanes at the right
+///      distance and rung 2 is already deciding whether to leave.
+///   2. **The melee lane demonstrably beats the ranged one**, both
+///      annotated, strictly greater. Ties stay put, which is the
+///      mirror of rung 2's "ties go to leaving" — between them, a
+///      creature with equal options neither walks in nor walks out.
+///      A missing estimate on *either* side is a refusal, not a
+///      licence: this rung's default is to do nothing, so a lane with
+///      no number has to leave it doing nothing.
+///   3. **The actor has movement left**, so the step is real.
+///   4. **The step actually gets closer**, which `step_toward_actor`
+///      answers.
+///
+/// The comparison is against the *same* creature the step is aimed at,
+/// so a melee estimate is never weighed against a shot at somebody
+/// else.
+///
+/// **What the comparison still gets wrong**, and knowingly: the ranged
+/// side is the best *single* thing the actor can do at range, which for
+/// a caster is whatever its largest remaining slot buys, while the
+/// melee side is what it would do every turn. A warlock holding one
+/// level-5 slot therefore refuses to close on the strength of a spell
+/// it can cast once. That asymmetry is `best_damage_per_lane`'s and it
+/// is shared with the kite rung above, which has read it that way since
+/// it was written; correcting it belongs to that function rather than
+/// to this caller. In practice it delays the walk rather than
+/// preventing it — a caster runs out of slots, and then the sword is
+/// the best thing it has by a wide margin.
+fn try_close_for_the_better_weapon(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if under_melee_threat(encounter, actor_id) {
+        return None;
+    }
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.remaining_movement() <= 0.0 {
+        return None;
+    }
+    let my_team = actor.team();
+    let enemies: Vec<usize> = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|id| {
+            encounter
+                .actors
+                .get(id)
+                .is_some_and(|a| a.team() != my_team && a.is_combat_active())
+        })
+        .collect();
+    if enemies.is_empty() {
+        return None;
+    }
+    let target_id = *enemies
+        .iter()
+        .min_by_key(|id| encounter.actors[id].effective_hitpoints())?;
+    let melee = best_melee_damage_if_closed(encounter, actor_id, target_id)?;
+    let (_, ranged) = best_damage_per_lane(encounter, actor_id, &enemies);
+    // **Both lanes have to have a number.** The kite rung reads a
+    // missing estimate as "no opinion" and leaves anyway, because
+    // leaving is its default; this rung's default is to do nothing, so
+    // reading a missing ranged estimate as permission to walk in would
+    // be the same asymmetry pointed the other way — and it is worse in
+    // this direction. A wizard out of slots has a dagger with a number
+    // on it and a Fire Bolt without one, and it should not be crossing
+    // the room to stab an ogre.
+    if ranged? >= melee {
+        return None;
+    }
+    let dest = encounter.step_toward_actor(actor_id, target_id)?;
+    let move_action = actor.find_action("move")?;
+    let aei = ActionExecutionInfo::new(move_action, actor_id, None, Some(vec![dest]), None);
+    aei.validate(encounter).then_some(aei)
+}
+
 /// BFS-step toward the lowest-HP visible enemy. Falls back to step toward
 /// any enemy if HP-based selection fails for some reason.
 fn try_step_toward_lowest_hp(
@@ -11073,6 +11233,82 @@ mod tests {
         assert!(
             ranged_lane_beats_staying(&e, blaster),
             "and a warlock whose blade is a dagger still wants the ground"
+        );
+    }
+
+    /// The other half of the lane comparison: a creature whose swing
+    /// beats its shot walks in.
+    ///
+    /// Rung 2 has always asked "should I back out of contact to
+    /// shoot"; nothing asked the reverse, and the ladder's shape meant
+    /// nothing had to — focus-fire sits above the approach rung and a
+    /// ranged attack reaches from anywhere, so an actor with any
+    /// working shot attacked from where it stood and the approach rung
+    /// was unreachable for it. Right for a wizard, wrong for a warlock
+    /// holding a conjured sword.
+    ///
+    /// Both directions, because the gates are what make the rung safe:
+    /// the wizard is the case that has to keep falling through, and it
+    /// falls through on the clause that a lane with no estimate is a
+    /// refusal rather than a licence. A wizard out of slots has a
+    /// dagger with a number on it and a Fire Bolt without one, and it
+    /// should not be crossing the room to stab an ogre.
+    #[test]
+    fn a_warlock_with_a_conjured_sword_walks_in_and_a_wizard_does_not() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+
+        let drain = |e: &mut EncounterInstance, id: usize| {
+            let a = e.actors.get_mut(&id).unwrap();
+            for lvl in 1..=9u32 {
+                while a.consume_resource(Resource::SpellSlot(lvl)) {}
+            }
+        };
+
+        let mut e = empty_arena();
+        let warlock = e
+            .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .add_condition(Condition::PactWeapon, ConditionTimer::Permanent);
+        drain(&mut e, warlock);
+        assert!(
+            !under_melee_threat(&e, warlock),
+            "the rung is only about closing a gap that exists"
+        );
+        assert!(
+            try_close_for_the_better_weapon(&e, warlock).is_some(),
+            "three swings beat a slotless blast — walk in"
+        );
+
+        // Without the weapon conjured there is no melee lane to walk
+        // toward, which is the invocation's own first clause doing its
+        // work inside the picker.
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .remove_condition(Condition::PactWeapon);
+        assert!(
+            try_close_for_the_better_weapon(&e, warlock).is_none(),
+            "a warlock who has not conjured the weapon has nothing to close for"
+        );
+
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 10), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 10), 1, 1)
+            .unwrap();
+        drain(&mut e, wiz);
+        assert!(
+            try_close_for_the_better_weapon(&e, wiz).is_none(),
+            "an unannotated Fire Bolt is not a reason to go and use the dagger"
         );
     }
 
@@ -20601,5 +20837,6 @@ mod tests {
         );
     }
 }
+
 
 

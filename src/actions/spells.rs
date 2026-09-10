@@ -21852,14 +21852,15 @@ impl Action for IceKnife {
         // Caster ability: best of INT / CHA / WIS so the spell works
         // for wizard (INT), sorcerer (CHA), and druid (WIS) without
         // each loadout having to special-case the modifier pick.
-        let cast_ability = [
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Charisma,
-            AbilityScoreType::Wisdom,
-        ]
-        .into_iter()
-        .max_by_key(|a| caster.ability_score(*a))
-        .unwrap_or(AbilityScoreType::Intelligence);
+        //
+        // The list this used to spell out inline is
+        // `ActorInstance::SPELLCASTING_ABILITIES`, and the pick is
+        // `best_spellcasting_ability` — which every other multi-class
+        // spell in the file already goes through. The copy differed
+        // from the shared one in nothing except that it broke ties the
+        // other way round.
+        let cast_ability = caster
+            .best_spellcasting_ability(crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES);
         let attack_bonus = caster.spell_attack_modifier(cast_ability);
         let dc = caster.spell_save_dc(cast_ability);
         // Pull the target's tile up front — the burst centers there

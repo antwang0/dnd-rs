@@ -10674,13 +10674,26 @@ impl ActorInstance {
     /// belt-and-suspenders so the helper is total). Shared body for the
     /// best-DC / best-attack-modifier pair so the picker logic lives at one
     /// chokepoint.
+    ///
+    /// The `Reverse(index)` is what makes the tie sentence true.
+    /// `max_by_key` keeps the *last* of several equal maxima, so a
+    /// creature with equal Intelligence, Wisdom and Charisma used to
+    /// cast off the last entry in the list rather than the first. No
+    /// number moved — the three scores are equal, so the DC and the
+    /// attack bonus come out the same either way — which is exactly why
+    /// it could sit here reading correctly. The ability itself is
+    /// returned, though, and a future consumer that cares *which* one
+    /// (a save proficiency, an item keyed to a stat) would have
+    /// inherited a documented order the code was walking backwards.
     pub fn best_spellcasting_ability<I>(&self, candidates: I) -> AbilityScoreType
     where
         I: IntoIterator<Item = AbilityScoreType>,
     {
         candidates
             .into_iter()
-            .max_by_key(|a| self.ability_score(*a))
+            .enumerate()
+            .max_by_key(|(i, a)| (self.ability_score(*a), std::cmp::Reverse(*i)))
+            .map(|(_, a)| a)
             .unwrap_or(AbilityScoreType::Intelligence)
     }
 
