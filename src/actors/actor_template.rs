@@ -2084,6 +2084,16 @@ const SWIM_SPEED_SOURCES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::GIFT_OF_THE_DEPTHS_TAG),
     },
+    // The road that is not a stat block. Every row above is a fact
+    // about who the creature is — a shark's line, a rogue's level 9, a
+    // warlock's spent invocation — which left a party made of a wizard,
+    // a fighter, a rogue and a cleric with no way to acquire a swimming
+    // speed at all. `Condition::Swimming` is Alter Self's Aquatic
+    // Adaptation, the Cloak of the Manta Ray and the Ring of Swimming,
+    // and it is the only row here anything can hand out.
+    ActorFlagRow {
+        flag: |a| a.has_condition(Condition::Swimming),
+    },
 ];
 
 /// Sources of **blanket** opportunity-attack suppression on the *mover*

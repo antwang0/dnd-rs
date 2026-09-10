@@ -2157,6 +2157,28 @@ pub enum Condition {
     /// stopped doing is drowning, and RAW's sentence grants nothing
     /// else.
     WaterBreathing,
+    /// Swimming — "you gain a Swim Speed equal to your Speed", the
+    /// clause 5e attaches to Alter Self's Aquatic Adaptation, the Cloak
+    /// of the Manta Ray and the Ring of Swimming.
+    ///
+    /// One row, on `SWIM_SPEED_SOURCES`, and it is the first row there
+    /// that is not a passive feature tag. Every other way into that
+    /// cohort is a fact about who the creature *is* — a shark's stat
+    /// block, a Scout Rogue's level 9, a warlock's spent invocation —
+    /// which meant a party of a wizard, a fighter, a rogue and a cleric
+    /// had no road to a swimming speed at all. Water Breathing stopped
+    /// them drowning and Water Walk kept them out of the lake; nothing
+    /// in the engine let them fight in it.
+    ///
+    /// Deliberately *not* on `is_immersed`'s exemption list, which is
+    /// exactly what separates it from `WaterWalking` two rows up. A
+    /// creature with a swimming speed is **in** the water: it crosses
+    /// for free and swings its trident at no penalty, and it still eats
+    /// the ranged-attack clause, still resists fire, and still drowns
+    /// unless something else is answering that question. RAW's
+    /// sentence grants a speed and nothing else, and the three water
+    /// rules are three rules.
+    Swimming,
     /// Gaseous (5e **Gaseous Form**, level-3 transmutation,
     /// concentration up to 1 hour). "A willing creature you touch
     /// shape-shifts, along with everything it's wearing and carrying,
@@ -3332,6 +3354,7 @@ impl Condition {
             Condition::Darkvisioned => "seeing in the dark",
             Condition::WaterWalking => "walking on water",
             Condition::WaterBreathing => "breathing water",
+            Condition::Swimming => "swimming",
             Condition::Gaseous => "gaseous",
             Condition::TrueSighted => "true-sighted",
             Condition::SeeingInvisible => "seeing-invisible",

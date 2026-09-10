@@ -35158,6 +35158,153 @@ pub static WATER_BREATHING: LazyLock<PartyBuffSpell> = LazyLock::new(|| PartyBuf
     redundant_for: crate::actors::actor_template::ActorInstance::breathes_underwater,
 });
 
+/// **Alter Self** — SRD 5.2 level-2 transmutation (Sorcerer, Wizard),
+/// action, Self, concentration up to 1 hour.
+///
+/// The third of the engine's water spells, and the one that answers the
+/// question the other two do not. Water Breathing stops the party
+/// drowning; Water Walk keeps them out of the lake entirely; neither
+/// does anything about the two clauses that decide a fight *in* the
+/// water. Alter Self's Aquatic Adaptation is the one clause that does:
+/// *"You sprout gills and grow webs between your fingers. You can
+/// breathe underwater and gain a Swim Speed equal to your Speed."*
+///
+/// A swimming speed is worth two rules at once, and 5e is precise about
+/// which two. It waives the movement surcharge, so a water tile stops
+/// costing double; and it is the exact escape clause on the melee half
+/// of Underwater Combat — "a creature that **doesn't have a swimming
+/// speed** has disadvantage on the attack roll" — so a caster holding
+/// this swings a dagger down there at no penalty. What it does *not*
+/// do is take them out of the water: the ranged clause still bites, and
+/// they still resist fire, because `is_immersed` is a question about
+/// where you are and the answer is still "in the lake". That is the
+/// whole difference between this and Water Walk, and it is RAW's.
+///
+/// **Which of RAW's three options ships.** The book offers Aquatic
+/// Adaptation, Change Appearance and Natural Weapons, chosen at cast
+/// time and swappable with a Magic action. The engine collapses option
+/// tables to their load-bearing branch — see `SummonSpell::template`
+/// for why a cast-time choice has nowhere to live — and here the
+/// choice is not close:
+///
+///   - **Change Appearance** has no combat surface at all. The engine
+///     has no disguise layer for a changed face to hide behind, which
+///     is the same reason the doppelganger's Shape-Shifter is
+///     unmodeled.
+///   - **Natural Weapons** — "your Unarmed Strike … deals 1d6 damage"
+///     — has no host. There is no generic Unarmed Strike action in
+///     this engine; the only one is the monk's Martial Arts strike,
+///     and a sorcerer or wizard has nothing for the clause to upgrade.
+///     Shipping it would have meant inventing a claw attack the book
+///     does not print, on the one branch of a three-way choice.
+///
+/// Concentration, which is RAW and which is what stops this being a
+/// free pre-fight buff: a wizard swimming under this is not holding
+/// Web, and the underwater fight is exactly the one where dropping
+/// concentration to a hit is likeliest.
+pub struct AlterSelf {}
+
+impl Action for AlterSelf {
+    /// Queues a `StartConcentration` — declared so the AI's summon and
+    /// area-control rungs can price the cast before trading a landed
+    /// concentration effect for an unlanded one.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "alter self"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["alter", "as", "aquatic adaptation"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The board gate the two other water spells already carry, and
+        // for the same reason: gills are worth a second-level slot and
+        // the caster's concentration on a map with a lake on it, and
+        // worth nothing at all on one without.
+        if !encounter.has_water() {
+            return false;
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        // `has_swim_speed` rather than the bare condition, so the spell
+        // declines to be cast by a sahuagin, a lizardfolk, a Scout
+        // Rogue or a warlock who spent Gift of the Depths — everyone
+        // the cohort already answers yes for.
+        !caster.is_concentrating() && !caster.has_swim_speed()
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Two conditions, because RAW's sentence is two clauses and the
+        // engine keeps its three water rules apart on purpose. The
+        // gills are `WaterBreathing` (the breath clock in
+        // `engine::breath`); the webbed fingers are `Swimming` (the
+        // surcharge and the melee clause). Both hang off the one
+        // concentration anchor, so a broken save takes the whole
+        // transformation and not half of it.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Swimming,
+                timer: ConditionTimer::Rounds(100),
+            }) as Box<dyn ApplicableSideEffect>,
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::WaterBreathing,
+                timer: ConditionTimer::Rounds(100),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Alter Self",
+                    vec![
+                        (caster_id, Condition::Swimming),
+                        (caster_id, Condition::WaterBreathing),
+                    ],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static ALTER_SELF: LazyLock<AlterSelf> = LazyLock::new(|| AlterSelf {});
+
 /// The **"up to ten willing creatures of your choice within 30 feet"**
 /// chassis: a party-wide buff that installs one condition on the
 /// caster's side of the board and does nothing else.

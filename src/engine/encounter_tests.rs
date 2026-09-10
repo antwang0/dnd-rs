@@ -85257,6 +85257,137 @@ fn water_breathing_stops_the_clock_without_taking_anybody_out_of_the_lake() {
     );
 }
 
+/// Alter Self's Aquatic Adaptation is the clause the other two water
+/// spells leave out: it does not keep the caster out of the lake or
+/// merely stop them drowning in it, it makes them able to *fight* in
+/// it.
+///
+/// The two halves are separate rules and the test reads them
+/// separately. The webbed fingers waive the movement surcharge and
+/// satisfy Underwater Combat's melee escape clause — RAW's "a creature
+/// that doesn't have a swimming speed has disadvantage on the attack
+/// roll" — and the gills take the caster off the breath clock. What
+/// neither does is take the caster out of the water, which is what
+/// separates the spell from Water Walk.
+#[test]
+fn alter_self_gives_a_wizard_gills_and_a_swimming_speed_without_lifting_it_out() {
+    use crate::actions::spells::ALTER_SELF;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(e.is_immersed(wizard));
+    assert!(!e.actors[&wizard].has_swim_speed());
+    assert!(!e.can_breathe(wizard), "a wizard underwater is on the clock");
+
+    for ef in ALTER_SELF.side_effects(&mut e, wizard, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&wizard].has_swim_speed(),
+        "the webbed-fingers half — and the first road to a swimming \
+         speed that is not a stat block"
+    );
+    assert!(
+        e.actors[&wizard].swims_freely(),
+        "so the water stops charging double"
+    );
+    assert!(e.can_breathe(wizard), "the gills half — the clock stops");
+    assert!(
+        e.is_immersed(wizard),
+        "a swimming speed is a speed, not a way out of the lake"
+    );
+    assert!(
+        e.actors[&wizard].is_concentrating(),
+        "RAW is concentration, and it is what stops this being free"
+    );
+}
+
+/// The melee clause is the half of Underwater Combat a swimming speed
+/// is written to answer, and the reason Alter Self is worth a slot to
+/// a caster with a dagger.
+#[test]
+fn alter_self_is_what_lets_a_submerged_caster_swing_without_disadvantage() {
+    use crate::actions::spells::ALTER_SELF;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(
+        e.underwater_verdict(wizard, "quarterstaff", true, true, false)
+            == crate::engine::underwater::UnderwaterVerdict::Disadvantage,
+        "a staff swung by somebody who cannot swim is at disadvantage"
+    );
+    for ef in ALTER_SELF.side_effects(&mut e, wizard, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.underwater_verdict(wizard, "quarterstaff", true, true, false)
+            == crate::engine::underwater::UnderwaterVerdict::Unaffected,
+        "and the same staff swung with webbed fingers is not"
+    );
+}
+
+/// The spell refuses a dry board, refuses a caster already holding
+/// something, and refuses anyone the swim cohort already answers yes
+/// for.
+#[test]
+fn alter_self_declines_a_dry_board_and_a_creature_that_already_swims() {
+    use crate::actions::spells::ALTER_SELF;
+    use crate::actors::creatures::lizardfolk::LIZARDFOLK_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut dry = ei_with_terrain(20, 20, &[]);
+    let landlocked = dry
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    assert!(
+        !ALTER_SELF.custom_validate_input(&dry, landlocked, None, None, None),
+        "gills are worth nothing on a board with no water on it"
+    );
+
+    let mut wet = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            wet.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let wizard = wet
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(ALTER_SELF.custom_validate_input(&wet, wizard, None, None, None));
+
+    let lizard = wet
+        .instantiate_creature(&LIZARDFOLK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        !ALTER_SELF.custom_validate_input(&wet, lizard, None, None, None),
+        "a lizardfolk was born with the clause"
+    );
+
+    for ef in ALTER_SELF.side_effects(&mut wet, wizard, None, None, None) {
+        ef.apply(&mut wet);
+    }
+    assert!(
+        !ALTER_SELF.custom_validate_input(&wet, wizard, None, None, None),
+        "and a caster already holding it has nothing to hold it with"
+    );
+}
+
 /// 5e Storm Herald Barbarian **Storm Soul (Sea)**: *"you gain
 /// resistance to lightning damage, and you can breathe underwater. You
 /// also gain a swimming speed."*

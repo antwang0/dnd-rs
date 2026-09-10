@@ -422,6 +422,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // surcharge. Declines to cast on a dry board, and skips anyone
     // whose stat block already says they breathe down there.
     actions.push(&*crate::actions::spells::WATER_BREATHING);
+    // lv2 **Alter Self** (Aquatic Adaptation) — the third water spell,
+    // and the only one that helps in a fight *in* the water rather than
+    // around it. A swimming speed waives the movement surcharge and is
+    // the exact escape clause on Underwater Combat's melee
+    // disadvantage; the gills keep the breath clock off. Concentration,
+    // and it declines to cast on a dry board or for anyone whose stat
+    // block already swims. See `spells::ALTER_SELF`.
+    actions.push(&*crate::actions::spells::ALTER_SELF);
     // Control Water (lv4) — the arcane list carries it too, and on this
     // chassis it is the transmuter's answer to a fight the enemy chose
     // the ground for. Costs nothing to carry on a dry board: the
