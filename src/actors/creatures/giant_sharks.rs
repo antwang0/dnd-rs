@@ -1,4 +1,6 @@
-use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
+use crate::actions::class_features::{
+    AQUATIC_ONLY_TAG, BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_SHARK_BITE;
 use crate::actors::actor_template::CreatureTemplate;
@@ -83,7 +85,14 @@ pub static GIANT_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // with the 3d10 base die it makes the shark's second swing
         // against a wounded target the deadliest non-recharge melee
         // attack at the CR-5 tier.
-        features: HashSet::from([SWIM_SPEED_TAG, BLOOD_FRENZY_TAG, UNDERWATER_BREATHING_TAG]),
+        features: HashSet::from([
+            SWIM_SPEED_TAG,
+            BLOOD_FRENZY_TAG,
+            UNDERWATER_BREATHING_TAG,
+            // RAW's *only*: the shark drowns in air. See
+            // `AQUATIC_ONLY_TAG` for the three lanes that read it.
+            AQUATIC_ONLY_TAG,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -85567,6 +85567,97 @@ fn alter_self_declines_a_dry_board_and_a_creature_that_already_swims() {
     );
 }
 
+/// A shark in the water is fine and a shark on the floor is drowning —
+/// SRD 5.2's *"the shark can breathe **only** underwater"*, the clause
+/// `engine::breath` shipped without.
+///
+/// It needed nothing new in the clock. The held-breath countdown, the
+/// exhaustion ladder and RAW's "removes all levels it gained from
+/// suffocating" all hang off `can_breathe`, so the whole of the rule is
+/// that one predicate answering differently on dry land.
+#[test]
+fn a_shark_out_of_water_is_the_one_creature_that_drowns_in_air() {
+    use crate::actors::creatures::reef_sharks::REEF_SHARK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let shark = e
+        .instantiate_creature(&REEF_SHARK_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    assert!(e.is_immersed(shark));
+    assert!(e.can_breathe(shark), "a shark in a pool is a shark at home");
+
+    // The same shark, put on the floor. Nothing about it changed except
+    // where it is.
+    e.place_actor_at(shark, Coordinate::new(15, 15)).unwrap();
+    assert!(!e.is_immersed(shark));
+    assert!(
+        !e.can_breathe(shark),
+        "and out of the water it is the thing that cannot breathe"
+    );
+
+    // A fighter standing beside it in the same pool is on the opposite
+    // clock, which is the whole point of the two tags being two tags.
+    let fighter = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(5, 5),
+            0,
+            0,
+        )
+        .unwrap();
+    assert!(!e.can_breathe(fighter));
+    e.place_actor_at(fighter, Coordinate::new(16, 16)).unwrap();
+    assert!(e.can_breathe(fighter));
+}
+
+/// The pathfinder will not walk a shark out of its own pool.
+///
+/// Without this the clause would be a trap rather than a rule: the AI's
+/// movement lane is "get closer to the enemy", so a reef shark with a
+/// fighter standing on the bank would beach itself on turn one and
+/// spend the rest of the fight suffocating. The gate is on being *in*
+/// the water, so a shark something has already thrown onto the floor
+/// can still move — a rule that freezes a creature in place is a worse
+/// answer than one that lets it flop home.
+#[test]
+fn a_shark_paths_inside_its_pool_and_a_beached_one_may_still_move() {
+    use crate::actors::creatures::reef_sharks::REEF_SHARK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    for x in 2..=8isize {
+        for y in 2..=8isize {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+        }
+    }
+    let shark = e
+        .instantiate_creature(&REEF_SHARK_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+        .unwrap();
+    e.start_turn_for(shark);
+
+    assert!(
+        e.path_to(shark, Coordinate::new(7, 7)).is_some(),
+        "the far corner of its own pool is reachable"
+    );
+    assert!(
+        e.path_to(shark, Coordinate::new(10, 3)).is_none(),
+        "and the dry floor two tiles past the edge is not"
+    );
+
+    // Something puts it on the bank. Now it can move again — including
+    // back into the water, which is the move that matters.
+    e.place_actor_at(shark, Coordinate::new(12, 12)).unwrap();
+    e.start_turn_for(shark);
+    assert!(
+        e.path_to(shark, Coordinate::new(13, 12)).is_some(),
+        "a beached shark is not frozen"
+    );
+}
+
 /// 5e Storm Herald Barbarian **Storm Soul (Sea)**: *"you gain
 /// resistance to lightning damage, and you can breathe underwater. You
 /// also gain a swimming speed."*

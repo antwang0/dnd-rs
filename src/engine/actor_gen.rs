@@ -111,6 +111,25 @@ pub fn generate_actors(
     // out.
     let mut full_widths: Vec<usize> = Vec::new();
     let width_is_full = |full: &[usize], size| full.iter().any(|&w| get_tiles_from_size(size) >= w);
+    // SRD 5.2 **Water Breathing** — the sharks, the seahorses and the
+    // piranhas drown in air, so they come in through
+    // `get_random_water_spawn` and nothing else.
+    //
+    // The flag is the same monotone-narrowing trick `full_widths` is,
+    // one axis over. A board either has an unoccupied pool big enough
+    // for a body or it does not, and the answer only gets more negative
+    // as the fight fills up — so the first failure settles the question
+    // for the rest of the generation, and the whole cohort leaves the
+    // draw rather than being re-asked once per try until `MAX_TRIES`
+    // runs out.
+    //
+    // Dropping them is the *right* answer rather than a fallback. A
+    // reef shark anchored in a dry corridor is not an encounter; it is
+    // a six-round countdown to a corpse nobody fought, which is exactly
+    // why the clause could not ship before the generator could say no.
+    let mut no_water_room = false;
+    let is_aquatic =
+        |t: &CreatureTemplate| t.features.contains(crate::actions::class_features::AQUATIC_ONLY_TAG);
     for team_id in params.start_team..params.n_teams {
         // Team 0 uses the fixed PC template if provided; else fall
         // through to the random CR-target generator.
@@ -135,6 +154,7 @@ pub fn generate_actors(
                 affordable_templates(template_pool, params.cr_target - cr_total)
                     .into_iter()
                     .filter(|&i| !width_is_full(&full_widths, template_pool[i].size))
+                    .filter(|&i| !(no_water_room && is_aquatic(template_pool[i])))
                     .collect();
             // Everything the budget could still buy is too big for what
             // is left of the map. That is a board that has run out of
@@ -146,13 +166,28 @@ pub fn generate_actors(
                 return Err(Box::new(NoLegalPosition));
             };
             let creature_template = &template_pool[idx];
-            let location_result = ei.get_random_spawn(creature_template.size);
+            let aquatic = is_aquatic(creature_template);
+            let location_result = if aquatic {
+                ei.get_random_water_spawn(creature_template.size)
+            } else {
+                ei.get_random_spawn(creature_template.size)
+            };
             let instance_n = id_by_template[idx];
             match location_result {
                 Ok(location) => {
                     ei.instantiate_creature(creature_template, location, team_id, instance_n)?;
                     id_by_template[idx] += 1;
                     cr_total += creature_template.cr;
+                }
+                Err(_) if aquatic => {
+                    // A failed *water* spawn proves nothing about dry
+                    // ground, so it narrows the aquatic cohort rather
+                    // than the width. Recording it on `full_widths`
+                    // would take every Large creature on the roster off
+                    // the table because a giant shark could not find a
+                    // pool.
+                    no_water_room = true;
+                    continue;
                 }
                 Err(_) => {
                     full_widths.push(get_tiles_from_size(creature_template.size));
@@ -281,6 +316,90 @@ mod tests {
                 enemy_cr
             );
         }
+    }
+
+    /// A creature that drowns in air is generated in water, or not at
+    /// all.
+    ///
+    /// The two halves of the same rule and both are load-bearing, which
+    /// is why they are one test. A reef shark anchored on a dungeon
+    /// floor is not an encounter — it is a six-round countdown to a
+    /// corpse nobody fought — so a board with no pool has to take the
+    /// whole cohort off the table rather than putting one somewhere it
+    /// cannot live. The dry half is also the one that would fail
+    /// silently: a shark generated on stone still walks, still bites,
+    /// and still dies of the rule working correctly.
+    #[test]
+    fn a_water_breather_is_generated_in_water_or_not_generated() {
+        use crate::actors::creatures::reef_sharks::REEF_SHARK_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+        use crate::engine::types::Coordinate;
+
+        let tp = TerrainGenParams {
+            width: 30,
+            height: 20,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let sharks_only: Vec<&'static CreatureTemplate> = vec![&REEF_SHARK_TEMPLATE];
+        let ap = ActorGenParams {
+            cr_target: 2.0,
+            n_teams: 2,
+            pc_template: Some(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE),
+            start_team: 0,
+        };
+
+        // A board the generator laid itself, with whatever pools it
+        // happened to flood. Every shark on it stands in one.
+        let mut wet_boards = 0;
+        for seed in 0..40u64 {
+            let mut e = EncounterInstance::empty(&tp, Some(seed));
+            if generate_actors(&mut e, &ap, &sharks_only).is_err() {
+                // A board with no pool cannot pay a CR-2 budget out of
+                // a pool of nothing but sharks, and says so rather than
+                // beaching one.
+                continue;
+            }
+            let ids: Vec<usize> = e.sorted_actor_ids();
+            for id in ids {
+                if e.actors[&id].name().starts_with("Reef Shark") {
+                    wet_boards += 1;
+                    assert!(
+                        e.is_immersed(id),
+                        "seed {seed} put a reef shark on dry ground"
+                    );
+                }
+            }
+        }
+        assert!(
+            wet_boards > 0,
+            "forty seeds and not one shark — the fixture is not exercising the lane"
+        );
+
+        // And the dry board: a map with the water scrubbed out draws no
+        // shark at all, rather than draining `MAX_TRIES` re-asking a
+        // question the first failure already settled.
+        let mut dry = EncounterInstance::empty(&tp, Some(7));
+        for x in 0..30isize {
+            for y in 0..20isize {
+                if dry
+                    .terrain_at(Coordinate::new(x, y))
+                    .is_some_and(|t| t.terrain_type.is_water())
+                {
+                    dry.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+                }
+            }
+        }
+        assert!(
+            generate_actors(&mut dry, &ap, &sharks_only).is_err(),
+            "a dry board cannot field a shark and must say so"
+        );
+        assert!(
+            dry.sorted_actor_ids()
+                .iter()
+                .all(|id| !dry.actors[id].name().starts_with("Reef Shark")),
+            "and must not have beached one on the way to saying it"
+        );
     }
 
     /// A board with no room left fails as a board with no room left,

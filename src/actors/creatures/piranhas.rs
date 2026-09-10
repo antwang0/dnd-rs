@@ -1,4 +1,6 @@
-use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
+use crate::actions::class_features::{
+    AQUATIC_ONLY_TAG, BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::PIRANHA_BITE;
 use crate::actors::actor_template::CreatureTemplate;
@@ -59,7 +61,13 @@ pub static PIRANHA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Beast,
         actions,
-        features: HashSet::from([SWIM_SPEED_TAG, BLOOD_FRENZY_TAG, UNDERWATER_BREATHING_TAG]),
+        features: HashSet::from([
+            SWIM_SPEED_TAG,
+            BLOOD_FRENZY_TAG,
+            UNDERWATER_BREATHING_TAG,
+            // RAW's *only*: a fish out of water.
+            AQUATIC_ONLY_TAG,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

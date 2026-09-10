@@ -71,24 +71,25 @@
 //!
 //! # What is deliberately not here
 //!
-//!   - **The fish out of water.** Nine SRD stat blocks say "can breathe
-//!     only underwater" — the three sharks, the two seahorses, the
-//!     piranha and its swarm, and the two octopuses (who then take it
-//!     back with an hour of held breath). RAW, the seven without the
-//!     hour begin suffocating the moment they are on dry land and are
-//!     dead six rounds later.
+//!   - **The two octopuses.** Nine SRD stat blocks say "can breathe
+//!     only underwater"; seven of them carry
+//!     [`AQUATIC_ONLY_TAG`][crate::actions::class_features::AQUATIC_ONLY_TAG]
+//!     and drown in air, which is the whole of the clause. The
+//!     octopuses do not, because RAW takes the sentence back on the
+//!     next line: *"the octopus can hold its breath for 1 hour"* is six
+//!     hundred rounds, and no fight this engine has run is a tenth of
+//!     that.
 //!
-//!     It is a cut rather than an oversight, and what it is waiting on
-//!     is not this module. The engine's map generator has no habitat
-//!     model: it will anchor a reef shark on a dungeon floor as
-//!     cheerfully as in a pool, so shipping the clause would turn most
+//!     The clause used to be cut outright, and what it was waiting on
+//!     was never this module: the engine's map generator had no habitat
+//!     model, so it would anchor a reef shark on a dungeon floor as
+//!     cheerfully as in a pool and the rule would have turned most
 //!     shark encounters into a six-round countdown to a corpse nobody
-//!     fought. The rule needs two things first — a spawn that puts a
-//!     water-breather in water, and a pathfinder that will not walk one
-//!     out of it — and both are their own feature. Until then
-//!     `UNDERWATER_BREATHING_TAG` carries the half of those stat blocks
-//!     that keeps them alive and none of the half that kills them,
-//!     which is the safe direction to be wrong in.
+//!     fought. Both halves of that are built now —
+//!     `EncounterInstance::get_random_water_spawn` puts a water-breather
+//!     in water and drops the cohort from a board that has none, and
+//!     the pathfinder will not walk one out — so the clause is nothing
+//!     here but `can_breathe` saying no on dry land.
 //!   - **The four-hour clause.** The Sahuagin's *Limited
 //!     Amphibiousness* — "it can breathe air and water, but it needs to
 //!     be submerged at least once every 4 hours to avoid suffocating

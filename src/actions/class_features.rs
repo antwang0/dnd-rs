@@ -13948,10 +13948,12 @@ pub const UNDEAD_FORTITUDE_TAG: &str = "shared.undead_fortitude";
 /// honest summary of all four is "being under water is never this
 /// creature's problem", which is what the tag is named for.
 ///
-/// The clause it deliberately does **not** carry is the sharks' other
-/// half — "*only* underwater", which RAW says makes them suffocate in
-/// air. See `engine::breath` for why that half is a scope cut and what
-/// it would take to ship.
+/// The clause it does **not** carry is the sharks' other half —
+/// "*only* underwater", which RAW says makes them suffocate in air.
+/// That one is `AQUATIC_ONLY_TAG` below, and the seven stat blocks that
+/// carry it carry this one too: breathing only underwater is a way of
+/// breathing underwater, and the two tags are read by different lanes
+/// for opposite purposes.
 ///
 /// What this is *not* is a swimming speed: the Crocodile and the
 /// Hippopotamus hold their breath and cross water at the ordinary
@@ -13962,6 +13964,49 @@ pub const UNDEAD_FORTITUDE_TAG: &str = "shared.undead_fortitude";
 ///
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const UNDERWATER_BREATHING_TAG: &str = "shared.underwater_breathing";
+
+/// SRD 5.2 **Water Breathing** — *"the shark can breathe **only**
+/// underwater."* The other half of the sharks' clause, and the half
+/// that kills them.
+///
+/// The tag above says the water is never this creature's problem; this
+/// one says the *air* is. It is the narrower fact and it is carried by
+/// seven stat blocks — the three sharks, the two seahorses, the piranha
+/// and its swarm — every one of which also carries
+/// `UNDERWATER_BREATHING_TAG`, because "can breathe only underwater"
+/// entails "can breathe underwater". Both are needed: the wide one is
+/// read to keep them alive down there and the narrow one to kill them
+/// up here, and no predicate can derive either from the other.
+///
+/// Three lanes read it, and they are the three things `engine::breath`
+/// said the clause was waiting on:
+///
+///   - **The breath clock.** `EncounterInstance::can_breathe` answers
+///     no for a carrier standing on dry land, which is all it takes:
+///     the held-breath countdown, the exhaustion ladder and RAW's
+///     "removes all levels it gained from suffocating" on getting back
+///     in the water are already built and already read that one
+///     predicate.
+///   - **The spawn.** `generate_actors` anchors a carrier on water and
+///     drops the whole cohort from the draw on a board with no pool big
+///     enough — because a reef shark generated in a dry corridor is not
+///     an encounter, it is a six-round countdown to a corpse nobody
+///     fought.
+///   - **The pathfinder.** A carrier standing in water will not walk
+///     out of it. Not a blanket ban: one that has been *put* on land —
+///     a Thunderwave, a Telekinesis, a gust — may move again, because a
+///     rule that freezes a creature in place is worse than one that
+///     lets it flop home, and the clock is already the punishment for
+///     being there.
+///
+/// The two octopuses are deliberately absent although RAW prints the
+/// same sentence on them, because RAW immediately takes it back: *"the
+/// octopus can hold its breath for 1 hour"* is six hundred rounds, and
+/// no fight this engine has ever run is a tenth of that. A tag that
+/// changed nothing about them would be a claim the code does not make.
+///
+/// Always-on passive; no per-rest charge and no condition gate.
+pub const AQUATIC_ONLY_TAG: &str = "monster.aquatic_only";
 
 
 /// Monster trait: "its weapon attacks are magical".

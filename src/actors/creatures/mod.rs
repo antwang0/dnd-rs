@@ -780,6 +780,37 @@ pub fn underwater_breathing_templates() -> Vec<&'static CreatureTemplate> {
     breathers
 }
 
+/// Every template whose stat block says it can breathe **only**
+/// underwater — SRD 5.2's *Water Breathing* trait.
+///
+/// A subset of `underwater_breathing_templates` above, and the reason
+/// it is a third list rather than a column on that one is that it is a
+/// third question. The first list answers "does the lake charge this
+/// creature double", the second "will the lake drown it", and this one
+/// "will the *air*". No two of the three have the same membership: the
+/// Green Hag breathes water and cannot swim, the constrictor snake
+/// swims and drowns, and the crocodile does both without being on this
+/// list at all.
+///
+/// Seven entries, and the two absences are the interesting part. RAW
+/// prints the same sentence on the two octopuses and then takes it back
+/// on the next line — *"the octopus can hold its breath for 1 hour"* —
+/// which is six hundred rounds and outlasts every fight the engine has
+/// ever run, so a tag on them would be a claim the code does not make.
+/// See `AQUATIC_ONLY_TAG` for the three lanes that read this and
+/// `engine::breath` for the clause itself.
+pub fn water_bound_templates() -> Vec<&'static CreatureTemplate> {
+    vec![
+        &giant_sharks::GIANT_SHARK_TEMPLATE,
+        &hunter_sharks::HUNTER_SHARK_TEMPLATE,
+        &reef_sharks::REEF_SHARK_TEMPLATE,
+        &seahorses::SEAHORSE_TEMPLATE,
+        &seahorses::GIANT_SEAHORSE_TEMPLATE,
+        &piranhas::PIRANHA_TEMPLATE,
+        &swarms::SWARM_OF_PIRANHAS_TEMPLATE,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use crate::actors::actor_template::CreatureTemplate;
@@ -1710,6 +1741,54 @@ mod tests {
             assert!(
                 aquatic_names.contains(&t.name),
                 "{} carries a swimming speed but is not on the aquatic list",
+                t.name
+            );
+        }
+    }
+
+    /// `water_bound_templates` is the whole truth about who carries
+    /// `AQUATIC_ONLY_TAG`, and every one of them also carries the wider
+    /// breathing tag.
+    ///
+    /// Three assertions rather than two, and the third is the one worth
+    /// having. The tag makes `can_breathe` answer no on dry land, so a
+    /// creature that acquires it by a copy-paste and cannot breathe
+    /// water either would suffocate everywhere on the board with
+    /// nothing in the log but the rule working correctly. "Breathes
+    /// only underwater" entails "breathes underwater", and the entailment
+    /// has to hold in the code as well as in the sentence.
+    #[test]
+    fn the_aquatic_only_tag_is_carried_by_exactly_the_water_bound_templates() {
+        use crate::actions::class_features::{AQUATIC_ONLY_TAG, UNDERWATER_BREATHING_TAG};
+        use crate::engine::encounter::EncounterInstance;
+
+        let bound = super::water_bound_templates();
+        for t in &bound {
+            assert!(
+                t.features.contains(AQUATIC_ONLY_TAG),
+                "{} is on the water-bound list without the tag",
+                t.name
+            );
+            assert!(
+                t.features.contains(UNDERWATER_BREATHING_TAG),
+                "{} drowns in air and cannot breathe water either",
+                t.name
+            );
+        }
+        let bound_names: Vec<&str> = bound.iter().map(|t| t.name).collect();
+
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            super::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            if !t.features.contains(AQUATIC_ONLY_TAG) {
+                continue;
+            }
+            assert!(
+                bound_names.contains(&t.name),
+                "{} drowns in air and is not on the water-bound list",
                 t.name
             );
         }

@@ -9583,6 +9583,29 @@ impl ActorInstance {
         self.matches_any(UNDERWATER_BREATH_SOURCES)
     }
 
+    /// True if this actor breathes *only* underwater — SRD 5.2's
+    /// **Water Breathing** trait, on the three sharks, the two
+    /// seahorses, the piranha and its swarm.
+    ///
+    /// The narrow twin of `breathes_underwater`, and the two are
+    /// deliberately not a single tri-state. Every carrier of this
+    /// answers yes to that one as well (breathing only underwater is a
+    /// way of breathing underwater), and the two are read by different
+    /// lanes for opposite purposes: the wide one keeps a creature alive
+    /// at the bottom of a pool, and this one is what happens to it
+    /// anywhere else.
+    ///
+    /// A single flag rather than a cohort because there is exactly one
+    /// road to it and no reason to expect a second: no spell, item or
+    /// condition in 5e makes a creature *unable* to breathe air, and a
+    /// blocked airway is `Condition::Choking`, which is a different
+    /// question asked at a different place. If one ever arrives this
+    /// becomes an `ActorFlagRow` list beside the other three water
+    /// cohorts.
+    pub fn breathes_only_underwater(&self) -> bool {
+        self.has_passive_feature(crate::actions::class_features::AQUATIC_ONLY_TAG)
+    }
+
     /// How long this actor could hold its breath from full, in rounds —
     /// RAW's *"1 plus its Constitution modifier"* minutes, floored at
     /// thirty seconds.

@@ -43,7 +43,9 @@
 //! board, not to a creature.
 
 use crate::actions::action_template::Action;
-use crate::actions::class_features::{BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
+use crate::actions::class_features::{
+    AQUATIC_ONLY_TAG, BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG,
+};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     SWARM_OF_BATS_BITES, SWARM_OF_CRAWLING_CLAWS_HANDS, SWARM_OF_INSECTS_BITES,
@@ -358,10 +360,16 @@ pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // The one swarm on the ladder that lives in the water — RAW's
         // "Speed 0 ft., swim 40 ft.", the only entry on the ladder with
         // no walking speed at all. The swim tag is what stops a pool
-        // from charging it double to cross; the breathing tag is RAW's
-        // "the swarm can breathe only underwater", which the engine
-        // reads for its safe half alone (see `engine::breath`).
-        HashSet::from([BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
+        // from charging it double to cross; the breathing pair is RAW's
+        // "the swarm can breathe only underwater", both halves of it —
+        // the wide tag keeps it alive down there and `AQUATIC_ONLY_TAG`
+        // is what happens when it is anywhere else.
+        HashSet::from([
+            BLOOD_FRENZY_TAG,
+            SWIM_SPEED_TAG,
+            UNDERWATER_BREATHING_TAG,
+            AQUATIC_ONLY_TAG,
+        ]),
     )
 });
 

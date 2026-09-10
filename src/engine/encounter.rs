@@ -7187,6 +7187,38 @@ impl EncounterInstance {
     }
 
     pub fn get_random_spawn(&mut self, size: Size) -> Result<Coordinate, NoLegalPosition> {
+        self.get_random_spawn_matching(size, false)
+    }
+
+    /// `get_random_spawn`, restricted to anchors whose whole footprint
+    /// sits on water.
+    ///
+    /// The spawn half of SRD 5.2's **Water Breathing** clause. The
+    /// generator has no habitat model and never has: it will anchor a
+    /// reef shark on a dungeon floor as cheerfully as in a pool, and
+    /// once a beached shark starts suffocating that stops being a
+    /// curiosity and starts being a six-round countdown to a corpse
+    /// nobody fought. So the carriers of `AQUATIC_ONLY_TAG` come in
+    /// through this door instead — and when it has nothing to offer,
+    /// `generate_actors` takes the whole cohort off the table rather
+    /// than putting one somewhere it cannot live.
+    pub fn get_random_water_spawn(&mut self, size: Size) -> Result<Coordinate, NoLegalPosition> {
+        self.get_random_spawn_matching(size, true)
+    }
+
+    /// The shared walk: a shuffled sweep of every anchor on the board,
+    /// returning the first whose `size` footprint is entirely spawnable
+    /// — and, when `require_water`, entirely wet.
+    ///
+    /// Exhaustive rather than sampled, which is what lets an `Err` from
+    /// here be read as a *proof* that no anchor of that shape exists
+    /// rather than as bad luck. `generate_actors` depends on exactly
+    /// that: it answers a failure by permanently narrowing the draw.
+    fn get_random_spawn_matching(
+        &mut self,
+        size: Size,
+        require_water: bool,
+    ) -> Result<Coordinate, NoLegalPosition> {
         let actor_width: usize = get_tiles_from_size(size);
         let coords = self.get_random_coord_list();
 
@@ -7195,6 +7227,13 @@ impl EncounterInstance {
                 for y_off in 0..actor_width {
                     let offset = Coordinate::new(x_off as isize, y_off as isize);
                     if !self.is_spawnable(coord + offset) {
+                        continue 'coord_loop;
+                    }
+                    if require_water
+                        && !self
+                            .terrain_at(coord + offset)
+                            .is_some_and(|t| t.terrain_type.is_water())
+                    {
                         continue 'coord_loop;
                     }
                 }
@@ -7660,7 +7699,15 @@ impl EncounterInstance {
             return false;
         }
         if !self.is_immersed(actor_id) {
-            return true;
+            // SRD 5.2 **Water Breathing** — "the shark can breathe
+            // *only* underwater". The clause `engine::breath` shipped
+            // without, and it needed nothing here but its own sentence:
+            // the held-breath countdown, the exhaustion ladder and
+            // RAW's "removes all levels it gained from suffocating" on
+            // getting back in already hang off this one predicate, so a
+            // beached shark starts drowning in air and stops the moment
+            // something puts it back.
+            return !actor.breathes_only_underwater();
         }
         actor.breathes_underwater()
     }
@@ -11666,6 +11713,22 @@ impl EncounterInstance {
         // same reason `ignores_rough` is: neither answer can change
         // while a single path is being searched.
         let swims = body.swims_freely();
+        // SRD 5.2 **Water Breathing** — the sharks, the seahorses and
+        // the piranhas do not walk out of the lake. A shark that could
+        // would, every time: the AI's whole movement lane is "get
+        // closer to the enemy", so a reef shark in a pool with a fighter
+        // standing beside it would beach itself on turn one and spend
+        // the rest of the fight suffocating.
+        //
+        // Gated on the creature being *in* the water right now, which is
+        // the difference between a rule and a cage. A carrier that has
+        // been put on land by something — a Thunderwave, a Telekinesis,
+        // a gust — may move again, because a creature frozen in place
+        // is a worse answer than one that can flop back toward the
+        // water, and the breath clock is already the punishment for
+        // being there. Resolved once out here for the same reason the
+        // two surcharge waivers are.
+        let water_bound = body.breathes_only_underwater() && self.is_immersed(body_id);
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -11739,6 +11802,11 @@ impl EncounterInstance {
                     // put both halves of the expression on screen at
                     // once, which is where it showed.
                     let tile = self.terrain_at(next).map(|t| t.terrain_type);
+                    // The lake's edge, for the things that cannot cross
+                    // it — see `water_bound` above.
+                    if water_bound && !tile.is_some_and(|t| t.is_water()) {
+                        continue;
+                    }
                     let waived = if tile.is_some_and(|t| t.is_water()) {
                         swims
                     } else {
@@ -11833,7 +11901,14 @@ impl EncounterInstance {
     /// thread-local RNG whose starting state was gone the moment it was
     /// used, so the one encounter anybody actually wanted to reproduce —
     /// the one they just played — was the one that couldn't be.
-    fn empty(terrain_params: &TerrainGenParams, seed: Option<u64>) -> EncounterInstance {
+    /// `pub(crate)` rather than private because `engine::actor_gen`
+    /// needs a board it can hand a *custom* template pool to. Every
+    /// caller outside this file wants `from_params` or `with_pcs`,
+    /// which are this plus the generator and the initiative roll.
+    pub(crate) fn empty(
+        terrain_params: &TerrainGenParams,
+        seed: Option<u64>,
+    ) -> EncounterInstance {
         let seed = seed.unwrap_or_else(|| fastrand::u64(..));
         let roller = FastRandRoller::with_seed(seed);
         let mut rng = Rng::with_seed(seed);
