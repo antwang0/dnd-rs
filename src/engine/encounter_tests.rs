@@ -14627,6 +14627,242 @@ fn eldritch_mind_buffs_concentration_saves() {
     );
 }
 
+/// Every Eldritch Invocation the engine declares is one some warlock
+/// on the roster actually took.
+///
+/// The sibling of `every_feat_is_carried_by_a_playable_chassis`, and it
+/// exists for the same reason: an invocation nobody carries is a
+/// passive that never fires, and nothing else in the suite would
+/// notice. Scoped to the warlock family rather than to every playable
+/// chassis, because that is the column's own rule — an invocation is a
+/// warlock's, and one that ended up on a paladin is a different bug
+/// this test should also catch.
+#[test]
+fn every_invocation_is_carried_by_a_warlock() {
+    use crate::actions::class_features::ELDRITCH_INVOCATION_TAGS;
+    use crate::actors::creatures::pc_template_families;
+    let warlocks = pc_template_families()
+        .into_iter()
+        .find(|(name, _)| *name == "warlock")
+        .expect("the warlock family is on the registry")
+        .1;
+    for tag in ELDRITCH_INVOCATION_TAGS {
+        assert!(
+            warlocks.iter().any(|t| t.features.contains(tag)),
+            "no warlock template carries {tag} — the invocation can never fire"
+        );
+    }
+}
+
+/// SRD 5.2 **Witch Sight**: *"You have Truesight with a range of 30
+/// feet."*
+///
+/// Asserted at the senses set rather than through an illusion, because
+/// the radius is the whole of what the invocation adds over the flag
+/// every other truesight reader already handles — and the radius is
+/// the thing a boolean accessor would have silently made infinite.
+#[test]
+fn witch_sight_gives_the_archfey_thirty_feet_of_truesight() {
+    use crate::actions::class_features::{WITCH_SIGHT_FEET, WITCH_SIGHT_TAG};
+    use crate::actors::creatures::warlocks::{ARCHFEY_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+    use crate::engine::types::SpecialSense;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let archfey = e
+        .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let baseline = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(5, 2), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&archfey].has_passive_feature(WITCH_SIGHT_TAG),
+        "the archfey chassis takes Witch Sight"
+    );
+    assert!(
+        e.actors[&archfey]
+            .senses()
+            .contains(&SpecialSense::Truesight(WITCH_SIGHT_FEET)),
+        "the invocation grants truesight at its own radius"
+    );
+    assert!(
+        !e.actors[&baseline]
+            .senses()
+            .iter()
+            .any(|s| matches!(s, SpecialSense::Truesight(_))),
+        "and a warlock who did not take it sees nothing extra"
+    );
+}
+
+/// SRD 5.2 **Gift of the Depths**, both clauses a battle map can hold:
+/// *"You can breathe underwater, and you gain a Swim Speed equal to
+/// your Speed."*
+///
+/// The swim half is the one with teeth — 5e's Underwater Combat clause
+/// is scoped to "a creature that doesn't have a swimming speed", so it
+/// decides whether the warlock's dagger works down there at all.
+#[test]
+fn gift_of_the_depths_lets_the_fathomless_warlock_swim_and_breathe() {
+    use crate::actions::class_features::GIFT_OF_THE_DEPTHS_TAG;
+    use crate::actors::creatures::warlocks::{FATHOMLESS_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fathomless = e
+        .instantiate_creature(&FATHOMLESS_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let baseline = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(5, 2), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&fathomless].has_passive_feature(GIFT_OF_THE_DEPTHS_TAG),
+        "the fathomless chassis takes Gift of the Depths"
+    );
+    assert!(e.actors[&fathomless].has_swim_speed(), "it swims");
+    assert!(e.actors[&fathomless].breathes_underwater(), "and breathes");
+    assert!(
+        !e.actors[&baseline].has_swim_speed() && !e.actors[&baseline].breathes_underwater(),
+        "and a warlock who did not take it drowns like everybody else"
+    );
+}
+
+/// SRD 5.2 **Gift of the Protectors**: *"When any creature whose name
+/// is on the page is reduced to 0 Hit Points but not killed outright,
+/// the creature magically drops to 1 Hit Point instead. Once this
+/// magic is triggered, no creature can benefit from it until you
+/// finish a Long Rest."*
+///
+/// The whole invocation is that it fires for somebody *else* and spends
+/// the warlock's own charge — every other drop-to-1 in the engine is a
+/// creature saving itself. So the test drops an ally, and then drops a
+/// second one to prove the page is empty.
+#[test]
+fn gift_of_the_protectors_catches_one_ally_and_then_is_spent() {
+    use crate::actions::class_features::GIFT_OF_THE_PROTECTORS_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::warlocks::CELESTIAL_WARLOCK_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let first = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    let second = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 0, 2)
+        .unwrap();
+    assert!(
+        e.actors[&warlock].feature_available(GIFT_OF_THE_PROTECTORS_TAG),
+        "the celestial chassis takes Gift of the Protectors"
+    );
+
+    // Exactly the fighter's hit points, so the blow reduces it to 0
+    // without the overflow that would make it Massive Damage — RAW's
+    // "but not killed outright" is the clause being tested.
+    let hp = e.actors[&first].hitpoints();
+    DealDamage {
+        actor_id: first,
+        amount: hp,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&first].hitpoints(),
+        1,
+        "the page caught the first fighter"
+    );
+    assert!(
+        e.actors[&first].is_combat_active(),
+        "and it is standing, not stabilised on the floor"
+    );
+    assert!(
+        !e.actors[&warlock].feature_available(GIFT_OF_THE_PROTECTORS_TAG),
+        "at the cost of the warlock's one page"
+    );
+
+    let hp = e.actors[&second].hitpoints();
+    DealDamage {
+        actor_id: second,
+        amount: hp,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&second].hitpoints(),
+        0,
+        "and the second fighter falls — one page, one rescue"
+    );
+}
+
+/// The page does not open for the other side.
+///
+/// RAW's names are written with the warlock's permission, which is the
+/// one thing an enemy has not got. Without the team gate the invocation
+/// would be a party-wide handicap: the first creature on the board to
+/// fall would be whoever the party just killed.
+#[test]
+fn gift_of_the_protectors_does_not_catch_an_enemy() {
+    use crate::actions::class_features::GIFT_OF_THE_PROTECTORS_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::warlocks::CELESTIAL_WARLOCK_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let enemy = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    let hp = e.actors[&enemy].hitpoints();
+    DealDamage {
+        actor_id: enemy,
+        amount: hp,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&enemy].hitpoints(), 0, "the enemy falls");
+    assert!(
+        e.actors[&warlock].feature_available(GIFT_OF_THE_PROTECTORS_TAG),
+        "and the page is untouched"
+    );
+}
+
+/// A warlock whose own name is on the page is caught by it.
+///
+/// The ordering trap: this intercept runs *after* the hit points
+/// reached zero, so the warlock reading its own page is by construction
+/// looking at an actor already marked Dying. Gating the holder on
+/// `is_combat_active` — which is the right gate for every *other*
+/// name on the page — would make the one name RAW most obviously puts
+/// there the one name it could never protect.
+#[test]
+fn gift_of_the_protectors_catches_the_warlock_who_wrote_it() {
+    use crate::actions::class_features::GIFT_OF_THE_PROTECTORS_TAG;
+    use crate::actors::creatures::warlocks::CELESTIAL_WARLOCK_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hp = e.actors[&warlock].hitpoints();
+    DealDamage {
+        actor_id: warlock,
+        amount: hp,
+        damage_type: DamageType::Force,
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&warlock].hitpoints(), 1, "the warlock stands");
+    assert!(
+        !e.actors[&warlock].feature_available(GIFT_OF_THE_PROTECTORS_TAG),
+        "on its own page"
+    );
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

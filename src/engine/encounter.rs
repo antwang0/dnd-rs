@@ -6537,6 +6537,85 @@ impl EncounterInstance {
         true
     }
 
+    /// SRD 5.2 Warlock Eldritch Invocation **Gift of the Protectors**
+    /// intercept: *"When any creature whose name is on the page is
+    /// reduced to 0 Hit Points but not killed outright, the creature
+    /// magically drops to 1 Hit Point instead. Once this magic is
+    /// triggered, no creature can benefit from it until you finish a
+    /// Long Rest."*
+    ///
+    /// Third and last of the drop-to-1 intercepts on the `Downed`
+    /// branch, and the only one whose charge belongs to somebody else.
+    /// Relentless Rage and Undead Fortitude are a creature saving
+    /// itself and both live above this call; `LETHAL_DAMAGE_ABSORBER_
+    /// FEATURES` is a creature spending its own once-per-rest charge
+    /// and lives further down still, inside `ActorInstance::take_damage`
+    /// — which is exactly why this one cannot join it. A warlock across
+    /// the room is not reachable from a method on the falling actor.
+    ///
+    /// **Ordering.** Runs after the two saves, so a barbarian who
+    /// passed its Relentless Rage CON check has not cost the party its
+    /// page; and after `take_damage`'s own cohort, structurally, since
+    /// that cohort already ran before this function is reached and a
+    /// creature it rescued never reports `Downed`. The page is
+    /// therefore the last thing spent and the first thing a party still
+    /// has when everything cheaper is gone, which is the order RAW's
+    /// own wording implies for a resource that refreshes on a long rest
+    /// and saves one creature per day.
+    ///
+    /// **Who is on the page** is the warlock's own team — see
+    /// `GIFT_OF_THE_PROTECTORS_TAG` for why a single encounter has no
+    /// better reading of a book written between adventures. The warlock
+    /// is on it too: RAW's "any creature whose name is on the page"
+    /// excludes nobody, and a warlock who wrote their own name is the
+    /// obvious first entry.
+    ///
+    /// **A warlock already down cannot save an ally, but can still save
+    /// itself.** `is_combat_active` is the gate every other ally-scoped
+    /// payout in the engine uses and it is the right one here: a party
+    /// whose protector is unconscious has lost the protection. The
+    /// exemption for the falling creature is not a softening of that —
+    /// it is the ordering. This intercept runs *after* the HP already
+    /// went to zero, so a warlock reading its own page is by
+    /// construction looking at an actor who has just been marked Dying,
+    /// and gating on the flag would make the one name RAW most
+    /// obviously puts on the page the one name it can never protect.
+    ///
+    /// Returns true when somebody's page caught the fall, and the
+    /// caller then skips everything it would have done about a body.
+    pub fn try_gift_of_the_protectors(&mut self, actor_id: usize) -> bool {
+        use crate::actions::class_features::GIFT_OF_THE_PROTECTORS_TAG;
+
+        // The falling creature has to be somebody's ally, and the
+        // warlock has to be up with a page unspent. `sorted_actor_ids`
+        // rather than a raw map walk: two warlocks in one party is a
+        // legal board, and which of their pages is spent must not
+        // depend on hash order.
+        let Some(warlock_id) = self.sorted_actor_ids().into_iter().find(|&id| {
+            self.actors.get(&id).is_some_and(|w| {
+                (id == actor_id || w.is_combat_active())
+                    && w.feature_available(GIFT_OF_THE_PROTECTORS_TAG)
+            }) && self.actors_allied(id, actor_id)
+        }) else {
+            return false;
+        };
+        if let Some(warlock) = self.actors.get_mut(&warlock_id) {
+            warlock.spend_feature(GIFT_OF_THE_PROTECTORS_TAG);
+        }
+        if let Some(actor) = self.actors.get_mut(&actor_id) {
+            actor.revive_at_one_hp();
+        } else {
+            return false;
+        }
+        let name = self.actor_name(actor_id);
+        let warlock_name = self.actor_name(warlock_id);
+        self.log(format!(
+            "  gift of the protectors: {}'s page burns and {} drops to 1 HP instead.",
+            warlock_name, name
+        ));
+        true
+    }
+
     /// Roll a saving throw attributed to `caster_id`'s spell. Identical to
     /// `roll_save` except it walks the shared `CASTER_SAVE_MODE_RIDERS`
     /// cohort first: any row whose gate fires for this (caster, target)

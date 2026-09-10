@@ -2018,6 +2018,15 @@ const UNDERWATER_BREATH_SOURCES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::STORM_SOUL_SEA_TAG),
     },
+    // SRD 5.2 Warlock Eldritch Invocation **Gift of the Depths** — "you
+    // can breathe underwater". Its own tag rather than the stat-block
+    // one for the same reason Storm Soul has one: a warlock who spent
+    // an invocation is not a creature whose stat block prints
+    // Amphibious, and `underwater_breathing_templates` is the roster of
+    // the ones that do.
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::GIFT_OF_THE_DEPTHS_TAG),
+    },
 ];
 
 /// Sources of a swimming speed, read by `ActorInstance::has_swim_speed`.
@@ -2063,6 +2072,17 @@ const SWIM_SPEED_SOURCES: &[ActorFlagRow] = &[
     // the rest of the sentence arriving.
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::STORM_SOUL_SEA_TAG),
+    },
+    // SRD 5.2 Warlock Eldritch Invocation **Gift of the Depths** — "you
+    // gain a Swim Speed equal to your Speed." The other half of the
+    // sentence whose breathing clause sits on
+    // `UNDERWATER_BREATH_SOURCES`, and the half that decides whether
+    // the warlock's dagger works down there: 5e's Underwater Combat
+    // clause is scoped to "a creature that doesn't have a swimming
+    // speed", so this row is what stops a submerged warlock swinging at
+    // disadvantage.
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::class_features::GIFT_OF_THE_DEPTHS_TAG),
     },
 ];
 
@@ -4674,29 +4694,58 @@ fn feature_charge_map(features: &HashSet<&'static str>) -> HashMap<&'static str,
         .collect()
 }
 
-/// A template's own senses, plus any a feature tag on it grants.
+/// One row of `SENSE_GRANTING_FEATURES` — a build option whose whole
+/// effect is "you have <sense>", paired with the sense it hands out.
 ///
-/// One row today — SRD 5.2's **Boon of Truesight**, whose entire text is
-/// "you have Truesight with a range of 60 feet" — and the row is here
-/// rather than written straight onto the chassis that takes the boon for
-/// the reason every other feat tag is a tag: a feat is a thing a
-/// character *picked*, and a sense typed directly into `senses` is
-/// indistinguishable from one the creature was born with. A warlock who
-/// later drops the boon should lose the truesight with it.
+/// A struct rather than an `if` per row because both rows say the same
+/// thing in the same shape and a third will too: the interesting part
+/// of each is the pair, and spelling it as a pair is what keeps the
+/// radius attached to the tag that prints it.
+struct SenseGrant {
+    tag: &'static str,
+    sense: SpecialSense,
+}
+
+/// Build options that grant a sense, read by
+/// `senses_with_feature_grants` at instantiation.
+///
+/// The rows are here rather than written straight onto the chassis that
+/// take them for the reason every other feature tag is a tag: a feat or
+/// an invocation is a thing a character *picked*, and a sense typed
+/// directly into `senses` is indistinguishable from one the creature
+/// was born with. A warlock who later drops the boon should lose the
+/// truesight with it.
+///
+/// Entries (in order):
+///   - **Boon of Truesight** (SRD 5.2 Epic Boon) — *"You have Truesight
+///     with a range of 60 feet."*
+///   - **Witch Sight** (SRD 5.2 Eldritch Invocation) — the same
+///     sentence at thirty feet.
+const SENSE_GRANTING_FEATURES: &[SenseGrant] = &[
+    SenseGrant {
+        tag: crate::actions::feats::BOON_OF_TRUESIGHT_TAG,
+        sense: SpecialSense::Truesight(crate::actions::feats::BOON_OF_TRUESIGHT_FEET),
+    },
+    SenseGrant {
+        tag: crate::actions::class_features::WITCH_SIGHT_TAG,
+        sense: SpecialSense::Truesight(crate::actions::class_features::WITCH_SIGHT_FEET),
+    },
+];
+
+/// A template's own senses, plus any a feature tag on it grants.
 ///
 /// Grants rather than replaces: `HashSet::insert` on a creature that
 /// already sees this way is a no-op, and one whose intrinsic radius is
 /// wider keeps it, because every reader of the set takes the widest
-/// matching variant (`sense_tiles` maxes over them).
-fn senses_with_feat_grants(ct: &CreatureTemplate) -> HashSet<SpecialSense> {
+/// matching variant (`sense_tiles` maxes over them). That is also what
+/// makes the two truesight rows safe to hold at once — a Great Old One
+/// warlock who took both sees sixty feet, not thirty.
+fn senses_with_feature_grants(ct: &CreatureTemplate) -> HashSet<SpecialSense> {
     let mut senses = ct.senses.clone();
-    if ct
-        .features
-        .contains(crate::actions::feats::BOON_OF_TRUESIGHT_TAG)
-    {
-        senses.insert(SpecialSense::Truesight(
-            crate::actions::feats::BOON_OF_TRUESIGHT_FEET,
-        ));
+    for grant in SENSE_GRANTING_FEATURES {
+        if ct.features.contains(grant.tag) {
+            senses.insert(grant.sense.clone());
+        }
     }
     senses
 }
@@ -5525,7 +5574,7 @@ impl ActorInstance {
             charisma: ct.charisma,
             skills: ct.skills.clone(),
             items: ct.items.clone(),
-            senses: senses_with_feat_grants(ct),
+            senses: senses_with_feature_grants(ct),
             languages: ct.languages.clone(),
             cr: ct.cr,
             hitpoints: hp_roll_val,

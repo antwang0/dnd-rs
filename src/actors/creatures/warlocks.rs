@@ -575,7 +575,7 @@ pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // belongs to: a patron whose every other feature is about perceiving
     // what was not meant to be perceived. Sixty feet of seeing through
     // an illusion, a Mirror Image, a Blur, and the dark — granted into
-    // the senses set at instantiation by `senses_with_feat_grants`
+    // the senses set at instantiation by `senses_with_feature_grants`
     // rather than written onto this template's own `senses`, so the
     // sight belongs to the feat and leaves with it. See
     // `crate::actions::feats::BOON_OF_TRUESIGHT_TAG`.
@@ -657,11 +657,27 @@ pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // immunity) on top of the shared envelope. 'A' — distinct from
     // baseline warlock 'L', Fiend 'F', Undying 'U', and Great Old One
     // 'O'; 'A' for the "Archfey" identity.
-    subclass_warlock_template(
+    let mut archfey = subclass_warlock_template(
         "Archfey Warlock",
         'A',
         crate::actions::class_features::BEGUILING_DEFENSES_TAG,
-    )
+    );
+    // SRD 5.2's Eldritch Invocation **Witch Sight**: "You have Truesight
+    // with a range of 30 feet." The Archfey is who it belongs to — a
+    // patron whose whole court runs on glamour, and the one warlock for
+    // whom "what is actually standing there" is a question with a
+    // different answer. Thirty feet of it reaches exactly as far as the
+    // melee band and one step past, so it is spent on a Blur, a Mirror
+    // Image and a Displacer Beast's flicker rather than on scouting.
+    //
+    // Granted into the senses set at instantiation by
+    // `senses_with_feature_grants`, so the sight belongs to the
+    // invocation and leaves with it. See
+    // `crate::actions::class_features::WITCH_SIGHT_TAG`.
+    archfey
+        .features
+        .insert(crate::actions::class_features::WITCH_SIGHT_TAG);
+    archfey
 });
 
 /// Celestial Warlock — Otherworldly Patron **The Celestial** subclass
@@ -731,11 +747,26 @@ pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     // on top of the shared envelope. 'C' — distinct from baseline
     // warlock 'L', Fiend 'F', Undying 'U', Great Old One 'O', and
     // Archfey 'A'; 'C' for the "Celestial" identity.
-    subclass_warlock_template(
+    let mut celestial = subclass_warlock_template(
         "Celestial Warlock",
         'C',
         crate::actions::class_features::RADIANT_SOUL_TAG,
-    )
+    );
+    // SRD 5.2's Eldritch Invocation **Gift of the Protectors**: a page
+    // of names, and the first ally on it to fall drops to 1 hit point
+    // instead. The Celestial is the patron it belongs to — every other
+    // feature RAW gives this pact is about keeping the party upright
+    // (Healing Light, Celestial Resilience, Searing Vengeance), and
+    // this chassis ships none of them, so the page is the one place
+    // the subclass's whole reason for existing reaches the table.
+    //
+    // One charge, refreshed on a long rest, spent on whoever falls
+    // first — see `crate::actions::class_features::
+    // GIFT_OF_THE_PROTECTORS_TAG` and the intercept that reads it.
+    celestial
+        .features
+        .insert(crate::actions::class_features::GIFT_OF_THE_PROTECTORS_TAG);
+    celestial
 });
 
 /// Marid Warlock — Otherworldly Patron **The Genie (Marid)** subclass
@@ -1316,6 +1347,15 @@ pub static FATHOMLESS_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     // whole plan carried out by the cantrip.
     features.remove(crate::actions::class_features::REPELLING_BLAST_TAG);
     features.insert(crate::actions::class_features::GRASP_OF_HADAR_TAG);
+    // SRD 5.2's Eldritch Invocation **Gift of the Depths**: "You can
+    // breathe underwater, and you gain a Swim Speed equal to your
+    // Speed." The Fathomless patron is the one warlock the sentence was
+    // written for, and it is the second invocation on the roster whose
+    // value is entirely a property of the board — a fight with no water
+    // on it never notices, and a fight in a flooded room hands this
+    // chassis a movement lane and a working dagger while everybody else
+    // wades. See `crate::actions::class_features::GIFT_OF_THE_DEPTHS_TAG`.
+    features.insert(crate::actions::class_features::GIFT_OF_THE_DEPTHS_TAG);
     CreatureTemplate {
         name: "Fathomless Warlock",
         glyph: 'T',

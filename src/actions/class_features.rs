@@ -10120,6 +10120,114 @@ pub const ELDRITCH_MIND_TAG: &str = "warlock.eldritch_mind";
 /// `features` set to install it.
 pub const DEVILS_SIGHT_TAG: &str = "warlock.devils_sight";
 
+/// Warlock Eldritch Invocation — **Witch Sight**. SRD 5.2, whole:
+/// *"You have Truesight with a range of 30 feet."*
+///
+/// The same sentence Boon of Truesight prints at sixty feet, and it
+/// arrives the same way: a grant into the senses set at instantiation
+/// (`senses_with_feature_grants`) rather than a boolean accessor
+/// widened to consult the tag. The radius is the whole difference
+/// between the two, and a bool cannot carry one.
+///
+/// Thirty feet is short enough to matter. Truesight at sixty covers
+/// most of a room; at thirty it covers the melee band and a step past
+/// it, which is where a Blur, a Mirror Image and a Displacer Beast's
+/// flicker are actually spent. So the invocation is worth taking and
+/// is not the boon in miniature.
+///
+/// Permanent passive — never consumed.
+pub const WITCH_SIGHT_TAG: &str = "warlock.witch_sight";
+
+/// How far Witch Sight sees, in feet. RAW's number, beside the tag for
+/// the same reason `BOON_OF_TRUESIGHT_FEET` is beside its own.
+pub const WITCH_SIGHT_FEET: u32 = 30;
+
+/// Warlock Eldritch Invocation — **Gift of the Depths**, the two
+/// clauses of it that a battle map can hold: *"You can breathe
+/// underwater, and you gain a Swim Speed equal to your Speed."*
+///
+/// One row on `UNDERWATER_BREATH_SOURCES` and one on
+/// `SWIM_SPEED_SOURCES`, which is the shape RAW's sentence has — 5e
+/// asks three separate questions about water (what does crossing it
+/// cost, does your weapon work down there, can you breathe) and this
+/// invocation answers two of them with one clause. Both cohorts
+/// already exist and both already carry a Storm Herald Barbarian row
+/// saying exactly this; the invocation is the second build that gets
+/// to say it.
+///
+/// **RAW's third sentence is not modeled**: *"You can also cast Water
+/// Breathing once without expending a spell slot."* It is a
+/// once-per-long-rest free cast of a spell that grants ten allies the
+/// flag this invocation already gives its holder, and the engine's
+/// warlock chassis does not carry Water Breathing to cast. The two
+/// clauses that ship are the ones that change what happens when the
+/// board has water on it.
+///
+/// Permanent passive — never consumed.
+pub const GIFT_OF_THE_DEPTHS_TAG: &str = "warlock.gift_of_the_depths";
+
+/// Warlock Eldritch Invocation — **Gift of the Protectors**: *"When any
+/// creature whose name is on the page is reduced to 0 Hit Points but
+/// not killed outright, the creature magically drops to 1 Hit Point
+/// instead. Once this magic is triggered, no creature can benefit from
+/// it until you finish a Long Rest."*
+///
+/// The first drop-to-1 on the roster that is not about its own holder.
+/// Every other row of `LETHAL_DAMAGE_ABSORBER_FEATURES` — Relentless
+/// Endurance, Undying Sentinel, Strength of the Grave — is a creature
+/// refusing to fall, spends its own charge, and is therefore readable
+/// inside `ActorInstance::take_damage`, which has no handle on anybody
+/// else. This one is a warlock across the room spending *their* charge
+/// to keep somebody else standing, so it cannot live there and does
+/// not: it is an encounter-level intercept
+/// (`EncounterInstance::try_gift_of_the_protectors`) on the same
+/// `Downed` branch that Relentless Rage and Undead Fortitude already
+/// hook, and it runs after both — a creature that saved its own way
+/// back up has not been reduced to 0, and should not also cost the
+/// warlock a page.
+///
+/// **The page is the warlock's own party.** RAW writes names into a
+/// book between adventures, up to the warlock's Charisma modifier of
+/// them, and an encounter that begins with everybody already on the
+/// board has no moment at which that happens. Reading the page as "the
+/// warlock's team" is the closest thing a single fight has to it, and
+/// it is the reading that makes the invocation's own restriction bite:
+/// one charge, one long rest, so the page saves exactly one ally per
+/// fight no matter how many names are on it.
+///
+/// Long-rest refresh, and deliberately not in `SHORT_REST_FEATURES` —
+/// RAW says long rest, and the warlock's short-rest slots are already
+/// the class's answer to attrition.
+pub const GIFT_OF_THE_PROTECTORS_TAG: &str = "warlock.gift_of_the_protectors";
+
+/// Every Eldritch Invocation the engine carries.
+///
+/// One list, for the reason `FEAT_TAGS` is one list: the invariant
+/// worth checking across a column of build options is that each of
+/// them is actually carried by something that can walk onto a board.
+/// An invocation nobody can take is a passive that never fires, and it
+/// is invisible by construction — no test fails, no encounter behaves
+/// differently, and the constant sits in this file reading as
+/// implemented. See `every_invocation_is_carried_by_a_warlock`.
+///
+/// Alphabetical, matching the order SRD 5.2 prints the options in.
+/// Three entries are not in that book — Aspect of the Moon, Grasp of
+/// Hadar and Lance of Lethargy are XGtE — and they are on the list
+/// anyway, because the list is about what the engine ships rather than
+/// about which supplement printed it.
+pub const ELDRITCH_INVOCATION_TAGS: &[&str] = &[
+    AGONIZING_BLAST_TAG,
+    ASPECT_OF_THE_MOON_TAG,
+    DEVILS_SIGHT_TAG,
+    ELDRITCH_MIND_TAG,
+    GIFT_OF_THE_DEPTHS_TAG,
+    GIFT_OF_THE_PROTECTORS_TAG,
+    GRASP_OF_HADAR_TAG,
+    LANCE_OF_LETHARGY_TAG,
+    REPELLING_BLAST_TAG,
+    WITCH_SIGHT_TAG,
+];
+
 /// 5e Warlock — Otherworldly Patron **The Fiend**, level-1 feature
 /// **Dark One's Blessing**. Passive: whenever the warlock reduces a
 /// hostile creature to 0 HP, they gain temporary hit points equal to

@@ -1199,8 +1199,15 @@ impl ApplicableSideEffect for DealDamage {
                 // at 1 instead of falling. The helper rolls the save,
                 // logs the outcome, and reverts the Dying transition
                 // on a pass. Skipped silently for non-barbarians.
+                // Three intercepts, cheapest resource first. The two
+                // saves cost nothing but a die; the warlock's page is a
+                // once-per-long-rest charge belonging to somebody else,
+                // so it is the last thing spent — a barbarian who
+                // passed its own CON check has not cost the party a
+                // page. See `try_gift_of_the_protectors`.
                 if !ei.try_relentless_rage(self.actor_id)
                     && !ei.try_undead_fortitude(self.actor_id, self.damage_type, landed)
+                    && !ei.try_gift_of_the_protectors(self.actor_id)
                 {
                     ei.log(format!("{} falls unconscious.", name));
                     ei.drop_concentration(self.actor_id);

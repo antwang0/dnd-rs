@@ -358,7 +358,7 @@ pub const BOON_OF_THE_NIGHT_SPIRIT_TAG: &str = "boon.night_spirit";
 /// rather than the template.
 ///
 /// So the boon is a *grant into that set*, applied at instantiation by
-/// `senses_with_feat_grants`. Doing it there rather than by widening
+/// `senses_with_feature_grants`. Doing it there rather than by widening
 /// `has_truesight` to also consult the tag is what keeps the radius
 /// real: a boolean accessor would have given the holder truesight of
 /// unbounded range, and sixty feet is a number the feat prints.
