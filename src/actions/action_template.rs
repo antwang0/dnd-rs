@@ -2367,20 +2367,16 @@ pub trait Action {
             && ids.len() == 1
         {
             let original_target_id = ids[0];
-            let costs = self.resolved_cost(
-                encounter,
-                caster_id,
-                target_ids,
-                target_locations,
-                overrides,
-            );
-            // Sniff the slot level off the resolved cost so the SP debit
-            // scales with the cast (cantrips → 1 SP, lvl-3 spell → 3 SP,
-            // etc.). RAW floor is 1 SP — cantrips have no `SpellSlot`
-            // entry, which the helper returns as `None`.
-            let sp_cost = crate::engine::side_effects::spell_slot_level(&costs)
-                .unwrap_or(1)
-                .max(1);
+            // The SP debit scales with the cast (cantrips → 1 SP, lvl-3
+            // spell → 3 SP, etc.), off the same `cast_frame_level` the
+            // frame above was opened with rather than off a second sniff
+            // of the resolved cost. The two agreed for the whole spell
+            // list and stopped agreeing the moment a cast could be paid
+            // for with something other than a slot: a staff's Fireball
+            // has no `SpellSlot` in its cost, so the sniff called it a
+            // cantrip and sold the twin for 1 SP. RAW floor is 1 SP,
+            // which is what a real cantrip costs.
+            let sp_cost = cast_level.max(1);
             // They all resolve through the same twin block below
             // because the *effect* is identical — re-run the action's
             // side-effects against one more id — and they differ only in
@@ -2416,7 +2412,7 @@ pub trait Action {
                         caster_id,
                         self.name(),
                         self.school(),
-                        crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0),
+                        cast_level,
                         self.is_harmful(),
                         self.reach_tiles(),
                         self.requires_los(),
@@ -2428,7 +2424,7 @@ pub trait Action {
                         caster_id,
                         self.name(),
                         self.school(),
-                        crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0),
+                        cast_level,
                         self.is_harmful(),
                         self.reach_tiles(),
                         self.requires_los(),
@@ -2488,14 +2484,15 @@ pub trait Action {
         // Post-cast trigger dispatch: Wild Magic Surge, Heart of the
         // Storm eruption, and any future post-cast hook all fire from
         // the encounter-side dispatcher against the resolved spell
-        // context. Sniff the spell-slot level off the resolved cost —
-        // cantrips and non-spell actions have no `SpellSlot` cost
-        // entry (spell_level==0), and each hook's own gate
+        // context. The level is `cast_frame_level`'s — the same number
+        // the frame carried — so a hook gated on "a leveled spell" sees
+        // the same cast the spell's own effects did. Cantrips and
+        // non-spell actions answer 0 and each hook's own gate
         // short-circuits on the non-caster / non-sorcerer / wrong-
         // damage-type paths. Trigger effects sit between the spell's
         // effects and the cost-consume effects so they resolve "after
         // the spell" per RAW.
-        let spell_level = crate::engine::side_effects::spell_slot_level(&costs).unwrap_or(0);
+        let spell_level = cast_level;
         let damage_types = self.damage_types();
         let mut post_cast_effects = encounter.dispatch_post_cast_triggers(
             caster_id,

@@ -39,9 +39,10 @@
 //! between-fights phase for it to happen in, and every item in the file
 //! is already live the moment it is picked up.
 //!
-//! **Recharging at dawn is not modeled**, for the reason
-//! `Item::charges` gives — the engine's clock starts at initiative and
-//! stops with the fight.
+//! **Recharging is not at dawn.** RAW's *"regains 1d6+1 expended charges
+//! daily at dawn"* is a long rest here, which is the engine's only
+//! between-fights clock — see `Item::recharge`. A staff emptied in one
+//! room comes back partly filled in the next.
 //!
 //! **The destruction clauses are not modeled.** Six of these staves
 //! print a "roll a d20 when you expend the last charge; on a 1 it
@@ -74,15 +75,13 @@ use crate::engine::types::{Coordinate, DamageType};
 /// Everything a staff option is asked about — where it reaches, what it
 /// targets, whether it is harmful, what it installs, whether it holds
 /// concentration, what the AI should expect it to do — is the spell's
-/// answer, forwarded. Only four things are the staff's:
+/// answer, forwarded. Only three things are the staff's:
 ///
 ///   - [`Action::cost`], which trades the spell's slot for charges;
 ///   - [`Action::cast_frame_level`], which keeps the printed level even
 ///     though nothing paid a slot for it (without this, a staff's
 ///     Fireball opens a level-0 cast frame and every cantrip-gated
 ///     feature in the engine mistakes it for one);
-///   - [`Action::custom_validate_input`], which adds "and you are still
-///     holding a staff with the charges on it";
 ///   - [`Action::scales_with_slot`], which is `false` on every staff
 ///     option even for a spell that scales: the price is fixed in
 ///     charges, so there is no bigger slot to spend.
@@ -317,13 +316,18 @@ impl Action for StaffSpell {
         false
     }
 
-    /// The spell's own gate, plus the staff.
+    /// The spell's own gate, and only that.
     ///
-    /// The charge half duplicates what `can_consume_resource` already
-    /// says through `cost()`, and is here for the reason every item
-    /// action in the engine re-checks its own item: affordability gates
-    /// the *picker*, and an action queued while the charges were there
-    /// must not fire after something else spent them.
+    /// "And you are still holding a staff with the charges on it" is
+    /// deliberately **not** re-checked here, though every other item
+    /// action in the engine re-checks its own item at this hook. It does
+    /// not need to be: `validate_input` walks every entry of `cost()`
+    /// through `can_consume_resource` before it reaches this method, and
+    /// the charge price is an entry of `cost()`. That is the whole
+    /// difference a first-class resource makes — a price named in the
+    /// cost list is checked by the engine at every gate that checks
+    /// prices, and a price paid inside `side_effects` is checked only
+    /// where its author remembered to ask.
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -332,18 +336,13 @@ impl Action for StaffSpell {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        let holds = encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| a.can_consume_resource(self.charge_cost()));
-        holds
-            && self.spell().custom_validate_input(
-                encounter,
-                caster_id,
-                target_ids,
-                target_locations,
-                None,
-            )
+        self.spell().custom_validate_input(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            None,
+        )
     }
 
     fn side_effects(
