@@ -978,6 +978,13 @@ const STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
     // 5e Rune Knight **Giant's Might**: same advantage clause as Enlarge,
     // reached by the same "you are briefly a bigger creature" flavor.
     (Condition::GiantsMight, RollMode::Advantage),
+    // SRD 5.2 **Staff of Withering**, the STR half of its clause:
+    // "Disadvantage … on any ability check or saving throw that uses
+    // Strength or Constitution". The only row here that is not about
+    // being bigger or angrier, and the only one that needs a second row
+    // on another table to finish its sentence — see
+    // `CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS`.
+    (Condition::Withered, RollMode::Disadvantage),
 ];
 
 /// Conditions that flip the roll mode on **Strength checks only** —
@@ -999,6 +1006,30 @@ const STRENGTH_CHECK_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
     // docstring, and `Condition::LargeForm` for the rest of the trait.
     (Condition::LargeForm, RollMode::Advantage),
 ];
+
+/// Conditions that flip the roll mode on **Constitution checks and
+/// Constitution saving throws** together.
+///
+/// The third of the physical trio to get a lane of its own, and the last:
+/// `STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS` has served STR since Rage,
+/// DEX's four clauses are inlined at the save site, and CON had nothing —
+/// which `PHYSICAL_SAVE_MODE_CONDITIONS`' docstring said out loud ("CON
+/// had none at all") while serving only the clauses that name all three
+/// abilities at once.
+///
+/// What needed it is a clause that names STR and CON and not DEX: the
+/// Staff of Withering's *"Disadvantage for 1 hour on any ability check or
+/// saving throw that uses Strength or Constitution"*. The physical table
+/// would have thrown in DEX, and the strength table alone would have
+/// dropped half the sentence.
+///
+/// Like the STR table, one table serves both the check lane and the save
+/// lane, because every row's RAW text names checks and saves in the same
+/// breath. A future clause that names CON saves alone belongs in its own
+/// table next to this one, the way `STRENGTH_CHECK_MODE_CONDITIONS` sits
+/// beside its shared sibling.
+const CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] =
+    &[(Condition::Withered, RollMode::Disadvantage)];
 
 /// Sources of advantage on the ability check that ends a grapple.
 ///
@@ -5368,11 +5399,23 @@ impl EncounterInstance {
                 }
             }
         }
+        // CON-save cluster. The sibling of the STR one above, and the
+        // narrowest of the three physical lanes — see
+        // `CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS` for why a clause
+        // naming STR and CON could not be written with the tables that
+        // were here.
+        if matches!(ability, AbilityScoreType::Constitution) {
+            for (condition, effect) in CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS {
+                if actor.has_condition(*condition) {
+                    tally.add(*effect);
+                }
+            }
+        }
         // Physical-save cluster — the clauses 5e writes as "Strength,
         // Dexterity, and Constitution saving throws", which is a unit
         // the STR and DEX clusters above cannot express between them
-        // and which CON had no lane for at all. Same branch-once shape
-        // as the mental cluster below it.
+        // and which had no single-ability lane for CON until the table
+        // above. Same branch-once shape as the mental cluster below it.
         if matches!(
             ability,
             AbilityScoreType::Strength
@@ -6819,6 +6862,16 @@ impl EncounterInstance {
                 .iter()
                 .chain(STRENGTH_CHECK_MODE_CONDITIONS)
             {
+                if actor.has_condition(*condition) {
+                    tally.add(*effect);
+                }
+            }
+        }
+        // And the CON half of the same shape. One table, both lanes, for
+        // the reason the STR pair gives: every row on it is a sentence
+        // about checks and saves together.
+        if matches!(ability, AbilityScoreType::Constitution) {
+            for (condition, effect) in CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS {
                 if actor.has_condition(*condition) {
                     tally.add(*effect);
                 }

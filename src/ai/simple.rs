@@ -1877,7 +1877,7 @@ fn try_make_light(
     // See `engine::weather`.
     let flames_hold = !encounter.weather().snuffs_open_flames();
     flames_hold
-        .then(|| try_self_action_inc_items(encounter, actor_id, "light torch"))
+        .then(|| try_self_action(encounter, actor_id, "light torch"))
         .flatten()
         .or_else(|| try_self_action(encounter, actor_id, "light"))
         .or_else(|| try_continual_flame(encounter, actor_id))
@@ -1938,7 +1938,7 @@ fn try_kindle_weapon(
     }
     unlit
         .into_iter()
-        .find_map(|name| try_self_action_inc_items(encounter, actor_id, name))
+        .find_map(|name| try_self_action(encounter, actor_id, name))
 }
 
 /// Strike a **Continual Flame** on the floor underfoot, when the free
@@ -2869,7 +2869,7 @@ fn try_self_buff_mage_armor(
     // silences the other two.
     try_self_action(encounter, actor_id, "armor of shadows")
         .or_else(|| try_self_action(encounter, actor_id, "mage armor"))
-        .or_else(|| try_self_action_inc_items(encounter, actor_id, "drink potion of mage armor"))
+        .or_else(|| try_self_action(encounter, actor_id, "drink potion of mage armor"))
 }
 
 /// See Invisibility — level-2 divination self-buff. Fire only when the
@@ -3637,6 +3637,8 @@ const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "divine strike psychic",
     "fangs of the fire snake",
     "fire rune",
+    "charge staff of withering",
+    "charge staff of striking",
     "trip attack",
     "menacing attack",
     "disarming attack",
@@ -5331,12 +5333,27 @@ fn enemy_of_type_within(
 /// Wrap "find action by name → ActionExecutionInfo if validates".
 /// Stays tight on the surface area for buff-style self-target actions
 /// that take no args.
+///
+/// **`available_actions`, not `find_action`.** The two differ by exactly
+/// the carried items, and `find_action`'s own docstring calls itself a
+/// trap for the question this function asks: it searches the stat
+/// block's list, which is right for "does this creature's template have
+/// X" and wrong for "can this creature do X right now". Every rung that
+/// reaches for a named action goes through here, so with the template
+/// lookup a torch, a potion, a wand or a staff's prime was invisible to
+/// all of them — an item action could only be found by the three rungs
+/// that had noticed and called a near-duplicate helper instead.
 fn try_self_action(
     encounter: &EncounterInstance,
     actor_id: usize,
     action_name: &str,
 ) -> Option<ActionExecutionInfo> {
-    let action = encounter.actors.get(&actor_id)?.find_action(action_name)?;
+    let action = encounter
+        .actors
+        .get(&actor_id)?
+        .available_actions()
+        .into_iter()
+        .find(|a| a.name() == action_name)?;
     // A buff that names a creature is aimed at the caster; a buff that
     // takes no arguments is already about them.
     //
@@ -5456,28 +5473,6 @@ fn try_action_on_nearest_enemy(
         }
     }
     best.map(|(_, aei)| aei)
-}
-
-/// Same as `try_self_action`, but searches `available_actions()` —
-/// the template-action list plus one entry per carried consumable item —
-/// instead of just the template list. Used by self-buff heuristics that
-/// want to fall back to a Potion of X consumable when the matching
-/// spell isn't on the caster's template (e.g. a fighter drinking a
-/// Potion of Mage Armor). The slower lookup (`available_actions` rebuilds
-/// the dedup vec each call) is fine since this fires once per turn at
-/// most through the AI pipeline.
-fn try_self_action_inc_items(
-    encounter: &EncounterInstance,
-    actor_id: usize,
-    action_name: &str,
-) -> Option<ActionExecutionInfo> {
-    let actor = encounter.actors.get(&actor_id)?;
-    let action = actor
-        .available_actions()
-        .into_iter()
-        .find(|a| a.name() == action_name)?;
-    let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
-    aei.validate(encounter).then_some(aei)
 }
 
 /// Shared gate for concentration-bound self-buff heuristics. Returns
@@ -11222,6 +11217,15 @@ mod tests {
                 for a in &t.actions {
                     known.insert(a.name());
                 }
+            }
+        }
+        // Plus the loot table, for the reason
+        // `every_ai_action_name_matches_a_real_action` gives: a prime can
+        // arrive on a staff rather than on a stat block, and the rungs
+        // walk `available_actions`, which is both.
+        for item in crate::items::item_template::LOOT_POOL {
+            for a in item.on_use {
+                known.insert(a.name());
             }
         }
         for name in ENGAGED_SELF_POSTURES
@@ -18855,6 +18859,63 @@ mod tests {
         );
     }
 
+    /// The AI charges the Staff of Striking before it swings.
+    ///
+    /// The prime lane is a table of action *names* resolved through
+    /// `try_self_action`, which looked at the stat block's own list —
+    /// so every prime that can only arrive on an item was a row that
+    /// could never fire. Two of the nine staves are exactly that, and so
+    /// is every torch, potion and wand the loot table drops.
+    #[test]
+    fn the_ai_charges_the_staff_of_striking_before_it_swings() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::items::item_template::STAFF_OF_STRIKING;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Adjacent, so the prime is cashed on this turn's swing — which
+        // is the whole of the lane's gate.
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+
+        // The lane, asked only about the staff's row: a Battle Master
+        // fighter carries eight other primes on this table, so "the lane
+        // returned nothing" is not a control that could ever hold.
+        let prime = |e: &EncounterInstance| {
+            try_self_action_when_enemy_within(
+                e,
+                fighter,
+                MELEE_REACH,
+                "charge staff of striking",
+            )
+        };
+        assert!(
+            MELEE_ADJACENT_PRIMES.contains(&"charge staff of striking"),
+            "the row has to be on the table for the lane to reach it"
+        );
+        assert!(
+            prime(&e).is_none(),
+            "a fighter with an empty hand cannot charge a staff they do not have"
+        );
+
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&STAFF_OF_STRIKING);
+        let aei = prime(&e).expect("the staff in the pack is a prime the lane can take");
+        assert_eq!(aei.action().name(), "charge staff of striking");
+
+        // And once it is up, the lane declines to pay for it twice.
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::StaffStriking, ConditionTimer::Permanent);
+        assert!(prime(&e).is_none(), "an armed staff is not re-armed");
+    }
+
     /// The AI fires the staff it picked up.
     ///
     /// Loot drops on the floor when something dies and the next actor
@@ -20372,6 +20433,20 @@ mod tests {
             .flat_map(|(_family, templates)| templates)
             .chain(crate::engine::encounter::EncounterInstance::template_pool())
             .flat_map(|t| t.actions.iter().map(|a| a.name()))
+            // And everything the loot table can put in somebody's hands.
+            // A stat block is not the only place an action comes from —
+            // `available_actions` is template *plus* carried items, which
+            // is the list every rung actually walks — so a row naming a
+            // torch, a potion or a staff's prime is reachable by anyone
+            // who picks the thing up. Without this leg the sweep called
+            // those rows orphans, which is the opposite of the failure it
+            // is looking for: the rung fires, and the test says it
+            // cannot.
+            .chain(
+                crate::items::item_template::LOOT_POOL
+                    .iter()
+                    .flat_map(|item| item.on_use.iter().map(|a| a.name())),
+            )
             .collect();
 
         // Every module-level name list the heuristics consult. A new

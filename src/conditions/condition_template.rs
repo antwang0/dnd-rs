@@ -3131,11 +3131,69 @@ pub enum Condition {
     /// shrieker dies" needs no wiring, since a dead actor is not
     /// combat-active and the dispatcher never reaches it.
     Shrieking,
+    /// **Staff of Striking**, charged — SRD 5.2's *"When you hit with a
+    /// melee attack using the staff, you can expend up to 3 of its
+    /// charges. For each charge you expend, the target takes an extra 1d6
+    /// Force damage."*
+    ///
+    /// A prime, in the shape every Smite on the paladin's sheet already
+    /// has: a marker the holder puts up with a Bonus Action, a row on
+    /// `ON_HIT_RIDERS` that reads it, and `consume_on_trigger` so the
+    /// next connecting melee swing is the one that cashes it.
+    ///
+    /// **RAW decides after the roll and this decides before it**, which
+    /// is the one place the model parts company with the book: the
+    /// staff's wielder is meant to see the hit land and then choose how
+    /// many charges it was worth. The engine has no "spend after the
+    /// d20" lane — the swing resolves in one pass — and the three charges
+    /// are therefore committed up front, exactly as `Condition::Smiting`
+    /// commits a paladin's spell slot. The cost of being wrong is the
+    /// same in both cases: a prime that misses is a prime that was paid
+    /// for and did nothing.
+    ///
+    /// Fixed at RAW's maximum three charges for 3d6 rather than offering
+    /// one, two or three. One row, one price, one die pool: the choice
+    /// RAW offers is between paying less now and having more later, and a
+    /// staff that recharges overnight (see `Item::recharge`) makes that a
+    /// decision about the dungeon rather than about the swing.
+    StaffStriking,
+    /// **Staff of Withering**, charged — SRD 5.2's *"you can expend 1
+    /// charge to deal an extra 2d10 Necrotic damage to the target. The
+    /// target must also make a DC 15 Constitution saving throw."*
+    ///
+    /// The Staff of Striking's sibling one tier up and one lane over: a
+    /// bigger die, a save on top, and a three-charge pool instead of ten
+    /// so the whole staff is three swings. Primed and consumed the same
+    /// way, with the same parting from RAW about *when* the charge is
+    /// committed.
+    StaffWithering,
+    /// **Withered** — what a failed save against the Staff of Withering
+    /// leaves behind: *"Disadvantage for 1 hour on any ability check or
+    /// saving throw that uses Strength or Constitution."*
+    ///
+    /// Two cohorts read it, one per ability:
+    /// `STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS` and
+    /// `CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS` — the second of
+    /// which this condition is the reason for. RAW keeps writing clauses
+    /// about the physical abilities one at a time and the engine had a
+    /// lane for STR, four inlined clauses for DEX, and nothing for CON.
+    ///
+    /// **Not an attack penalty.** RAW's sentence names checks and saves
+    /// and stops; a withered fighter swings at full strength and simply
+    /// cannot grapple, shove or shrug off poison the way they could.
+    /// That is the whole of it, and it is the whole of what is modeled.
+    ///
+    /// RAW's hour is ten rounds, the engine's standing stand-in for any
+    /// duration that outlasts a fight.
+    Withered,
 }
 
 impl Condition {
     pub fn name(&self) -> &'static str {
         match self {
+            Condition::StaffStriking => "staff of striking charged",
+            Condition::StaffWithering => "staff of withering charged",
+            Condition::Withered => "withered",
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",

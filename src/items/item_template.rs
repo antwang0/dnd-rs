@@ -3523,6 +3523,67 @@ pub static STAFF_OF_POWER: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Staff of Striking** (Staff, Very Rare) — *"a magic quarterstaff
+/// that grants a +3 bonus to attack and damage rolls made with it. The
+/// staff has 10 charges. When you hit with a melee attack using it, you
+/// can expend up to 3 of its charges. For each charge you expend, the
+/// target takes an extra 1d6 Force damage."*
+///
+/// The first of the two staves that cast nothing. Its action is a prime
+/// — `staves::CHARGE_STAFF_OF_STRIKING`, a Bonus Action and three
+/// charges — and the payout is a row on `engine::attack`'s
+/// `ON_HIT_RIDERS`, read by the next connecting melee swing.
+///
+/// `+3` puts it at the top of the weapon ladder alongside
+/// `WEAPON_PLUS_THREE`, which is what RAW's Very Rare buys, and the
+/// `+3`-and-3d6 pair is why the pool is ten charges rather than three:
+/// three primes a fight and an overnight top-up is the envelope.
+///
+/// The `+3` is wider than RAW in the direction the other two weapon
+/// staves' is — see `STAFF_OF_THE_WOODLANDS`.
+pub static STAFF_OF_STRIKING: Item = Item {
+    name: crate::actions::staves::STAFF_OF_STRIKING_NAME,
+    glyph: '/',
+    bonuses: ItemBonuses { attack_bonus: 3, damage_bonus: 3, ..ItemBonuses::ZERO },
+    on_use: &[&crate::actions::staves::CHARGE_STAFF_OF_STRIKING],
+    grants_magical_attacks: true,
+    charges: 10,
+    recharge: Some(DAILY_1D6_PLUS_1),
+    ..Item::DEFAULTS
+};
+
+/// **Staff of Withering** (Staff, Rare) — *"a magic quarterstaff. The
+/// staff has 3 charges. On a hit, you can expend 1 charge to deal an
+/// extra 2d10 Necrotic damage to the target. The target must also
+/// succeed on a DC 15 Constitution saving throw or have Disadvantage for
+/// 1 hour on any ability check or saving throw that uses Strength or
+/// Constitution."*
+///
+/// The Staff of Striking's opposite number: a smaller pool, a bigger die,
+/// and a rider that takes something away rather than adding damage. Three
+/// charges is three swings in the whole object, which is what makes the
+/// overnight `1d6+1` matter more here than anywhere else on the table —
+/// a night's rest is the staff, twice over.
+///
+/// A magic quarterstaff with no `+N`, which RAW prints and which makes it
+/// the one staff on the table that is a weapon and carries no attack
+/// bonus: it is here for the wither, not for the swing. It still sharpens
+/// a hit past nonmagical resistance, which is what "magic quarterstaff"
+/// means.
+///
+/// The save's DC is the staff's own 15 rather than the wielder's, and the
+/// condition it lands is `Condition::Withered` — see both for the half of
+/// RAW's sentence the engine can express and the half it cannot.
+pub static STAFF_OF_WITHERING: Item = Item {
+    name: crate::actions::staves::STAFF_OF_WITHERING_NAME,
+    glyph: '/',
+    on_use: &[&crate::actions::staves::CHARGE_STAFF_OF_WITHERING],
+    grants_magical_attacks: true,
+    charges: 3,
+    recharge: Some(DAILY_1D6_PLUS_1),
+    ..Item::DEFAULTS
+};
+
 /// Every staff, as a set — the shelf `actions::staves`' invariants sweep
 /// and the loot table draws from.
 ///
@@ -3537,6 +3598,8 @@ pub static STAVES: &[&Item] = &[
     &STAFF_OF_SWARMING_INSECTS,
     &STAFF_OF_CHARMING,
     &STAFF_OF_THE_WOODLANDS,
+    &STAFF_OF_STRIKING,
+    &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
 ];
 
@@ -4277,6 +4340,8 @@ pub static LOOT_POOL: &[&Item] = &[
     &STAFF_OF_SWARMING_INSECTS,
     &STAFF_OF_CHARMING,
     &STAFF_OF_THE_WOODLANDS,
+    &STAFF_OF_STRIKING,
+    &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
 ];
 
@@ -4323,19 +4388,39 @@ mod tests {
             );
         }
         // The staves are the third road onto the allowlist, and the
-        // narrowest: two of the seven are `+2` quarterstaffs in RAW and
-        // the other five are sticks that cast. The flag has to track
-        // which is which, so it is asserted against the `+N` the item
-        // prints rather than allowed outright — a Staff of Charming that
-        // quietly started sharpening swings would be caught here, and a
-        // Staff of Power that stopped would be too.
+        // narrowest: four of the nine are quarterstaffs in RAW and the
+        // other five are sticks that cast. The flag has to track which is
+        // which, so the four are named rather than allowed wholesale — a
+        // Staff of Charming that quietly started sharpening swings would
+        // be caught here, and a Staff of Power that stopped would be too.
+        //
+        // Named rather than derived from `attack_bonus`, which is the
+        // shape this assertion had until the Staff of Withering arrived:
+        // RAW writes it as *"a magic quarterstaff"* and prints no `+N` at
+        // all, so "is a weapon" and "has a bonus" are two different
+        // questions about a staff and only one of them is this flag's.
+        const ARMED: &[&str] = &[
+            "Staff of the Woodlands",
+            "Staff of Power",
+            "Staff of Striking",
+            "Staff of Withering",
+        ];
         for item in STAVES {
             assert_eq!(
                 item.grants_magical_attacks,
-                item.bonuses.attack_bonus > 0,
-                "{} is a magic weapon exactly when it prints a +N quarterstaff",
+                ARMED.contains(&item.name),
+                "{} is a magic weapon exactly when RAW calls it a quarterstaff",
                 item.name
             );
+            // And a staff that adds to attack rolls is a weapon by any
+            // reading, so the two can never disagree in that direction.
+            if item.bonuses.attack_bonus > 0 {
+                assert!(
+                    item.grants_magical_attacks,
+                    "{} sharpens a swing and does not count as magical",
+                    item.name
+                );
+            }
         }
         for item in LOOT_POOL {
             if !item.grants_magical_attacks {

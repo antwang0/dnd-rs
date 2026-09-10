@@ -6599,6 +6599,67 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
         },
+        // SRD 5.2 **Staff of Striking** (Staff; Very Rare): "When you hit
+        // with a melee attack using the staff, you can expend up to 3 of
+        // its charges. For each charge you expend, the target takes an
+        // extra 1d6 Force damage."
+        //
+        // Three charges for 3d6, committed when the prime goes up rather
+        // than after the d20 — see `Condition::StaffStriking` for why the
+        // engine cannot offer RAW's after-the-hit choice, and why the
+        // fixed maximum is the right single price.
+        //
+        // `consume_on_trigger`, unlike every other magic weapon on this
+        // table: a Flame Tongue burns on every swing for the rest of the
+        // fight and this is a charge spent on one of them.
+        OnHitRider {
+            condition: Condition::StaffStriking,
+            dice: Dice::new(3, 6),
+            label: "staff of striking",
+            damage_type: RiderDamage::Fixed(DamageType::Force),
+            // "A melee attack using the staff" — melee only, where the
+            // two slayers above are `AnyWeapon` because RAW writes them
+            // about any weapon the enchantment is on.
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+        },
+        // SRD 5.2 **Staff of Withering** (Staff; Rare): "On a hit, you
+        // can expend 1 charge to deal an extra 2d10 Necrotic damage to
+        // the target. The target must also succeed on a DC 15
+        // Constitution saving throw or have Disadvantage for 1 hour on
+        // any ability check or saving throw that uses Strength or
+        // Constitution."
+        //
+        // The DC is the staff's own 15, not the wielder's spell save DC,
+        // for the reason the Giant Slayer's is — see `fixed_dc`.
+        OnHitRider {
+            condition: Condition::StaffWithering,
+            dice: Dice::new(2, 10),
+            label: "staff of withering",
+            damage_type: RiderDamage::Fixed(DamageType::Necrotic),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(15),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Withered,
+                    // RAW's hour, as the engine's ten rounds. No repeat
+                    // save: RAW gives the target one roll and no second
+                    // chance, unlike the Sword of Wounding above it.
+                    timer: ConditionTimer::Rounds(10),
+                },
+                label: "staff of withering",
+                hp_threshold: None,
+                size_cap: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+        },
 ];
 
 /// SRD 5.2 **Sword of Wounding**: *"The target repeats the save at the

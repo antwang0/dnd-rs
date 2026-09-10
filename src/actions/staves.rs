@@ -56,17 +56,21 @@
 //! to every swing rather than to swings with the staff. See each item's
 //! docstring in [`crate::items::item_template`].
 //!
-//! **The Staff of Striking and the Staff of Withering are absent**, and
-//! deliberately: neither casts anything. Both spend charges to sweeten a
-//! melee attack, which is the on-hit-rider lane in `engine::attack`
-//! rather than this one, and would be a different chassis.
+//! **Two of the nine staves cast nothing**, and take a second chassis.
+//! The Staff of Striking and the Staff of Withering spend their charges
+//! sweetening a melee swing, which is the on-hit-rider lane in
+//! `engine::attack`: [`StaffPrime`] is the Bonus Action that puts the
+//! marker up, and the row in `ON_HIT_RIDERS` that reads it is what pays
+//! out. Same pool, same `Resource::ItemCharges`, different half of the
+//! engine.
 
 use std::collections::HashSet;
 
 use crate::actions::action_template::{Action, TargetingSchema};
+use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::action_overrides::ActionOverride;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::side_effects::{ApplicableSideEffect, Resource};
+use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition, Resource};
 use crate::engine::types::{Coordinate, DamageType};
 
 /// One row of a staff's spell menu: a spell, the staff it is cast from,
@@ -674,3 +678,167 @@ pub static STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY: StaffSpell = StaffSpell {
     spell_level: 6,
     spell: || &*crate::actions::spells::GLOBE_OF_INVULNERABILITY,
 };
+
+// =====================================================================
+// The two staves that are weapons rather than spellbooks.
+// =====================================================================
+
+/// The Bonus Action that charges a staff whose payout is a melee hit.
+///
+/// The Staff of Striking and the Staff of Withering do not cast
+/// anything: each spends charges to add damage to the wielder's next
+/// swing. That is the `ON_HIT_RIDERS` lane in `engine::attack`, which is
+/// driven by a marker condition on the *attacker* — so the item's action
+/// is a prime, exactly like a paladin declaring a Smite or a Rune Knight
+/// invoking a rune, and the rider row is what reads it.
+///
+/// Structurally this is `item_actions::KindleWeapon` with a price. The
+/// differences are the two that matter: the charges are named in
+/// `cost()` so the pool gates the prime, and the marker is consumed by
+/// the hit rather than burning for the rest of the fight.
+pub struct StaffPrime {
+    /// Player-facing action name.
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// The staff, by the name the charge ledger is keyed on.
+    pub item_name: &'static str,
+    /// Charges the prime costs. RAW's per-swing price.
+    pub charges: u32,
+    /// Marker installed on the wielder, and the condition the staff's
+    /// `ON_HIT_RIDERS` row keys off. Also the re-prime guard: the action
+    /// refuses while it is already up, so a wielder cannot stack two
+    /// charges' worth of the same die onto one swing.
+    pub condition: Condition,
+    /// Full log line, `{actor}` substituted with the wielder's name.
+    pub log_text: &'static str,
+}
+
+impl StaffPrime {
+    /// The charge price as a resource.
+    pub fn charge_cost(&self) -> Resource {
+        Resource::ItemCharges {
+            item: self.item_name,
+            count: self.charges,
+        }
+    }
+}
+
+impl Action for StaffPrime {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    /// The marker, so the AI's buff lanes and the panel can both see what
+    /// this action is for.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(self.condition)
+    }
+
+    /// A Bonus Action and the charges.
+    ///
+    /// A bonus action rather than `item_actions::item_use_cost`'s
+    /// Action-unless-a-Thief, for the reason `KindleWeapon` gives: the
+    /// staff is already in the wielder's hand, not in a pack, so the
+    /// cost is the command rather than the rummage. RAW prices the
+    /// charges on the hit and says nothing about an action at all — a
+    /// bonus action is the closest the engine's economy comes to "free,
+    /// as part of the swing", and it is what the smites it is modeled on
+    /// cost.
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::BonusAction, self.charge_cost()]
+    }
+
+    /// Holding it, and not already primed.
+    ///
+    /// The charges are checked by `validate_input`'s walk over `cost()`;
+    /// see `StaffSpell::custom_validate_input` for why that is enough.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.has_item_named(self.item_name) && !a.has_condition(self.condition)
+        })
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let name = encounter.actor_name(caster_id);
+        encounter.log(self.log_text.replace("{actor}", &name));
+        // `Permanent`, and consumed by the swing that cashes it — the
+        // rider row carries `consume_on_trigger`. A timer would be the
+        // wrong shape: RAW's charge is spent on a hit, and a prime that
+        // expired on its own would be charges the wielder paid for and
+        // lost to the clock.
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: self.condition,
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub const STAFF_OF_STRIKING_NAME: &str = "Staff of Striking";
+
+/// Three charges of the ten, for 3d6 force on the next melee hit.
+pub static CHARGE_STAFF_OF_STRIKING: StaffPrime = StaffPrime {
+    action_name: "charge staff of striking",
+    action_aliases: &["staff-striking", "charge staff"],
+    item_name: STAFF_OF_STRIKING_NAME,
+    charges: 3,
+    condition: Condition::StaffStriking,
+    log_text: "{actor} pours three charges into the Staff of Striking; it hums.",
+};
+
+pub const STAFF_OF_WITHERING_NAME: &str = "Staff of Withering";
+
+/// One charge of three, for 2d10 necrotic and a DC 15 Constitution save
+/// on the next melee hit.
+pub static CHARGE_STAFF_OF_WITHERING: StaffPrime = StaffPrime {
+    action_name: "charge staff of withering",
+    action_aliases: &["staff-withering"],
+    item_name: STAFF_OF_WITHERING_NAME,
+    charges: 1,
+    condition: Condition::StaffWithering,
+    log_text: "{actor} wakes the rot in the Staff of Withering.",
+};
+
+/// Every prime in the file — the [`StaffPrime`] counterpart of
+/// [`STAFF_SPELLS`], swept by the same invariants and read by the AI's
+/// own staff rung.
+pub static STAFF_PRIMES: &[&StaffPrime] =
+    &[&CHARGE_STAFF_OF_STRIKING, &CHARGE_STAFF_OF_WITHERING];

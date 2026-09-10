@@ -95800,25 +95800,38 @@ fn every_spell_that_prices_an_upcast_declares_it() {
 /// simply not very good.
 #[test]
 fn every_staff_row_is_wired_to_the_staff_it_names() {
-    use crate::actions::staves::STAFF_SPELLS;
+    use crate::actions::staves::{STAFF_PRIMES, STAFF_SPELLS};
     use crate::items::item_template::STAVES;
 
-    for row in STAFF_SPELLS {
+    // Both chassis, as one list of `(row name, staff name, price)`: a
+    // spell row and a prime row differ in what they do with the charges
+    // and not at all in how they have to be wired.
+    let rows: Vec<(&str, &str, u32)> = STAFF_SPELLS
+        .iter()
+        .map(|r| (r.action_name, r.item_name, r.charges))
+        .chain(
+            STAFF_PRIMES
+                .iter()
+                .map(|r| (r.action_name, r.item_name, r.charges)),
+        )
+        .collect();
+
+    for (action_name, item_name, charges) in &rows {
         let staff = STAVES
             .iter()
-            .find(|s| s.name == row.item_name)
-            .unwrap_or_else(|| panic!("{} names a staff nothing carries", row.action_name));
+            .find(|s| s.name == *item_name)
+            .unwrap_or_else(|| panic!("{action_name} names a staff nothing carries"));
         assert!(
-            staff.on_use.iter().any(|a| a.name() == row.action_name),
+            staff.on_use.iter().any(|a| a.name() == *action_name),
             "{} is written and the {} does not offer it",
-            row.action_name,
+            action_name,
             staff.name
         );
         assert!(
-            row.charges > 0 && row.charges <= staff.charges,
+            *charges > 0 && *charges <= staff.charges,
             "{} costs {} charges and the {} holds {}",
-            row.action_name,
-            row.charges,
+            action_name,
+            charges,
             staff.name,
             staff.charges
         );
@@ -95839,9 +95852,9 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
         );
         for action in staff.on_use {
             assert!(
-                STAFF_SPELLS.iter().any(|r| r.action_name == action.name()),
-                "the {} offers `{}` and it is not on STAFF_SPELLS — the \
-                 invariants above cannot see it",
+                rows.iter().any(|(name, _, _)| *name == action.name()),
+                "the {} offers `{}` and it is on neither STAFF_SPELLS nor \
+                 STAFF_PRIMES — the invariants above cannot see it",
                 staff.name,
                 action.name()
             );
@@ -96274,4 +96287,195 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n  "));
+}
+
+/// The Staff of Striking: a Bonus Action and three charges prime it, and
+/// the next melee hit cashes the prime for 3d6 force.
+///
+/// Three things in one run, because they are one sentence of RAW and any
+/// of them alone is an item that looks like it works: the charges leave
+/// the pool when the prime goes up, the rider fires on the swing, and the
+/// marker is gone afterwards so the second swing of the turn does not get
+/// it for free.
+#[test]
+fn the_staff_of_striking_primes_for_three_charges_and_fires_once() {
+    use crate::actions::monster_attacks::GREATSWORD;
+    use crate::actions::staves::CHARGE_STAFF_OF_STRIKING;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::items::item_template::STAFF_OF_STRIKING;
+
+    let mut fired = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&STAFF_OF_STRIKING);
+
+        for ef in CHARGE_STAFF_OF_STRIKING.execute(&mut e, fighter, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&fighter].has_condition(Condition::StaffStriking),
+            "seed {seed}: the prime should be up"
+        );
+        assert_eq!(
+            e.actors[&fighter].item_charges_remaining(STAFF_OF_STRIKING.name),
+            7,
+            "seed {seed}: three charges of ten"
+        );
+        assert!(
+            e.actors[&fighter].has_item_named(STAFF_OF_STRIKING.name),
+            "seed {seed}: priming a staff does not spend the staff"
+        );
+
+        let before = e.messages().len();
+        let tv = vec![ogre];
+        let _ = GREATSWORD.side_effects(&mut e, fighter, Some(&tv), None, None);
+        if e.actors[&fighter].has_condition(Condition::StaffStriking) {
+            // The swing missed; the prime is still banked, which is the
+            // right outcome and not the one under test.
+            continue;
+        }
+        assert!(
+            e.messages()[before..]
+                .iter()
+                .any(|m| m.contains("staff of striking")),
+            "seed {seed}: the hit consumed the prime and logged no rider"
+        );
+        fired = true;
+        break;
+    }
+    assert!(
+        fired,
+        "forty seeds and the staff's rider never fired on a connecting swing"
+    );
+}
+
+/// The Staff of Withering's save, and the condition a failure leaves.
+///
+/// `Condition::Withered` is the reason
+/// `CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS` exists, so the test
+/// asserts the clause rather than just the install: RAW's sentence is
+/// *"Disadvantage … on any ability check or saving throw that uses
+/// Strength or Constitution"*, which is four lanes (STR and CON × checks
+/// and saves) and must be none of the other eight.
+#[test]
+fn a_withered_creature_is_slow_in_the_arms_and_not_in_the_reflexes() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::dice::RollMode;
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    for ability in [
+        AbilityScoreType::Strength,
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+        AbilityScoreType::Wisdom,
+    ] {
+        assert_eq!(
+            e.compute_check_mode(ogre, ability),
+            RollMode::Normal,
+            "an undebuffed ogre rolls {ability:?} straight"
+        );
+    }
+
+    e.actors
+        .get_mut(&ogre)
+        .unwrap()
+        .add_condition(Condition::Withered, ConditionTimer::Rounds(10));
+
+    for ability in [AbilityScoreType::Strength, AbilityScoreType::Constitution] {
+        assert_eq!(
+            e.compute_check_mode(ogre, ability),
+            RollMode::Disadvantage,
+            "a withered creature's {ability:?} checks suffer"
+        );
+        assert_eq!(
+            e.compute_save_mode(ogre, ability),
+            RollMode::Disadvantage,
+            "and so do its {ability:?} saves"
+        );
+    }
+    // And the eight lanes RAW does not name. DEX is the one that matters:
+    // the physical-save table next door covers STR, DEX and CON together,
+    // and reaching for it would have given the staff a clause the book
+    // does not print.
+    for ability in [
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Wisdom,
+        AbilityScoreType::Charisma,
+    ] {
+        assert_eq!(
+            e.compute_check_mode(ogre, ability),
+            RollMode::Normal,
+            "withering should not touch {ability:?} checks"
+        );
+        assert_eq!(
+            e.compute_save_mode(ogre, ability),
+            RollMode::Normal,
+            "withering should not touch {ability:?} saves"
+        );
+    }
+}
+
+/// The Staff of Withering, end to end: prime for one of three charges,
+/// hit, and the target rots.
+#[test]
+fn the_staff_of_withering_withers_what_it_hits() {
+    use crate::actions::monster_attacks::GREATSWORD;
+    use crate::actions::staves::CHARGE_STAFF_OF_WITHERING;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::items::item_template::STAFF_OF_WITHERING;
+
+    let mut withered = false;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&STAFF_OF_WITHERING);
+
+        for ef in CHARGE_STAFF_OF_WITHERING.execute(&mut e, fighter, None, None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&fighter].item_charges_remaining(STAFF_OF_WITHERING.name),
+            2,
+            "seed {seed}: one charge of three"
+        );
+
+        let tv = vec![goblin];
+        for ef in GREATSWORD.side_effects(&mut e, fighter, Some(&tv), None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors
+            .get(&goblin)
+            .is_some_and(|g| g.has_condition(Condition::Withered))
+        {
+            withered = true;
+            break;
+        }
+    }
+    assert!(
+        withered,
+        "sixty seeds and the DC 15 save never failed — the follow-up is not wired"
+    );
 }
