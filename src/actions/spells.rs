@@ -15633,6 +15633,65 @@ pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
     scaling: SummonScaling::bodies(2),
 };
 
+/// Create Undead — 5e level-6 necromancy (cleric, warlock, wizard),
+/// no concentration. Three Ghouls at once, on free tiles beside the
+/// caster, permanently for the encounter.
+///
+/// Animate Dead's apex, and it earns the three extra slot levels on
+/// two axes rather than one: the cohort starts at three rather than one,
+/// and every body in it is a Ghoul rather than a Skeleton — CR 1
+/// against CR 1/4, and claws that carry a paralysis rider. Three
+/// creatures that can each paralyse somebody is a genuinely different
+/// threat from three creatures that can each hit somebody, because
+/// paralysis in this engine is what turns the *next* melee hit into an
+/// automatic critical. A necromancer who lands one is not adding
+/// damage; they are handing the whole front line auto-crits.
+///
+/// **Ghouls, and only ghouls.** RAW's upcast table branches at level 8
+/// — five ghouls, or two ghasts, or two wights — and at level 9 adds
+/// mummies. That is an option table, and the engine collapses option
+/// tables to their load-bearing branch for the reason
+/// `SummonSpell::template` gives: a `&'static CreatureTemplate` is
+/// shared by every cast on the board and a cast-time choice has nowhere
+/// to live. The ghoul lane is the one that runs the whole ladder
+/// without a gap, so it is the one that ships, and the ladder that
+/// remains is RAW's own: three at level 6, four at 7, five at 8, six at
+/// 9 — `bodies(1)`.
+///
+/// **No concentration**, which is RAW and is the same exception Animate
+/// Dead takes for the same reason: an animated corpse is a made thing.
+/// It is also what makes this spell worth a level-6 slot at all. The
+/// engine's other level-6 summon, Conjure Fey, rents one Medium body
+/// against the caster's concentration; this one buys three permanent
+/// ones and leaves the caster free to hold Globe of Invulnerability
+/// over them.
+///
+/// Two RAW clauses are dropped rather than approximated, both for
+/// reasons the engine has already settled elsewhere: the **1-minute
+/// casting time** and the **"only at night"** gate are out-of-combat
+/// clauses, and the engine's clock starts at initiative. The
+/// bonus-action command lane is dropped for the reason every summon's
+/// is — the minions run on the AI's own rungs, which is the engine's
+/// standing answer to "who decides what the skeleton does".
+pub static CREATE_UNDEAD: SummonSpell = SummonSpell {
+    display_name: "create undead",
+    aliases: &["cundead", "raise ghouls"],
+    school: SpellSchool::Necromancy,
+    slot_level: 6,
+    template: &crate::actors::creatures::ghouls::GHOUL_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 3,
+    // RAW's 10 feet, which is 4 tiles on the 2.5-ft grid — and the
+    // cohort needs the room, since each ghoul that lands takes its
+    // anchor out of the search for the next one.
+    search_radius: 4,
+    // Six wide at a level-9 cast: three printed, plus one for each of
+    // three levels. See `SummonSpell::instance_id_span`.
+    base_instance_id: 170,
+    concentration: None,
+    scaling: SummonScaling::bodies(1),
+};
+
 /// Confusion — 5e level-4 enchantment, concentration, action. Targets a
 /// 20ft burst (radius 4) at a point within 90ft (36 tiles). Every
 /// creature in the area makes a WIS save vs the caster's spell DC; on
@@ -18073,6 +18132,7 @@ pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
         &CONJURE_ANIMALS,
         &CONJURE_ELEMENTAL,
         &ANIMATE_DEAD,
+        &CREATE_UNDEAD,
         &FIND_STEED,
         &FIND_GREATER_STEED,
         &PHANTOM_STEED,

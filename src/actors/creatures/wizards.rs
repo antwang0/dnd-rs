@@ -194,6 +194,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // Latest necromancy / divination additions: lv3 Animate Dead (raise
     // skeleton ally) and lv9 Foresight (single-target apex buff).
     actions.push(&crate::actions::spells::ANIMATE_DEAD);
+    // lv6 **Create Undead** — Animate Dead's apex, and the wizard's one
+    // way to spend a sixth-level slot on bodies rather than on a
+    // burst. Three ghouls at once, permanently, with the caster's
+    // concentration still free for the Globe they will be standing
+    // under.
+    actions.push(&crate::actions::spells::CREATE_UNDEAD);
     actions.push(&*crate::actions::spells::FORESIGHT);
     // Latest enchantment / transmutation additions: lv2 Levitate (CON
     // save lift), lv3 Fly (concentration speed buff), lv3 Plant Growth

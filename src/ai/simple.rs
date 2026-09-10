@@ -20100,15 +20100,22 @@ mod tests {
 
         // (action name, does it take the caster's concentration)
         let expected: &[(&str, bool)] = &[
-            // Summons. Every spell in the lane anchors its minions to
-            // the caster's concentration except Animate Dead, and every
-            // per-rest *feature* summon does not — see
+            // Summons. Almost every spell in the lane anchors its
+            // minions to the caster's concentration — the exceptions are
+            // the two that *make* a thing and the three that bond one —
+            // and every per-rest *feature* summon does not. See
             // `spells::SummonSpell::concentration` for why that split is
             // the design rather than an accident of who wrote what.
             ("conjure animals", true),
             ("conjure elemental", true),
             ("animate objects", true),
             ("animate dead", false),
+            // Animate Dead's apex takes the same exception for the same
+            // reason, and it is what the sixth-level slot is buying:
+            // three permanent ghouls *and* a concentration slot still
+            // free for whatever the necromancer wants to hold over
+            // them.
+            ("create undead", false),
             // Find Steed is the second `None` on the chassis, and for
             // the same reason: a paladin who had to concentrate on their
             // horse could never smite from its back.

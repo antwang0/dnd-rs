@@ -94772,6 +94772,34 @@ fn animate_dead_raises_two_more_skeletons_for_each_slot_above_its_own() {
     assert_eq!(three_up.len(), 7, "three levels up is six more bodies");
 }
 
+/// Create Undead is Animate Dead's apex on both axes at once: three
+/// bodies instead of one at the printed level, and a Ghoul instead of a
+/// Skeleton in each of them.
+///
+/// The ladder is RAW's own, minus the option table — three ghouls at
+/// level 6, four at 7, five at 8, six at 9 — and the ghoul is what the
+/// slot is really for: its claws carry a paralysis rider, and paralysis
+/// is what turns the party's next melee hit into an automatic critical.
+#[test]
+fn create_undead_raises_a_ghoul_cohort_that_grows_a_body_a_rung() {
+    use crate::actions::spells::CREATE_UNDEAD;
+
+    let (e, base) = summon_at_level(&CREATE_UNDEAD, 6);
+    assert_eq!(base.len(), 3, "the printed cast raises three ghouls");
+    let first = *base.first().expect("a ghoul");
+    assert_eq!(
+        e.actors[&first].creature_type(),
+        crate::engine::types::CreatureType::Undead
+    );
+    assert!(
+        e.actors[&first].find_action("ghoul claws").is_some(),
+        "the cohort is ghouls, not skeletons — the claws are the point"
+    );
+
+    let (_, top) = summon_at_level(&CREATE_UNDEAD, 9);
+    assert_eq!(top.len(), 6, "three levels up is three more ghouls");
+}
+
 /// Every body a count-scaling summon can ever raise gets its own
 /// instance id.
 ///

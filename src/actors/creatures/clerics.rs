@@ -144,6 +144,11 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // spawn) + Spirit Shroud (concentration on-hit cold rider), and the
     // lv8 Holy Aura (concentration save-advantage burst aura).
     actions.push(&ANIMATE_DEAD);
+    // lv6 **Create Undead** — RAW puts it on the cleric list, which
+    // reads oddly beside Turn Undead and is exactly the tension the
+    // spell is for: a Death Domain cleric raising three ghouls is
+    // using the same list a Life cleric uses to lay them to rest.
+    actions.push(&crate::actions::spells::CREATE_UNDEAD);
     // lv5 **Summon Celestial** (TCE) — the cleric's only summon, and the
     // only summon on the divine list at all. The cleric fights in the
     // front rank with a mace; what the spirit adds is not another body

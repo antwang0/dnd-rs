@@ -85,6 +85,13 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*BESTOW_CURSE);
     actions.push(&*FLY);
     actions.push(&ANIMATE_DEAD);
+    // lv6 **Create Undead** — RAW's third caster for it, and the one
+    // whose slot table makes it a genuine decision: Pact Magic's whole
+    // pool sits at one level and comes back on a short rest, so a
+    // warlock who reaches the sixth rung is choosing between three
+    // permanent ghouls and everything else they could have cast that
+    // fight. See `spells::CREATE_UNDEAD`.
+    actions.push(&crate::actions::spells::CREATE_UNDEAD);
     // The Tasha's summon family, warlock half. RAW gives the warlock
     // Fey, Undead, Aberration and Fiend, and the shape of that list is
     // the patron: everything the warlock can call is something that
