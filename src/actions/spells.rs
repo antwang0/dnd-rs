@@ -5350,6 +5350,52 @@ impl Action for EldritchBlast {
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Force]
     }
+    /// The one ranged attack cantrip in the engine that carries an
+    /// estimate, and it needs one for a reason no other cantrip has.
+    ///
+    /// `melee_cantrip_expected_damage`'s docstring explains why ranged
+    /// cantrips were left unannotated: the AI's *attack picker* only
+    /// uses the number to break a tie between two candidates that
+    /// already agree on reach, and a ranged cantrip never ties with a
+    /// melee weapon on reach. That was the whole story while the picker
+    /// was the only reader. It is not any more — `best_damage_per_lane`
+    /// arrived later and compares the melee lane against the ranged one
+    /// to decide whether backing out of contact is worth the step, and
+    /// there an unannotated ranged lane is not "no opinion" in effect:
+    /// `ranged_lane_beats_staying` falls through to `true`, so the actor
+    /// retreats unconditionally.
+    ///
+    /// While a warlock has slots that hardly matters — a levelled spell
+    /// puts a real number in the ranged slot and the comparison works.
+    /// The hole is the back half of every fight, which is where a
+    /// warlock spends most of its rounds: four Pact Magic slots against
+    /// ten rounds, and then nothing at range carrying a number at all.
+    /// A slotless warlock therefore backed out of contact every turn to
+    /// fire a cantrip, whatever was in its other hand.
+    ///
+    /// SRD 5.2's Pact of the Blade invocations are what made that
+    /// visible, by putting a warlock on the roster whose best remaining
+    /// action is three sword swings. It conjured the sword and backed
+    /// away from it.
+    ///
+    /// Beams times a d10, plus Charisma per beam for a holder of
+    /// **Agonizing Blast** — which is the only cantrip modifier in the
+    /// game that is a build choice rather than a constant, and is
+    /// exactly what makes the lane comparison worth doing. Repelling
+    /// Blast, Grasp of Hadar and Lance of Lethargy are deliberately not
+    /// priced: they move a target and slow it, and the estimate is a
+    /// damage number.
+    fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        use crate::actions::class_features::AGONIZING_BLAST_TAG;
+        let caster = encounter.actors.get(&caster_id)?;
+        let beams = crate::engine::util::cantrip_dice_count(caster.level()) as f32;
+        let per_beam = if caster.feature_available(AGONIZING_BLAST_TAG) {
+            caster.ability_modifier(AbilityScoreType::Charisma).max(0) as f32
+        } else {
+            0.0
+        };
+        Some(beams * (Dice::new(1, 10).average_roll() + per_beam))
+    }
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

@@ -15050,6 +15050,220 @@ fn devouring_blade_lands_three_swings_in_one_action() {
     assert_eq!(chained, 2, "one swing plus two chained is three");
 }
 
+/// SRD 5.2 **Eldritch Smite**: the prime needs a pact weapon, and a
+/// warlock who has not conjured one cannot buy it.
+///
+/// The gate is the half that makes it an invocation of this family
+/// rather than a second Divine Smite — RAW's prerequisite is Pact of
+/// the Blade, and a slot spent with no blade to spend it on would be
+/// the invocation paying for nothing.
+#[test]
+fn eldritch_smite_waits_for_the_blade() {
+    use crate::actions::class_features::{CONJURE_PACT_WEAPON, ELDRITCH_SMITE};
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+
+    let prime = ActionExecutionInfo::new(&*ELDRITCH_SMITE, warlock, None, None, None);
+    assert!(!prime.validate(&e), "no blade, no smite");
+
+    let conjure = ActionExecutionInfo::new(&*CONJURE_PACT_WEAPON, warlock, None, None, None);
+    e.push_action(conjure);
+    e.process_stack();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+
+    let prime = ActionExecutionInfo::new(&*ELDRITCH_SMITE, warlock, None, None, None);
+    assert!(prime.validate(&e), "and with one, the slot buys the prime");
+    e.push_action(prime);
+    e.process_stack();
+    assert!(e.actors[&warlock].has_condition(Condition::EldritchSmiting));
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    assert!(
+        !ActionExecutionInfo::new(&*ELDRITCH_SMITE, warlock, None, None, None).validate(&e),
+        "and a second slot on an unspent prime buys nothing"
+    );
+}
+
+/// SRD 5.2 **Eldritch Smite**'s size clause: *"you can give the target
+/// the Prone condition **if it is Huge or smaller**."*
+///
+/// The clause is on the knockdown alone, which is what
+/// `SmiteFollowUp::size_cap` exists to say — every other target gate on
+/// the rider tables would have taken the force damage away too. So the
+/// test is two swings: one at something Huge or under, which falls, and
+/// one at a gargantuan, which takes the dice and stays up.
+#[test]
+fn an_eldritch_smite_knocks_down_everything_but_the_gargantuan() {
+    use crate::actions::class_features::PACT_WEAPON;
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::actors::creatures::warlocks::FIEND_WARLOCK_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::types::Size;
+
+    // A swing that lands, over enough seeds that one of them connects,
+    // with the prime re-installed each time — the rider is consumed by
+    // the hit, so a re-primed swing is what makes a sweep meaningful.
+    let sweep = |template: &'static crate::actors::actor_template::CreatureTemplate,
+                 expect_prone: bool| {
+        let mut saw_hit = false;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let warlock = e
+                .instantiate_creature(&FIEND_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(template, Coordinate::new(7, 4), 1, 0)
+                .unwrap();
+            e.pop_prompt();
+            let actor = e.actors.get_mut(&warlock).unwrap();
+            actor.add_condition(Condition::PactWeapon, ConditionTimer::Permanent);
+            actor.add_condition(Condition::EldritchSmiting, ConditionTimer::Rounds(2));
+            let tv = vec![target];
+            let effects = PACT_WEAPON.side_effects(&mut e, warlock, Some(&tv), None, None);
+            let landed = !effects.is_empty();
+            for effect in effects {
+                effect.apply(&mut e);
+            }
+            if !landed {
+                continue;
+            }
+            saw_hit = true;
+            assert_eq!(
+                e.actors[&target].has_condition(Condition::Prone),
+                expect_prone,
+                "{} ({}): prone should be {}",
+                template.name,
+                e.actors[&target].size(),
+                expect_prone
+            );
+            break;
+        }
+        assert!(saw_hit, "{}: no swing connected in 60 seeds", template.name);
+    };
+
+    assert!(OGRE_TEMPLATE.size.is_at_most(Size::Huge));
+    sweep(&OGRE_TEMPLATE, true);
+    assert!(!TARRASQUE_TEMPLATE.size.is_at_most(Size::Huge));
+    sweep(&TARRASQUE_TEMPLATE, false);
+}
+
+/// SRD 5.2 **Lifedrinker**: *"once per turn when you hit a creature
+/// with your pact weapon, you can deal an extra 1d6 … and you can
+/// expend one of your Hit Point Dice to roll it and regain a number of
+/// Hit Points equal to the roll plus your Constitution modifier."*
+///
+/// The heal is the half this cohort had never carried, so that is what
+/// the test watches: a wounded warlock swings and comes back up by
+/// something between the die's floor and its ceiling.
+#[test]
+fn lifedrinker_gives_the_warlock_hit_points_back() {
+    use crate::actions::class_features::{LIFEDRINKER_TAG, LIFEDRINKER_USES, PACT_WEAPON};
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::types::{AbilityScoreType, DamageType};
+
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let warlock = e
+            .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(7, 4), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        {
+            let actor = e.actors.get_mut(&warlock).unwrap();
+            actor.add_condition(Condition::PactWeapon, ConditionTimer::Permanent);
+            // Wounded, so there is room for the heal to show.
+            actor.take_typed_damage(20, DamageType::Force);
+        }
+        let before = e.actors[&warlock].hitpoints();
+        let con = e.actors[&warlock].ability_modifier(AbilityScoreType::Constitution);
+        let tv = vec![target];
+        let effects = PACT_WEAPON.side_effects(&mut e, warlock, Some(&tv), None, None);
+        let landed = !effects.is_empty();
+        for effect in effects {
+            effect.apply(&mut e);
+        }
+        if !landed {
+            continue;
+        }
+        let healed = e.actors[&warlock].hitpoints() as i32 - before as i32;
+        assert!(
+            healed >= (1 + con).max(1) && healed <= (8 + con).max(1),
+            "1d8 + CON({con}) came back, not {healed}"
+        );
+        assert_eq!(
+            e.actors[&warlock].feature_charges_remaining(LIFEDRINKER_TAG),
+            LIFEDRINKER_USES - 1,
+            "and one of RAW's Hit Dice went with it"
+        );
+        return;
+    }
+    panic!("no swing connected in 60 seeds");
+}
+
+/// Lifedrinker is scoped to the pact weapon, which is the gate that
+/// needed `caster_gate` to see the swing rather than only the swinger.
+///
+/// Held-condition-only would have paid the die and the heal on the
+/// dagger the same warlock is carrying.
+#[test]
+fn lifedrinker_does_not_ride_the_warlocks_dagger() {
+    use crate::actions::class_features::{LIFEDRINKER_TAG, LIFEDRINKER_USES};
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::DAGGER;
+    use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::actors::creatures::warlocks::UNDEAD_WARLOCK_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let warlock = e
+            .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&TARRASQUE_TEMPLATE, Coordinate::new(7, 4), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .add_condition(Condition::PactWeapon, ConditionTimer::Permanent);
+        let tv = vec![target];
+        let effects = DAGGER.side_effects(&mut e, warlock, Some(&tv), None, None);
+        let landed = !effects.is_empty();
+        for effect in effects {
+            effect.apply(&mut e);
+        }
+        if !landed {
+            continue;
+        }
+        assert_eq!(
+            e.actors[&warlock].feature_charges_remaining(LIFEDRINKER_TAG),
+            LIFEDRINKER_USES,
+            "a dagger is not a pact weapon, whatever else the warlock is holding"
+        );
+        return;
+    }
+    panic!("no swing connected in 60 seeds");
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

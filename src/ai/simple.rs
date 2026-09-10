@@ -671,6 +671,21 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3d'. Eldritch Smite — the warlock's entry on the same lane and
+        //      the same rung, for the same reason: a bonus-action prime
+        //      whose whole worth is that the swing it rides happens this
+        //      turn. Below Divine Smite only because nothing can hold
+        //      both, so the order between them decides nothing.
+        //
+        //      Its own validator carries the two gates that make it a
+        //      warlock's rather than a paladin's — the pact weapon has
+        //      to be conjured, and the slot has to exist — so this rung
+        //      is silent on every warlock that has not taken the
+        //      invocation and on every turn before the blade is out.
+        if let Some(aei) = try_eldritch_smite(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3e. Paladin Smite spells — bonus-action concentration primes
         //     (Searing / Wrathful / Thunderous / Branding / Blinding /
         //     Staggering / Banishing, slot-cheapest first). Same trigger
@@ -5764,6 +5779,23 @@ fn try_divine_smite(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, "divine smite")
+}
+
+/// Warlock Eldritch Smite — the same shape as `try_divine_smite` above
+/// and gated at the same reach, because it is the same decision: a
+/// bonus-action prime that is worth a slot only if the swing it rides
+/// happens this turn.
+///
+/// Everything that makes it a warlock's rather than a paladin's is in
+/// the action's own `custom_validate_input` — the invocation tag, the
+/// conjured pact weapon, the unspent slot, and the no-double-prime
+/// clause — which is why this rung is three words different from its
+/// sibling and not thirty.
+fn try_eldritch_smite(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_self_action_when_enemy_within(encounter, actor_id, MELEE_REACH, "eldritch smite")
 }
 
 /// Shared "pick the highest-HP hostile within `range_tiles` and queue
@@ -10877,6 +10909,132 @@ mod tests {
         );
     }
 
+    /// The same question asked of the chassis that had no way to answer
+    /// it: a warlock late in a fight, when the slots are gone and the
+    /// only thing left at range is Eldritch Blast.
+    ///
+    /// `ranged_lane_beats_staying` compares two `expected_damage`
+    /// numbers and falls through to "leave" whenever either lane has
+    /// none. Eldritch Blast had none — ranged attack cantrips were
+    /// deliberately unannotated, on an argument about the attack
+    /// picker's tie-break that was true of the picker and had nothing
+    /// to say about this function, which arrived later.
+    ///
+    /// While a warlock has slots it hardly matters: a levelled spell
+    /// puts a large number in the ranged slot and the comparison is
+    /// real. The hole is the back half of every fight, which is where
+    /// warlocks spend most of their rounds — four Pact Magic slots and
+    /// ten rounds. With nothing at range carrying a number, the lane
+    /// read as "no opinion" and the rung walked the warlock backwards
+    /// out of contact, every turn, to fire a cantrip worth less than
+    /// the weapon in its hand.
+    ///
+    /// SRD 5.2's Pact of the Blade invocations are what made that
+    /// visible: a warlock whose best remaining action is three sword
+    /// swings conjured the sword and then backed away from it.
+    ///
+    /// Both directions, because the fix has to leave the baseline
+    /// alone: a blaster warlock's cantrip really does beat its dagger,
+    /// and it should still want out of an ogre's reach.
+    #[test]
+    fn a_blade_warlock_out_of_slots_stands_and_fights() {
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::warlocks::{UNDEAD_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::side_effects::Resource;
+
+        // Spend every slot the chassis has, which is where a warlock
+        // spends most of its rounds.
+        let drain = |e: &mut EncounterInstance, id: usize| {
+            let a = e.actors.get_mut(&id).unwrap();
+            for lvl in 1..=9u32 {
+                while a.consume_resource(Resource::SpellSlot(lvl)) {}
+            }
+        };
+
+        let mut e = empty_arena();
+        let blade = e
+            .instantiate_creature(&UNDEAD_WARLOCK_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        // The weapon has to be out for the melee lane to exist at all —
+        // which is the invocation's own first clause, and the reason
+        // the AI conjures it before anything closes.
+        e.actors
+            .get_mut(&blade)
+            .unwrap()
+            .add_condition(Condition::PactWeapon, ConditionTimer::Permanent);
+        drain(&mut e, blade);
+        assert!(under_melee_threat(&e, blade));
+        assert!(
+            has_ranged_attack(&e, blade),
+            "the blast is still there — this is not the no-shot case"
+        );
+        assert!(
+            !ranged_lane_beats_staying(&e, blade),
+            "three swings of a Charisma blade beat a slotless blast — stay and swing"
+        );
+
+        let blaster = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 10), 1, 1)
+            .unwrap();
+        drain(&mut e, blaster);
+        assert!(
+            ranged_lane_beats_staying(&e, blaster),
+            "and a warlock whose blade is a dagger still wants the ground"
+        );
+    }
+
+    /// A blade warlock spends its invocations on the blade.
+    ///
+    /// RAW hands out five invocations, not eight, so the pact-weapon
+    /// chassis cannot also be carrying the baseline's three Eldritch
+    /// Blast picks — and the one that matters most is the one that
+    /// works against the build: Repelling Blast shoves the target ten
+    /// feet away, and every feature on a blade warlock's sheet is
+    /// priced on standing next to something.
+    ///
+    /// Agonizing Blast is the one that decides the lane comparison
+    /// above. Charisma on *every beam* is twelve flat points on a
+    /// level-9 chassis, which is enough to make the cantrip beat three
+    /// sword swings — so a warlock carrying both lists would conjure
+    /// the weapon and never swing it.
+    #[test]
+    fn the_blade_warlocks_do_not_also_carry_the_blast_invocations() {
+        use crate::actions::class_features::{
+            AGONIZING_BLAST_TAG, LANCE_OF_LETHARGY_TAG, PACT_OF_THE_BLADE_TAG,
+            REPELLING_BLAST_TAG,
+        };
+        use crate::actors::creatures::pc_template_families;
+        let warlocks = pc_template_families()
+            .into_iter()
+            .find(|(name, _)| *name == "warlock")
+            .expect("the warlock family is on the registry")
+            .1;
+        let mut blades = 0;
+        for t in warlocks {
+            if !t.features.contains(PACT_OF_THE_BLADE_TAG) {
+                continue;
+            }
+            blades += 1;
+            for tag in [
+                AGONIZING_BLAST_TAG,
+                REPELLING_BLAST_TAG,
+                LANCE_OF_LETHARGY_TAG,
+            ] {
+                assert!(
+                    !t.features.contains(tag),
+                    "{} takes Pact of the Blade and {tag} — that is eight invocations",
+                    t.name
+                );
+            }
+        }
+        assert!(blades >= 2, "the roster has blade warlocks to check");
+    }
+
     /// A creature standing five feet away is in melee, and a ranged
     /// attack made from there rolls at disadvantage.
     ///
@@ -12449,7 +12607,7 @@ mod tests {
         ];
         for (template, marker) in cases {
             let mut seen_in = 0;
-            for seed in 0..4u64 {
+            for seed in 0..16u64 {
                 let tp = TerrainGenParams {
                     width: 24,
                     height: 16,
@@ -18007,7 +18165,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 59] = [
+        let cases: [(&CreatureTemplate, &str); 58] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -18018,16 +18176,22 @@ mod tests {
             (&CONQUEST_PALADIN_TEMPLATE, "conquering presence"),
             (&BLADESINGER_WIZARD_TEMPLATE, "bladesong"),
             (&UNDEAD_WARLOCK_TEMPLATE, "form of dread"),
-            // The conjuring, and the weapon it puts in the list. The
-            // second row is the interesting one for the same reason
-            // Astral Arms' is: `PACT_WEAPON` is a `SimpleWeapon` gated
-            // on a self-condition, so seeing the ordinary attack picker
-            // choose it proves the summon and the swing are wired to
-            // each other and not merely each to the engine. Devouring
-            // Blade rides that swing rather than printing a line of its
-            // own; the count is pinned engine-side.
+            // The conjuring, and only the conjuring. Not the swing, not
+            // Lifedrinker and not Eldritch Smite: all three need the
+            // warlock to be *in contact*, and in this fixture — one PC
+            // in the open against one ogre — it never is. A warlock
+            // with a working ranged lane shoots, and nothing on the
+            // ladder gives it a reason to walk into a club; the picker
+            // prefers the blade only once something has closed on the
+            // warlock, and an ogre that closes on this one gets
+            // stunned, hexed and pulled off again. All three are pinned
+            // engine-side, where a warlock can be stood next to
+            // something.
+            //
+            // The row is worth keeping anyway: it proves the
+            // bonus-action rung fires, which is the half of the
+            // invocation the AI does own.
             (&UNDEAD_WARLOCK_TEMPLATE, "pact of the blade"),
-            (&UNDEAD_WARLOCK_TEMPLATE, "pact weapon"),
             (&KENSEI_MONK_TEMPLATE, "kensei's shot"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "giant's might"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "fire rune"),
@@ -20330,3 +20494,5 @@ mod tests {
         );
     }
 }
+
+

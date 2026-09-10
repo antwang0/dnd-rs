@@ -2666,6 +2666,24 @@ pub enum Condition {
     /// those the engine enforces by the actor leaving the board; the
     /// first two have no surface here.
     PactWeapon,
+    /// SRD 5.2 Warlock Eldritch Invocation **Eldritch Smite**, primed:
+    /// *"Once per turn when you hit a creature with your pact weapon,
+    /// you can expend a Pact Magic spell slot to deal an extra 1d8
+    /// Force damage to the target, plus another 1d8 per level of the
+    /// spell slot, and you can give the target the Prone condition if
+    /// it is Huge or smaller."*
+    ///
+    /// The warlock's entry on the smite lane, and it behaves exactly
+    /// like `Smiting` — a caster-side flag the on-hit rider table reads
+    /// and consumes on the swing that cashes it. RAW asks for the slot
+    /// *after* the hit lands, where the engine's prime asks for it
+    /// before; that is the same collapse `Smiting` already makes, for
+    /// the same reason, and the note is on `EldritchSmite`.
+    ///
+    /// The Prone half rides the follow-up's new `size_cap`, because
+    /// RAW puts the size clause on the knockdown alone: a gargantuan
+    /// creature takes the force and stays standing.
+    EldritchSmiting,
     /// 5e Peace Domain Cleric **Emboldening Bond** (subclass level 1):
     /// a bonded creature "can roll a d4 and add the number rolled to
     /// the attack roll, ability check, or saving throw" once per turn.
@@ -3278,6 +3296,7 @@ impl Condition {
             Condition::Enfeebled => "enfeebled",
             Condition::AstralArms => "arms of the astral self",
             Condition::PactWeapon => "bonded to a pact weapon",
+            Condition::EldritchSmiting => "primed with an eldritch smite",
             Condition::TransmutedSpelling => "primed with transmuted spell",
             Condition::CunningStrikePoison => "primed with cunning poison",
             Condition::CunningStrikeTrip => "primed with cunning trip",
@@ -3731,6 +3750,9 @@ impl Condition {
                 | Condition::LightningArrowPrimed
                 | Condition::EnsnaringStriking
                 | Condition::ZephyrStriking
+                // SRD 5.2 Warlock **Eldritch Smite** — the warlock's
+                // entry on a lane that had been the paladin's alone.
+                | Condition::EldritchSmiting
         )
     }
 

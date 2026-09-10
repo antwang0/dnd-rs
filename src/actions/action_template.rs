@@ -1098,13 +1098,29 @@ pub fn weapon_expected_damage_named(
 /// weapon in the caster's hand. Shocking Grasp, Booming Blade and
 /// Green-Flame Blade are all of it today.
 ///
-/// Ranged attack cantrips are deliberately left unannotated. The
-/// picker's damage key only ever decides a tie between two candidates
-/// that already agree on matchup, roll mode and reach — and a ranged
-/// cantrip never ties with a melee weapon on reach, so an estimate for
-/// it would sort nothing that is not already sorted. Annotating the
-/// cohort that can tie, and only that cohort, is what keeps the hint
-/// from quietly becoming a second, worse ranking of everything.
+/// Ranged attack cantrips are *mostly* left unannotated, and the
+/// argument for that used to be flat: the picker's damage key only ever
+/// decides a tie between two candidates that already agree on matchup,
+/// roll mode and reach, a ranged cantrip never ties with a melee weapon
+/// on reach, so an estimate for it would sort nothing that is not
+/// already sorted. Annotating the cohort that can tie, and only that
+/// cohort, keeps the hint from quietly becoming a second, worse ranking
+/// of everything.
+///
+/// That argument is still right about the picker and is no longer the
+/// whole story, because the picker is no longer the only reader.
+/// `ai::simple::best_damage_per_lane` compares the melee lane against
+/// the ranged one to decide whether backing out of contact is worth the
+/// step, and there an unannotated lane is not neutral in effect —
+/// `ranged_lane_beats_staying` falls through to "leave". So a caster
+/// whose only *remaining* ranged option is an unannotated cantrip —
+/// which is any caster past its slots, and that is most of a fight —
+/// retreats unconditionally, whatever is on the rest of its sheet.
+///
+/// Eldritch Blast carries an estimate for exactly that reason; see its
+/// `expected_damage`. The rest of the ranged cantrips do not, and that
+/// is still the right default — for a wizard or a sorcerer the fallback
+/// and the truth agree.
 pub fn melee_cantrip_expected_damage(
     encounter: &EncounterInstance,
     caster_id: usize,

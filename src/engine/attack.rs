@@ -3651,7 +3651,16 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// it, and the alternative — a second `board_gate` column beside
     /// this one — would have made every future row choose between two
     /// spellings of the same idea.
-    pub caster_gate: Option<fn(&EncounterInstance, &ActorInstance) -> bool>,
+    ///
+    /// It takes the swing too, for the same reason and one row later.
+    /// SRD 5.2's **Lifedrinker** is scoped to *"hit a creature with your
+    /// pact weapon"*, and a gate that could only see the actor would
+    /// have paid the rider on the dagger the warlock is also carrying.
+    /// Empowered Arms above it had exactly that hole — RAW scopes it to
+    /// hits made *with the arms*, the gate read only whether the arms
+    /// were up, and a monk who punched with a fist while wearing them
+    /// collected the die. Both rows name their weapon now.
+    pub caster_gate: Option<fn(&EncounterInstance, &ActorInstance, &AttackParams) -> bool>,
     /// `Some(tag)` if the row also burns a per-rest charge on top of the
     /// once-a-turn ledger; `None` for the rows that are free every turn,
     /// which is every class rider on this cohort.
@@ -3671,6 +3680,36 @@ pub struct OncePerTurnWeaponRiderSpec {
     /// one — and it keeps every row on this cohort rationed the same
     /// way.
     pub charge_tag: Option<&'static str>,
+    /// What the *swinger* gets back when the rider lands, or `None` for
+    /// every row that is damage aimed outward and nothing else.
+    ///
+    /// SRD 5.2's **Lifedrinker** is why it exists: *"you can expend one
+    /// of your Hit Point Dice to roll it and regain a number of Hit
+    /// Points equal to the roll plus your Constitution modifier."* Every
+    /// other row on this cohort is a die the target takes; this is the
+    /// first that is also a die the attacker keeps, and it is what makes
+    /// the invocation a survivability pick rather than a third damage
+    /// rider.
+    ///
+    /// Fires alongside the outward die and under the same gates, which
+    /// is RAW — the two clauses are one sentence and the heal is not
+    /// separately rationed. Queued as an ordinary `Heal` side effect, so
+    /// it respects the swinger's own hit-point cap and does nothing at
+    /// all for a swinger who is already down.
+    pub self_heal: Option<RiderSelfHeal>,
+}
+
+/// The heal half of an `OncePerTurnWeaponRiderSpec` — a die and the
+/// ability modifier added to it. Split out of the spec for the same
+/// reason `RiderCondition` is: the pair is the clause, and a bare
+/// `Option<Dice>` would have left the modifier somewhere else.
+///
+/// Floored at 1 by the fire site, per RAW's *"(minimum of 1 Hit
+/// Point)"* — a swinger with a negative Constitution modifier still
+/// gets something back rather than owing the invocation hit points.
+pub struct RiderSelfHeal {
+    pub dice: Dice,
+    pub ability: AbilityScoreType,
 }
 
 /// A condition an `OncePerTurnWeaponRiderSpec` lays on its target, and
@@ -3728,7 +3767,7 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
         a.has_passive_feature(spec.tag)
             && !a.once_per_turn_used(spec.tag)
             && spec.charge_tag.is_none_or(|tag| a.feature_available(tag))
-            && spec.caster_gate.is_none_or(|gate| gate(encounter, a))
+            && spec.caster_gate.is_none_or(|gate| gate(encounter, a, p))
     });
     if !caster_ok {
         return false;
@@ -3761,6 +3800,27 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
                 timer: rider.timer,
             },
         ));
+    }
+    // The heal half, for the rows that have one. Rolled here rather
+    // than queued as a die so the log carries the number, and pushed as
+    // an ordinary `Heal` so the swinger's own cap applies.
+    if let Some(heal) = &spec.self_heal {
+        let rolled = encounter.roll(&heal.dice) as i32;
+        let ability_mod = encounter
+            .actors
+            .get(&p.caster_id)
+            .map(|a| a.ability_modifier(heal.ability))
+            .unwrap_or(0);
+        // RAW's "(minimum of 1 Hit Point)".
+        let amount = (rolled + ability_mod).max(1) as u32;
+        encounter.log(format!(
+            "  {}: {}({}){:+} = {} HP back",
+            spec.label, heal.dice, rolled, ability_mod, amount
+        ));
+        effects.push(Box::new(crate::engine::side_effects::Heal {
+            actor_id: p.caster_id,
+            amount,
+        }));
     }
     if let Some(caster) = encounter.actors.get_mut(&p.caster_id) {
         caster.mark_once_per_turn_used(spec.tag);
@@ -3846,6 +3906,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     // 5e Way of the Kensei Monk **Deft Strike** (subclass level 6):
     // "when you hit a target with a kensei weapon, you can spend 1 ki
@@ -3864,6 +3925,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::DREADFUL_STRIKES_TAG,
@@ -3874,6 +3936,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSYCHIC_BLADES_TAG,
@@ -3884,6 +3947,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PLANAR_WARRIOR_TAG,
@@ -3894,6 +3958,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::SLAYERS_PREY_TAG,
@@ -3904,6 +3969,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::GATHERED_SWARM_TAG,
@@ -3914,6 +3980,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::PSIONIC_STRIKE_TAG,
@@ -3924,6 +3991,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     // 5e Way of Mercy Monk **Hand of Harm** (subclass lv3) with
     // **Physician's Touch** (lv6) folded in: the monk's hand carries
@@ -3959,6 +4027,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         }),
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     // 5e Way of the Astral Self Monk **Empowered Arms** (subclass level
     // 11, TCE): "once on each of your turns when you hit a creature
@@ -3984,8 +4053,17 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "empowered arms",
         target_gate: |_| true,
         installs: None,
-        caster_gate: Some(|_, a| a.has_condition(crate::conditions::Condition::AstralArms)),
+        // Both halves of RAW's scope: the arms are up, *and* this is a
+        // swing with them. The second half used to be missing, which
+        // made a monk in astral form punch harder with an ordinary fist
+        // than a monk who had not spent the bonus action.
+        caster_gate: Some(|_, a, p| {
+            a.has_condition(crate::conditions::Condition::AstralArms)
+                && p.action_name
+                    == crate::actions::monster_attacks::ASTRAL_ARMS_STRIKE.display_name
+        }),
         charge_tag: None,
+        self_heal: None,
     },
     // 5e Drakewarden Ranger **Bond of Fang and Scale** (subclass level
     // 7): while the drake is summoned, the ranger's weapon attacks
@@ -4006,7 +4084,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         label: "bond of fang and scale",
         target_gate: |_| true,
         installs: None,
-        caster_gate: Some(|encounter, a| {
+        caster_gate: Some(|encounter, a, _| {
             encounter.friendly_beacon_within(
                 a,
                 crate::actions::class_features::DRAKE_COMPANION_TAG,
@@ -4014,6 +4092,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
             )
         }),
         charge_tag: None,
+        self_heal: None,
     },
     // 5e Armorer Artificer **Arcane Armor: Infiltrator** (subclass
     // level 3, TCE): "once on each of your turns when you hit a
@@ -4036,6 +4115,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     // 5e Battle Smith Artificer **Arcane Jolt** (subclass level 9,
     // TCE), damage half: "the target takes an extra 2d6 force damage."
@@ -4061,6 +4141,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: None,
+        self_heal: None,
     },
     // SRD 5.2 Goliath **Fire's Burn** (Fire Giant ancestry): "when you
     // hit a target with an attack roll and deal damage to it, you can
@@ -4092,6 +4173,7 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         installs: None,
         caster_gate: None,
         charge_tag: Some(crate::actions::species::FIRES_BURN_TAG),
+        self_heal: None,
     },
     // SRD 5.2 Goliath **Frost's Chill** (Frost Giant ancestry): "you
     // can also deal 1d6 Cold damage to that target and reduce its Speed
@@ -4120,6 +4202,42 @@ pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
         }),
         caster_gate: None,
         charge_tag: Some(crate::actions::species::FROSTS_CHILL_TAG),
+        self_heal: None,
+    },
+    // SRD 5.2 Warlock Eldritch Invocation **Lifedrinker** (level 9+,
+    // Pact of the Blade): "once per turn when you hit a creature with
+    // your pact weapon, you can deal an extra 1d6 Necrotic, Psychic, or
+    // Radiant damage (your choice) to the creature, and you can expend
+    // one of your Hit Point Dice to roll it and regain a number of Hit
+    // Points equal to the roll plus your Constitution modifier."
+    //
+    // The row that gave this cohort its `self_heal` column, and the only
+    // one on it whose payout is aimed inward.
+    //
+    // `|p| p.damage_type` is RAW's three-way choice, already made:
+    // `PACT_WEAPON` runs its own four-way menu against the target and
+    // three of the four are exactly Lifedrinker's list, so inheriting
+    // the swing's type is the same decision rather than a second one.
+    // The gate names the weapon, because RAW does — a warlock's dagger
+    // drinks nothing.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::LIFEDRINKER_TAG,
+        dice: Dice::new(1, 6),
+        damage_type: |p| p.damage_type,
+        label: "lifedrinker",
+        target_gate: |_| true,
+        installs: None,
+        caster_gate: Some(|_, a, p| {
+            a.has_condition(crate::conditions::Condition::PactWeapon)
+                && p.action_name == crate::actions::class_features::PACT_WEAPON.display_name
+        }),
+        // RAW's Hit Die, collapsed to a pool — see `LIFEDRINKER_USES`.
+        charge_tag: Some(crate::actions::class_features::LIFEDRINKER_TAG),
+        self_heal: Some(RiderSelfHeal {
+            // The warlock's own hit die, which is what RAW spends.
+            dice: Dice::new(1, 8),
+            ability: AbilityScoreType::Constitution,
+        }),
     },
 ];
 
@@ -4312,6 +4430,21 @@ pub struct SmiteFollowUp {
     /// HP as `current_hp - rider_damage` and gating the apply on that.
     /// `None` (the default) skips the gate.
     pub hp_threshold: Option<u32>,
+    /// The largest creature this follow-up can land on, or `None` for
+    /// the riders whose RAW names no size at all.
+    ///
+    /// The size clause is one of the most repeated sentences in the
+    /// book — *"if it is Huge or smaller"*, *"If the target is a Large
+    /// or smaller creature"* — and this table had nowhere for it. The
+    /// existing `OnHitRider::target_gate` is the wrong place: it gates
+    /// the *whole* rider, damage included, and SRD 5.2's Eldritch Smite
+    /// puts the size clause on the Prone alone. A gargantuan creature
+    /// still takes the force; it simply does not fall over.
+    ///
+    /// Read through `Size::clears_gate`, so `None` is a clause every
+    /// target passes and the inequality is spelled once, in the one
+    /// place the engine spells it.
+    pub size_cap: Option<crate::engine::types::Size>,
 }
 
 /// What a smite follow-up does on a failed save (or auto-trigger).
@@ -4715,6 +4848,7 @@ fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
         },
         label,
         hp_threshold: None,
+        size_cap: None,
     }
 }
 
@@ -5114,6 +5248,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "form of dread fear",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: Some(crate::actions::class_features::FORM_OF_DREAD_TAG),
             target_gate: None,
@@ -5233,6 +5368,52 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
         },
+        // SRD 5.2 Warlock Eldritch Invocation **Eldritch Smite** — the
+        // warlock's entry on a lane that had been the paladin's alone:
+        // "expend a Pact Magic spell slot to deal an extra 1d8 Force
+        // damage to the target, plus another 1d8 per level of the spell
+        // slot, and you can give the target the Prone condition if it
+        // is Huge or smaller."
+        //
+        // 2d8 for a level-1 slot, which is RAW's arithmetic at the
+        // bottom of the ladder and the same collapse Divine Smite above
+        // makes at the top of it — see `EldritchSmite` for why the
+        // engine's smite primes do not scale.
+        //
+        // Force rather than radiant, and the difference is the point:
+        // it is the least-resisted damage type in the bestiary, which
+        // is what a warlock's smite should be against the fiends and
+        // undead a paladin's radiant already handles.
+        //
+        // The Prone rides `size_cap` rather than `target_gate`, because
+        // RAW puts the size clause on the knockdown and not on the
+        // damage: a gargantuan creature takes the force and stays up.
+        // No save, which is also RAW — the whole cost is the slot.
+        OnHitRider {
+            condition: Condition::EldritchSmiting,
+            dice: Dice::new(2, 8),
+            label: "eldritch smite",
+            damage_type: RiderDamage::Fixed(DamageType::Force),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Charisma,
+                fixed_dc: None,
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Prone,
+                    // Prone lasts until the target spends the movement
+                    // to stand, which is what every other install of it
+                    // in the engine says.
+                    timer: ConditionTimer::Permanent,
+                },
+                label: "eldritch smite knockdown",
+                hp_threshold: None,
+                size_cap: Some(crate::engine::types::Size::Huge),
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+        },
         // 5e Searing Smite — 1st-level paladin evocation, bonus action.
         // +1d6 fire on the primed hit, and the target catches fire
         // (Burning) for 3 rounds. We bake the Burning rider in as a
@@ -5259,6 +5440,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "searing smite ignite",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5283,6 +5465,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "wrathful smite fear",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5309,6 +5492,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "branding smite brand",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5332,6 +5516,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "blinding smite blind",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5358,6 +5543,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "stunning strike stun",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5498,6 +5684,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "trip attack prone",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5523,6 +5710,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "staggering smite stun",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5558,6 +5746,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 // to 50 hp or fewer." We honor the gate by predicting
                 // post-damage HP at the smite follow-up site.
                 hp_threshold: Some(50),
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5605,6 +5794,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "thunderous smite prone",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5682,6 +5872,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "fire rune chains",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5738,6 +5929,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "ensnaring strike restrain",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5832,6 +6024,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "menacing attack fear",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5859,6 +6052,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "disarming attack disarm",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5885,6 +6079,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 effect: FollowUpEffect::Push { tiles: 4 },
                 label: "pushing attack shove",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5915,6 +6110,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "goading attack goad",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5945,6 +6141,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "sweeping attack splash",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -5977,6 +6174,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "distracting strike distract",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6006,6 +6204,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 effect: FollowUpEffect::AllyReposition,
                 label: "maneuvering attack",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6052,6 +6251,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "banishing arrow banish",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6076,6 +6276,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "beguiling arrow charm",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6104,6 +6305,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "bursting arrow burst",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6127,6 +6329,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "enfeebling arrow enfeeble",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6151,6 +6354,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "grasping arrow brambles",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6173,6 +6377,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "shadow arrow blind",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6237,6 +6442,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "giant slayer knockdown",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
@@ -6291,6 +6497,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "mace of disruption terror",
                 hp_threshold: Some(25),
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: Some(|t| {
@@ -6387,6 +6594,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 },
                 label: "sword of wounding wound",
                 hp_threshold: None,
+                size_cap: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
@@ -6516,6 +6724,21 @@ fn apply_smite_follow_up(
             ));
             return false;
         }
+    }
+    // RAW's size clause, where a rider has one — "you can give the
+    // target the Prone condition if it is Huge or smaller". Checked
+    // before the save rather than after, because a creature too big for
+    // the effect should not be made to roll for it: the log would read
+    // as a save it passed, and a passed save is a different fact from a
+    // clause that never applied.
+    if let Some(cap) = follow.size_cap
+        && !encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.size().clears_gate(Some(cap)))
+    {
+        encounter.log(format!("  {}: the target is too large", follow.label));
+        return false;
     }
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return false;

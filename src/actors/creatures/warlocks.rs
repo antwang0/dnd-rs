@@ -378,6 +378,38 @@ fn subclass_warlock_template(
     WARLOCK_TEMPLATE.with_subclass_tag(name, glyph, subclass_tag)
 }
 
+/// Take the three Eldritch Blast invocations off a warlock that is
+/// going to be swinging a sword instead.
+///
+/// **A warlock has a number of invocations, not all of them.** RAW hands
+/// out five by level nine; the baseline chassis spends all five on the
+/// cantrip (Agonizing Blast, Repelling Blast, Lance of Lethargy,
+/// Eldritch Mind, Devil's Sight), which is the right build for a warlock
+/// whose Action is always going to be a blast. A Pact of the Blade
+/// warlock spends the same five somewhere else, and a template that
+/// carried both lists would be a character sheet nobody could legally
+/// write.
+///
+/// **It is also the difference between the blade being used and not.**
+/// Agonizing Blast adds Charisma to *every beam*, which on a level-9
+/// chassis is three beams — twelve points of flat damage on a cantrip
+/// that costs nothing. Against that, the pact weapon loses the AI's
+/// lane comparison outright, and a warlock with three swings a turn
+/// conjures its weapon in round one and never once swings it. The
+/// Fathomless template makes the same argument one invocation at a time
+/// for the same reason: an invocation that works against the rest of
+/// the build is worse than an empty slot.
+///
+/// Repelling Blast is the sharpest case, and it would be wrong even if
+/// the damage worked out: it shoves the target ten feet away, and every
+/// other feature on a blade warlock's sheet is priced on standing next
+/// to something.
+fn drop_the_blast_invocations(features: &mut HashSet<&'static str>) {
+    features.remove(crate::actions::class_features::AGONIZING_BLAST_TAG);
+    features.remove(crate::actions::class_features::REPELLING_BLAST_TAG);
+    features.remove(crate::actions::class_features::LANCE_OF_LETHARGY_TAG);
+}
+
 /// Fiend Warlock — Otherworldly Patron **The Fiend** subclass build.
 /// Identical envelope to the baseline `WARLOCK_TEMPLATE` (CHA-primary
 /// half-caster with Pact Magic, Eldritch Blast + Hex + Witch Bolt at
@@ -438,7 +470,18 @@ pub static FIEND_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     // thirds of it.
     actions.push(&*crate::actions::class_features::CONJURE_PACT_WEAPON);
     actions.push(&crate::actions::class_features::PACT_WEAPON);
+    // **Eldritch Smite** on top of them, because this is the patron
+    // that can afford it. RAW prices the smite in Pact Magic slots, and
+    // a warlock has four of those a fight; spending one is spending a
+    // Hold Monster. What makes it worth spending here is the other end
+    // of the exchange: Dark One's Blessing pays temp HP when a creature
+    // *drops*, and 2d8 of force plus a knockdown on the swing that was
+    // going to be close is how a creature drops. The invocation and the
+    // patron feature are the same plan read from both ends.
+    actions.push(&*crate::actions::class_features::ELDRITCH_SMITE);
     let mut features = WARLOCK_TEMPLATE.features.clone();
+    features.insert(crate::actions::class_features::ELDRITCH_SMITE_TAG);
+    drop_the_blast_invocations(&mut features);
     features.insert(crate::actions::class_features::DARK_ONES_BLESSING_TAG);
     features.insert(crate::actions::class_features::DARK_ONES_OWN_LUCK_TAG);
     features.insert(crate::actions::class_features::HURL_THROUGH_HELL_TAG);
@@ -1287,6 +1330,16 @@ pub static UNDEAD_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     features.insert(crate::actions::class_features::PACT_OF_THE_BLADE_TAG);
     features.insert(crate::actions::class_features::THIRSTING_BLADE_TAG);
     features.insert(crate::actions::class_features::DEVOURING_BLADE_TAG);
+    // **Lifedrinker** with them, and it is the invocation the build
+    // needs rather than the one it wants. Three swings a turn is three
+    // turns spent inside an enemy's reach on a d8 hit die, and RAW's
+    // answer to that is this: a die back on the first hit of every
+    // turn. It also rides the pact weapon's damage menu for free — the
+    // rider inherits whichever of Necrotic / Psychic / Radiant /
+    // Slashing the weapon chose, which is RAW's own three-way choice
+    // already made against the same target. See `LIFEDRINKER_TAG`.
+    features.insert(crate::actions::class_features::LIFEDRINKER_TAG);
+    drop_the_blast_invocations(&mut features);
     CreatureTemplate {
         name: "Undead Warlock",
         glyph: 'W',

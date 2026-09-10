@@ -36,6 +36,12 @@ use crate::{
 /// registered PC template — a registry entry whose feature has moved on
 /// is invisible otherwise.
 pub const SHORT_REST_FEATURES: &[&str] = &[
+    // SRD 5.2 Warlock **Lifedrinker**. RAW's Hit Dice come back on a
+    // long rest and half of them at that; the short-rest cadence here
+    // matches the warlock's own Pact Magic slots, which is the class's
+    // whole resource rhythm — a warlock arrives at the next fight with
+    // its subclass, and should arrive with this too.
+    LIFEDRINKER_TAG,
     // 5e Artificer, all five charges. RAW prices four of them off pools
     // this engine does not track (Arcane Armor uses, the Alchemist's
     // flask, the Artillerist's cannon uses, the Battle Smith's hour of
@@ -681,6 +687,10 @@ pub fn shared_pool_for(tag: &str) -> Option<&'static str> {
 /// RAW pools of two or more, and all three would spend the second charge
 /// refreshing a timer that had eight rounds left on it.
 pub const FEATURE_CHARGES: &[(&str, u32)] = &[
+    // SRD 5.2 Warlock **Lifedrinker**: RAW spends a Hit Die, and the
+    // engine has no Hit Dice. See `LIFEDRINKER_USES` for why the pool
+    // is two.
+    (LIFEDRINKER_TAG, LIFEDRINKER_USES),
     // 5e Arcane Archer Fighter (XGE, subclass level 3): "You can use
     // this feature twice. You regain all expended uses of it when you
     // finish a short or long rest." RAW to the number.
@@ -3096,6 +3106,12 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // `GRASP_OF_HADAR_TAG` / `LANCE_OF_LETHARGY_TAG`.
     GRASP_OF_HADAR_TAG,
     LANCE_OF_LETHARGY_TAG,
+    // The third warlock invocation on the ledger, and the first one
+    // gated on a weapon rather than a beam: Lifedrinker's RAW is "once
+    // per turn when you hit a creature with your pact weapon", and a
+    // Devouring Blade warlock swings that weapon three times in one
+    // Action — which is exactly the case the window caps.
+    LIFEDRINKER_TAG,
     // The first entries that are a *species* trait — SRD 5.2's Goliath
     // Giant Ancestry. They are also the first rows whose RAW cadence is
     // not once-a-turn at all: the ancestry is rationed by a per-rest
@@ -10221,10 +10237,12 @@ pub const ELDRITCH_INVOCATION_TAGS: &[&str] = &[
     DEVILS_SIGHT_TAG,
     DEVOURING_BLADE_TAG,
     ELDRITCH_MIND_TAG,
+    ELDRITCH_SMITE_TAG,
     GIFT_OF_THE_DEPTHS_TAG,
     GIFT_OF_THE_PROTECTORS_TAG,
     GRASP_OF_HADAR_TAG,
     LANCE_OF_LETHARGY_TAG,
+    LIFEDRINKER_TAG,
     PACT_OF_THE_BLADE_TAG,
     REPELLING_BLAST_TAG,
     THIRSTING_BLADE_TAG,
@@ -10429,6 +10447,166 @@ impl Action for ConjurePactWeapon {
 
 pub static CONJURE_PACT_WEAPON: LazyLock<ConjurePactWeapon> =
     LazyLock::new(|| ConjurePactWeapon {});
+
+/// Warlock Eldritch Invocation — **Eldritch Smite**: *"Once per turn
+/// when you hit a creature with your pact weapon, you can expend a Pact
+/// Magic spell slot to deal an extra 1d8 Force damage to the target,
+/// plus another 1d8 per level of the spell slot, and you can give the
+/// target the Prone condition if it is Huge or smaller."*
+///
+/// **The prime is the engine's smite idiom, not RAW's timing.** RAW
+/// lets the warlock see the hit land and *then* decide to spend the
+/// slot; the engine's smite lane declares first and cashes on the next
+/// connecting swing, because a decision made after the die is a
+/// decision the action stack has no place to put. `Condition::Smiting`
+/// has made exactly that collapse since the paladin arrived, and a
+/// second spelling of the same rule would be worse than the collapse.
+///
+/// **The bonus action is the engine's too**, and it is doing real work
+/// here that it does not do for the paladin: a warlock's bonus action
+/// is already the most contested resource on the sheet — Hex,
+/// Hellish Rebuke, conjuring the weapon in the first place — so
+/// pricing the smite there makes it a decision rather than a
+/// free rider on every swing.
+///
+/// **2d8 for a level-1 slot**, which is RAW at the bottom of the
+/// ladder: one die plus one per slot level. It does not scale, and
+/// `scales_with_slot` is left at its default `false` so that a warlock
+/// who casts it with a bigger slot is told the difference bought
+/// nothing rather than finding out by comparing damage rolls. The same
+/// collapse Divine Smite makes, for the same reason — the rider's dice
+/// live on a condition, and a condition carries no level.
+///
+/// Force, where the paladin's is radiant. That is RAW and it is also
+/// the invocation's whole niche: force is the least-resisted damage
+/// type in the bestiary, so a warlock's smite lands on the fiends and
+/// undead a paladin's radiant was already good against *and* on
+/// everything else.
+///
+/// The tag is declarative rather than load-bearing — the invocation is
+/// an action, and carrying the action is what lets a warlock use it —
+/// but it is what puts the row on `ELDRITCH_INVOCATION_TAGS`, and the
+/// validator reads it so the two can never disagree about who has this
+/// invocation. Divine Smite ships without one because nothing counts
+/// paladin features; the invocation column is counted.
+pub const ELDRITCH_SMITE_TAG: &str = "warlock.eldritch_smite";
+
+/// See `ELDRITCH_SMITE_TAG`.
+pub struct EldritchSmite {}
+
+impl Action for EldritchSmite {
+    fn name(&self) -> &str {
+        "eldritch smite"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["es", "smite-eldritch"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        // The rider lands on the next hit, not here. Same answer and
+        // the same reason as Divine Smite: a `true` would put the prime
+        // into the AI's focus-fire pipeline as though it were an
+        // attack.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(1)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Two gates, and the second is the one Divine Smite has no
+        // equivalent of: RAW scopes the smite to the pact weapon, so a
+        // warlock who has not conjured one has nothing to prime. It is
+        // read as the condition rather than as the weapon's name for
+        // the same reason the AI's rung is — the prime is declared
+        // before any swing exists to name.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.has_passive_feature(ELDRITCH_SMITE_TAG)
+                && a.has_condition(Condition::PactWeapon)
+                && !a.has_condition(Condition::EldritchSmiting)
+        })
+    }
+    fn side_effects(
+        &self,
+        _e: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::EldritchSmiting,
+            // The same two-round window Divine Smite's prime uses, so a
+            // warlock who cannot connect on its own turn still has the
+            // opportunity attack.
+            timer: ConditionTimer::Rounds(2),
+        })]
+    }
+}
+
+pub static ELDRITCH_SMITE: LazyLock<EldritchSmite> = LazyLock::new(|| EldritchSmite {});
+
+/// Warlock Eldritch Invocation — **Lifedrinker**: *"Once per turn when
+/// you hit a creature with your pact weapon, you can deal an extra 1d6
+/// Necrotic, Psychic, or Radiant damage (your choice) to the creature,
+/// and you can expend one of your Hit Point Dice to roll it and regain
+/// a number of Hit Points equal to the roll plus your Constitution
+/// modifier (minimum of 1 Hit Point)."*
+///
+/// One row on `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, and it is the row that
+/// gave that cohort its `self_heal` column: every other rider on the
+/// lane is damage aimed outward, and this one is a caster who gets
+/// something back. That is the whole reason the invocation exists at
+/// tier three — a d8-hit-die chassis standing in the front rank needs
+/// hit points more than it needs another die.
+///
+/// **The damage type is inherited rather than chosen**, and the
+/// inheritance is not a shortcut. `PACT_WEAPON` already runs RAW's own
+/// four-way menu against the target and comes back with the branch it
+/// is least able to shrug off; three of those four are exactly
+/// Lifedrinker's three. So the rider taking `p.damage_type` is the same
+/// decision made once instead of twice. The one divergence is a target
+/// with no relevant modifiers, where the weapon picks Slashing and the
+/// rider follows it — against a creature that resists nothing, which
+/// makes the two readings identical in damage.
+///
+/// **RAW's Hit Die is a charge**, because the engine has no Hit Dice.
+/// There is no short-rest die pool, and inventing one for a single
+/// invocation would be a resource nothing else in the game refills.
+/// `LIFEDRINKER_USES` is the collapse `FEATURE_CHARGES`' own preamble
+/// asks for: the smallest pool that makes the spend a decision. The die
+/// rolled is a d8 — the warlock's hit die — plus Constitution, floored
+/// at 1, which is RAW's arithmetic on RAW's die.
+pub const LIFEDRINKER_TAG: &str = "warlock.lifedrinker";
+
+/// How many Hit Dice a Lifedrinker warlock brings to one fight.
+///
+/// RAW's pool is the warlock's level and refreshes on a rest; two is
+/// the number here for the reason `FEATURE_CHARGES`' preamble gives
+/// about every other collapsed pool — a second heal is genuinely
+/// spendable inside one fight and a ninth is not, and two is the
+/// smallest pool that makes spending the first one a choice.
+pub const LIFEDRINKER_USES: u32 = 2;
 
 /// 5e Warlock — Otherworldly Patron **The Fiend**, level-1 feature
 /// **Dark One's Blessing**. Passive: whenever the warlock reduces a
