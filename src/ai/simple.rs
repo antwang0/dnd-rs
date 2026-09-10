@@ -360,139 +360,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
-        // 3c''. Form of Dread — the Undead Warlock's bonus-action
-        //       transformation. Same rung as Rage and Bladesong for the
-        //       same reason: a once-per-rest, bonus-action posture that
-        //       wants to be up before the swinging starts. Its fear
-        //       rider needs the warlock to be *landing hits*, so the
-        //       gate is the tighter melee-ish band rather than
-        //       Bladesong's approach-distance one.
-        if let Some(aei) =
-            try_self_action_when_enemy_within(encounter, actor_id, IMMINENT_CONTACT_GAP, "form of dread")
-        {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3c'''. Giant's Might — the Rune Knight's bonus-action
-        //        growth. Same rung and the same reasoning as Rage and
-        //        Form of Dread: a per-rest bonus-action posture worth
-        //        more the earlier it is up. The tighter melee-ish gate
-        //        applies here for a reason the others don't have — the
-        //        feature's best half is the widened footprint, and a
-        //        wider footprint is only worth anything once there is
-        //        someone close enough to be caught by it.
-        if let Some(aei) = try_self_action_when_enemy_within(
-            encounter,
-            actor_id,
-            IMMINENT_CONTACT_GAP,
-            "giant's might",
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3c'''½. Large Form — the Goliath's once-a-day growth. The
-        //        species-axis twin of Giant's Might directly above,
-        //        and it sits on the same rung with the same gate for
-        //        the same reason: the trait's best half is the widened
-        //        footprint, and a wider footprint buys nothing until
-        //        there is somebody close enough to be caught by it.
+        // 3c''. The opening-posture lane — one ordered table rather
+        //       than seven near-identical rungs. Every entry is a
+        //       bonus-action button whose whole decision is "am I close
+        //       enough for this to start paying", and they differ in a
+        //       name and a distance and in nothing else. See
+        //       `OPENING_POSTURES` for the roster and the order.
         //
-        //        Below Giant's Might rather than beside it only so the
-        //        order is written down. The two never co-occur — one is
-        //        a fighter subclass and the other a species — so a
-        //        hypothetical Rune Knight goliath is the only build
-        //        that would ever read this line, and it should spend
-        //        the short-rest charge before the daily one.
-        if let Some(aei) = try_self_action_when_enemy_within(
-            encounter,
-            actor_id,
-            IMMINENT_CONTACT_GAP,
-            "large form",
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3c''''. Elemental Cleaver — the Path of the Giant Barbarian's
-        //         bonus-action kindling. Below Rage rather than beside
-        //         it, and the order is load-bearing: the action refuses
-        //         to install unless the rage is already up, so a rung
-        //         above Rage would spend the turn deciding nothing. The
-        //         melee-ish gate is Giant's Might's, for the same
-        //         reason — the die rides swings, and a barbarian with
-        //         nothing in reach has nothing to ride.
-        //
-        //         The bonus action it spends is the one Frenzy wants,
-        //         which is the trade the subclass is priced on. Ranking
-        //         the kindling first is right anyway: the cleaver pays
-        //         out on every hit for the rest of the rage, and
-        //         Frenzy's extra swing pays out once.
-        if let Some(aei) = try_self_action_when_enemy_within(
-            encounter,
-            actor_id,
-            IMMINENT_CONTACT_GAP,
-            "elemental cleaver",
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3c'''''. Arms of the Astral Self — the Astral Self Monk's
-        //         bonus-action summon. Same rung and the same argument
-        //         as Rage, Form of Dread and Giant's Might: a
-        //         bonus-action posture worth more the earlier it is up.
-        //         Gated at Bladesong's wider approach band rather than
-        //         the melee-ish one its neighbours use, because the
-        //         monk is the one closing the distance and the arms are
-        //         what it wants to arrive holding — a summon paid for
-        //         on the contact turn has spent the bonus action Flurry
-        //         of Blows wanted, on a round the monk could have swung
-        //         twice. The action's own `!has_condition` gate makes
-        //         this a no-op for the rest of the minute, so the cost
-        //         is one bonus action per fight.
-        if let Some(aei) = try_self_action_when_enemy_within(
-            encounter,
-            actor_id,
-            BLADESONG_ENGAGE_GAP,
-            "arms of the astral self",
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3c''''''. Pact of the Blade — the warlock's bonus-action
-        //          conjuring, and the exact twin of the rung above it:
-        //          a weapon that is not in the action list until it is
-        //          summoned, summoned once, free, and worth more the
-        //          earlier it is up. Same approach band for the same
-        //          reason — the warlock is the one walking into
-        //          contact, and a blade conjured on arrival cost the
-        //          bonus action Hex wanted on the turn the warlock
-        //          could have been swinging with it.
-        //
-        //          Ranked above Hex deliberately. Hex is a rider on
-        //          damage the warlock has yet to deal; the blade is
-        //          the damage. A Thirsting Blade warlock's first turn
-        //          in contact is worth two swings with a Charisma
-        //          weapon or one Hex, and the swings compound for the
-        //          rest of the fight while the rider does not.
-        if let Some(aei) = try_self_action_when_enemy_within(
-            encounter,
-            actor_id,
-            BLADESONG_ENGAGE_GAP,
-            "pact of the blade",
-        ) {
-            return ControllerDecision::Act(aei);
-        }
-
-        // 3c'. Bladesong — the Bladesinger's bonus-action trance. Sits
-        //      beside Rage because it is the same kind of decision: a
-        //      once-per-rest, bonus-action, whole-fight defensive
-        //      posture that wants to be up *before* the first swing
-        //      lands, not after. Gated a little wider than Rage's
-        //      melee-reach trigger (`BLADESONG_ENGAGE_GAP`) because the
-        //      wizard is the one who has to close the distance, and a
-        //      song started on arrival has already spent the round it
-        //      was meant to protect.
-        if let Some(aei) =
-            try_self_action_when_enemy_within(encounter, actor_id, BLADESONG_ENGAGE_GAP, "bladesong")
+        //       Directly below Rage, which stays a rung of its own
+        //       because its gate is not a distance.
+        if let Some(aei) = OPENING_POSTURES
+            .iter()
+            .find_map(|row| try_self_action_when_enemy_within(encounter, actor_id, row.gap, row.name))
         {
             return ControllerDecision::Act(aei);
         }
@@ -3587,6 +3466,126 @@ const EXTENDABLE: &[&str] = &[
 ///      spending the action, which is exactly the position RAW puts the
 ///      alchemist in.
 const ENGAGED_SELF_POSTURES: &[&str] = &["defensive field", "experimental elixir"];
+
+/// One row of `OPENING_POSTURES` — a bonus-action button and the gap at
+/// which it starts paying for itself.
+///
+/// A named pair rather than a tuple because the two halves are read
+/// together and a bare `(&str, isize)` at seven call sites is seven
+/// chances to read the distance as the name's length.
+struct OpeningPosture {
+    name: &'static str,
+    /// How close an enemy has to be before the button is worth the
+    /// bonus action. Two values are in use and the difference between
+    /// them is the whole reason this is a column: `IMMINENT_CONTACT_GAP`
+    /// for the postures that pay out on *being* in contact, and the
+    /// wider `BLADESONG_ENGAGE_GAP` for the ones that want to be up
+    /// before their holder arrives.
+    gap: isize,
+}
+
+/// Ordered roster of the "bonus action, spend it now, live off it for
+/// the rest of the fight" lane — walked top-to-bottom at rung 3c'', and
+/// the first entry the actor carries and can afford wins the turn's
+/// bonus action.
+///
+/// **Seven consecutive rungs used to be here**, one per row, each of
+/// them a single `try_self_action_when_enemy_within` call differing
+/// from its neighbours in a name and a distance. The labels are what
+/// gave it away: they had reached `3c''''''` and one of them was
+/// `3c'''½`. `ENGAGED_SELF_POSTURES` and `MELEE_ADJACENT_PRIMES` below
+/// were extracted from the same shape for the same reason, and this is
+/// the third table that argument produces.
+///
+/// The order here *is* the order those rungs were in, and it is
+/// preserved rather than tidied: three of the pairs never co-occur on a
+/// legal build, but two do, and the reasoning for each row's position
+/// is on the row.
+///
+/// Rage is not here, and neither is Reckless Attack or Frenzy. Each of
+/// those carries a gate that is not a distance — a feature charge, a
+/// held condition, a resource swap — so each stays a rung of its own
+/// around this one.
+const OPENING_POSTURES: &[OpeningPosture] = &[
+    // The Undead Warlock's transformation. Same argument as Rage
+    // directly above the table: a once-per-rest, bonus-action posture
+    // that wants to be up before the swinging starts. Its fear rider
+    // needs the warlock to be *landing hits*, so it takes the tighter
+    // melee-ish band rather than the approach one.
+    OpeningPosture {
+        name: "form of dread",
+        gap: IMMINENT_CONTACT_GAP,
+    },
+    // The Rune Knight's growth. The tighter gate applies here for a
+    // reason the others do not have: the feature's best half is the
+    // widened footprint, and a wider footprint is only worth anything
+    // once there is someone close enough to be caught by it.
+    OpeningPosture {
+        name: "giant's might",
+        gap: IMMINENT_CONTACT_GAP,
+    },
+    // The Goliath's once-a-day growth — the species-axis twin of
+    // Giant's Might above, same gate, same reasoning.
+    //
+    // Below it rather than beside it only so the order is written down.
+    // The two never co-occur — one is a fighter subclass and the other
+    // a species — so a hypothetical Rune Knight goliath is the only
+    // build that would ever read this line, and it should spend the
+    // short-rest charge before the daily one.
+    OpeningPosture {
+        name: "large form",
+        gap: IMMINENT_CONTACT_GAP,
+    },
+    // The Path of the Giant Barbarian's kindling. Below Rage rather
+    // than beside it, and the order is load-bearing: the action refuses
+    // to install unless the rage is already up, so a position above
+    // Rage would spend the turn deciding nothing.
+    //
+    // The bonus action it spends is the one Frenzy wants, which is the
+    // trade the subclass is priced on. Ranking the kindling first is
+    // right anyway: the cleaver pays out on every hit for the rest of
+    // the rage, and Frenzy's extra swing pays out once.
+    OpeningPosture {
+        name: "elemental cleaver",
+        gap: IMMINENT_CONTACT_GAP,
+    },
+    // The Astral Self Monk's summon. Gated at the wider approach band
+    // rather than the melee-ish one its neighbours use, because the
+    // monk is the one closing the distance and the arms are what it
+    // wants to arrive holding — a summon paid for on the contact turn
+    // has spent the bonus action Flurry of Blows wanted, on a round the
+    // monk could have swung twice. The action's own `!has_condition`
+    // gate makes the row a no-op for the rest of the minute, so the
+    // cost is one bonus action per fight.
+    OpeningPosture {
+        name: "arms of the astral self",
+        gap: BLADESONG_ENGAGE_GAP,
+    },
+    // The warlock's conjuring, and the exact twin of the row above it:
+    // a weapon that is not in the action list until it is summoned,
+    // summoned once, free, and worth more the earlier it is up. Same
+    // approach band for the same reason.
+    //
+    // Ranked above Hex deliberately — Hex is a rider on damage the
+    // warlock has yet to deal, and the blade is the damage. A Thirsting
+    // Blade warlock's first turn in contact is worth two swings with a
+    // Charisma weapon or one Hex, and the swings compound for the rest
+    // of the fight while the rider does not.
+    OpeningPosture {
+        name: "pact of the blade",
+        gap: BLADESONG_ENGAGE_GAP,
+    },
+    // The Bladesinger's trance. The same kind of decision as Rage: a
+    // once-per-rest, bonus-action, whole-fight defensive posture that
+    // wants to be up *before* the first swing lands. Gated a little
+    // wider than Rage's melee-reach trigger because the wizard is the
+    // one who has to close the distance, and a song started on arrival
+    // has already spent the round it was meant to protect.
+    OpeningPosture {
+        name: "bladesong",
+        gap: BLADESONG_ENGAGE_GAP,
+    },
+];
 
 const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "reaper's touch",
@@ -11047,11 +11046,30 @@ mod tests {
                 }
             }
         }
-        for name in ENGAGED_SELF_POSTURES.iter().chain(MELEE_ADJACENT_PRIMES) {
+        for name in ENGAGED_SELF_POSTURES
+            .iter()
+            .chain(MELEE_ADJACENT_PRIMES)
+            // The third table, and the one that most needed the sweep:
+            // its seven rows arrived as seven separate rungs, where a
+            // misspelled name was a rung that quietly never fired and
+            // nothing anywhere would have said so.
+            .chain(OPENING_POSTURES.iter().map(|row| &row.name))
+        {
             assert!(
                 known.contains(name),
                 "bonus-action table row '{}' names no action on any registered PC template",
                 name
+            );
+        }
+        // A name on two of the three tables would be the same bonus
+        // action reconsidered at a second distance after the first
+        // table had already declined it.
+        for row in OPENING_POSTURES {
+            assert!(
+                !ENGAGED_SELF_POSTURES.contains(&row.name)
+                    && !MELEE_ADJACENT_PRIMES.contains(&row.name),
+                "'{}' is on two bonus-action tables",
+                row.name
             );
         }
         // The two tables answer different questions with the same
@@ -19886,6 +19904,11 @@ mod tests {
         for row in CONCENTRATION_MARKS {
             if !known.contains(row.name) && !waiting_on_a_template.contains(row.name) {
                 orphans.push(format!("CONCENTRATION_MARKS: {:?}", row.name));
+            }
+        }
+        for row in OPENING_POSTURES {
+            if !known.contains(row.name) && !waiting_on_a_template.contains(row.name) {
+                orphans.push(format!("OPENING_POSTURES: {:?}", row.name));
             }
         }
         for (list_name, entries) in [
