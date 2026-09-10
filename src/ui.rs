@@ -137,6 +137,10 @@ fn cost_label(costs: &[Resource], action_name: &str) -> String {
             Resource::LegendaryAction => "Lg".to_string(),
             Resource::Movement(_) => "M".to_string(),
             Resource::SpellSlot(n) => format!("S{}", n),
+            // "C3", not "3 charges off the Staff of Fire": the tag has
+            // one column in front of the action name, and the action
+            // name is already "staff of fire: fireball".
+            Resource::ItemCharges { count, .. } => format!("C{}", count),
         })
         .collect();
     format!("[{}]", parts.join("+"))

@@ -8,4 +8,5 @@ pub mod metamagic;
 pub mod monster_attacks;
 pub mod species;
 pub mod spells;
+pub mod staves;
 pub mod two_weapon;

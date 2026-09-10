@@ -3283,6 +3283,223 @@ pub static GEM_OF_SEEING: Item = Item {
     ..Item::DEFAULTS
 };
 
+// =====================================================================
+// Staves — SRD 5.2's charge-priced spell menus.
+//
+// The whole category, and the last one the loot table had no shelf for.
+// Each is a `charges` pool and a slice of `on_use` rows; the rows
+// themselves — what each casts, at what level, for how many charges —
+// live in `actions::staves`, whose module docstring is the reference for
+// what a staff is and is not in this engine.
+//
+// Two things every one of them shares. `charges` is RAW's printed pool,
+// and it is spent through `Resource::ItemCharges` rather than through
+// `spend_item_use`, which is why running a staff dry leaves it in the
+// pack: a spent wand is ash and a spent staff is still a staff with
+// whatever passive it prints. And none of them is attuned, because
+// nothing in the engine is.
+// =====================================================================
+
+/// **Staff of Fire** (Staff, Rare, requires attunement by a druid,
+/// sorcerer, warlock, or wizard) — *"You have Resistance to Fire
+/// damage while you hold this staff. The staff has 10 charges."*
+///
+/// Burning Hands (1), Fireball (3), Wall of Fire (4): the whole
+/// fire-shaped answer on one stick, at three prices, and a ten-charge
+/// pool that buys any two of the top rows or ten of the bottom one.
+///
+/// The resistance is the half that survives the pool running out, and
+/// the reason a spent staff stays in the pack.
+pub static STAFF_OF_FIRE: Item = Item {
+    name: crate::actions::staves::STAFF_OF_FIRE_NAME,
+    glyph: '/',
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_FIRE_BURNING_HANDS,
+        &crate::actions::staves::STAFF_OF_FIRE_FIREBALL,
+        &crate::actions::staves::STAFF_OF_FIRE_WALL_OF_FIRE,
+    ],
+    damage_resistances: &[crate::engine::types::DamageType::Fire],
+    charges: 10,
+    ..Item::DEFAULTS
+};
+
+/// **Staff of Frost** (Staff, Very Rare) — *"You have Resistance to
+/// Cold damage while you hold this staff. The staff has 10 charges."*
+///
+/// Fog Cloud (1), Ice Storm (4), Wall of Ice (4), Cone of Cold (5).
+/// The Staff of Fire one tier up, and a wider menu for it: the same
+/// ten charges buy a battlefield the holder can shape (fog, a wall)
+/// as well as one they can burn down.
+pub static STAFF_OF_FROST: Item = Item {
+    name: crate::actions::staves::STAFF_OF_FROST_NAME,
+    glyph: '/',
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_FROST_FOG_CLOUD,
+        &crate::actions::staves::STAFF_OF_FROST_ICE_STORM,
+        &crate::actions::staves::STAFF_OF_FROST_WALL_OF_ICE,
+        &crate::actions::staves::STAFF_OF_FROST_CONE_OF_COLD,
+    ],
+    damage_resistances: &[crate::engine::types::DamageType::Cold],
+    charges: 10,
+    ..Item::DEFAULTS
+};
+
+/// **Staff of Healing** (Staff, Rare) — 10 charges, and the only
+/// support staff in the book.
+///
+/// Cure Wounds (1), Lesser Restoration (2), Mass Cure Wounds (5). The
+/// loot table's other heals are a potion the drinker drinks and a wand
+/// or scroll that heals one ally; this is the first item that can pick
+/// which of those a turn needs, out of one pool, and the first that can
+/// answer a Poisoned or Paralyzed ally at all.
+pub static STAFF_OF_HEALING: Item = Item {
+    name: crate::actions::staves::STAFF_OF_HEALING_NAME,
+    glyph: '/',
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_HEALING_CURE_WOUNDS,
+        &crate::actions::staves::STAFF_OF_HEALING_LESSER_RESTORATION,
+        &crate::actions::staves::STAFF_OF_HEALING_MASS_CURE_WOUNDS,
+    ],
+    charges: 10,
+    ..Item::DEFAULTS
+};
+
+/// **Staff of Swarming Insects** (Staff, Rare) — 10 charges.
+///
+/// Giant Insect (4) and Insect Plague (5): a body and a zone, and the
+/// only item on the loot table that puts an ally on the board. RAW's
+/// third clause — the 1-charge cloud of insects that heavily obscures a
+/// 10-foot radius around the holder — has no row here; the engine's
+/// obscurement lane is a lighting-and-fog affair keyed to terrain
+/// rather than to a creature-anchored emanation, and inventing one for
+/// a single item would be a worse trade than leaving the clause out.
+pub static STAFF_OF_SWARMING_INSECTS: Item = Item {
+    name: crate::actions::staves::STAFF_OF_SWARMING_INSECTS_NAME,
+    glyph: '/',
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_SWARMING_INSECTS_GIANT_INSECT,
+        &crate::actions::staves::STAFF_OF_SWARMING_INSECTS_INSECT_PLAGUE,
+    ],
+    charges: 10,
+    ..Item::DEFAULTS
+};
+
+/// **Staff of Charming** (Staff, Rare) — 10 charges.
+///
+/// Charm Person (1) and Command (1), both at a penny apiece, which is
+/// what makes this the cheapest staff to actually use: ten castings of
+/// something that takes an enemy out of the fight without killing it.
+///
+/// RAW's other two clauses are not modeled. Comprehend Languages has no
+/// combat surface, and the reaction that absorbs an enchantment aimed at
+/// the holder needs a counter-a-spell-by-school reaction lane the engine
+/// does not have — `spells::COUNTERSPELL` is the only thing near it and
+/// it answers every school at once.
+pub static STAFF_OF_CHARMING: Item = Item {
+    name: crate::actions::staves::STAFF_OF_CHARMING_NAME,
+    glyph: '/',
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_CHARMING_CHARM_PERSON,
+        &crate::actions::staves::STAFF_OF_CHARMING_COMMAND,
+    ],
+    charges: 10,
+    ..Item::DEFAULTS
+};
+
+/// **Staff of the Woodlands** (Staff, Rare) — *"a magic quarterstaff
+/// that grants a +2 bonus to attack and damage rolls made with it.
+/// While holding it, you have a +2 bonus to spell attack rolls."* 10
+/// charges.
+///
+/// Barkskin (2), Spike Growth (2), Wall of Thorns (6) — the three of
+/// RAW's seven rows with anything to do in a fight.
+///
+/// **Where the `+2` is wider than RAW.** The bonus rides `ItemBonuses`,
+/// which the engine applies to every attack and every damage roll the
+/// holder makes, not only to swings with the staff and casts through it.
+/// The engine has no per-weapon attribution to hang the narrower reading
+/// on — the same approximation `WEAPON_PLUS_TWO` has always made — and
+/// the direction it errs in is a druid who is also carrying a longbow,
+/// which is not the case the item is for.
+pub static STAFF_OF_THE_WOODLANDS: Item = Item {
+    name: crate::actions::staves::STAFF_OF_THE_WOODLANDS_NAME,
+    glyph: '/',
+    bonuses: ItemBonuses { attack_bonus: 2, damage_bonus: 2, ..ItemBonuses::ZERO },
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_THE_WOODLANDS_BARKSKIN,
+        &crate::actions::staves::STAFF_OF_THE_WOODLANDS_SPIKE_GROWTH,
+        &crate::actions::staves::STAFF_OF_THE_WOODLANDS_WALL_OF_THORNS,
+    ],
+    grants_magical_attacks: true,
+    charges: 10,
+    ..Item::DEFAULTS
+};
+
+/// **Staff of Power** (Staff, Very Rare) — *"a magic quarterstaff that
+/// grants a +2 bonus to attack and damage rolls made with it. While
+/// holding it, you gain a +2 bonus to Armor Class, saving throws, and
+/// spell attack rolls."* 20 charges, and nine spells on it.
+///
+/// Magic Missile (1), Ray of Enfeeblement (1), Levitate (2), then a
+/// 5-charge shelf of Fireball, Lightning Bolt, Cone of Cold, Hold
+/// Monster and Wall of Force, and Globe of Invulnerability at 6.
+/// Twenty charges is four of the top shelf, which is roughly a
+/// mid-level wizard's whole day in one object — and the item is the
+/// most expensive thing on the loot table for exactly that reason.
+///
+/// The Fireball row is the 5th-level version RAW prints, not the
+/// 3rd-level one on the Staff of Fire; the five charges buy the upcast.
+///
+/// The `+2` is wider than RAW in the same direction the Staff of the
+/// Woodlands' is, and for the same reason.
+///
+/// **Retributive Strike is not modeled** — RAW's break-the-staff
+/// clause, which destroys the item and the holder along with it. It is
+/// an ending for an object with a tomorrow, and the engine's clock stops
+/// with the fight.
+pub static STAFF_OF_POWER: Item = Item {
+    name: crate::actions::staves::STAFF_OF_POWER_NAME,
+    glyph: '/',
+    bonuses: ItemBonuses {
+        ac: 2,
+        save: 2,
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_POWER_MAGIC_MISSILE,
+        &crate::actions::staves::STAFF_OF_POWER_RAY_OF_ENFEEBLEMENT,
+        &crate::actions::staves::STAFF_OF_POWER_LEVITATE,
+        &crate::actions::staves::STAFF_OF_POWER_FIREBALL,
+        &crate::actions::staves::STAFF_OF_POWER_LIGHTNING_BOLT,
+        &crate::actions::staves::STAFF_OF_POWER_CONE_OF_COLD,
+        &crate::actions::staves::STAFF_OF_POWER_HOLD_MONSTER,
+        &crate::actions::staves::STAFF_OF_POWER_WALL_OF_FORCE,
+        &crate::actions::staves::STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY,
+    ],
+    grants_magical_attacks: true,
+    charges: 20,
+    ..Item::DEFAULTS
+};
+
+/// Every staff, as a set — the shelf `actions::staves`' invariants sweep
+/// and the loot table draws from.
+///
+/// Exists for the reason `MAGIC_ARMOURY` does: the family has questions
+/// that are about the family (does every staff carry charges, is every
+/// row wired to the staff it names) and a scattering of statics cannot
+/// answer them.
+pub static STAVES: &[&Item] = &[
+    &STAFF_OF_FIRE,
+    &STAFF_OF_FROST,
+    &STAFF_OF_HEALING,
+    &STAFF_OF_SWARMING_INSECTS,
+    &STAFF_OF_CHARMING,
+    &STAFF_OF_THE_WOODLANDS,
+    &STAFF_OF_POWER,
+];
+
 /// The magic armoury as a set — the nine items above whose value is a
 /// printed clause rather than a bonus.
 ///
@@ -4009,6 +4226,18 @@ pub static LOOT_POOL: &[&Item] = &[
     &CLOAK_OF_THE_MANTA_RAY,
     &RING_OF_SWIMMING,
     &RING_OF_WATER_WALKING,
+    // The staves. Single entries each — a staff is the deepest item on
+    // the table (three to nine spells and a pool big enough to matter)
+    // and should be the rarest thing a party walks away with. Ordered
+    // by tier: the four rare ones, then the two that carry a `+2`, then
+    // the Staff of Power at the top of the whole file.
+    &STAFF_OF_FIRE,
+    &STAFF_OF_FROST,
+    &STAFF_OF_HEALING,
+    &STAFF_OF_SWARMING_INSECTS,
+    &STAFF_OF_CHARMING,
+    &STAFF_OF_THE_WOODLANDS,
+    &STAFF_OF_POWER,
 ];
 
 #[cfg(test)]
@@ -4053,14 +4282,30 @@ mod tests {
                 item.name
             );
         }
+        // The staves are the third road onto the allowlist, and the
+        // narrowest: two of the seven are `+2` quarterstaffs in RAW and
+        // the other five are sticks that cast. The flag has to track
+        // which is which, so it is asserted against the `+N` the item
+        // prints rather than allowed outright — a Staff of Charming that
+        // quietly started sharpening swings would be caught here, and a
+        // Staff of Power that stopped would be too.
+        for item in STAVES {
+            assert_eq!(
+                item.grants_magical_attacks,
+                item.bonuses.attack_bonus > 0,
+                "{} is a magic weapon exactly when it prints a +N quarterstaff",
+                item.name
+            );
+        }
         for item in LOOT_POOL {
             if !item.grants_magical_attacks {
                 continue;
             }
             assert!(
                 tiers.iter().any(|e| e.name == item.name)
-                    || MAGIC_ARMOURY.iter().any(|e| e.name == item.name),
-                "{} grants magical attacks and is neither a +N weapon nor part of the armoury",
+                    || MAGIC_ARMOURY.iter().any(|e| e.name == item.name)
+                    || STAVES.iter().any(|e| e.name == item.name),
+                "{} grants magical attacks and is none of a +N weapon, the armoury, or a staff",
                 item.name
             );
         }

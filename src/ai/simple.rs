@@ -8675,14 +8675,13 @@ fn try_support_heal(
     let my_team = actor.team();
 
     let support_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
-        .actions
-        .iter()
+        .available_actions()
+        .into_iter()
         .filter(|a| {
             !a.is_harmful()
                 && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
                 && !matches!(a.name(), "help" | "master of tactics")
         })
-        .copied()
         .collect();
     if support_actions.is_empty() {
         return None;
@@ -9158,13 +9157,13 @@ fn best_burst_placement(
 
     // Find area actions we own. Most actors have none — bail early.
     let burst_actions: Vec<(&'static (dyn Action + Send + Sync), AreaShape)> = actor
-        .actions
-        .iter()
+        .available_actions()
+        .into_iter()
         .filter_map(|a| {
-            if !a.is_harmful() || !accept(*a) {
+            if !a.is_harmful() || !accept(a) {
                 return None;
             }
-            a.targeting_schema().area_shape().map(|shape| (*a, shape))
+            a.targeting_schema().area_shape().map(|shape| (a, shape))
         })
         .collect();
     if burst_actions.is_empty() {
@@ -9515,15 +9514,15 @@ fn try_summon_allies(
     let busy = actor.is_concentrating();
     let already_called = actor.has_condition(Condition::Summoner);
     let mut candidates: Vec<(bool, u32, usize, ActionExecutionInfo)> = actor
-        .actions
-        .iter()
+        .available_actions()
+        .into_iter()
         .enumerate()
         .filter(|(_, a)| a.summons_allies())
         .filter_map(|(order, a)| {
             if busy && a.holds_concentration() {
                 return None;
             }
-            let aei = ActionExecutionInfo::new(*a, actor_id, None, None, None);
+            let aei = ActionExecutionInfo::new(a, actor_id, None, None, None);
             let slot = crate::engine::side_effects::spell_slot_level(&a.cost(
                 encounter, actor_id, None, None, None,
             ))
@@ -9699,7 +9698,7 @@ fn try_ally_support_pulse(
     if !actor.is_combat_active() {
         return None;
     }
-    for action in actor.actions.iter() {
+    for action in actor.available_actions() {
         // `pulses_ally_buff`, not `is_heal`. The rung was written when
         // every member of the cohort restored hit points and the two
         // questions had the same answer; Countercharm restores nothing
@@ -9736,7 +9735,7 @@ fn try_ally_support_pulse(
         {
             continue;
         }
-        let aei = ActionExecutionInfo::new(*action, actor_id, None, None, None);
+        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
         if aei.validate(encounter) {
             return Some(aei);
         }
@@ -9897,14 +9896,13 @@ fn try_self_centered_burst(
     // or an explicit non-damage flag, which together exclude utility
     // NoArgs (Dodge / Disengage) cleanly.
     let mut bursts: Vec<&'static (dyn Action + Send + Sync)> = actor
-        .actions
-        .iter()
+        .available_actions()
+        .into_iter()
         .filter(|a| {
             a.is_harmful()
                 && matches!(a.targeting_schema(), TargetingSchema::NoArgs)
                 && (!a.damage_types().is_empty() || !a.deals_damage())
         })
-        .copied()
         .collect();
     bursts.sort_by_key(|a| {
         std::cmp::Reverse(a.self_burst_radius().unwrap_or(CLUSTER_RADIUS))
@@ -10398,7 +10396,7 @@ fn best_attack_against(
     // candidate they rank.
     type Ranked<'a> = (u8, u8, u8, isize, Option<f32>, &'a (dyn Action + Send + Sync));
     let mut best: Option<Ranked> = None;
-    for &action in &actor.actions {
+    for action in actor.available_actions() {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
         }
@@ -18855,6 +18853,52 @@ mod tests {
             super::try_resistance_ward(&e, cleric).is_none(),
             "nobody in reach still needs one"
         );
+    }
+
+    /// The AI fires the staff it picked up.
+    ///
+    /// Loot drops on the floor when something dies and the next actor
+    /// to walk over it takes it, monsters included — so "who is holding
+    /// this" and "who is on a template that lists it" are different
+    /// questions, and the offensive pickers used to ask the second one.
+    /// `best_burst_placement` read `actor.actions`, the stat block's own
+    /// list, which a Staff of Fire is not on and never will be. An AI
+    /// wizard could pick the thing up, carry it for the rest of the
+    /// fight, and throw darts.
+    ///
+    /// Asserted through a fighter, who has no area attack of their own
+    /// at all: the only way the burst picker can return anything here is
+    /// by looking in the pack.
+    #[test]
+    fn the_ai_throws_the_fireball_from_the_staff_it_is_carrying() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::STAFF_OF_FIRE;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .unwrap();
+        // Three of them, clustered, well out of melee reach — a burst
+        // is worth taking and closing is not the obvious answer.
+        for (i, y) in [4usize, 5, 6].into_iter().enumerate() {
+            e.instantiate_creature(
+                &ZOMBIE_TEMPLATE,
+                Coordinate::new(16, y as isize),
+                1,
+                i,
+            )
+            .unwrap();
+        }
+
+        assert!(
+            super::try_attack_aoe(&e, fighter).is_none(),
+            "a fighter with nothing in their hands has no burst to place"
+        );
+
+        e.actors.get_mut(&fighter).unwrap().pickup_item(&STAFF_OF_FIRE);
+        let aei = super::try_attack_aoe(&e, fighter)
+            .expect("the staff in the pack is a burst the picker can place");
+        assert_eq!(aei.action().name(), "staff of fire: fireball");
     }
 
     /// AI mage-armor fallback: a non-caster (fighter) carrying a Potion of

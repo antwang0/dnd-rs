@@ -353,6 +353,37 @@ pub enum Resource {
     BonusAction,
     Reaction,
     LegendaryAction,
+    /// Charges off a named carried item — SRD 5.2's staves, and the one
+    /// price in the book that is neither an action-economy slot nor a
+    /// spell slot.
+    ///
+    /// The engine already had a charge ledger
+    /// (`ActorInstance::item_charges`, seeded on pickup), and every wand
+    /// in the file bills it from inside its own `side_effects` through
+    /// `item_actions::consume_caster_item`. That works, and it is
+    /// invisible: a cost paid inside the effect is a cost the picker
+    /// cannot grey out, the AI cannot price, and the log cannot name. It
+    /// is affordable exactly when the item action's own
+    /// `custom_validate_input` says so, which every wand has to remember
+    /// to write.
+    ///
+    /// A staff cannot be billed that way at all, because *how many*
+    /// charges is a property of the spell chosen rather than of the item:
+    /// a Staff of Fire is one object with a 1-charge, a 3-charge and a
+    /// 4-charge option on it. Naming the price in `cost()` puts it where
+    /// the rest of the engine already looks — `can_consume_resource`
+    /// greys the row out, `lack_description` says why, and the
+    /// `ConsumeResource` tail of `Action::execute` spends it after the
+    /// spell resolves, in the same pass that bills the Action.
+    ///
+    /// Unlike `spend_item_use`, running the pool to zero does **not**
+    /// take the object away. A staff at 0 charges is still a staff: the
+    /// Staff of Fire's fire resistance and the Staff of Power's +2 do not
+    /// depend on the charges, and a wand's does not exist to lose.
+    ItemCharges {
+        item: &'static str,
+        count: u32,
+    },
 }
 
 impl Resource {
@@ -367,6 +398,9 @@ impl Resource {
             Resource::LegendaryAction => "out of legendary actions".to_string(),
             Resource::Movement(amt) => format!("not enough movement ({:.1}ft needed)", amt),
             Resource::SpellSlot(lvl) => format!("no level-{} spell slot", lvl),
+            Resource::ItemCharges { item, count } => {
+                format!("not enough charges on the {item} ({count} needed)")
+            }
         }
     }
 }

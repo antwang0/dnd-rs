@@ -9146,6 +9146,15 @@ impl ActorInstance {
                     && self.reaction_slots >= 1
             }
             Resource::LegendaryAction => !action_blocked && self.legendary_action_slots >= 1,
+            // Not gated on `action_blocked`. Every other arm here is a
+            // slot the Incapacitated family zeroes; charges are stock,
+            // and a stunned holder still has them. What a stunned holder
+            // cannot do is take the Action that spends them, and the
+            // `Resource::Action` arm alongside this one already says so
+            // on every staff option in the file.
+            Resource::ItemCharges { item, count } => {
+                self.has_item_named(item) && self.item_charges_remaining(item) >= count
+            }
         }
     }
 
@@ -9192,6 +9201,24 @@ impl ActorInstance {
             }
             Resource::Reaction => self.reaction_slots -= 1,
             Resource::LegendaryAction => self.legendary_action_slots -= 1,
+            // Saturating, though `can_consume_resource` above has
+            // already refused an overdraft: the ledger is keyed by name
+            // and additive across pickups, so the arithmetic is one
+            // subtraction that must not be the one place a dropped item
+            // can panic the engine.
+            //
+            // The entry stays at zero rather than being removed, and the
+            // staff stays in the pack. That is the difference between
+            // this lane and `spend_item_use`: a wand's last charge is
+            // the end of the wand, and a staff's is only the end of the
+            // spells — the fire resistance on the Staff of Fire, the +2
+            // on the Staff of Power, and the quarterstaff itself all
+            // outlive the pool.
+            Resource::ItemCharges { item, count } => {
+                if let Some(remaining) = self.item_charges.get_mut(item) {
+                    *remaining = remaining.saturating_sub(count);
+                }
+            }
         }
         true
     }
@@ -9206,6 +9233,15 @@ impl ActorInstance {
             Resource::BonusAction => self.bonus_action_slots += 1,
             Resource::Reaction => self.reaction_slots += 1,
             Resource::LegendaryAction => self.legendary_action_slots += 1,
+            // Only for an item still carried. A refund into an empty
+            // ledger slot would conjure charges for a staff that is not
+            // in the pack, and the refund path exists to undo a spend
+            // rather than to create stock.
+            Resource::ItemCharges { item, count } => {
+                if let Some(remaining) = self.item_charges.get_mut(item) {
+                    *remaining += count;
+                }
+            }
         }
     }
 

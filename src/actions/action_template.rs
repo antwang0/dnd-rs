@@ -1903,6 +1903,46 @@ pub trait Action {
         false
     }
 
+    /// The spell level this cast counts as while it resolves — the
+    /// number `Action::execute` stamps on the cast frame, which every
+    /// level-gated feature in the engine then reads.
+    ///
+    /// Defaults to the slot the resolved cost is paid with, which is the
+    /// right answer for the whole spell list: a Fireball cast with a
+    /// 5th-level slot is a 5th-level Fireball, and a cantrip, a weapon
+    /// swing and a Dash all have no slot and answer 0.
+    ///
+    /// It is a method rather than the inline sniff it used to be because
+    /// 0 means two things to `CastContext::is_cantrip`, and one of them
+    /// became wrong the moment a spell could be paid for with something
+    /// other than a slot. A staff casting Fireball for 3 charges has no
+    /// `SpellSlot` in its cost and a `school()` like every other spell —
+    /// which is precisely the frame Potent Cantrip and Potent
+    /// Spellcasting are looking for. Left alone, a Light Domain cleric
+    /// holding a Staff of Fire would have added their Wisdom modifier to
+    /// its Fireball, on the grounds that a spell nobody spent a slot on
+    /// must be a cantrip.
+    ///
+    /// Override it wherever the price and the level come apart; the
+    /// answer is the level the spell is *cast at*, not what it cost.
+    fn cast_frame_level(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> u32 {
+        crate::engine::side_effects::spell_slot_level(&self.resolved_cost(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            overrides,
+        ))
+        .unwrap_or(0)
+    }
+
     fn validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -2220,14 +2260,13 @@ pub trait Action {
         // frame. Everything past that point (cost resolution, post-cast
         // triggers, the ConsumeResource tail) is "after the spell" per
         // RAW and deliberately sits outside the frame.
-        let cast_level = crate::engine::side_effects::spell_slot_level(&self.resolved_cost(
+        let cast_level = self.cast_frame_level(
             encounter,
             caster_id,
             target_ids,
             target_locations,
             overrides,
-        ))
-        .unwrap_or(0);
+        );
         // The note the upcast lane owes a player who spent a bigger
         // slot than the spell prints. Factual on both halves: what it
         // was cast at, and — for the majority of the spell list, which

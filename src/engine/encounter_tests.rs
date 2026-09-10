@@ -95776,3 +95776,353 @@ fn every_spell_that_prices_an_upcast_declares_it() {
          who pays for the bigger slot will be told it bought nothing: {missing:?}"
     );
 }
+
+// =====================================================================
+// Staves. See `actions::staves` for what a staff is in this engine and
+// `items::item_template`'s staff section for the seven of them.
+// =====================================================================
+
+/// Every staff row is wired to the staff it names, in both directions,
+/// and none of them is priced past what the object holds.
+///
+/// Three ways a staff can be half-written, and this is the only place
+/// any of them has a symptom:
+///
+///   - a row naming an `item_name` no staff carries is an action that
+///     can never validate, because the charge lane will never find the
+///     item;
+///   - a row that is not on its staff's `on_use` is an action nobody can
+///     reach, because the picker builds itself out of `on_use`;
+///   - a row costing more charges than the staff has is a spell printed
+///     on an object that cannot cast it.
+///
+/// All three compile, and all three look exactly like an item that is
+/// simply not very good.
+#[test]
+fn every_staff_row_is_wired_to_the_staff_it_names() {
+    use crate::actions::staves::STAFF_SPELLS;
+    use crate::items::item_template::STAVES;
+
+    for row in STAFF_SPELLS {
+        let staff = STAVES
+            .iter()
+            .find(|s| s.name == row.item_name)
+            .unwrap_or_else(|| panic!("{} names a staff nothing carries", row.action_name));
+        assert!(
+            staff.on_use.iter().any(|a| a.name() == row.action_name),
+            "{} is written and the {} does not offer it",
+            row.action_name,
+            staff.name
+        );
+        assert!(
+            row.charges > 0 && row.charges <= staff.charges,
+            "{} costs {} charges and the {} holds {}",
+            row.action_name,
+            row.charges,
+            staff.name,
+            staff.charges
+        );
+    }
+
+    // The other direction, plus the two things that make a staff a
+    // staff: a pool to spend and something to spend it on.
+    for staff in STAVES {
+        assert!(
+            staff.charges > 0,
+            "{} is a staff with no charges — every row on it is unreachable",
+            staff.name
+        );
+        assert!(
+            !staff.on_use.is_empty(),
+            "{} carries charges and offers nothing to spend them on",
+            staff.name
+        );
+        for action in staff.on_use {
+            assert!(
+                STAFF_SPELLS.iter().any(|r| r.action_name == action.name()),
+                "the {} offers `{}` and it is not on STAFF_SPELLS — the \
+                 invariants above cannot see it",
+                staff.name,
+                action.name()
+            );
+        }
+    }
+}
+
+/// A staff casts the spell itself, and the slot stays in the book.
+///
+/// The whole point of `StaffSpell` being an adapter rather than a copy:
+/// what the Staff of Fire throws is `spells::FIREBALL`, so it rolls
+/// 8d6, saves against the holder's own DC, and burns exactly nothing
+/// out of their spell slots. Three charges leave the staff and the
+/// level-3 slots are untouched.
+#[test]
+fn a_staff_casts_the_spell_itself_and_pays_in_charges_not_slots() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::staves::STAFF_OF_FIRE_FIREBALL;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::STAFF_OF_FIRE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&wizard).unwrap().pickup_item(&STAFF_OF_FIRE);
+
+    let slots_before = e.actors[&wizard].spell_slot_manager.spell_slots(3).spell_slots;
+    let hp_before = e.actors[&zombie].hitpoints();
+    let at = e.actors[&zombie].location();
+
+    let aei = ActionExecutionInfo::new(
+        &STAFF_OF_FIRE_FIREBALL,
+        wizard,
+        None,
+        Some(vec![at]),
+        None,
+    );
+    assert!(aei.validate(&e), "a full staff and a target on the map");
+    e.push_action(aei);
+    e.process_stack();
+
+    let hp_after = e.actors.get(&zombie).map(|a| a.hitpoints()).unwrap_or(0);
+    assert!(
+        hp_after < hp_before,
+        "the staff's fireball should burn the zombie ({} → {})",
+        hp_before,
+        hp_after
+    );
+    assert_eq!(
+        e.actors[&wizard].item_charges_remaining(STAFF_OF_FIRE.name),
+        7,
+        "three of ten charges"
+    );
+    assert_eq!(
+        e.actors[&wizard].spell_slot_manager.spell_slots(3).spell_slots,
+        slots_before,
+        "a staff is not a slot — the wizard should still be able to cast \
+         their own fireball afterwards"
+    );
+}
+
+/// The pool prices each row separately, and running low takes the
+/// expensive ones away first.
+///
+/// This is the thing `Resource::ItemCharges` buys that
+/// `spend_item_use` could not express at all: a Staff of Fire with two
+/// charges on it is out of Fireballs and out of Walls of Fire, and
+/// still has two Burning Hands in it. The picker greys the top two rows
+/// and leaves the bottom one, and says why.
+#[test]
+fn a_staff_row_the_pool_cannot_pay_for_is_refused_and_the_cheap_one_is_not() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::staves::{
+        STAFF_OF_FIRE_BURNING_HANDS, STAFF_OF_FIRE_FIREBALL, STAFF_OF_FIRE_WALL_OF_FIRE,
+    };
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::STAFF_OF_FIRE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+        .unwrap();
+    let at = e.actors[&zombie].location();
+    {
+        let a = e.actors.get_mut(&wizard).unwrap();
+        a.pickup_item(&STAFF_OF_FIRE);
+        // Down to two, which is under the 3-charge Fireball and the
+        // 4-charge Wall and over the 1-charge Burning Hands.
+        assert!(a.consume_resource(Resource::ItemCharges {
+            item: STAFF_OF_FIRE.name,
+            count: 8,
+        }));
+        assert_eq!(a.item_charges_remaining(STAFF_OF_FIRE.name), 2);
+    }
+
+    let a = &e.actors[&wizard];
+    assert!(a.can_consume_resource(STAFF_OF_FIRE_BURNING_HANDS.charge_cost()));
+    assert!(!a.can_consume_resource(STAFF_OF_FIRE_FIREBALL.charge_cost()));
+    assert!(!a.can_consume_resource(STAFF_OF_FIRE_WALL_OF_FIRE.charge_cost()));
+
+    // And the reason the picker prints is the staff's, not a generic
+    // "no targets in reach".
+    assert_eq!(
+        STAFF_OF_FIRE_FIREBALL.charge_cost().lack_description(),
+        "not enough charges on the Staff of Fire (3 needed)"
+    );
+
+    // The cost the action declares is the one the picker asks about.
+    let costs = STAFF_OF_FIRE_FIREBALL.cost(&e, wizard, None, Some(&vec![at]), None);
+    assert!(costs.contains(&Resource::Action), "a staff costs an action");
+    assert!(costs.contains(&STAFF_OF_FIRE_FIREBALL.charge_cost()));
+    assert!(
+        !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+        "and never a spell slot: {costs:?}"
+    );
+
+    assert!(
+        !ActionExecutionInfo::new(
+            &STAFF_OF_FIRE_FIREBALL,
+            wizard,
+            None,
+            Some(vec![at]),
+            None
+        )
+        .validate(&e),
+        "a queued fireball must not fire out of a pool that no longer covers it"
+    );
+    assert!(
+        ActionExecutionInfo::new(
+            &STAFF_OF_FIRE_BURNING_HANDS,
+            wizard,
+            None,
+            Some(vec![at]),
+            None
+        )
+        .validate(&e),
+        "and the row the pool still covers is still there"
+    );
+}
+
+/// A spent staff is still a staff.
+///
+/// The difference between this lane and `spend_item_use`, which drops
+/// the object on its last charge. That is right for a wand — RAW's wand
+/// is seven fireballs and a stick — and wrong for every staff in the
+/// book, because the passive half does not come out of the pool. A
+/// Staff of Fire with nothing left in it is still a thing you hold, and
+/// you still have Resistance to Fire damage while you hold it.
+#[test]
+fn a_spent_staff_is_still_a_staff() {
+    use crate::actions::staves::STAFF_OF_FIRE_BURNING_HANDS;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::engine::types::DamageType;
+    use crate::items::item_template::STAFF_OF_FIRE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let a = e.actors.get_mut(&wizard).unwrap();
+    let bare_fire = a.effective_damage(20, DamageType::Fire);
+    a.pickup_item(&STAFF_OF_FIRE);
+    let held_fire = a.effective_damage(20, DamageType::Fire);
+    assert!(
+        held_fire < bare_fire,
+        "holding the staff should halve fire ({bare_fire} vs {held_fire})"
+    );
+
+    assert!(a.consume_resource(Resource::ItemCharges {
+        item: STAFF_OF_FIRE.name,
+        count: 10,
+    }));
+    assert_eq!(a.item_charges_remaining(STAFF_OF_FIRE.name), 0);
+    assert!(
+        a.has_item_named(STAFF_OF_FIRE.name),
+        "a wand's last charge is the end of the wand; a staff's is not"
+    );
+    assert_eq!(
+        a.effective_damage(20, DamageType::Fire),
+        held_fire,
+        "and the resistance the staff prints outlives its charges"
+    );
+    assert!(
+        !a.can_consume_resource(STAFF_OF_FIRE_BURNING_HANDS.charge_cost()),
+        "what it has run out of is spells"
+    );
+}
+
+/// A spell cast from a staff is not a cantrip.
+///
+/// The trap `Action::cast_frame_level` exists to close. Every
+/// cantrip-gated feature in the engine reads the cast frame's level and
+/// tests it against 0, and 0 is also what a cast with no spell slot in
+/// its cost looks like. A staff pays in charges, so without the
+/// override a Knowledge Cleric holding a Staff of Fire would add their
+/// Wisdom modifier to its Fireball under Potent Spellcasting — a
+/// feature whose whole text is *"any cleric cantrip"*.
+///
+/// Asserted against the same cleric and the same log line the cantrip
+/// sweep uses, and in both directions: the staff's Fireball never
+/// collects the bonus, and the cleric's own Sacred Flame always does,
+/// so a run where nothing fires cannot pass by accident.
+#[test]
+fn a_spell_cast_from_a_staff_is_not_a_cantrip() {
+    use crate::actions::class_features::POTENT_SPELLCASTING_TAG;
+    use crate::actions::staves::STAFF_OF_FIRE_FIREBALL;
+    use crate::actors::creatures::clerics::KNOWLEDGE_CLERIC_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::STAFF_OF_FIRE;
+
+    assert_eq!(
+        STAFF_OF_FIRE_FIREBALL.cast_frame_level(
+            &ei_with_terrain(4, 4, &[]),
+            0,
+            None,
+            None,
+            None
+        ),
+        3,
+        "the staff's fireball is a level-3 cast that nobody spent a slot on"
+    );
+
+    let mut cantrip_fired = false;
+    for seed in 0..40 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = FastRandRoller::with_seed(seed);
+        let cleric = e
+            .instantiate_creature(&KNOWLEDGE_CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        assert!(e.actors[&cleric].has_passive_feature(POTENT_SPELLCASTING_TAG));
+        e.actors.get_mut(&cleric).unwrap().pickup_item(&STAFF_OF_FIRE);
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 3), 1, 0)
+            .unwrap();
+        let at = e.actors[&ogre].location();
+
+        for ef in STAFF_OF_FIRE_FIREBALL.execute(&mut e, cleric, None, Some(&vec![at]), None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.messages().iter().any(|m| m.contains("potent spellcasting")),
+            "seed {seed}: the staff's fireball collected a cantrip bonus"
+        );
+
+        // The control, in its own encounter: the cleric above has spent
+        // their Action on the staff and the ogre may not have survived
+        // it, and `execute` re-validates both.
+        let mut c = ei_with_terrain(20, 20, &[]);
+        c.roller = FastRandRoller::with_seed(seed);
+        let cleric = c
+            .instantiate_creature(&KNOWLEDGE_CLERIC_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let ogre = c
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 3), 1, 0)
+            .unwrap();
+        for ef in crate::actions::spells::SACRED_FLAME.execute(
+            &mut c,
+            cleric,
+            Some(&vec![ogre]),
+            None,
+            None,
+        ) {
+            ef.apply(&mut c);
+        }
+        if c.messages().iter().any(|m| m.contains("potent spellcasting")) {
+            cantrip_fired = true;
+        }
+    }
+    assert!(
+        cantrip_fired,
+        "the control never fired — the log line this test reads has moved, \
+         and the negative half above is vacuous"
+    );
+}
