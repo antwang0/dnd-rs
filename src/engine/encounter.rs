@@ -7455,13 +7455,26 @@ impl EncounterInstance {
     /// would be correct only until the next one was written.
     pub fn is_shrouded_in_shadow(&self, actor_id: usize) -> bool {
         use crate::actions::feats::BOON_OF_THE_NIGHT_SPIRIT_TAG;
-        let Some(actor) = self.actors.get(&actor_id) else {
-            return false;
-        };
-        if !actor.has_passive_feature(BOON_OF_THE_NIGHT_SPIRIT_TAG) {
-            return false;
-        }
-        self.light_at(actor.location()) != crate::engine::lighting::LightLevel::Bright
+        self.actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_passive_feature(BOON_OF_THE_NIGHT_SPIRIT_TAG))
+            && self.stands_in_shadow(actor_id)
+    }
+
+    /// The light half of `is_shrouded_in_shadow` on its own: is this
+    /// creature standing somewhere that is *not* Bright Light — RAW's
+    /// *"while you're in an area of Dim Light or Darkness"*.
+    ///
+    /// Split out when a second clause wanted the same sentence and not
+    /// the same feature. SRD 5.2's **One with Shadows** — *"While you're
+    /// in an area of Dim Light or Darkness, you can cast Invisibility on
+    /// yourself"* — is a warlock invocation, and the Boon of the Night
+    /// Spirit's tag has no business gating it. Two features, one
+    /// question about the board, and this is the question.
+    pub fn stands_in_shadow(&self, actor_id: usize) -> bool {
+        self.actors.get(&actor_id).is_some_and(|a| {
+            self.light_at(a.location()) != crate::engine::lighting::LightLevel::Bright
+        })
     }
 
     /// Where SRD 5.2's **Boon of Dimensional Travel** puts its holder:

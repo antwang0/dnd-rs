@@ -15264,6 +15264,138 @@ fn lifedrinker_does_not_ride_the_warlocks_dagger() {
     panic!("no swing connected in 60 seeds");
 }
 
+/// SRD 5.2 **Armor of Shadows**: *"You can cast Mage Armor on yourself
+/// without expending a spell slot."*
+///
+/// Both halves: the same condition the spell installs, and no slot
+/// spent for it. The shared condition is what stops a warlock carrying
+/// both and casting them one after the other.
+#[test]
+fn armor_of_shadows_is_mage_armor_for_nothing() {
+    use crate::actions::class_features::ARMOR_OF_SHADOWS;
+    use crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&GREAT_OLD_ONE_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    let slots_before = e.actors[&warlock].spell_slot_manager.spell_slots(1).spell_slots;
+
+    let cast = ActionExecutionInfo::new(&ARMOR_OF_SHADOWS, warlock, None, None, None);
+    assert!(cast.validate(&e));
+    e.push_action(cast);
+    e.process_stack();
+
+    assert!(e.actors[&warlock].has_condition(Condition::MageArmored));
+    assert_eq!(
+        e.actors[&warlock].spell_slot_manager.spell_slots(1).spell_slots,
+        slots_before,
+        "and the level-1 slot the spell would have cost is still there"
+    );
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    assert!(
+        !ActionExecutionInfo::new(&ARMOR_OF_SHADOWS, warlock, None, None, None).validate(&e),
+        "an at-will self-buff with nothing behind it needs the no-restack gate"
+    );
+}
+
+/// SRD 5.2 **One with Shadows**: *"While you're in an area of Dim Light
+/// or Darkness, you can cast Invisibility on yourself without expending
+/// a spell slot."*
+///
+/// The board gate is the invocation. Under a torch it refuses; in the
+/// dark it lands — and the gate is live rather than latched, which is
+/// what makes casting Darkness a way to turn it on.
+#[test]
+fn one_with_shadows_needs_the_dark() {
+    use crate::actions::class_features::ONE_WITH_SHADOWS;
+    use crate::actors::creatures::warlocks::ARCHFEY_WARLOCK_TEMPLATE;
+    use crate::engine::lighting::AmbientLight;
+
+    // A lit board first: the ambient light is what the invocation asks
+    // about, so a bright room is a refusal.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    e.set_ambient_light(AmbientLight::BrightLight);
+    let warlock = e
+        .instantiate_creature(&ARCHFEY_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    assert!(
+        !ActionExecutionInfo::new(&ONE_WITH_SHADOWS, warlock, None, None, None).validate(&e),
+        "there is nowhere to step into"
+    );
+
+    e.set_ambient_light(AmbientLight::DimLight);
+    let cast = ActionExecutionInfo::new(&ONE_WITH_SHADOWS, warlock, None, None, None);
+    assert!(cast.validate(&e), "and in dim light it lands");
+    e.push_action(cast);
+    e.process_stack();
+    assert!(e.actors[&warlock].has_condition(Condition::Invisible));
+    assert!(
+        e.actors[&warlock].is_concentrating(),
+        "the invocation waives the slot, not RAW's concentration"
+    );
+}
+
+/// SRD 5.2 **Fiendish Vigor**'s second sentence, which is most of the
+/// invocation: *"you don't roll the die for the Temporary Hit Points;
+/// you automatically get the highest number on the die."*
+///
+/// A flat eight rather than a 1d4+4, for an Action and no slot — and
+/// refused while a bigger pool is already up, because 5e keeps the
+/// larger of two temporary-hit-point pools rather than adding them.
+#[test]
+fn fiendish_vigor_takes_the_die_at_its_maximum() {
+    use crate::actions::class_features::{FIENDISH_VIGOR, FIENDISH_VIGOR_TEMP_HP};
+    use crate::actors::creatures::warlocks::UNDYING_WARLOCK_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, GainTempHp};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&UNDYING_WARLOCK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    let slots_before = e.actors[&warlock].spell_slot_manager.spell_slots(1).spell_slots;
+
+    let cast = ActionExecutionInfo::new(&*FIENDISH_VIGOR, warlock, None, None, None);
+    assert!(cast.validate(&e));
+    e.push_action(cast);
+    e.process_stack();
+    assert_eq!(
+        e.actors[&warlock].temp_hp(),
+        FIENDISH_VIGOR_TEMP_HP,
+        "the top of the die, not a roll on it"
+    );
+    assert_eq!(
+        e.actors[&warlock].spell_slot_manager.spell_slots(1).spell_slots,
+        slots_before,
+        "and no slot behind it"
+    );
+
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    assert!(
+        !ActionExecutionInfo::new(&*FIENDISH_VIGOR, warlock, None, None, None).validate(&e),
+        "eight on top of eight is eight — the Action would buy nothing"
+    );
+
+    // A bigger pool — Armor of Agathys' ten — keeps the gate shut, and
+    // that is the ordering the AI's two rungs rely on.
+    GainTempHp {
+        actor_id: warlock,
+        amount: 20,
+    }
+    .apply(&mut e);
+    e.actors.get_mut(&warlock).unwrap().reset_for_new_round();
+    assert!(
+        !ActionExecutionInfo::new(&*FIENDISH_VIGOR, warlock, None, None, None).validate(&e),
+        "and a larger pool already up is not something eight improves"
+    );
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

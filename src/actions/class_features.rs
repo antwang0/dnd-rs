@@ -10231,18 +10231,46 @@ pub const GIFT_OF_THE_PROTECTORS_TAG: &str = "warlock.gift_of_the_protectors";
 /// Hadar and Lance of Lethargy are XGtE — and they are on the list
 /// anyway, because the list is about what the engine ships rather than
 /// about which supplement printed it.
+///
+/// **SRD 5.2 prints twenty-eight options and fifteen of them are
+/// here.** The thirteen that are not divide cleanly, and the division
+/// is worth writing down so that a future reader can tell "not yet"
+/// from "never":
+///
+///   - **No combat surface at all.** Mask of Many Faces (Disguise
+///     Self), Master of Myriad Forms (Alter Self), Misty Visions
+///     (Silent Image), Visions of Distant Realms (Arcane Eye),
+///     Whispers of the Grave (Speak with Dead), Otherworldly Leap
+///     (Jump), Gaze of Two Minds, and Pact of the Tome. Each is
+///     "cast <spell> without a slot" for a spell the engine does not
+///     have and would gain nothing by having — illusion, disguise,
+///     scrying, long-jump distance and spell preparation are all
+///     things a battle map has no question about.
+///   - **Waiting on a lane the engine has not got.** Pact of the Chain
+///     and Investment of the Chain Master both build on Find Familiar,
+///     which is a summon with an action economy of its own; Lessons of
+///     the First Ones grants an Origin feat, which needs a way for a
+///     template to take a feat it was not written with.
+///   - **Waiting on one number.** Ascendant Step is Levitate on
+///     yourself, and Eldritch Spear is *"its range increases by 30
+///     times your Warlock level"* — a per-caster reach on one named
+///     cantrip, where `Action::reach_tiles` is a constant that never
+///     sees the caster.
 pub const ELDRITCH_INVOCATION_TAGS: &[&str] = &[
     AGONIZING_BLAST_TAG,
+    ARMOR_OF_SHADOWS_TAG,
     ASPECT_OF_THE_MOON_TAG,
     DEVILS_SIGHT_TAG,
     DEVOURING_BLADE_TAG,
     ELDRITCH_MIND_TAG,
     ELDRITCH_SMITE_TAG,
+    FIENDISH_VIGOR_TAG,
     GIFT_OF_THE_DEPTHS_TAG,
     GIFT_OF_THE_PROTECTORS_TAG,
     GRASP_OF_HADAR_TAG,
     LANCE_OF_LETHARGY_TAG,
     LIFEDRINKER_TAG,
+    ONE_WITH_SHADOWS_TAG,
     PACT_OF_THE_BLADE_TAG,
     REPELLING_BLAST_TAG,
     THIRSTING_BLADE_TAG,
@@ -10598,6 +10626,285 @@ pub static ELDRITCH_SMITE: LazyLock<EldritchSmite> = LazyLock::new(|| EldritchSm
 /// rolled is a d8 — the warlock's hit die — plus Constitution, floored
 /// at 1, which is RAW's arithmetic on RAW's die.
 pub const LIFEDRINKER_TAG: &str = "warlock.lifedrinker";
+
+/// Warlock Eldritch Invocation — **Armor of Shadows**: *"You can cast
+/// Mage Armor on yourself without expending a spell slot."*
+///
+/// The plainest of the eight invocations SRD 5.2 writes in that exact
+/// shape, and the only one of them whose spell is already on the
+/// warlock's own list. Mage Armor sits on the baseline chassis costing
+/// a level-1 slot out of four; this is the same AC for nothing, which
+/// on a d8-hit-die caster is the difference between spending a quarter
+/// of the day's magic on not dying and not having to.
+pub const ARMOR_OF_SHADOWS_TAG: &str = "warlock.armor_of_shadows";
+
+/// Warlock Eldritch Invocation — **One with Shadows**: *"While you're
+/// in an area of Dim Light or Darkness, you can cast Invisibility on
+/// yourself without expending a spell slot."*
+///
+/// The same shape as Armor of Shadows with a clause about the board on
+/// it, which is what makes it interesting rather than merely free: the
+/// gate is live, so a warlock who steps into a torch's circle loses the
+/// option, and a warlock who casts Darkness has made its own. The
+/// engine has carried per-tile lighting and a Darkness spell for a
+/// while; this is the first invocation that spends them.
+///
+/// RAW's spell is still Concentration, and the invocation waives the
+/// slot rather than the concentration — so a warlock hiding this way
+/// has given up Hex, which is the real price and the reason the
+/// invocation is a choice.
+pub const ONE_WITH_SHADOWS_TAG: &str = "warlock.one_with_shadows";
+
+/// Warlock Eldritch Invocation — **Fiendish Vigor**: *"You can cast
+/// False Life on yourself without expending a spell slot. When you cast
+/// the spell with this feature, you don't roll the die for the
+/// Temporary Hit Points; you automatically get the highest number on
+/// the die."*
+///
+/// The one member of the family that is not pure delegation, and the
+/// maxed die is why: 1d4+4 becomes a flat 8, every time, for free. That
+/// second sentence is most of the invocation — a random 5 to 8 that
+/// costs a slot is a spell, and a guaranteed 8 that costs nothing is a
+/// posture the warlock takes at the top of every fight and again
+/// whenever the last one is gone.
+///
+/// So it ships as its own small action rather than as a row on
+/// `SlotlessSelfSpell`: that chassis installs a condition, and temporary
+/// hit points are a number.
+pub const FIENDISH_VIGOR_TAG: &str = "warlock.fiendish_vigor";
+
+/// The temporary hit points Fiendish Vigor grants, which is RAW's
+/// arithmetic with RAW's die maxed: the 4 on a d4, plus the spell's
+/// flat 4.
+pub const FIENDISH_VIGOR_TEMP_HP: u32 = 8;
+
+/// One "you can cast <spell> on yourself without expending a spell
+/// slot" invocation, as data.
+///
+/// SRD 5.2 writes eight of the twenty-four invocations in exactly this
+/// shape — Armor of Shadows, Ascendant Step, Mask of Many Faces, Master
+/// of Myriad Forms, Misty Visions, One with Shadows, Otherworldly Leap,
+/// Visions of Distant Realms — and the differences between the ones a
+/// battle map can hold come down to four fields: which condition lands,
+/// how long it holds, whether it costs concentration, and whether the
+/// board has to look a particular way first.
+///
+/// Deliberately *not* a delegation to the spell's own `Action`. That
+/// would have been shorter and would have carried the spell's cost
+/// with it, which is the one thing the invocation exists to change;
+/// and the two spells that ship here reach their conditions by
+/// different roads (Mage Armor installs on the caster with no target,
+/// Invisibility takes a target and holds concentration on it), so the
+/// "delegate and subtract a slot" shape would have needed a special
+/// case per row anyway.
+pub struct SlotlessSelfSpell {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// The invocation's tag. Read as the availability gate, so a
+    /// template that carries the action without the invocation cannot
+    /// cast it — which is what keeps the action list and the feature
+    /// set from disagreeing about who took what.
+    pub tag: &'static str,
+    pub condition: Condition,
+    pub timer: ConditionTimer,
+    /// RAW's concentration label, or `None` for the spells that hold
+    /// none. The invocation waives the slot; it never waives this.
+    pub concentration: Option<&'static str>,
+    /// Whether the concentration ends when the holder attacks — RAW's
+    /// Invisibility clause, and nothing else's.
+    pub breaks_on_attack: bool,
+    /// A question about the board that has to answer yes first, or
+    /// `None` for the rows RAW gates on nothing. One row has one: One
+    /// with Shadows' *"while you're in an area of Dim Light or
+    /// Darkness"*.
+    pub board_gate: Option<fn(&EncounterInstance, usize) -> bool>,
+    /// The line the cast prints, with the caster's name substituted for
+    /// `{}`.
+    pub log: &'static str,
+}
+
+impl Action for SlotlessSelfSpell {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn holds_concentration(&self) -> bool {
+        self.concentration.is_some()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // The whole invocation: an Action and no slot.
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The no-restack clause is doing the same work Mage Armor's and
+        // Arms of the Astral Self's do: an at-will self-buff with no
+        // resource behind it will otherwise be re-cast every turn for
+        // the rest of the fight, because nothing else stops it.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.has_passive_feature(self.tag)
+                && !a.has_condition(self.condition)
+        }) && self
+            .board_gate
+            .is_none_or(|gate| gate(encounter, caster_id))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let name = encounter.actor_name(caster_id);
+        encounter.log(self.log.replace("{}", &name));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: self.condition,
+            timer: self.timer,
+        })];
+        if let Some(label) = self.concentration {
+            let mut data = crate::actors::actor_template::ConcentrationData::with_conditions(
+                label,
+                vec![(caster_id, self.condition)],
+            );
+            if self.breaks_on_attack {
+                data = data.breaking_on_attack();
+            }
+            effects.push(Box::new(
+                crate::engine::side_effects::StartConcentration { caster_id, data },
+            ));
+        }
+        effects
+    }
+}
+
+/// **Armor of Shadows** — Mage Armor, free, on the warlock's own body.
+///
+/// The condition and the hundred-round timer are Mage Armor's own, read
+/// off `spells::MAGE_ARMOR`'s `side_effects`: RAW's duration is eight
+/// hours, which is longer than any encounter, and the two casts have to
+/// land the same flag or a warlock could carry both at once.
+pub static ARMOR_OF_SHADOWS: SlotlessSelfSpell = SlotlessSelfSpell {
+    display_name: "armor of shadows",
+    aliases: &["aos", "shadow armor"],
+    tag: ARMOR_OF_SHADOWS_TAG,
+    condition: Condition::MageArmored,
+    timer: ConditionTimer::Rounds(100),
+    concentration: None,
+    breaks_on_attack: false,
+    board_gate: None,
+    log: "  armor of shadows: shadow sets over {}'s skin like plate.",
+};
+
+/// **One with Shadows** — Invisibility, free, while the light is not on
+/// the warlock.
+pub static ONE_WITH_SHADOWS: SlotlessSelfSpell = SlotlessSelfSpell {
+    display_name: "one with shadows",
+    aliases: &["ows", "shadowmeld"],
+    tag: ONE_WITH_SHADOWS_TAG,
+    condition: Condition::Invisible,
+    // The spell's own minute, which is what the invocation casts.
+    timer: ConditionTimer::Rounds(10),
+    concentration: Some("Invisibility"),
+    breaks_on_attack: true,
+    board_gate: Some(EncounterInstance::stands_in_shadow),
+    log: "  one with shadows: {} steps into the dark and is not there.",
+};
+
+/// **Fiendish Vigor** — False Life on the warlock, free, with the die
+/// taken at its maximum. See `FIENDISH_VIGOR_TAG`.
+pub struct FiendishVigor {}
+
+impl Action for FiendishVigor {
+    fn name(&self) -> &str {
+        "fiendish vigor"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["fv", "vigor"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        vec![Resource::Action]
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The gate the condition-installing siblings get for free.
+        // Temporary hit points do not stack — 5e keeps the larger pool
+        // and discards the other — so a warlock already holding eight
+        // or more of them would be spending its Action on nothing.
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.has_passive_feature(FIENDISH_VIGOR_TAG)
+                && a.temp_hp() < FIENDISH_VIGOR_TEMP_HP
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log(format!(
+            "  fiendish vigor: false life, taken at the top of the die — {} temp HP",
+            FIENDISH_VIGOR_TEMP_HP
+        ));
+        vec![Box::new(crate::engine::side_effects::GainTempHp {
+            actor_id: caster_id,
+            amount: FIENDISH_VIGOR_TEMP_HP,
+        })]
+    }
+}
+
+pub static FIENDISH_VIGOR: LazyLock<FiendishVigor> = LazyLock::new(|| FiendishVigor {});
 
 /// How many Hit Dice a Lifedrinker warlock brings to one fight.
 ///

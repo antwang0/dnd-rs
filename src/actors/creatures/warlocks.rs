@@ -549,11 +549,35 @@ pub static UNDYING_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     // (`ASPECT_OF_THE_MOON_TAG`) on top of the shared envelope, so the
     // whole subclass template lands as a three-argument helper call
     // (name, glyph, tag) rather than an inline clone-and-insert.
-    subclass_warlock_template(
+    let mut undying = subclass_warlock_template(
         "Undying Warlock",
         'U',
         crate::actions::class_features::ASPECT_OF_THE_MOON_TAG,
-    )
+    );
+    // SRD 5.2's **Fiendish Vigor**: "you can cast False Life on
+    // yourself without expending a spell slot… you don't roll the die
+    // for the Temporary Hit Points; you automatically get the highest
+    // number on the die." Eight, every time, for an Action.
+    //
+    // On the patron that will not die, and not on the Fiend the name
+    // points at, for a reason that is arithmetic rather than flavour:
+    // the Fiend's Dark One's Blessing already pays temporary hit points
+    // on every kill, and 5e keeps the larger pool rather than adding —
+    // so on that chassis the invocation would spend an Action
+    // overwriting something the patron gives away. Here it is the only
+    // free pool on the sheet.
+    //
+    // The same argument applies to Armor of Agathys, which every
+    // warlock carries and which is worth more; the invocation's own
+    // validator refuses while ten temp HP are already up, so the two
+    // sort themselves out without the AI having to know.
+    undying
+        .actions
+        .push(&*crate::actions::class_features::FIENDISH_VIGOR);
+    undying
+        .features
+        .insert(crate::actions::class_features::FIENDISH_VIGOR_TAG);
+    undying
 });
 
 /// Great Old One Warlock — Otherworldly Patron **The Great Old One**
@@ -638,6 +662,17 @@ pub static GREAT_OLD_ONE_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `crate::actions::feats::BOON_OF_TRUESIGHT_TAG`.
     goo.features
         .insert(crate::actions::feats::BOON_OF_TRUESIGHT_TAG);
+    // SRD 5.2's **Armor of Shadows**: "you can cast Mage Armor on
+    // yourself without expending a spell slot." Mage Armor is already
+    // on the baseline warlock's list at the cost of a level-1 slot out
+    // of four; the invocation is the same armour for nothing, and this
+    // is the patron whose shadow it is. The AI reaches for it ahead of
+    // the spell — see `try_self_buff_mage_armor`, where the three ways
+    // to the same condition are ordered by what they cost.
+    goo.actions
+        .push(&crate::actions::class_features::ARMOR_OF_SHADOWS);
+    goo.features
+        .insert(crate::actions::class_features::ARMOR_OF_SHADOWS_TAG);
     goo
 });
 
@@ -734,6 +769,19 @@ pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     archfey
         .features
         .insert(crate::actions::class_features::WITCH_SIGHT_TAG);
+    // SRD 5.2's **One with Shadows**: "While you're in an area of Dim
+    // Light or Darkness, you can cast Invisibility on yourself without
+    // expending a spell slot." The other half of the Archfey's
+    // relationship with what can and cannot be seen — Witch Sight is
+    // the court's glamour pierced, and this is the court's glamour
+    // worn. Free, and gated live on the light, so a warlock who steps
+    // into a torch's circle simply loses it.
+    archfey
+        .actions
+        .push(&crate::actions::class_features::ONE_WITH_SHADOWS);
+    archfey
+        .features
+        .insert(crate::actions::class_features::ONE_WITH_SHADOWS_TAG);
     archfey
 });
 

@@ -328,6 +328,29 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3b''. Fiendish Vigor — the free eight temporary hit points.
+        //       Directly below Armor of Agathys because it is the same
+        //       pool: the ward is worth more (ten, plus a retaliation
+        //       rider), so a warlock that can still afford the slot
+        //       casts it and the invocation's own validator then
+        //       refuses. This rung is what a warlock out of slots — or
+        //       one that never had the ward — gets instead.
+        if let Some(aei) = try_fiendish_vigor(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 3b'''. One with Shadows — free Invisibility while the light
+        //        is off the warlock. Sits with the other self-buffs
+        //        rather than with the escape rungs above, because it is
+        //        not an escape: RAW ends the condition the moment the
+        //        holder attacks, so what it buys is the round in
+        //        between. Its own rung refuses above half hit points
+        //        for that reason, and the action refuses outside the
+        //        dark for RAW's.
+        if let Some(aei) = try_one_with_shadows(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3c. Rage — barbarian's bonus-action damage-resistance + STR
         //     advantage. Fire as soon as an enemy is in reach so the
         //     physical resistance lands before incoming swings. Once
@@ -2882,7 +2905,18 @@ fn try_self_buff_mage_armor(
     // Prefer the spell — it's reusable across encounters (slot-based)
     // and doesn't burn an inventory slot. Fall back to the potion if
     // the caster has no Mage Armor spell or the slot is spent.
-    try_self_action(encounter, actor_id, "mage armor")
+    // SRD 5.2's **Armor of Shadows** is the same condition for no slot
+    // at all, so a warlock that has the invocation should reach for it
+    // before the spell — and reaching for it first is not a
+    // micro-optimisation on this chassis: Pact Magic is four slots for
+    // the whole fight, and spending a quarter of them on not dying is
+    // the thing the invocation exists to stop.
+    //
+    // The three are ordered by what they cost, cheapest first, and the
+    // shared `MageArmored` gate above means whichever lands first
+    // silences the other two.
+    try_self_action(encounter, actor_id, "armor of shadows")
+        .or_else(|| try_self_action(encounter, actor_id, "mage armor"))
         .or_else(|| try_self_action_inc_items(encounter, actor_id, "drink potion of mage armor"))
 }
 
@@ -2953,6 +2987,60 @@ fn try_armor_of_agathys(
         return None;
     }
     try_self_action(encounter, actor_id, "armor of agathys")
+}
+
+/// Fiendish Vigor — SRD 5.2's Eldritch Invocation, eight temporary hit
+/// points for an Action and no slot.
+///
+/// Below Armor of Agathys and above nothing much, because the two are
+/// the same pool and the ordering between them is the whole decision. A
+/// warlock that casts the ward first has ten temp HP and a retaliation
+/// rider, and the invocation's own validator then refuses — 5e keeps the
+/// larger pool rather than adding, so eight on top of ten is eight
+/// thrown away. A warlock with no slot for the ward gets the eight,
+/// which is what the invocation is for.
+///
+/// The proximity gate is Agathys's, for a different reason: temp HP is
+/// worth nothing in an empty room, and an Action spent on it in round
+/// one is an Action not spent closing.
+fn try_fiendish_vigor(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, 12) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "fiendish vigor")
+}
+
+/// One with Shadows — SRD 5.2's Eldritch Invocation: Invisibility on
+/// the warlock's own body, free, while the light is off them.
+///
+/// Two gates beyond the action's own. The invisibility RAW grants ends
+/// *"if you attack or cast a spell"* — which is what
+/// `breaking_on_attack` enforces — so it buys the warlock exactly one
+/// thing: not being seen while something is trying to kill it. That is
+/// worth an Action when the warlock is losing and worth nothing when it
+/// is winning, so the gate is the same low-HP one the Dodge rung uses.
+///
+/// The board gate (Dim Light or Darkness) lives on the action, where it
+/// belongs: it is a rule rather than a preference, and a human player
+/// typing the name should be refused for the same reason the AI is.
+fn try_one_with_shadows(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // The same half-hit-points line the Dodge rung draws, and for the
+    // same reason: both spend the Action on not being hit, which is a
+    // trade a healthy creature should not make.
+    if actor.hitpoints() as f32 / actor.max_hitpoints().max(1) as f32 >= 0.5 {
+        return None;
+    }
+    if !under_melee_threat(encounter, actor_id) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "one with shadows")
 }
 
 /// One row in the concentration self-buff cohort — a spell whose whole
@@ -18165,7 +18253,7 @@ mod tests {
         };
 
         // (template, the log fragment its headline feature prints)
-        let cases: [(&CreatureTemplate, &str); 58] = [
+        let cases: [(&CreatureTemplate, &str); 60] = [
             // Not Master of Tactics: the Mastermind hands an *ally*
             // advantage, and this fixture is one PC against one ogre.
             // Misdirection has no action to choose either — the engine
@@ -18192,6 +18280,25 @@ mod tests {
             // bonus-action rung fires, which is the half of the
             // invocation the AI does own.
             (&UNDEAD_WARLOCK_TEMPLATE, "pact of the blade"),
+            // The at-will invocations, and the shape of what each one
+            // needs to be reached for. Armor of Shadows is
+            // unconditional, so it fires in round one on every seed.
+            (
+                &crate::actors::creatures::warlocks::GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+                "armor of shadows",
+            ),
+            // Fiendish Vigor needs the warlock to be out of the level-1
+            // slot Armor of Agathys wants first, which is the ordering
+            // its rung is built on — so it lands in the back half of a
+            // fight rather than the front.
+            (
+                &crate::actors::creatures::warlocks::UNDYING_WARLOCK_TEMPLATE,
+                "fiendish vigor",
+            ),
+            // Not One with Shadows: the fixture generates a lit board,
+            // and RAW's clause is "while you're in an area of Dim Light
+            // or Darkness". Its gate is pinned engine-side, where the
+            // ambient can be turned down.
             (&KENSEI_MONK_TEMPLATE, "kensei's shot"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "giant's might"),
             (&RUNE_KNIGHT_FIGHTER_TEMPLATE, "fire rune"),
