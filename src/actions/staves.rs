@@ -696,6 +696,15 @@ pub static STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY: StaffSpell = StaffSpell {
 /// differences are the two that matter: the charges are named in
 /// `cost()` so the pool gates the prime, and the marker is consumed by
 /// the hit rather than burning for the rest of the fight.
+///
+/// **Dropping the staff does not disarm the prime**, which is the one
+/// hole in the model and one the engine already has: a marker is a
+/// condition on the wielder, and `ON_HIT_RIDERS` asks about the
+/// condition rather than about the pack. `KindleWeapon`'s docstring
+/// records the same parting for the Flame Tongue. Closing it properly
+/// would mean a rider row that can ask about inventory, which is a
+/// column on a forty-row table for the benefit of a wielder who threw
+/// away a Very Rare staff mid-swing.
 pub struct StaffPrime {
     /// Player-facing action name.
     pub action_name: &'static str,
@@ -772,10 +781,18 @@ impl Action for StaffPrime {
         vec![Resource::BonusAction, self.charge_cost()]
     }
 
-    /// Holding it, and not already primed.
+    /// Holding it, not already primed, and able to swing something.
     ///
     /// The charges are checked by `validate_input`'s walk over `cost()`;
     /// see `StaffSpell::custom_validate_input` for why that is enough.
+    ///
+    /// The third clause is the one a class prime never needed. A Divine
+    /// Strike arrives on a cleric who has a mace; a staff arrives on
+    /// whoever walked over it, and a caster with nothing but cantrips
+    /// would otherwise spend a bonus action and three charges priming a
+    /// hit they are never going to make. The rider's lane is
+    /// `RiderLane::MeleeWeapon`, so the gate asks the same question that
+    /// lane does.
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -785,7 +802,14 @@ impl Action for StaffPrime {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.has_item_named(self.item_name) && !a.has_condition(self.condition)
+            a.has_item_named(self.item_name)
+                && !a.has_condition(self.condition)
+                && a.available_actions().iter().any(|act| {
+                    act.is_harmful()
+                        && act.deals_damage()
+                        && act.is_melee_attack()
+                        && act.school().is_none()
+                })
         })
     }
 

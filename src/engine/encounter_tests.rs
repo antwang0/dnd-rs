@@ -18432,7 +18432,7 @@ fn owlbear_multiattack_lands_two_swings() {
 
 #[test]
 fn wisp_is_immune_to_lightning() {
-    use crate::actors::creatures::wisps::WISP_TEMPLATE;
+    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
     use crate::engine::side_effects::DealDamage;
     let mut e = ei_with_terrain(15, 15, &[]);
     let wisp = e
@@ -18454,7 +18454,7 @@ fn wisp_is_immune_to_lightning() {
 
 #[test]
 fn wisp_is_resistant_to_fire() {
-    use crate::actors::creatures::wisps::WISP_TEMPLATE;
+    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
     let e = ei_with_terrain(15, 15, &[]);
     let mut e = e;
     let wisp = e
@@ -86999,7 +86999,7 @@ fn a_wyvern_is_already_in_the_air_when_the_fight_starts() {
 /// hanging serenely in the sky.
 #[test]
 fn a_wyvern_put_to_sleep_falls_and_a_will_o_wisp_does_not() {
-    use crate::actors::creatures::wisps::WISP_TEMPLATE;
+    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
     use crate::actors::creatures::wyverns::WYVERN_TEMPLATE;
     use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
 
@@ -96477,5 +96477,42 @@ fn the_staff_of_withering_withers_what_it_hits() {
     assert!(
         withered,
         "sixty seeds and the DC 15 save never failed — the follow-up is not wired"
+    );
+}
+
+/// Priming a staff you cannot swing is refused.
+///
+/// The clause on `StaffPrime::custom_validate_input` that no class prime
+/// ever needed. A Divine Strike arrives on a cleric holding a mace; a
+/// staff arrives on whoever walked over the tile it fell on, and the
+/// rider only ever pays out on a melee weapon hit — so a caster with
+/// nothing but spells would otherwise buy a bonus action and three
+/// charges' worth of nothing.
+#[test]
+fn a_caster_with_no_swing_cannot_charge_the_staff_of_striking() {
+    use crate::actions::staves::CHARGE_STAFF_OF_STRIKING;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::shrieker_fungi::SHRIEKER_FUNGUS_TEMPLATE;
+    use crate::items::item_template::STAFF_OF_STRIKING;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let fungus = e
+        .instantiate_creature(&SHRIEKER_FUNGUS_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    for id in [fungus, fighter] {
+        e.actors.get_mut(&id).unwrap().pickup_item(&STAFF_OF_STRIKING);
+    }
+    // The control first, so a refusal for some unrelated reason cannot
+    // pass as the clause under test.
+    assert!(
+        CHARGE_STAFF_OF_STRIKING.validate_input(&e, fighter, None, None, None),
+        "a fighter holding the staff can charge it"
+    );
+    assert!(
+        !CHARGE_STAFF_OF_STRIKING.validate_input(&e, fungus, None, None, None),
+        "a shrieker has no attack at all and nothing to spend the charges on"
     );
 }

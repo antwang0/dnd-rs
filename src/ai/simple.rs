@@ -3364,6 +3364,16 @@ fn try_self_buff_pick(
 ///      clause plus a speed of zero plus disadvantage on the target's
 ///      own swings. Ahead of every maneuver below because it strictly
 ///      contains what they buy.
+///   4b. `charge staff of withering` — 2d10 necrotic and a DC 15 CON
+///      save against `Withered`, for one of the staff's three charges.
+///      The only rows on this lane that arrive on an *item* rather than
+///      a stat block, and the first withering is ahead of striking for
+///      the reason Fire Rune is ahead of the maneuvers: it pays twice,
+///      and its pool is three charges deep, so a charge held back is a
+///      third of the staff left unused.
+///   4c. `charge staff of striking` — 3d6 force for three of ten. Pure
+///      damage, no save, and the deeper pool, so it is the one to fall
+///      through to.
 ///   5. `trip attack` — prone is the strongest maneuver rider: it
 ///      hands every melee ally advantage against the target *and*
 ///      costs the target its movement.
@@ -18964,9 +18974,9 @@ mod tests {
 
     /// AI mage-armor fallback: a non-caster (fighter) carrying a Potion of
     /// Mage Armor drinks it via `try_self_buff_mage_armor`. Confirms the
-    /// `try_self_action_inc_items` fallback searches `available_actions()`,
-    /// which surfaces inventory-granted actions a `find_action` lookup
-    /// would miss.
+    /// `try_self_action` lookup searches `available_actions()`, which
+    /// surfaces inventory-granted actions the `find_action` lookup it
+    /// used to use would miss.
     #[test]
     fn ai_drinks_potion_of_mage_armor_when_no_spell() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
