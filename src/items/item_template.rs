@@ -3053,6 +3053,170 @@ pub static SWORD_OF_WOUNDING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Holy Avenger** (Weapon, any sword; Legendary) — "When you hit a
+/// Fiend or an Undead with this weapon, that creature takes an extra
+/// 2d10 Radiant damage."
+///
+/// The only Legendary weapon in the file, and it earns the tier on the
+/// `+3` as much as on the die: nothing else on the loot table hands a
+/// wielder three points of attack and damage on every swing they make.
+/// Against the two creature types it is written for, 2d10 on top of
+/// that is the largest save-free rider the armoury has.
+///
+/// RAW's second half — a 10-foot aura granting the wielder's allies
+/// Advantage on saving throws against spells and magical effects — is
+/// not modeled. The engine's auras are emanations installed by an
+/// action or carried by a passive feature, and this would be the only
+/// *item* on the board that wanted one; the shield and the mantle that
+/// grant the same advantage grant it to their wearer, through the flag
+/// lane that already exists. Widening that lane to radiate is a
+/// different change from adding a sword.
+pub static HOLY_AVENGER: Item = Item {
+    name: "Holy Avenger",
+    glyph: 'A',
+    bonuses: ItemBonuses {
+        attack_bonus: 3,
+        damage_bonus: 3,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::HolyAvenging],
+    ..Item::DEFAULTS
+};
+
+/// **Dwarven Thrower** (Weapon, warhammer; Very Rare) — "You gain a +3
+/// bonus to attack rolls and damage rolls made with this magic weapon.
+/// It deals an extra 1d8 Bludgeoning damage when you hit with it, or an
+/// extra 2d8 Bludgeoning damage if the target is a Giant."
+///
+/// The second `+3` on the table and the only one below Legendary. What
+/// separates it from the Holy Avenger is the gate: the hammer pays
+/// something on *every* swing and more against giants, where the sword
+/// pays nothing at all against most of the bestiary. A party that finds
+/// both hands the hammer to whoever fights the most and the sword to
+/// whoever fights the worst things.
+///
+/// RAW's returning throw — "immediately after the attack, the weapon
+/// flies back to your hand" — is not modeled, for the reason nothing in
+/// this family models a weapon's own behaviour: the engine binds no
+/// swing to an item. See `Condition::DragonSlaying`.
+pub static DWARVEN_THROWER: Item = Item {
+    name: "Dwarven Thrower",
+    glyph: 'T',
+    bonuses: ItemBonuses {
+        attack_bonus: 3,
+        damage_bonus: 3,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::DwarvenThrowing],
+    ..Item::DEFAULTS
+};
+
+/// **Sword of Sharpness** (Weapon, any Slashing melee weapon; Very
+/// Rare) — "When you roll a 20 on the d20 for an attack roll with this
+/// weapon, the target takes an extra 4d12 Slashing damage."
+///
+/// The first of the three crit-gated blades, and the shape that needed
+/// `OnHitRider::requires_natural_twenty`: RAW's trigger is the die's
+/// face, not the swing's outcome, and in this engine those come apart
+/// in three separate places (a Champion's 19, a Hexblade's Curse, a
+/// Paralyzed target's auto-crit).
+///
+/// 4d12 is the biggest number in the file and it arrives on one swing
+/// in twenty — doubled to 8d12 by the critical hit it rides, which is
+/// a median of 52 extra damage on top of a doubled greatsword. It is
+/// the only item here whose value is entirely in the tail, and that is
+/// what makes it worth finding beside a Vicious Weapon that quietly
+/// out-damages it over any ten rounds.
+///
+/// RAW's "maximize your weapon damage dice against an object" half is
+/// not modeled: the engine has no objects to attack.
+pub static SWORD_OF_SHARPNESS: Item = Item {
+    name: "Sword of Sharpness",
+    glyph: '/',
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::Sharpening],
+    ..Item::DEFAULTS
+};
+
+/// **Sword of Life Stealing** (Weapon, any sword; Rare) — "When you roll
+/// a 20 on the d20 for an attack roll with this weapon, the target takes
+/// an extra 3d6 Necrotic damage, and you gain Temporary Hit Points equal
+/// to the extra damage dealt."
+///
+/// The armoury's only item that pays the wielder, and the reason
+/// `FollowUpEffect::TempHpToAttacker` exists. The temp HP is the
+/// rider's own 3d6 — doubled, on the critical hit it rides — and not
+/// the swing's total, so a greatsword that crit for thirty does not
+/// hand thirty back.
+pub static SWORD_OF_LIFE_STEALING: Item = Item {
+    name: "Sword of Life Stealing",
+    glyph: '\\',
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::LifeStealing],
+    ..Item::DEFAULTS
+};
+
+/// **Nine Lives Stealer** (Weapon, any sword; Very Rare) — "You gain a
+/// +2 bonus to attack rolls and damage rolls made with this magic
+/// weapon. When you roll a 20 on the d20 for an attack roll with this
+/// weapon, the target must succeed on a DC 15 Constitution saving throw
+/// or die. The sword can't be used on a creature that has more than 100
+/// Hit Points."
+///
+/// The sword that kills, and the item the `SlayActor` lane was built
+/// for. Everything below a hundred hit points on this roster — which is
+/// most of it, and includes every dragon under the adult tier — is one
+/// natural 20 and one failed Constitution save from the end of its
+/// fight, whatever its resistances say, because the clause is not
+/// damage.
+///
+/// RAW's charge counter is not modeled: the blade has nine kills in it
+/// and then reverts to a plain `+2` sword, which is a ledger no weapon
+/// in this engine keeps and a limit no encounter on this board would
+/// reach. What ships is the sword before the ninth.
+pub static NINE_LIVES_STEALER: Item = Item {
+    name: "Nine Lives Stealer",
+    glyph: '9',
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::NineLivesStealing],
+    ..Item::DEFAULTS
+};
+
+/// **Dagger of Venom** (Weapon, dagger; Rare) — "You gain a +1 bonus to
+/// attack rolls and damage rolls made with this magic weapon. As a
+/// Bonus Action, you can cause thick, black poison to coat it. The
+/// poison remains for 1 minute or until an attack using this weapon
+/// hits a creature. That creature must succeed on a DC 15 Constitution
+/// saving throw or take 2d10 Poison damage and have the Poisoned
+/// condition for 1 minute."
+///
+/// Arrives dry, like the Sun Blade and the Flame Tongue arrive dark,
+/// and for a sharper reason than either: the coating is spent by the
+/// swing that lands it, so every poisoned hit costs a Bonus Action the
+/// wielder could have spent on something else. That is the whole item —
+/// a `+1` dagger with a question attached to each turn.
+///
+/// The `+1` is passive because RAW's is. Only the venom is switched.
+pub static DAGGER_OF_VENOM: Item = Item {
+    name: "Dagger of Venom",
+    glyph: 'v',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    on_use: &[&crate::actions::item_actions::COAT_DAGGER_OF_VENOM],
+    ..Item::DEFAULTS
+};
+
 /// **Adamantine Armor** (Armor, any medium or heavy except hide;
 /// Uncommon) — "While you're wearing it, any Critical Hit against you
 /// becomes a normal hit."
@@ -3625,6 +3789,12 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &FROST_BRAND,
     &VICIOUS_WEAPON,
     &SWORD_OF_WOUNDING,
+    &HOLY_AVENGER,
+    &DWARVEN_THROWER,
+    &SWORD_OF_SHARPNESS,
+    &SWORD_OF_LIFE_STEALING,
+    &NINE_LIVES_STEALER,
+    &DAGGER_OF_VENOM,
     &ADAMANTINE_ARMOR,
 ];
 
@@ -4299,6 +4469,25 @@ pub static LOOT_POOL: &[&Item] = &[
     &VICIOUS_WEAPON,
     &SWORD_OF_WOUNDING,
     &ADAMANTINE_ARMOR,
+    // The second batch of the armoury, at the same single-entry weight
+    // as the first for the same reason — and the spread across it is
+    // wider than anything the file has carried before. The Holy
+    // Avenger and the Dwarven Thrower are the only `+3` weapons here;
+    // the two crit-gated blades are worth nothing on nineteen swings in
+    // twenty and more than either of them on the twentieth; and the
+    // Nine Lives Stealer does not deal damage at all, it just ends
+    // things.
+    //
+    // Even odds across that spread is deliberate. A loot table that
+    // weighted by expected damage would almost never hand out the
+    // sword whose whole value is the tail, which is the one worth
+    // finding.
+    &HOLY_AVENGER,
+    &DWARVEN_THROWER,
+    &SWORD_OF_SHARPNESS,
+    &SWORD_OF_LIFE_STEALING,
+    &NINE_LIVES_STEALER,
+    &DAGGER_OF_VENOM,
     // The wondrous half of the same batch — items whose clause is a
     // defence or a sense rather than a die on a swing. Single entries
     // apiece for the same reason the armoury gets them: each answers one
@@ -4469,6 +4658,12 @@ mod tests {
             (&FROST_BRAND, Condition::FrostBranded, false),
             (&VICIOUS_WEAPON, Condition::Vicious, false),
             (&SWORD_OF_WOUNDING, Condition::Wounding, false),
+            (&HOLY_AVENGER, Condition::HolyAvenging, false),
+            (&DWARVEN_THROWER, Condition::DwarvenThrowing, false),
+            (&SWORD_OF_SHARPNESS, Condition::Sharpening, false),
+            (&SWORD_OF_LIFE_STEALING, Condition::LifeStealing, false),
+            (&NINE_LIVES_STEALER, Condition::NineLivesStealing, false),
+            (&DAGGER_OF_VENOM, Condition::Envenomed, true),
         ];
         for (item, marker, kindled) in wiring {
             assert!(

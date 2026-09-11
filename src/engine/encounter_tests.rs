@@ -75780,6 +75780,7 @@ fn a_smite_prime_survives_a_melee_spell_attack_unspent() {
             is_melee: true,
             is_spell: true,
             is_crit: false,
+            natural_twenty: false,
             damage_so_far: 0,
             damage_type: crate::engine::types::DamageType::Slashing,
         },
@@ -76148,6 +76149,7 @@ fn giants_might_rider_fires_once_per_turn() {
         is_melee: true,
         is_spell: false,
         is_crit: false,
+        natural_twenty: false,
         damage_so_far: 0,
         damage_type: crate::engine::types::DamageType::Slashing,
     };
@@ -76248,6 +76250,7 @@ fn fire_rune_primes_once_and_is_spent_by_the_swing() {
             is_melee: true,
             is_spell: false,
             is_crit: false,
+            natural_twenty: false,
             damage_so_far: 0,
             damage_type: crate::engine::types::DamageType::Slashing,
         },
@@ -91682,6 +91685,7 @@ fn the_absorb_elements_rider_returns_the_element_that_was_thrown() {
             is_melee: true,
             is_spell: false,
             is_crit: false,
+            natural_twenty: false,
             damage_so_far: 0,
             damage_type: crate::engine::types::DamageType::Slashing,
         },
@@ -94332,6 +94336,7 @@ fn a_weapon_typed_rider_is_typed_as_the_weapon() {
         is_melee: true,
         is_spell: false,
         is_crit: false,
+        natural_twenty: false,
         damage_so_far: 0,
         damage_type: LONGSWORD.damage_type,
     };
@@ -94563,6 +94568,549 @@ fn gloves_of_missile_snaring_catch_arrows_and_not_swords() {
             "melee={is_melee} spell={is_spell}: {bare} bare vs {gloved} gloved"
         );
     }
+}
+
+// =====================================================================
+// The crit-gated half of the armoury, and the lane that kills.
+//
+// Three engine capabilities arrived with SRD 5.2's second batch of
+// named weapons, and each of them is a question the table could not ask
+// before: *did the die read 20* (as opposed to "did this crit"), *does
+// this creature simply die* (as opposed to "take damage equal to your
+// hit points"), and *what happens when the target makes the save*.
+// =====================================================================
+
+/// A natural 20 and a critical hit are not the same question, and the
+/// Sword of Sharpness asks the first one.
+///
+/// The failure this names is silent and generous, which is the worst
+/// combination. Three separate things in this engine make a swing
+/// critical without the die reading 20 — a Champion Fighter's 19, a
+/// Hexblade's Curse, and a Paralyzed target promoting every melee hit —
+/// and a rider keyed on `is_crit` would have paid 4d12 on all of them.
+/// Against a paralyzed creature that is *every single swing*.
+///
+/// Driven through `push_on_hit_riders` directly rather than by fishing
+/// for a 20 across seeds, because the two swings being compared differ
+/// in exactly one boolean and nothing else: same wielder, same marker,
+/// same critical hit.
+#[test]
+fn the_sword_of_sharpness_asks_about_the_die_and_not_about_the_crit() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::SWORD_OF_SHARPNESS;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&SWORD_OF_SHARPNESS);
+    assert!(
+        e.actors[&fighter].has_condition(Condition::Sharpening),
+        "picking the sword up arms it"
+    );
+
+    let swing = |natural_twenty: bool| RiderSwing {
+        is_melee: true,
+        is_spell: false,
+        // Critical either way. The *only* difference between the two
+        // runs is the face the die showed.
+        is_crit: true,
+        natural_twenty,
+        damage_so_far: 0,
+        damage_type: DamageType::Slashing,
+    };
+
+    let mut effects = Vec::new();
+    let promoted = push_on_hit_riders(&mut e, &mut effects, fighter, goblin, swing(false));
+    assert_eq!(
+        promoted, 0,
+        "a critical hit off a die that read something else sharpens nothing"
+    );
+    let mut effects = Vec::new();
+    let rolled_twenty = push_on_hit_riders(&mut e, &mut effects, fighter, goblin, swing(true));
+    // 4d12, doubled by the critical hit it rides: 8 dice, 8..=96.
+    assert!(
+        (8..=96).contains(&rolled_twenty),
+        "a natural 20 should shear for 8d12, got {rolled_twenty}"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("sword of sharpness")),
+        "the shear went unnamed:\n{}",
+        e.messages().join("\n")
+    );
+}
+
+/// The Nine Lives Stealer ends a creature that damage of the same size
+/// would not have.
+///
+/// This is the whole argument for `SlayActor` in one fixture. The victim
+/// is a specter — necrotic **immune** on this roster — so a "deal damage
+/// equal to its hit points" implementation of *"or die"* would deal it
+/// nothing at all and leave it standing at full health. RAW's sentence
+/// is not about damage, and neither is the effect.
+#[test]
+fn the_nine_lives_stealer_kills_what_damage_could_not_touch() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::NINE_LIVES_STEALER;
+
+    // Confirm the premise before relying on it: the whole point of the
+    // fixture is that the victim shrugs off necrotic damage.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let specter = e
+        .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    let full = e.actors[&specter].hitpoints();
+    assert_eq!(
+        e.actors[&specter].effective_damage(full, DamageType::Necrotic),
+        0,
+        "the fixture wants a creature necrotic damage cannot reach"
+    );
+
+    // Sixty seeds, because the sword is asking for a failed DC-15
+    // Constitution save and the specter is allowed to make some.
+    let mut ended_one = false;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let specter = e
+            .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&NINE_LIVES_STEALER);
+        let mut effects = Vec::new();
+        let dice = push_on_hit_riders(
+            &mut e,
+            &mut effects,
+            fighter,
+            specter,
+            RiderSwing {
+                is_melee: true,
+                is_spell: false,
+                is_crit: true,
+                natural_twenty: true,
+                damage_so_far: 0,
+                damage_type: DamageType::Slashing,
+            },
+        );
+        assert_eq!(dice, 0, "the sword's whole effect is the save");
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        if e.actors[&specter].hitpoints() == 0 {
+            ended_one = true;
+            assert!(
+                e.messages()
+                    .iter()
+                    .any(|m| m.contains("nine lives stealer") && m.contains("destroyed")),
+                "seed {seed}: the kill went unnamed:\n{}",
+                e.messages().join("\n")
+            );
+            break;
+        }
+    }
+    assert!(
+        ended_one,
+        "sixty natural 20s should beat one specter's Constitution save at least once"
+    );
+}
+
+/// Power Word Kill kills a lich, and used to not.
+///
+/// The spell shipped for a long time as a necrotic `DealDamage` sized to
+/// the target's current hit points, which is the commonest way to spell
+/// *"the target dies"* in an engine with no way to end a creature — and
+/// it is wrong against precisely the creatures a 9th-level slot is being
+/// spent on. A lich resists necrotic damage. It halved a spell whose
+/// RAW is a full stop and stood back up at half health.
+#[test]
+fn power_word_kill_is_not_necrotic_damage() {
+    use crate::actors::creatures::liches::LICH_TEMPLATE;
+    use crate::actors::creatures::archmages::ARCHMAGE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let caster = e
+        .instantiate_creature(&ARCHMAGE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let lich = e
+        .instantiate_creature(&LICH_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    // The premise: necrotic damage is not the instrument for this job.
+    let hp = e.actors[&lich].hitpoints();
+    assert!(
+        e.actors[&lich].effective_damage(hp, DamageType::Necrotic) < hp,
+        "the fixture wants a creature that shrugs off necrotic damage"
+    );
+    // RAW's gate is 100 hit points, so bring it inside the spell's
+    // reach first — by damage, which is what the spell is *not*.
+    e.actors.get_mut(&lich).unwrap().take_damage(hp - 40);
+    assert!(e.actors[&lich].hitpoints() <= 100);
+
+    let pwk = &*crate::actions::spells::POWER_WORD_KILL;
+    for ef in pwk.side_effects(&mut e, caster, Some(&vec![lich]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&lich].hitpoints(),
+        0,
+        "the word is not damage and the lich's resistance has nothing to halve:\n{}",
+        e.messages().join("\n")
+    );
+}
+
+/// Death Ward is the one clause that answers a death effect, and
+/// answering it costs the ward.
+///
+/// SRD 5.2's second sentence is written about exactly this lane —
+/// *"subjected to an effect that would kill it instantly without
+/// dealing damage… that effect is negated"* — and "negated" is not
+/// "survives at 1 hit point": that is the spell's *other* clause, the
+/// one about damage. A warded creature walks away on the hit points it
+/// had.
+#[test]
+fn a_death_ward_negates_a_slaying_and_burns_away() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::SlayActor;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::DeathWarded, ConditionTimer::Permanent);
+    let before = e.actors[&fighter].hitpoints();
+
+    SlayActor {
+        actor_id: fighter,
+        label: "test",
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&fighter].hitpoints(),
+        before,
+        "negated, not survived-at-one"
+    );
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::DeathWarded),
+        "the ward burns away answering it"
+    );
+
+    // And the second one lands, because there is no ward left.
+    SlayActor {
+        actor_id: fighter,
+        label: "test",
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&fighter].hitpoints(), 0);
+}
+
+/// The Mace of Disruption destroys on a failed save and frightens on a
+/// made one — which is RAW, and is the opposite of what it used to do.
+///
+/// The mace shipped with the two branches collapsed onto one: a *failed*
+/// save landed Frightened, because the engine had no way to end a
+/// creature that did not involve damage, and RAW's consolation prize was
+/// the only half that could be expressed. Both halves are pinned here
+/// because either one alone would pass with them swapped.
+#[test]
+fn the_mace_of_disruption_destroys_on_a_failure_and_frightens_on_a_success() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::MACE_OF_DISRUPTION;
+
+    let (mut saw_destroyed, mut saw_frightened) = (false, false);
+    for seed in 0..80u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let skeleton = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&MACE_OF_DISRUPTION);
+        // Well inside RAW's 25-hit-point clause, so the save is rolled.
+        let hp = e.actors[&skeleton].hitpoints();
+        assert!(hp <= 25, "a skeleton is already under the mace's threshold");
+        let mut effects = Vec::new();
+        push_on_hit_riders(
+            &mut e,
+            &mut effects,
+            fighter,
+            skeleton,
+            RiderSwing {
+                is_melee: true,
+                is_spell: false,
+                is_crit: false,
+                natural_twenty: false,
+                damage_so_far: 0,
+                damage_type: DamageType::Bludgeoning,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let destroyed = e
+            .messages()
+            .iter()
+            .any(|m| m.contains("mace of disruption") && m.contains("destroyed"));
+        let frightened = e.actors[&skeleton].has_condition(Condition::Frightened);
+        assert!(
+            !(destroyed && frightened),
+            "seed {seed}: one save, one outcome"
+        );
+        saw_destroyed |= destroyed;
+        saw_frightened |= frightened;
+        if saw_destroyed && saw_frightened {
+            break;
+        }
+    }
+    assert!(
+        saw_destroyed,
+        "eighty swings should beat a skeleton's Wisdom save at least once"
+    );
+    assert!(
+        saw_frightened,
+        "and should lose to it at least once, which is when RAW frightens"
+    );
+}
+
+/// The Sword of Life Stealing hands its wielder exactly what the rider
+/// took, and nothing the swing took.
+///
+/// RAW's *"Temporary Hit Points equal to the extra damage dealt"* is
+/// about the 3d6 and not about the greatsword that carried it, which is
+/// why `apply_smite_follow_up` learned to carry the two figures
+/// separately. Driven with a fat `damage_so_far` so the two are
+/// impossible to confuse: if the follow-up were reading the swing's
+/// total, the temp HP would be north of 60.
+#[test]
+fn the_sword_of_life_stealing_pays_the_rider_and_not_the_swing() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::SWORD_OF_LIFE_STEALING;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&SWORD_OF_LIFE_STEALING);
+    assert_eq!(e.actors[&fighter].temp_hp(), 0);
+
+    let mut effects = Vec::new();
+    let drained = push_on_hit_riders(
+        &mut e,
+        &mut effects,
+        fighter,
+        ogre,
+        RiderSwing {
+            is_melee: true,
+            is_spell: false,
+            is_crit: true,
+            natural_twenty: true,
+            damage_so_far: 60,
+            damage_type: DamageType::Slashing,
+        },
+    );
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    // 3d6 doubled by the crit: 6..=36, and never the 60 the swing dealt.
+    assert!((6..=36).contains(&drained), "3d6 doubled, got {drained}");
+    assert_eq!(
+        e.actors[&fighter].temp_hp(),
+        drained,
+        "the wielder gains the rider's roll, not the swing's total"
+    );
+}
+
+/// The Dwarven Thrower pays one die against anything and two against a
+/// giant.
+///
+/// Two rows off one marker, which nothing else in the armoury does, and
+/// the failure mode is a die quietly going missing in one of the two
+/// directions. Swept as ranges rather than as a single roll because
+/// both are dice: 1d8 cannot reach 9 and 2d8 cannot come up 1.
+#[test]
+fn the_dwarven_thrower_pays_twice_against_a_giant() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::DWARVEN_THROWER;
+
+    let mut small = (u32::MAX, 0u32);
+    let mut large = (u32::MAX, 0u32);
+    for seed in 0..60u64 {
+        for is_giant in [false, true] {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = if is_giant {
+                e.instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            } else {
+                e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+            }
+            .unwrap();
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .pickup_item(&DWARVEN_THROWER);
+            let mut effects = Vec::new();
+            let rolled = push_on_hit_riders(
+                &mut e,
+                &mut effects,
+                fighter,
+                victim,
+                RiderSwing {
+                    is_melee: true,
+                    is_spell: false,
+                    is_crit: false,
+                    natural_twenty: false,
+                    damage_so_far: 0,
+                    damage_type: DamageType::Bludgeoning,
+                },
+            );
+            let slot = if is_giant { &mut large } else { &mut small };
+            slot.0 = slot.0.min(rolled);
+            slot.1 = slot.1.max(rolled);
+        }
+    }
+    assert!(
+        (1..=8).contains(&small.0) && (1..=8).contains(&small.1),
+        "against a goblin the hammer pays 1d8, saw {small:?}"
+    );
+    assert!(
+        (2..=16).contains(&large.0) && (2..=16).contains(&large.1),
+        "against a giant the hammer pays 2d8, saw {large:?}"
+    );
+    assert!(
+        large.1 > small.1,
+        "the giant clause has to be the bigger of the two, saw {large:?} vs {small:?}"
+    );
+}
+
+/// Coating the Dagger of Venom arms it without lighting anything, and
+/// the coating comes off on the swing that lands it.
+///
+/// Two clauses in one test because they are the two halves of what makes
+/// the dagger a decision. The first is why `KindleWeapon::light` became
+/// an `Option` — the dagger is that type's shape with the lamp struck
+/// out, and a poison that glowed would announce the wielder on a dark
+/// board. The second is `consume_on_trigger`: RAW's coating lasts
+/// *"until an attack using this weapon hits a creature"*, so a wielder
+/// who wants it twice pays for it twice.
+#[test]
+fn coating_the_dagger_of_venom_arms_it_darkly_and_spends_it_on_a_hit() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::engine::lighting::AmbientLight;
+    use crate::items::item_template::DAGGER_OF_VENOM;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&DAGGER_OF_VENOM);
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::Envenomed),
+        "the dagger arrives dry"
+    );
+    let coat = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "coat dagger of venom")
+        .expect("holding the dagger offers the coating");
+    for ef in coat.execute(&mut e, fighter, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&fighter].has_condition(Condition::Envenomed));
+    assert!(
+        !e.actor_carries_light(fighter),
+        "black poison is not a light source"
+    );
+    assert!(
+        e.actors[&fighter].has_item_named(DAGGER_OF_VENOM.name),
+        "the dagger stays in the wielder's hand"
+    );
+
+    let mut effects = Vec::new();
+    let on_the_hit = push_on_hit_riders(
+        &mut e,
+        &mut effects,
+        fighter,
+        ogre,
+        RiderSwing {
+            is_melee: true,
+            is_spell: false,
+            is_crit: false,
+            natural_twenty: false,
+            damage_so_far: 0,
+            damage_type: DamageType::Piercing,
+        },
+    );
+    assert_eq!(
+        on_the_hit, 0,
+        "RAW puts the poison behind the save, so the hit itself adds nothing"
+    );
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::Envenomed),
+        "the coating is spent by the swing that lands it"
+    );
+    // And it can be re-coated next turn, which is the per-turn cost the
+    // item is actually selling. The round reset is load-bearing: the
+    // first coating spent this turn's Bonus Action, so the refusal
+    // before it is about the action economy and not about the dagger.
+    // And it can be re-coated next turn, which is the per-turn cost the
+    // item is actually selling. The round reset is load-bearing: the
+    // first coating spent this turn's Bonus Action, so the refusal
+    // before it is about the action economy and not about the dagger.
+    assert!(
+        !coat.validate_input(&e, fighter, None, None, None),
+        "a second coating this turn has no bonus action to pay with"
+    );
+    e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    assert!(
+        coat.validate_input(&e, fighter, None, None, None),
+        "and next turn the wielder can coat it again"
+    );
 }
 
 /// A cure refuses to be drunk by somebody with nothing to cure.

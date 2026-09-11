@@ -2020,6 +2020,75 @@ impl ApplicableSideEffect for RemoveFromEncounter {
     }
 }
 
+/// End a creature **outright** — SRD 5.2's *"the target dies"* and
+/// *"or be destroyed"*.
+///
+/// The engine's answer to a clause that kills without dealing damage,
+/// and it had none before: every such rule in the book used to ship as
+/// a `DealDamage` sized to the victim's current hit points, which is
+/// wrong in four separate directions at once. Typed resistance halves
+/// it, so a lich shrugs off a Power Word Kill and stands at half
+/// health. Typed immunity zeroes it. Undead Fortitude rolls a save
+/// against it and a zombie stands back up. And the "drop to 1 HP
+/// instead" cohort — Half-Orc Relentless Endurance, the Ancients
+/// Paladin's Undying Sentinel — fires on it, though every one of those
+/// features is written *"reduced to 0 hit points **but not killed
+/// outright**"*. None of those four is a thing RAW lets the victim do,
+/// and there is no amount of damage that avoids all of them.
+///
+/// So the payload is not damage. `ActorInstance::slay` sets the hit
+/// points and the state; everything below is the bookkeeping a death
+/// owes the rest of the encounter, and it is the same bookkeeping
+/// `DealDamage`'s own `Killed` branch does.
+///
+/// **Death Ward is the one clause that still answers**, and this is the
+/// lane its second sentence was written for: *"if the spell is still in
+/// effect when the target is subjected to an effect that would kill it
+/// instantly without dealing damage, that effect is negated against the
+/// target, and the spell ends."* Negated, not survived-at-1: the ward's
+/// other clause is the one that pins a hit point, and this one leaves
+/// the creature exactly where it was standing. Spending the ward is the
+/// whole price.
+///
+/// Deliberately *not* routed through `despawn_actor`. A slain creature
+/// is dead rather than gone: the death burst fires, the experience is
+/// awarded and the loot is rolled, exactly as for a creature that was
+/// beaten to death. `cleanup_dead_actors` writes the "X dies." line, so
+/// this one names the instrument instead.
+pub struct SlayActor {
+    pub actor_id: usize,
+    /// The clause that did it — "power word kill", "nine lives
+    /// stealer". Named in the log, because the whole point of dying to
+    /// something other than damage is *what* it was.
+    pub label: &'static str,
+}
+
+impl ApplicableSideEffect for SlayActor {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        if actor.has_condition(Condition::DeathWarded) {
+            actor.remove_condition(Condition::DeathWarded);
+            ei.log(format!(
+                "  {}: {}'s death ward negates it and burns away.",
+                self.label, name
+            ));
+            return;
+        }
+        if !actor.slay() {
+            return;
+        }
+        ei.log(format!("  {}: {} is destroyed outright.", self.label, name));
+        ei.drop_concentration(self.actor_id);
+        // The kill-triggered temp HP cohort (Dark One's Blessing, Touch
+        // of Death). A creature reduced to 0 hit points is a creature
+        // reduced to 0 hit points however it got there.
+        ei.trigger_creature_dropped(self.actor_id);
+    }
+}
+
 /// Bring a flying actor down **under control** — take away every source
 /// of flight and set the actor on the floor, with no fall damage and no
 /// Prone.

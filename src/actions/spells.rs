@@ -599,6 +599,7 @@ fn spell_attack_outcome_exploding(
             is_melee,
             is_spell: true,
             is_crit,
+            natural_twenty: roll.natural_twenty,
             damage_so_far: total_dmg,
             damage_type,
         },
@@ -10395,10 +10396,18 @@ impl Action for PowerWordKill {
             "  power word kill: target has {} HP \u{2264} 100 \u{2014} struck down",
             hp
         ));
-        vec![Box::new(DealDamage {
+        // `SlayActor`, not a necrotic `DealDamage` sized to the
+        // target's hit points. The spell's RAW is "the target dies" —
+        // it names no damage and no type — and routing it through the
+        // damage pipeline handed four different creatures an out the
+        // spell does not offer: a lich halves it and lives at half
+        // health, anything necrotic-immune ignores it outright, a
+        // zombie's Undead Fortitude stands back up off it, and a
+        // Half-Orc's Relentless Endurance pins at 1 on a clause that
+        // reads "but not killed outright". See `SlayActor`.
+        vec![Box::new(crate::engine::side_effects::SlayActor {
             actor_id: target_id,
-            amount: hp,
-            damage_type: DamageType::Necrotic,
+            label: "power word kill",
         })]
     }
 }

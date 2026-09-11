@@ -11085,6 +11085,37 @@ impl ActorInstance {
         absorbed
     }
 
+    /// End this creature **outright**, with no damage instance in
+    /// between — SRD 5.2's *"the target dies"* and *"or be destroyed"*.
+    ///
+    /// The sibling of `take_damage` and deliberately not a call into
+    /// it. Everything that lane does is a reaction to *damage*, and a
+    /// clause that kills is not damage: a necrotic-resistant lich
+    /// halves a `DealDamage` of its own hit points and lives, a zombie
+    /// stands up off it with Undead Fortitude, a Half-Orc's Relentless
+    /// Endurance pins at 1 HP ("reduced to 0 hit points **but not
+    /// killed outright**"), and a player character rolls death saves
+    /// instead of dying. None of those five is the rule, and there is
+    /// no amount of damage that avoids all of them.
+    ///
+    /// So this sets the two fields and says so. The one clause that
+    /// does still get a say is **Death Ward**, whose second sentence is
+    /// written about exactly this lane — *"if the target would be
+    /// killed outright, the spell dissipates and the target isn't
+    /// killed"* — and it is the caller's to check, because the caller
+    /// is the one that can log it. See `side_effects::SlayActor`.
+    ///
+    /// Returns false for a creature that was already dead, so a caller
+    /// can decline to narrate a second death.
+    pub fn slay(&mut self) -> bool {
+        if matches!(self.hp_state, HpState::Dead) {
+            return false;
+        }
+        self.hitpoints = 0;
+        self.hp_state = HpState::Dead;
+        true
+    }
+
     pub fn take_damage(&mut self, amount: u32) -> DamageOutcome {
         match self.hp_state {
             HpState::Stable => {

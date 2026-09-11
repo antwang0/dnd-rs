@@ -2533,6 +2533,7 @@ pub fn resolve_attack_outcome_with_rider(
             is_melee: p.is_melee,
             is_spell: false,
             is_crit,
+            natural_twenty: raw_attack == 20,
             damage_so_far: damage,
             damage_type: p.damage_type,
         },
@@ -2997,6 +2998,16 @@ pub struct RiderSwing {
     /// rows fire there.
     pub is_spell: bool,
     pub is_crit: bool,
+    /// Whether the d20 itself landed on a 20.
+    ///
+    /// A different question from `is_crit` on both sides: a Champion
+    /// crits on a 19 and a downed target promotes every hit, so a swing
+    /// can be critical without the face reading 20; and nothing makes
+    /// the face read 20 without the swing being critical, which is why
+    /// this is the *narrower* of the two rather than an independent
+    /// axis. See `OnHitRider::requires_natural_twenty` for the rows
+    /// that care.
+    pub natural_twenty: bool,
     /// What the swing itself deals, for the rows whose `damage_type` is
     /// `RiderDamage::Weapon` — RAW's "extra damage of the weapon's
     /// type". Ignored by every row that names a type outright.
@@ -3035,6 +3046,11 @@ pub fn push_on_hit_riders(
     let mut added = 0u32;
     for rider in ON_HIT_RIDERS.iter().copied() {
         if !rider.lane.admits(swing.is_melee, swing.is_spell) {
+            continue;
+        }
+        // RAW's "when you roll a 20 on the d20", asked of the die and
+        // not of the crit — see `OnHitRider::requires_natural_twenty`.
+        if rider.requires_natural_twenty && !swing.natural_twenty {
             continue;
         }
         // Asked before the caster gate marks the ledger, so a bane
@@ -3106,6 +3122,7 @@ pub fn push_on_hit_riders(
                 target_id,
                 follow,
                 rider_total + swing.damage_so_far,
+                rider_total,
             );
         }
     }
@@ -4388,6 +4405,22 @@ pub struct OnHitRider {
     /// rider that declines to fire against the wrong creature type does
     /// not burn a per-turn charge on it.
     pub target_gate: Option<fn(&ActorInstance) -> bool>,
+    /// True for the rows whose RAW trigger is the **die face** rather
+    /// than the hit — SRD 5.2's *"When you roll a 20 on the d20 for an
+    /// attack roll with this weapon"*.
+    ///
+    /// Not the same question as `RiderSwing::is_crit`, and the whole
+    /// reason the column exists. A Champion Fighter crits on a 19, a
+    /// Hexblade's Curse widens the range against one creature, and a
+    /// Paralyzed target promotes every close hit to a critical — under
+    /// any of those a Sword of Sharpness would be shearing limbs off a
+    /// swing whose die read 12. RAW's crit-gated weapons name the face,
+    /// so the engine asks about the face.
+    ///
+    /// Checked before the caster gate marks the once-per-turn ledger,
+    /// for the reason `target_gate` is: a row that cannot fire should
+    /// not spend a charge finding that out.
+    pub requires_natural_twenty: bool,
 }
 
 /// Secondary save + effect rider tagged onto a Smite-spell hit. When
@@ -4445,6 +4478,24 @@ pub struct SmiteFollowUp {
     /// target passes and the inequality is spelled once, in the one
     /// place the engine spells it.
     pub size_cap: Option<crate::engine::types::Size>,
+    /// What lands when the target **makes** the save, or `None` for the
+    /// riders whose RAW is silent about success.
+    ///
+    /// Almost every row on the table is silent, which is why this is an
+    /// `Option` rather than a second required column: a passed save
+    /// against a Smite means the Smite's condition did not land, full
+    /// stop. The Mace of Disruption is the shape that needed it —
+    /// *"must succeed on a DC 15 Wisdom saving throw or be destroyed.
+    /// On a successful save, the creature has the Frightened condition
+    /// until the end of your next turn"* — two different effects on the
+    /// two branches of one save, which the table could not express
+    /// before and which used to ship as the consolation half alone.
+    ///
+    /// Gated by the same `hp_threshold` and `size_cap` clauses as the
+    /// failure branch, because RAW's save is not rolled at all when the
+    /// clause that offers it does not apply: a fiend above the mace's
+    /// 25 hit points is not frightened either.
+    pub on_success: Option<FollowUpEffect>,
 }
 
 /// What a smite follow-up does on a failed save (or auto-trigger).
@@ -4549,6 +4600,69 @@ pub enum FollowUpEffect {
     /// tile or two further from RAW's answer and never in a worse place
     /// than RAW would have put it.
     AllyReposition,
+    /// The target **dies**, with no damage instance in between — SRD
+    /// 5.2's *"or be destroyed"* and *"the target dies"*.
+    ///
+    /// The variant the magic armoury was missing, and the one
+    /// `Condition::Disrupting` used to apologise for at length: the
+    /// engine's only way to end a creature was to deal it damage, so a
+    /// mace whose RAW destroys an undead outright had to settle for
+    /// frightening it. Damage is the wrong instrument for the clause in
+    /// both directions — a necrotic-resistant lich shrugs half of a
+    /// "you die" off, and a zombie's Undead Fortitude stands back up
+    /// from it — and the two errors do not cancel.
+    ///
+    /// Routed through `side_effects::SlayActor`, which is where the one
+    /// clause that *does* still get a say lives: SRD 5.2's **Death
+    /// Ward**, whose second sentence is written about exactly this lane
+    /// (*"if the target would be killed outright, the spell dissipates
+    /// and the target isn't killed"*).
+    Slay,
+    /// The **attacker** gains temporary hit points equal to the rider's
+    /// own damage — SRD 5.2 Sword of Life Stealing's *"you gain
+    /// Temporary Hit Points equal to the extra damage dealt"*.
+    ///
+    /// The only follow-up whose subject is the creature that swung, and
+    /// the only one that reads the rider's damage roll rather than
+    /// rolling something of its own. Both are why it is a variant
+    /// rather than a flag: `AllyReposition` already established that a
+    /// follow-up need not land on the target, and `hp_threshold`
+    /// already established that the swing's damage total reaches this
+    /// far down.
+    ///
+    /// Paired with `save_ability: None` at every site — nothing saves
+    /// against somebody else feeling better.
+    TempHpToAttacker,
+    /// Damage the creature that was hit, on the branch the follow-up
+    /// landed on.
+    ///
+    /// The sibling of `Splash` and `Burst`, and the one that was
+    /// missing: both of those exist to reach somebody *other* than the
+    /// target, which left the table unable to express the commonest
+    /// sentence of the three — *"must succeed on a DC 15 Constitution
+    /// saving throw or take 2d10 Poison damage"*. A rider whose dice
+    /// land on the hit is `OnHitRider::dice`; this is for the ones RAW
+    /// puts behind the save, where a target that makes it takes nothing
+    /// at all.
+    ///
+    /// Rolled here rather than folded into the rider's own die pool
+    /// because the two are charged differently: the rider's dice double
+    /// on a critical hit, and a save-gated effect's do not — nothing in
+    /// the rules doubles the poison a creature failed a Constitution
+    /// save against.
+    Damage {
+        dice: Dice,
+        damage_type: DamageType,
+        /// A condition that lands *with* the damage, for the clauses
+        /// that name both in one breath — the Dagger of Venom's *"or
+        /// take 2d10 Poison damage and have the Poisoned condition for
+        /// 1 minute"* is one sentence and one save, and splitting it
+        /// across two follow-ups would have meant two saves.
+        ///
+        /// `None` for a clause whose failure is damage and nothing
+        /// else.
+        condition: Option<(Condition, ConditionTimer)>,
+    },
 }
 
 /// A per-rest source that can rescue a swing which just missed, by
@@ -4849,6 +4963,7 @@ fn charge_knockdown(label: &'static str) -> SmiteFollowUp {
         label,
         hp_threshold: None,
         size_cap: None,
+        on_success: None,
     }
 }
 
@@ -4951,6 +5066,7 @@ fn push_charge_rider(
             p.caster_id,
             p.target_id,
             charge_knockdown(rider.knockdown_label),
+            rolled,
             rolled,
         );
         // "If the target is prone, the mammoth can make one stomp attack
@@ -5143,6 +5259,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         OnHitRider {
             condition: Condition::CrownOfStars,
@@ -5154,6 +5271,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Bigby's Hand (level-5 concentration). Persistent +1d10 force
         // rider on every attack the caster lands — not melee-only since
@@ -5169,6 +5287,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Path of the Giant Barbarian **Elemental Cleaver** (subclass
         // level 3): the weapon the barbarian kindled deals an extra 1d6
@@ -5198,6 +5317,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
         // rider on every melee swing the holder lands. Mirrors Crown of
@@ -5212,6 +5332,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Undead Warlock **Form of Dread** (subclass level 1),
         // offensive clause: "once on each of your turns when you hit a
@@ -5249,9 +5370,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "form of dread fear",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: Some(crate::actions::class_features::FORM_OF_DREAD_TAG),
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Way of the Kensei Monk **Kensei's Shot** (subclass level
         // 3): "you can make your ranged attacks with a kensei weapon
@@ -5279,6 +5402,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Circle of Spores Druid **Symbiotic Entity** (subclass
         // level 2). Persistent +1d6 necrotic rider on every melee swing
@@ -5298,6 +5422,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Flame Arrows (XGE level-3 transmutation, concentration).
         // Persistent +1d6 fire rider on every ranged swing the holder
@@ -5316,6 +5441,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Tasha's Otherworldly Guise (TCE level-6 concentration). The
         // celestial-form flavor adds +2d6 radiant per melee weapon hit
@@ -5335,6 +5461,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Elemental Weapon (level-3 transmutation, concentration). The
         // weapon is sheathed in elemental energy: +1d4 fire per melee
@@ -5356,6 +5483,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         OnHitRider {
             condition: Condition::Smiting,
@@ -5367,6 +5495,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // SRD 5.2 Warlock Eldritch Invocation **Eldritch Smite** — the
         // warlock's entry on a lane that had been the paladin's alone:
@@ -5410,9 +5539,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "eldritch smite knockdown",
                 hp_threshold: None,
                 size_cap: Some(crate::engine::types::Size::Huge),
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Searing Smite — 1st-level paladin evocation, bonus action.
         // +1d6 fire on the primed hit, and the target catches fire
@@ -5441,9 +5572,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "searing smite ignite",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Wrathful Smite — 1st-level. +1d6 psychic on the primed hit;
         // target makes WIS save or is Frightened of the paladin for
@@ -5466,9 +5599,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "wrathful smite fear",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Branding Smite — 2nd-level. +2d6 radiant; target glows
         // (Outlined for 10 rounds), giving advantage to attackers and
@@ -5493,9 +5628,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "branding smite brand",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Blinding Smite — 3rd-level. +3d8 radiant; target makes CON
         // save or is Blinded for 10 rounds.
@@ -5517,9 +5654,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "blinding smite blind",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Monk Stunning Strike — bonus action prime; on the next
         // melee hit, the target makes a CON save vs the monk's
@@ -5544,9 +5683,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "stunning strike stun",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Cleric Divine Strike (level 8 class feature, here exposed as
         // a Channel-Divinity-flavored bonus-action prime). +1d8 radiant
@@ -5563,6 +5704,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Trickery Domain Cleric Divine Strike (subclass level 8).
         // The poison-typed arm of the row above — RAW varies only the
@@ -5584,6 +5726,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Death Domain Cleric Divine Strike (subclass level 8) — the
         // necrotic arm of the same row. Third typing of one feature, and
@@ -5599,6 +5742,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Order Domain Cleric Divine Strike (subclass level 8) — the
         // psychic arm. Fourth typing of one feature, and the one that
@@ -5615,6 +5759,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Death Domain Cleric **Reaper's Touch** (subclass level 2,
         // RAW "Touch of Death"), the Channel Divinity. RAW pays a flat
@@ -5637,6 +5782,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Way of the Four Elements Monk **Fangs of the Fire Snake**
         // elemental discipline. The biggest single die on this table
@@ -5658,6 +5804,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Trip Attack maneuver. RAW: "you add the
         // superiority die to the attack's damage roll, and the target
@@ -5685,9 +5832,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "trip attack prone",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Staggering Smite — 4th-level paladin enchantment, bonus
         // action prime. +4d6 psychic on the primed hit; target makes a
@@ -5711,9 +5860,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "staggering smite stun",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Banishing Smite — 5th-level paladin abjuration, bonus
         // action prime. +5d10 force on the primed hit; if the target
@@ -5747,9 +5898,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 // post-damage HP at the smite follow-up site.
                 hp_threshold: Some(50),
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Shillelagh — druid cantrip prime. The caster's club /
         // staff is wreathed in sylvan magic: the next melee weapon hit
@@ -5768,6 +5921,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Thunderous Smite — 1st-level paladin evocation, bonus
         // action prime. +2d6 thunder on the primed hit; target makes a
@@ -5795,9 +5949,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "thunderous smite prone",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Enlarge / Reduce (Enlarge half) — 2nd-level transmutation,
         // concentration. The holder rolls +1d4 bonus damage on every
@@ -5818,6 +5974,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Rune Knight Fighter **Giant's Might** (subclass level 3):
         // "once on each of your turns when you hit a creature with an
@@ -5842,6 +5999,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 crate::actions::class_features::GIANTS_MIGHT_RIDER_TAG,
             ),
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Rune Knight Fighter **Fire Rune** (subclass level 3): "the
         // target takes an extra 2d6 fire damage, and it must succeed on
@@ -5873,9 +6031,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "fire rune chains",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Lightning Arrow — 3rd-level ranger evocation, bonus action,
         // concentration. Primes the ranger's next ranged weapon attack
@@ -5896,6 +6056,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Ensnaring Strike — 1st-level ranger conjuration, bonus
         // action, concentration. Primes the ranger's next weapon
@@ -5930,9 +6091,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "ensnaring strike restrain",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Zephyr Strike — 1st-level ranger transmutation (XGtE),
         // bonus action, concentration. Primes the ranger's next weapon
@@ -5959,6 +6122,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Holy Weapon — 5th-level paladin evocation, concentration.
         // The caster's weapon glows with radiant light: every weapon
@@ -5976,6 +6140,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Absorb Elements — 1st-level abjuration, reaction. The
         // caster stores the energy that was thrown at it and releases
@@ -6001,6 +6166,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Menacing Attack maneuver. +1 superiority die
         // on the consuming melee hit; the target makes a WIS save vs the
@@ -6025,9 +6191,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "menacing attack fear",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Disarming Attack maneuver. +1 superiority die
         // on the consuming melee hit, same as its siblings. The
@@ -6053,9 +6221,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "disarming attack disarm",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Pushing Attack maneuver. +1 superiority die
         // on the consuming melee hit. On that same melee
@@ -6080,9 +6250,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "pushing attack shove",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Goading Attack maneuver. +1 superiority die
         // on the consuming melee hit, and on that same hit the
@@ -6111,9 +6283,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "goading attack goad",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Sweeping Attack maneuver. Zero rider damage on
         // the primary target (RAW: damage goes to the secondary creature,
@@ -6142,9 +6316,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "sweeping attack splash",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Distracting Strike maneuver. +1 superiority
         // die on the consuming melee hit (RAW: add the superiority die to
@@ -6175,9 +6351,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "distracting strike distract",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Battle Master Maneuvering Attack maneuver. +1 superiority
         // die on the consuming melee hit (RAW: "you add the superiority
@@ -6205,9 +6383,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "maneuvering attack",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e Arcane Archer Fighter **Arcane Shot** (subclass level 3,
         // XGE) — six rows, one per option, all six on
@@ -6252,9 +6432,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "banishing arrow banish",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // Beguiling Arrow: 2d6 psychic, then a CHA save or Charmed. The
         // charm links back to the archer rather than to the ally RAW
@@ -6277,9 +6459,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "beguiling arrow charm",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // Bursting Arrow: no damage to the creature struck — RAW's force
         // burst spares the target and catches everything around it. The
@@ -6306,9 +6490,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "bursting arrow burst",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // Enfeebling Arrow: 2d6 necrotic, then a CON save or the
         // target's own weapon damage is halved. See `Condition::Enfeebled`.
@@ -6330,9 +6516,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "enfeebling arrow enfeeble",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // Grasping Arrow: 2d6 poison, then a STR save or Restrained.
         // RAW's ongoing 2d6 slashing per turn of struggle is dropped —
@@ -6355,9 +6543,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "grasping arrow brambles",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // Shadow Arrow: 2d6 psychic, then a WIS save or Blinded.
         OnHitRider {
@@ -6378,9 +6568,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "shadow arrow blind",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // ---------------------------------------------------------------
         // The magic armoury. Seven rows whose condition is not a spell
@@ -6416,6 +6608,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Dragon),
+            requires_natural_twenty: false,
         },
         // 5e **Giant Slayer** (Weapon, any simple or martial; Rare):
         // "When you hit a Giant with this weapon, the Giant takes an
@@ -6443,9 +6636,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "giant slayer knockdown",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
+            requires_natural_twenty: false,
         },
         // 5e **Sun Blade** (Weapon, longsword; Rare): "When you hit an
         // Undead with it, that target takes an extra 1d8 Radiant
@@ -6466,6 +6661,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type().is_undead()),
+            requires_natural_twenty: false,
         },
         // 5e **Mace of Disruption** (Weapon, mace; Rare): "When you hit
         // a Fiend or an Undead with this magic weapon, that creature
@@ -6477,9 +6673,13 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
         //
         // The `hp_threshold` is RAW's 25, read against the target's
         // predicted post-damage total exactly as Banishing Smite's 50
-        // is. The failed save lands Frightened where RAW lands death;
-        // see `Condition::Disrupting` for why that half is the one
-        // that is dropped.
+        // is. Both branches of the save are now spelled: the failure
+        // destroys through `FollowUpEffect::Slay`, and the *success*
+        // lands the consolation Frightened through
+        // `SmiteFollowUp::on_success`. Until those two existed the mace
+        // shipped with the branches collapsed — a failed save landed
+        // Frightened, which was RAW's outcome for the creature that
+        // shrugged the mace off.
         OnHitRider {
             condition: Condition::Disrupting,
             dice: Dice::new(2, 6),
@@ -6491,13 +6691,14 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 save_ability: Some(AbilityScoreType::Wisdom),
                 dc_ability: AbilityScoreType::Wisdom,
                 fixed_dc: Some(15),
-                effect: FollowUpEffect::Condition {
-                    condition: Condition::Frightened,
-                    timer: ConditionTimer::Rounds(1),
-                },
-                label: "mace of disruption terror",
+                effect: FollowUpEffect::Slay,
+                label: "mace of disruption",
                 hp_threshold: Some(25),
                 size_cap: None,
+                on_success: Some(FollowUpEffect::Condition {
+                    condition: Condition::Frightened,
+                    timer: ConditionTimer::Rounds(1),
+                }),
             }),
             once_per_turn_tag: None,
             target_gate: Some(|t| {
@@ -6506,6 +6707,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                     CreatureType::Fiend | CreatureType::Undead
                 )
             }),
+            requires_natural_twenty: false,
         },
         // 5e **Flame Tongue** (Weapon, any melee weapon; Rare): "While
         // the weapon is ablaze, it deals an extra 2d6 Fire damage on a
@@ -6525,6 +6727,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e **Frost Brand** (Weapon, one of six blades; Very Rare):
         // "When you hit with an attack roll using this magic weapon, the
@@ -6543,6 +6746,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e **Vicious Weapon** (Weapon, any simple or martial; Rare):
         // "This magic weapon deals an extra 2d6 damage to any creature
@@ -6558,6 +6762,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // 5e **Sword of Wounding** (Weapon, one of six blades; Rare):
         // "the target takes an extra 2d6 Necrotic damage and must
@@ -6595,9 +6800,219 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "sword of wounding wound",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
+        },
+        // SRD 5.2 **Holy Avenger** (Weapon, any sword; Legendary):
+        // "When you hit a Fiend or an Undead with this weapon, that
+        // creature takes an extra 2d10 Radiant damage."
+        //
+        // The largest save-free die in the armoury, against the same
+        // gate the Mace of Disruption bites — and the sword is the
+        // better of the two against anything that is not nearly dead,
+        // which is the trade RAW is drawing between a Rare mace that
+        // finishes and a Legendary blade that grinds.
+        OnHitRider {
+            condition: Condition::HolyAvenging,
+            dice: Dice::new(2, 10),
+            label: "holy avenger",
+            damage_type: RiderDamage::Fixed(DamageType::Radiant),
+            // "Any sword", so melee — and with the Sun Blade one of the
+            // two rows in the family RAW narrows to a blade.
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: Some(|t| {
+                matches!(
+                    t.creature_type(),
+                    CreatureType::Fiend | CreatureType::Undead
+                )
+            }),
+            requires_natural_twenty: false,
+        },
+        // SRD 5.2 **Dwarven Thrower** (Weapon, warhammer; Very Rare):
+        // "It deals an extra 1d8 Bludgeoning damage when you hit with
+        // it, or an extra 2d8 Bludgeoning damage if the target is a
+        // Giant."
+        //
+        // Two rows off one marker — the only weapon in the armoury that
+        // takes two. RAW's clauses are alternatives and the table has no
+        // "instead of", so the ungated row pays the first d8 and the
+        // Giant-gated row below adds the second. The sum is RAW in both
+        // directions. See `Condition::DwarvenThrowing`.
+        OnHitRider {
+            condition: Condition::DwarvenThrowing,
+            dice: Dice::new(1, 8),
+            label: "dwarven thrower",
+            damage_type: RiderDamage::Fixed(DamageType::Bludgeoning),
+            // RAW's hammer is thrown as often as it is swung, and the
+            // engine binds no swing to an item — `AnyWeapon` rather
+            // than melee-only, so the wielder who throws something is
+            // not silently declined.
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+        },
+        OnHitRider {
+            condition: Condition::DwarvenThrowing,
+            dice: Dice::new(1, 8),
+            label: "dwarven thrower (giant)",
+            damage_type: RiderDamage::Fixed(DamageType::Bludgeoning),
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
+            requires_natural_twenty: false,
+        },
+        // SRD 5.2 **Dagger of Venom** (Weapon, dagger; Rare): "As a
+        // Bonus Action, you can cause thick, black poison to coat the
+        // blade. The poison remains for 1 minute or until an attack
+        // using this weapon hits a creature. That creature must succeed
+        // on a DC 15 Constitution saving throw or take 2d10 Poison
+        // damage and have the Poisoned condition for 1 minute."
+        //
+        // The only row in the armoury whose damage is entirely behind
+        // the save — `dice` is empty and the whole effect is the
+        // follow-up, the shape Stunning Strike established. That is
+        // also why the poison does not double on a critical hit: RAW
+        // doubles the dice of an *attack*, and this is the dice of a
+        // failed Constitution save.
+        //
+        // `consume_on_trigger`, like the two staves and unlike the rest
+        // of the family: RAW's coating is spent by the hit that carries
+        // it, so the wielder buys one poisoned swing per Bonus Action.
+        OnHitRider {
+            condition: Condition::Envenomed,
+            dice: Dice::new(0, 0),
+            label: "dagger of venom",
+            damage_type: RiderDamage::Fixed(DamageType::Poison),
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(15),
+                effect: FollowUpEffect::Damage {
+                    dice: Dice::new(2, 10),
+                    damage_type: DamageType::Poison,
+                    condition: Some((Condition::Poisoned, ConditionTimer::Rounds(10))),
+                },
+                label: "dagger of venom poison",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+        },
+        // ---------------------------------------------------------------
+        // The crit-gated blades. Three weapons whose RAW trigger is not
+        // "when you hit" but *"when you roll a 20 on the d20 for an
+        // attack roll"* — the face of the die rather than the outcome of
+        // the swing. See `OnHitRider::requires_natural_twenty` for why
+        // those are different questions in this engine and why asking
+        // the wrong one would have made a Champion Fighter's 19 shear a
+        // limb off.
+        // ---------------------------------------------------------------
+        //
+        // SRD 5.2 **Sword of Sharpness** (Weapon, any Slashing melee
+        // weapon; Very Rare): "When you roll a 20 on the d20 for an
+        // attack roll with this weapon, the target takes an extra 4d12
+        // Slashing damage."
+        //
+        // The largest die in the armoury by a distance, on the rarest
+        // trigger in it — five percent of swings, and on those swings
+        // the dice double like every other rider on a critical hit.
+        OnHitRider {
+            condition: Condition::Sharpening,
+            dice: Dice::new(4, 12),
+            label: "sword of sharpness",
+            damage_type: RiderDamage::Fixed(DamageType::Slashing),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: true,
+        },
+        // SRD 5.2 **Sword of Life Stealing** (Weapon, any sword; Rare):
+        // "When you roll a 20 on the d20 for an attack roll with this
+        // weapon, the target takes an extra 3d6 Necrotic damage, and you
+        // gain Temporary Hit Points equal to the extra damage dealt."
+        //
+        // The follow-up pays the *wielder*, which nothing else on this
+        // table does — see `FollowUpEffect::TempHpToAttacker`. No save:
+        // `save_ability: None` auto-applies it, and the "equal to the
+        // extra damage" is the rider's own roll rather than the swing's
+        // total.
+        OnHitRider {
+            condition: Condition::LifeStealing,
+            dice: Dice::new(3, 6),
+            label: "sword of life stealing",
+            damage_type: RiderDamage::Fixed(DamageType::Necrotic),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: None,
+                effect: FollowUpEffect::TempHpToAttacker,
+                label: "sword of life stealing",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: true,
+        },
+        // SRD 5.2 **Nine Lives Stealer** (Weapon, any sword; Very Rare):
+        // "When you roll a 20 on the d20 for an attack roll with this
+        // weapon, the target must succeed on a DC 15 Constitution saving
+        // throw or die. The sword can't be used on a creature that has
+        // more than 100 Hit Points."
+        //
+        // No damage die: the whole row is the follow-up, and the
+        // follow-up is `FollowUpEffect::Slay` — the variant the armoury
+        // had been missing and the reason the Mace of Disruption spent
+        // several releases frightening things it was written to destroy.
+        //
+        // The hit-point clause rides `hp_threshold`, which predicts the
+        // target's post-swing total rather than reading its current one.
+        // That is a shade more generous than RAW (whose sentence is
+        // about the creature, not about the blow), and it is the same
+        // prediction Banishing Smite's 50 and the mace's 25 already run
+        // on — a threshold column that meant two different things
+        // depending on the row would be worse than either reading.
+        OnHitRider {
+            condition: Condition::NineLivesStealing,
+            dice: Dice::new(0, 0),
+            label: "nine lives stealer",
+            damage_type: RiderDamage::Fixed(DamageType::Necrotic),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(15),
+                effect: FollowUpEffect::Slay,
+                label: "nine lives stealer",
+                hp_threshold: Some(100),
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: true,
         },
         // SRD 5.2 **Staff of Striking** (Staff; Very Rare): "When you hit
         // with a melee attack using the staff, you can expend up to 3 of
@@ -6625,6 +7040,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             follow_up: None,
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
         // SRD 5.2 **Staff of Withering** (Staff; Rare): "On a hit, you
         // can expend 1 charge to deal an extra 2d10 Necrotic damage to
@@ -6656,9 +7072,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 label: "staff of withering",
                 hp_threshold: None,
                 size_cap: None,
+                on_success: None,
             }),
             once_per_turn_tag: None,
             target_gate: None,
+            requires_natural_twenty: false,
         },
 ];
 
@@ -6761,6 +7179,12 @@ fn attacker_link_side_effect(
 /// target is prone", and the only thing that knows whether the
 /// knockdown landed is the save rolled in here. Most callers ignore it,
 /// which is why it isn't `#[must_use]`.
+///
+/// `rider_damage` is the narrower figure: what *this rider's own dice*
+/// dealt, with the swing that carried them excluded. The two are
+/// different questions and exactly one variant asks the second one —
+/// `FollowUpEffect::TempHpToAttacker` is RAW's "equal to the extra
+/// damage dealt", where "extra" means the 3d6 and not the sword.
 fn apply_smite_follow_up(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
@@ -6768,6 +7192,7 @@ fn apply_smite_follow_up(
     target_id: usize,
     follow: SmiteFollowUp,
     total_damage: u32,
+    rider_damage: u32,
 ) -> bool {
     // HP-threshold gate (Banishing Smite). Predict post-damage HP as
     // `current_hp - total_damage` and bail if the target would still be
@@ -6825,12 +7250,31 @@ fn apply_smite_follow_up(
             follow.effect,
             follow.label,
             dc,
+            rider_damage,
         );
         return true;
     };
     let save = encounter.roll_save(target_id, save_ability, dc);
     if save.passed() {
         encounter.log(format!("  {}: target saves", follow.label));
+        // RAW's *other* branch, where a rider writes one — see
+        // `SmiteFollowUp::on_success`. Still a decline as far as the
+        // return value is concerned: the caller's question is "did the
+        // clause this rider is gated on land", and a Mace of
+        // Disruption's frightened fiend is one that did not get
+        // destroyed.
+        if let Some(effect) = follow.on_success {
+            push_follow_up_effect(
+                encounter,
+                effects,
+                caster_id,
+                target_id,
+                effect,
+                follow.label,
+                dc,
+                rider_damage,
+            );
+        }
         return false;
     }
     encounter.log(format!("  {}: target fails save", follow.label));
@@ -6842,6 +7286,7 @@ fn apply_smite_follow_up(
         follow.effect,
         follow.label,
         dc,
+        rider_damage,
     );
     true
 }
@@ -6859,6 +7304,9 @@ fn apply_smite_follow_up(
 /// themselves. It used to be hardcoded to "sweeping attack" inside the
 /// `Splash` arm, which was true of the only row that used the variant
 /// and would have quietly mislabeled the next one.
+///
+/// `rider_damage` is what the rider's own dice dealt, read by
+/// `TempHpToAttacker` and ignored by everything else.
 #[allow(clippy::too_many_arguments)]
 fn push_follow_up_effect(
     encounter: &mut EncounterInstance,
@@ -6868,6 +7316,7 @@ fn push_follow_up_effect(
     effect: FollowUpEffect,
     label: &'static str,
     dc: i32,
+    rider_damage: u32,
 ) {
     match effect {
         FollowUpEffect::Condition { condition, timer } => {
@@ -7013,6 +7462,56 @@ fn push_follow_up_effect(
         }
         FollowUpEffect::AllyReposition => {
             resolve_ally_reposition(encounter, caster_id, label, effects);
+        }
+        FollowUpEffect::Slay => {
+            // Queued rather than applied, like every other damage-shaped
+            // effect on this match: the rider's own dice are already
+            // sitting unapplied in `effects`, and killing the target
+            // before they land would make the log read backwards.
+            // `SlayActor` no-ops on a creature that is already gone, so
+            // a rider whose dice finished the job first costs nothing.
+            effects.push(Box::new(crate::engine::side_effects::SlayActor {
+                actor_id: target_id,
+                label,
+            }));
+        }
+        FollowUpEffect::Damage {
+            dice,
+            damage_type,
+            condition,
+        } => {
+            let rolled = encounter.roll(&dice);
+            encounter.log(format!("  {}: +{} {:?}", label, rolled, damage_type));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: rolled,
+                damage_type,
+            }));
+            if let Some((condition, timer)) = condition {
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition,
+                    timer,
+                }));
+                if let Some(link) = attacker_link_side_effect(condition, target_id, caster_id) {
+                    effects.push(link);
+                }
+            }
+        }
+        FollowUpEffect::TempHpToAttacker => {
+            if rider_damage == 0 {
+                return;
+            }
+            let (attacker, target) =
+                (encounter.actor_name(caster_id), encounter.actor_name(target_id));
+            encounter.log(format!(
+                "  {}: {} draws {} hit points out of {}",
+                label, attacker, rider_damage, target
+            ));
+            effects.push(Box::new(crate::engine::side_effects::GainTempHp {
+                actor_id: caster_id,
+                amount: rider_damage,
+            }));
         }
     }
 }

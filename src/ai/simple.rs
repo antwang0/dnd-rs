@@ -1895,6 +1895,19 @@ fn try_make_light(
 const KINDLED_WEAPONS: &[(&str, Condition)] = &[
     ("light flame tongue", Condition::FlameTongued),
     ("draw sun blade", Condition::SunBladed),
+    // The third row is not a blade and does not light anything: SRD
+    // 5.2's **Dagger of Venom** is coated rather than kindled. It
+    // belongs here anyway, because what this table is actually about is
+    // "a Bonus Action that arms a rider, gated on the rider not already
+    // being armed" — and the dagger is that with a different noun.
+    //
+    // It is also the row the marker check was written for. The two
+    // blades stay lit for the fight, so their validator answers the
+    // question on its own; the dagger's coating is spent by the swing
+    // that lands it, so this rung re-arms it on the wielder's next turn
+    // and keeps re-arming it all fight. That is RAW's own cadence and
+    // the whole cost of the item.
+    ("coat dagger of venom", Condition::Envenomed),
 ];
 
 /// Light a Flame Tongue or draw a Sun Blade, when there is anything

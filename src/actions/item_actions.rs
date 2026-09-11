@@ -5613,14 +5613,37 @@ pub struct KindleWeapon {
     /// `ON_HIT_RIDERS` row keys off. Also the re-light guard: the action
     /// refuses while it is already up.
     pub condition: Condition,
+    /// The light the weapon sheds while it is primed, or `None` for a
+    /// weapon that is primed without lighting up.
+    ///
+    /// Optional because the shape turned out to be more general than
+    /// the two blades that named it. SRD 5.2's **Dagger of Venom** is
+    /// the same clause with the light struck out — a Bonus Action, a
+    /// marker the wielder holds, a rider that is live only while the
+    /// marker is, and an item that is emphatically not consumed by
+    /// using it — and the whole of what separates it from the Flame
+    /// Tongue is that black poison does not glow.
+    ///
+    /// Writing it as a second struct would have duplicated the
+    /// holding-it validator, the re-prime guard, the bonus-action cost
+    /// and the deliberate absence of `consume_caster_item`, which is
+    /// four of the five things this type is. So the light became a
+    /// field that can be absent.
+    pub light: Option<KindledLight>,
+    /// Full log line, `{actor}` substituted with the wielder's name.
+    pub log_text: &'static str,
+}
+
+/// The lamp half of a `KindleWeapon` — what the weapon sheds while it
+/// is lit, for the ones that shed anything.
+#[derive(Clone, Copy)]
+pub struct KindledLight {
     /// Name the light source carries in the log and on the panel.
-    pub light_name: &'static str,
+    pub name: &'static str,
     /// Bright / dim radii in tiles, RAW's feet divided by the 2.5-ft
     /// grid.
     pub bright_tiles: isize,
     pub dim_tiles: isize,
-    /// Full log line, `{actor}` substituted with the wielder's name.
-    pub log_text: &'static str,
 }
 
 impl Action for KindleWeapon {
@@ -5696,24 +5719,26 @@ impl Action for KindleWeapon {
         if !caster_holds(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        encounter.add_light_source(LightSource {
-            id: 0,
-            name: self.light_name,
-            anchor: LightAnchor::Carried(caster_id),
-            bright_tiles: self.bright_tiles,
-            dim_tiles: self.dim_tiles,
-            rounds_remaining: None,
-            // Magical light, and therefore *not* the first thing a
-            // Darkness sphere puts out — a level-2 Darkness quenches
-            // light "created by a spell of 2nd level or lower", and a
-            // rare magic weapon outranks it. Rated at 3 for that
-            // reason rather than because either blade is a 3rd-level
-            // spell; see `LightSource::spell_level`.
-            spell_level: 3,
-            // Carried, not innate: the wielder can drop it.
-            innate: false,
-            open_flame: false,
-        });
+        if let Some(light) = self.light {
+            encounter.add_light_source(LightSource {
+                id: 0,
+                name: light.name,
+                anchor: LightAnchor::Carried(caster_id),
+                bright_tiles: light.bright_tiles,
+                dim_tiles: light.dim_tiles,
+                rounds_remaining: None,
+                // Magical light, and therefore *not* the first thing a
+                // Darkness sphere puts out — a level-2 Darkness quenches
+                // light "created by a spell of 2nd level or lower", and a
+                // rare magic weapon outranks it. Rated at 3 for that
+                // reason rather than because either blade is a 3rd-level
+                // spell; see `LightSource::spell_level`.
+                spell_level: 3,
+                // Carried, not innate: the wielder can drop it.
+                innate: false,
+                open_flame: false,
+            });
+        }
         let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
         vec![Box::new(ApplyCondition {
@@ -5734,9 +5759,11 @@ pub static LIGHT_FLAME_TONGUE: KindleWeapon = KindleWeapon {
     action_aliases: &["flame tongue", "ignite", "kindle blade"],
     item_name: crate::items::item_template::FLAME_TONGUE.name,
     condition: Condition::FlameTongued,
-    light_name: "flame tongue",
-    bright_tiles: 16,
-    dim_tiles: 16,
+    light: Some(KindledLight {
+        name: "flame tongue",
+        bright_tiles: 16,
+        dim_tiles: 16,
+    }),
     log_text: "{actor} speaks the command word and the blade catches fire.",
 };
 
@@ -5757,10 +5784,34 @@ pub static DRAW_SUN_BLADE: KindleWeapon = KindleWeapon {
     action_aliases: &["sun blade", "sunblade", "draw blade"],
     item_name: crate::items::item_template::SUN_BLADE.name,
     condition: Condition::SunBladed,
-    light_name: "sun blade",
-    bright_tiles: 6,
-    dim_tiles: 6,
+    light: Some(KindledLight {
+        name: "sun blade",
+        bright_tiles: 6,
+        dim_tiles: 6,
+    }),
     log_text: "{actor} grips the hilt and a blade of pure radiance springs into being.",
+};
+
+/// The Dagger of Venom's coating — the same three-part clause as the two
+/// blades above with the light struck out. *"As a Bonus Action, you can
+/// cause thick, black poison to coat it."*
+///
+/// The one `KindleWeapon` whose marker is spent rather than held: the
+/// rider row is `consume_on_trigger`, so the coating comes off on the
+/// swing that lands it and the wielder pays another Bonus Action for
+/// the next one. That is what makes the dagger a decision every turn
+/// rather than a switch thrown once in round one — and it is why the
+/// re-prime guard inherited from this type matters here in a way it
+/// does not for a blade that stays lit: the validator refuses only
+/// while the coating is still on, so a wielder who has spent it can
+/// immediately re-coat.
+pub static COAT_DAGGER_OF_VENOM: KindleWeapon = KindleWeapon {
+    action_name: "coat dagger of venom",
+    action_aliases: &["coat dagger", "venom", "poison blade", "envenom"],
+    item_name: crate::items::item_template::DAGGER_OF_VENOM.name,
+    condition: Condition::Envenomed,
+    light: None,
+    log_text: "{actor} draws thick, black poison along the dagger's edge.",
 };
 
 /// Config struct for a consumable whose whole effect is **taking

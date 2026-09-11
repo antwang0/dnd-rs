@@ -3037,13 +3037,20 @@ pub enum Condition {
     ///
     /// RAW's destroy-outright clause fires on a target left at 25 hit
     /// points or fewer *after* the radiant die, and the engine's rider
-    /// follow-up can express exactly that — `hp_threshold` predicts the
+    /// follow-up expresses exactly that — `hp_threshold` predicts the
     /// post-damage total, which is what Banishing Smite's own 50-hp
-    /// clause is written on. What the engine does not have is a
-    /// "destroyed outright" effect, so the mace's failed save lands
-    /// Frightened where RAW would land death, and the save is not rolled
-    /// at all above the threshold. That is the weaker half of RAW in the
-    /// direction that cannot break a fight open by accident.
+    /// clause is written on. Both branches of the save land:
+    /// `FollowUpEffect::Slay` on the failure, `SmiteFollowUp::on_success`
+    /// carrying the consolation Frightened on the success. Above the
+    /// threshold the save is not rolled at all, and neither branch
+    /// applies — which is RAW, the whole sentence being conditional on
+    /// the hit points.
+    ///
+    /// It shipped for a long time with the two branches collapsed onto
+    /// one: a *failed* save landed Frightened, because the engine had
+    /// no way to end a creature that did not involve dealing it damage,
+    /// and dealing an undead necrotic damage equal to its hit points is
+    /// not the same sentence at all. That is what `SlayActor` is for.
     Disrupting,
     /// Wielding a **Flame Tongue** whose flames are lit — *"While the
     /// weapon is ablaze, it deals an extra 2d6 Fire damage on a hit."*
@@ -3082,6 +3089,95 @@ pub enum Condition {
     ///
     /// The attacker's half. The victim's half is `Wounded`.
     Wounding,
+    /// Holding a SRD 5.2 **Sword of Sharpness** — *"When you roll a 20
+    /// on the d20 for an attack roll with this weapon, the target takes
+    /// an extra 4d12 Slashing damage."*
+    ///
+    /// The first of the crit-gated blades, and the reason
+    /// `OnHitRider::requires_natural_twenty` exists: a Champion Fighter
+    /// crits on a 19 and a Paralyzed target promotes every close hit,
+    /// so a rider keyed on "did this crit" would have the sword shearing
+    /// limbs off a die that read 12. RAW names the face.
+    ///
+    /// The die is a *rider*, so `roll_rider` doubles it on the swing
+    /// that triggered it — which is right: RAW's extra damage is dice,
+    /// the swing is a critical hit by definition, and a critical hit
+    /// doubles the dice.
+    Sharpening,
+    /// Holding a SRD 5.2 **Sword of Life Stealing** — *"When you roll a
+    /// 20 on the d20 for an attack roll with this weapon, the target
+    /// takes an extra 3d6 Necrotic damage, and you gain Temporary Hit
+    /// Points equal to the extra damage dealt."*
+    ///
+    /// The only weapon in the armoury whose clause pays the *wielder*,
+    /// which is what `FollowUpEffect::TempHpToAttacker` is for. The temp
+    /// HP is the rider's own roll and not the swing's total — a
+    /// greatsword that crit for thirty does not hand thirty back.
+    LifeStealing,
+    /// Holding a SRD 5.2 **Nine Lives Stealer** — *"When you roll a 20
+    /// on the d20 for an attack roll with this weapon, the target must
+    /// succeed on a DC 15 Constitution saving throw or die."*
+    ///
+    /// No damage die at all: the row's whole effect is the follow-up,
+    /// which is the shape Stunning Strike and Form of Dread already
+    /// established. RAW's charge counter — nine lives and then a plain
+    /// +2 sword — is not modeled; the engine has no per-item charge
+    /// ledger for a weapon, and nine is more executions than any
+    /// encounter on this board will see.
+    ///
+    /// Gated at 100 hit points, which RAW writes as its own sentence
+    /// (*"the sword can't be used on a creature that has more than 100
+    /// Hit Points"*) and which `SmiteFollowUp::hp_threshold` already
+    /// spells for Banishing Smite's 50.
+    NineLivesStealing,
+    /// Holding a SRD 5.2 **Dwarven Thrower** — *"It deals an extra 1d8
+    /// Bludgeoning damage when you hit with it, or an extra 2d8
+    /// Bludgeoning damage if the target is a Giant."*
+    ///
+    /// Two rider rows off one marker, which nothing else in the armoury
+    /// does. RAW's two clauses are alternatives rather than a sum, and
+    /// the table has no "instead of" — so the ungated row carries the
+    /// first 1d8 and a Giant-gated row adds the second, which sums to
+    /// RAW's 2d8 against a giant and to RAW's 1d8 against everything
+    /// else. Writing it as one 2d8 row gated on Giant plus one 1d8 row
+    /// gated on *not* Giant would have been the same numbers and a
+    /// negation on a column that has never held one.
+    ///
+    /// RAW's returning throw is not modeled: the engine binds no swing
+    /// to an item, so there is nothing to throw and nothing to have
+    /// come back. See `DragonSlaying` for why the whole family is that
+    /// way.
+    DwarvenThrowing,
+    /// Holding a SRD 5.2 **Holy Avenger** — *"When you hit a Fiend or an
+    /// Undead with this weapon, that creature takes an extra 2d10
+    /// Radiant damage."*
+    ///
+    /// The biggest ungated-by-a-save die in the armoury, against the
+    /// same two creature types the Mace of Disruption bites. RAW's
+    /// second half — the 10-foot aura granting allies Advantage on
+    /// saves against spells — is not modeled here: the engine's auras
+    /// are emanations installed by an action or a passive feature, and
+    /// this is the only *item* that would want one. The blade is the
+    /// clause that is on it.
+    HolyAvenging,
+    /// Wielding a SRD 5.2 **Dagger of Venom** whose blade is coated —
+    /// *"you can cause thick, black poison to coat it. The poison
+    /// remains for 1 minute or until an attack using this weapon hits a
+    /// creature. That creature must succeed on a DC 15 Constitution
+    /// saving throw or take 2d10 Poison damage and have the Poisoned
+    /// condition for 1 minute."*
+    ///
+    /// The second marker in the armoury that is not installed by
+    /// picking the item up — `FlameTongued` is the first — and the only
+    /// one that is spent by the hit it rides. A wielder gets one coated
+    /// swing per bonus action, which is the decision RAW is selling:
+    /// the dagger is a `+1` weapon that is worth a bonus action on the
+    /// turn something needs to be poisoned and not on any other.
+    ///
+    /// RAW's damage is *on the failed save* rather than on the hit, so
+    /// the poison rides the follow-up's own dice rather than the
+    /// rider's. See the row on `ON_HIT_RIDERS`.
+    Envenomed,
     /// A wound that will not close — 5e's *"can't regain Hit Points"*,
     /// wherever it comes from.
     ///
@@ -3438,6 +3534,12 @@ impl Condition {
             Condition::FrostBranded => "wielding a frost brand",
             Condition::Vicious => "wielding a vicious weapon",
             Condition::Wounding => "wielding a sword of wounding",
+            Condition::Sharpening => "wielding a sword of sharpness",
+            Condition::LifeStealing => "wielding a sword of life stealing",
+            Condition::NineLivesStealing => "wielding a nine lives stealer",
+            Condition::DwarvenThrowing => "wielding a dwarven thrower",
+            Condition::HolyAvenging => "wielding a holy avenger",
+            Condition::Envenomed => "wielding a coated dagger of venom",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",
         }
