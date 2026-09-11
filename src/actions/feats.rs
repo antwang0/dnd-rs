@@ -377,6 +377,40 @@ pub const SHARPSHOOTER_TAG: &str = "feat.sharpshooter";
 /// Mind"* is an out-of-combat cleanse.
 pub const MAGE_SLAYER_TAG: &str = "feat.mage_slayer";
 
+/// **Mounted Combatant** (General feat) — the feat that turns
+/// `engine::mounts` from a way to travel into a way to fight, and the
+/// only one in this module whose three RAW clauses all ship:
+///
+///   - *"You have Advantage on melee attack rolls against any
+///     unmounted creature that is smaller than your mount."* —
+///     `EncounterInstance::rides_down`, read from the saddle down, so
+///     the comparison RAW makes is against the horse's size and not the
+///     rider's.
+///   - *"You can force an attack that targets your mount to target you
+///     instead."* — `EncounterInstance::claim_rider_interposition`, on
+///     the damage-redirect lane the Crown Paladin's Divine Allegiance
+///     already owns.
+///   - *"If your mount is subjected to an effect that allows it to make
+///     a Dexterity saving throw to take only half damage, it instead
+///     takes no damage on a success."* — which is Evasion granted to
+///     somebody else, so it lands in `save_mitigation_for` beside the
+///     real one.
+///
+/// It arrived before this module did, as a `has_mounted_combatant`
+/// boolean on `CreatureTemplate` and a second copy on `ActorInstance`
+/// — two fields, a `defaults()` row and a copy line for one passive
+/// that nothing but three predicates in `engine::mounts` ever reads.
+/// It is a feat, so it belongs where the feats are: the module
+/// docstring's own argument for tags over fields, applied to the one
+/// entry that predates the argument. `ActorInstance::
+/// has_mounted_combatant` still answers the question its three callers
+/// ask; what changed is where the answer is kept.
+///
+/// Carried by `fighters::CAVALIER_FIGHTER_TEMPLATE` and by the
+/// bestiary's Knight — the two builds on the roster whose stat block is
+/// written around a horse.
+pub const MOUNTED_COMBATANT_TAG: &str = "feat.mounted_combatant";
+
 /// **Boon of Combat Prowess** (Epic Boon) — *"Peerless Aim. When you
 /// miss with an attack roll, you can hit instead. Once you use this
 /// benefit, you can't use it again until the start of your next turn."*
@@ -636,6 +670,7 @@ pub const FEAT_TAGS: &[&str] = &[
     WAR_CASTER_TAG,
     SHARPSHOOTER_TAG,
     MAGE_SLAYER_TAG,
+    MOUNTED_COMBATANT_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,

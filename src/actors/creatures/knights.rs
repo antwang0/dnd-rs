@@ -57,8 +57,8 @@ pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // "warriors who have sworn fealty… frequently mounted". Now
         // that `engine::mounts` exists, the AI's mount rung puts one on
         // any warhorse that spawns beside it, and the feat is what
-        // makes that worth doing.
-        has_mounted_combatant: true,
+        // makes that worth doing. See `feats::MOUNTED_COMBATANT_TAG`.
+        features: HashSet::from([crate::actions::feats::MOUNTED_COMBATANT_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -3389,31 +3389,6 @@ pub struct CreatureTemplate {
     /// 5e Evasion (Rogue 7, Monk 7): on DEX saves for half damage, take 0
     /// on a pass and half on a fail instead of half / full.
     pub has_evasion: bool,
-    /// 5e **Mounted Combatant** feat (PHB p.168) — the feat that turns
-    /// `engine::mounts` from a way to travel into a way to fight.
-    ///
-    /// All three of RAW's clauses ship, and each lands on a lane that
-    /// already existed, which is the argument for one flag rather than
-    /// three:
-    ///
-    ///   - "You have advantage on melee attack rolls against an
-    ///     unmounted creature that is smaller than your mount" —
-    ///     `compute_attack_mode`, beside every other reason a swing
-    ///     rolls twice.
-    ///   - "You can force an attack that targets your mount to target
-    ///     you instead" — the damage-redirect lane the Crown Paladin's
-    ///     Divine Allegiance already owns, at
-    ///     `EncounterInstance::claim_rider_interposition`.
-    ///   - "If your mount is subjected to an effect that allows it to
-    ///     make a Dexterity saving throw to take only half damage, it
-    ///     instead takes no damage if it succeeds and only half damage
-    ///     if it fails" — which is Evasion, granted to somebody else,
-    ///     so it lands in `save_mitigation_for` next to the real one.
-    ///
-    /// `false` for everybody who has not taken the feat, which on this
-    /// roster is everybody but the Cavalier and the Knight — the two
-    /// builds whose stat block is written around a horse.
-    pub has_mounted_combatant: bool,
     /// 5e Uncanny Dodge (Rogue 5): use reaction to halve damage from one
     /// attack you can see. Modeled as a passive flag checked in the
     /// attack resolution pipeline.
@@ -4451,7 +4426,6 @@ impl CreatureTemplate {
             portent_dice: 0,
             transmuters_stone: None,
             has_evasion: false,
-            has_mounted_combatant: false,
             has_uncanny_dodge: false,
             has_deflect_missiles: false,
             has_parry: false,
@@ -5472,9 +5446,6 @@ pub struct ActorInstance {
     /// 5e Evasion (Rogue 7, Monk 7): on DEX saves that deal half on pass,
     /// take 0 on pass and half on fail.
     has_evasion: bool,
-    /// Whether this creature has the Mounted Combatant feat, copied from
-    /// its template. See `CreatureTemplate::has_mounted_combatant`.
-    has_mounted_combatant: bool,
     /// 5e Uncanny Dodge (Rogue 5): reaction to halve damage from one
     /// visible attack per round.
     has_uncanny_dodge: bool,
@@ -5846,7 +5817,6 @@ impl ActorInstance {
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             has_evasion: ct.has_evasion,
-            has_mounted_combatant: ct.has_mounted_combatant,
             has_uncanny_dodge: ct.has_uncanny_dodge,
             has_deflect_missiles: ct.has_deflect_missiles,
             has_parry: ct.has_parry,
@@ -6148,9 +6118,17 @@ impl ActorInstance {
     }
 
     /// Whether this creature fights from the saddle the way the feat
-    /// describes. See `CreatureTemplate::has_mounted_combatant`.
+    /// describes — see `crate::actions::feats::MOUNTED_COMBATANT_TAG`,
+    /// which is where all three of its clauses are written down.
+    ///
+    /// Kept as a named accessor over the tag rather than letting the
+    /// three consumers in `engine::mounts` spell out
+    /// `has_passive_feature(MOUNTED_COMBATANT_TAG)` themselves: the
+    /// question those three ask is "does this creature fight from a
+    /// saddle", and the tag is the answer's storage rather than its
+    /// wording.
     pub fn has_mounted_combatant(&self) -> bool {
-        self.has_mounted_combatant
+        self.has_passive_feature(crate::actions::feats::MOUNTED_COMBATANT_TAG)
     }
 
     pub fn has_uncanny_dodge(&self) -> bool {
