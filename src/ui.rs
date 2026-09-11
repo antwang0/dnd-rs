@@ -845,7 +845,22 @@ pub fn render_sideinfo(
 
     let mut stats_lines: Vec<Line<'static>> = vec![
         Line::from(hp_spans),
-        Line::from(Span::raw(format!("AC: {}", ac))),
+        // SRD 5.2's Arrow-Catching Shield is the one thing in the game
+        // that makes a creature's Armour Class depend on what is being
+        // swung at it, so it is the one thing this line cannot report
+        // as a single number. Suffixed rather than folded in, because
+        // `armor_class()` is the sword's answer and the suffix is the
+        // arrow's — a player who sees "AC: 18 (20 vs ranged)" can read
+        // both, and one who saw a bare 20 would plan a round around a
+        // number that does not hold against the thing in front of them.
+        //
+        // Absent for everybody not holding the shield, which is
+        // everybody: the suffix costs a line of panel width and would
+        // be noise on every other chassis in the game.
+        Line::from(Span::raw(match curr_actor.total_item_bonuses().ranged_ac {
+            0 => format!("AC: {}", ac),
+            bonus => format!("AC: {} ({} vs ranged)", ac, ac as i32 + bonus),
+        })),
         Line::from(Span::raw(format!("Movement: {:.0}", movement))),
         Line::from(Span::raw(format!(
             "Actions: {}{}  Bonus: {}",
@@ -1577,6 +1592,40 @@ mod tests {
         assert!(
             panel.contains("darkness") && panel.contains("strong wind"),
             "and a dark, windy board says both:\n{}",
+            panel
+        );
+    }
+
+    /// The panel reports one Armour Class for everybody, and two for the
+    /// one creature in the game whose AC depends on what is being swung
+    /// at it.
+    ///
+    /// The suffix is the whole point of `ItemBonuses::ranged_ac` made
+    /// visible: a bearer of the Arrow-Catching Shield really does have
+    /// two numbers, and a panel reporting either alone would be lying
+    /// about half the swings in the room. Both directions are pinned —
+    /// a goblin with no shield must not grow a parenthesis.
+    #[test]
+    fn the_panel_names_the_second_armour_class_only_when_there_is_one() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::ARROW_CATCHING_SHIELD;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel(&e).contains("vs ranged"),
+            "an ordinary creature has one Armour Class"
+        );
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        let bare = e.actors[&id].armor_class();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&ARROW_CATCHING_SHIELD);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains(&format!("AC: {} ({} vs ranged)", bare + 2, bare + 4)),
+            "the shield's two numbers should both be on the panel:\n{}",
             panel
         );
     }
