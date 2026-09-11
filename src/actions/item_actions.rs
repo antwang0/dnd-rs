@@ -1912,6 +1912,24 @@ pub struct BurstSaveConditionItem {
     /// Timer for the install (typically `Rounds(10)` for combat-scale
     /// CC consumables — ~1 minute RAW).
     pub timer: ConditionTimer,
+    /// Charges one use costs, for an item that is **not** consumed by
+    /// using it, or `None` for the consumables that are.
+    ///
+    /// The distinction the rest of this module did not need. Every item
+    /// on this chassis until now has been a wand, a scroll or a set of
+    /// pipes — objects whose entire existence is their charges, so
+    /// `spend_item_use`'s "decrement, and drop the object when the pool
+    /// empties" is exactly right for them. The Mace of Terror is the
+    /// first that is something else as well: it is a mace. Running its
+    /// three charges dry must leave a mace in the wielder's hand, and
+    /// the old lane would have deleted a magic weapon mid-fight.
+    ///
+    /// `Some(n)` prices the use in `Resource::ItemCharges`, the ledger
+    /// the staves already spend through — see that variant's docstring
+    /// for why the pool emptying takes nothing away — and leaves the
+    /// billing to `Action::execute`'s own tail. `None` keeps the
+    /// consumable behaviour, which is what every existing row wants.
+    pub charge_cost: Option<u32>,
 }
 
 impl Action for BurstSaveConditionItem {
@@ -1943,6 +1961,30 @@ impl Action for BurstSaveConditionItem {
         false
     }
 
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // An Action either way — the consumable rows inherited that
+        // from the trait's default and this override keeps it — plus
+        // the charges, for a row that declares a price in them. Putting
+        // the charge in `cost()` rather than spending it inside
+        // `side_effects` is what lets the picker grey the option out
+        // and say why, exactly as it does for a spell slot.
+        let mut costs = action_only();
+        if let Some(count) = self.charge_cost {
+            costs.push(Resource::ItemCharges {
+                item: self.item_name,
+                count,
+            });
+        }
+        costs
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -1965,7 +2007,12 @@ impl Action for BurstSaveConditionItem {
         let Some(center) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        if !consume_caster_item(encounter, caster_id, self.item_name) {
+        // A row priced in charges is billed by `Action::execute`'s tail
+        // off the `cost()` above; only the consumables bill here. See
+        // `charge_cost`.
+        if self.charge_cost.is_none()
+            && !consume_caster_item(encounter, caster_id, self.item_name)
+        {
             return Vec::new();
         }
         let name = encounter.actor_name(caster_id);
@@ -2138,6 +2185,7 @@ pub static USE_WAND_OF_WEB: BurstSaveConditionItem = BurstSaveConditionItem {
     reach: 24,
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Pipes of Haunting — Action; 4-tile burst, WIS save vs DC 13, fail =
@@ -2159,7 +2207,47 @@ pub static PLAY_PIPES_OF_HAUNTING: BurstSaveConditionItem = BurstSaveConditionIt
     reach: 12,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
+
+/// **Mace of Terror** — SRD 5.2: *"This magic mace has 3 charges, and it
+/// regains 1d3 expended charges daily at dawn. While holding it, you
+/// can expend 1 charge as a Magic action to emit a wave of terror. Each
+/// creature of your choice within 30 feet of you must succeed on a DC 15
+/// Wisdom saving throw or have the Frightened condition for 1 minute."*
+///
+/// The first row on this chassis that is **not** a consumable, and the
+/// reason `charge_cost` exists. The Pipes of Haunting above are the
+/// same effect at a lower DC, and when the pipes run out there is
+/// nothing left worth carrying; when this mace runs out there is still
+/// a mace, and the old billing lane would have taken it away.
+///
+/// RAW's *"each creature of your choice"* is the enemy-only filter the
+/// burst already applies, which is a rare case of the engine's
+/// simplification landing exactly on the rule.
+///
+/// The mace carries no `+1`: RAW's does not, which is what separates it
+/// from the Mace of Smiting and makes three charges of area fear the
+/// whole of what it is worth.
+pub static SOUND_MACE_OF_TERROR: BurstSaveConditionItem = BurstSaveConditionItem {
+    action_name: "sound mace of terror",
+    action_aliases: &["mace of terror", "terror", "wave of terror"],
+    item_name: MACE_OF_TERROR_NAME,
+    log_text: "{actor} raises the mace of terror and a wave of dread rolls outward.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // 30 ft radius RAW, centered on the wielder; 12 tiles on the 2.5-ft
+    // grid. The reach is the same number for the same reason — the wave
+    // starts where the wielder is standing, so the aimed-at point is
+    // never further away than the radius.
+    radius: 12,
+    reach: 12,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+    charge_cost: Some(1),
+};
+
+const MACE_OF_TERROR_NAME: &str = "Mace of Terror";
 
 /// Wand of Paralysis — Action; single-target line, CON save vs DC 15,
 /// fail = Paralyzed for 10 rounds. Single-use consumable. 5e RAW: 7
@@ -2277,6 +2365,7 @@ pub static USE_WAND_OF_CONFUSION: BurstSaveConditionItem = BurstSaveConditionIte
     reach: 36,
     condition: Condition::Confused,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Scroll of Hypnotic Pattern — Action; 4-tile burst, WIS save vs DC 14,
@@ -2299,6 +2388,7 @@ pub static READ_HYPNOTIC_PATTERN_SCROLL: BurstSaveConditionItem = BurstSaveCondi
     reach: 48,
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Scroll of Vitriolic Sphere — Action; 10d4 acid DEX-save burst,
@@ -2684,6 +2774,7 @@ pub static READ_BANE_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
     reach: 12,
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Scroll of Faerie Fire — Action; 4-tile burst, DEX save vs DC 13, fail
@@ -2705,6 +2796,7 @@ pub static READ_FAERIE_FIRE_SCROLL: BurstSaveConditionItem = BurstSaveConditionI
     reach: 24,
     condition: Condition::Outlined,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Wand of Polymorph — Action; single-target, WIS save vs DC 15, fail =
@@ -2941,6 +3033,7 @@ pub static READ_SLOW_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
     reach: 24,
     condition: Condition::Slowed,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Scroll of Stinking Cloud — Action; 4-tile burst, CON save vs DC 15,
@@ -2964,6 +3057,7 @@ pub static READ_STINKING_CLOUD_SCROLL: BurstSaveConditionItem = BurstSaveConditi
     reach: 24,
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Scroll of Death Ward — Action; install `DeathWarded` on a single
@@ -3162,6 +3256,7 @@ pub static READ_FEAR_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
     reach: 12,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 const SCROLL_OF_CHARM_PERSON_NAME: &str = "Scroll of Charm Person";
@@ -3284,6 +3379,7 @@ pub static READ_WEB_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
     reach: 24,
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Potion of Resistance — the unlabelled bottle, and the best of the
@@ -3411,6 +3507,7 @@ pub static READ_CALM_EMOTIONS_SCROLL: BurstSaveConditionItem = BurstSaveConditio
     reach: 24,
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 /// Wand of Blindness — Action; single-target CON save vs DC 15, fail =
@@ -3949,6 +4046,7 @@ pub static USE_GEM_OF_BRIGHTNESS: BurstSaveConditionItem = BurstSaveConditionIte
     reach: 12,
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
+    charge_cost: None,
 };
 
 const SCROLL_OF_RESILIENT_SPHERE_NAME: &str = "Scroll of Resilient Sphere";

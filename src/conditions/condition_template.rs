@@ -3178,6 +3178,48 @@ pub enum Condition {
     /// the poison rides the follow-up's own dice rather than the
     /// rider's. See the row on `ON_HIT_RIDERS`.
     Envenomed,
+    /// Holding a SRD 5.2 **Vorpal Sword** — *"When you roll a 20 on the
+    /// d20 for an attack roll with this weapon, you cut off one of the
+    /// target's heads. The creature dies if it can't survive without
+    /// the head."*
+    ///
+    /// The third crit-gated blade, and the only Legendary weapon in the
+    /// engine that kills on the face of a die rather than on a save.
+    /// RAW's three exemptions all ride the rider's `target_gate`, which
+    /// is what that column turns out to be for: a creature with no head
+    /// (an Ooze), a creature with Legendary Actions, and a creature
+    /// immune to Slashing damage each keep theirs.
+    ///
+    /// The Legendary-Actions clause is the one that makes the sword
+    /// playable rather than a boss-deleter. Every dragon, lich, kraken
+    /// and sphinx on this bestiary carries a legendary repertoire, so
+    /// the blade that ends a purple worm on a twenty does nothing at
+    /// all to the ancient red — which is precisely the balance RAW
+    /// drew, and precisely why the exemption is not optional.
+    Vorpal,
+    /// Holding a SRD 5.2 **Mace of Smiting** — *"When you roll a 20 on
+    /// the d20 for an attack roll with this weapon, the target takes an
+    /// extra 7 Bludgeoning damage, or 14 Bludgeoning damage if the
+    /// target is a Construct. If a Construct has 25 Hit Points or fewer
+    /// after taking this damage, it is destroyed."*
+    ///
+    /// Three rows off one marker, the widest spread in the armoury —
+    /// see `DwarvenThrowing` for why RAW's "or" becomes two additive
+    /// rows rather than a negated gate. The third is the destruction,
+    /// which carries no dice of its own and rides
+    /// `FollowUpEffect::Slay` behind RAW's 25-hit-point clause.
+    ///
+    /// RAW prints *flat* damage — 7 and 14, not dice — and the rider
+    /// table rolls dice. 2d6 and 4d6 are the honest translations: the
+    /// same means, and the variance a critical hit's doubling was
+    /// always going to add anyway.
+    ///
+    /// RAW's other half, *"the bonus increases to +3 when you use the
+    /// mace to attack a Construct"*, is not modeled. The engine binds
+    /// no swing to an item and `ItemBonuses` has no target-conditional
+    /// lane; the construct-only die is where that clause's value goes
+    /// instead.
+    MaceSmiting,
     /// A wound that will not close — 5e's *"can't regain Hit Points"*,
     /// wherever it comes from.
     ///
@@ -3540,6 +3582,8 @@ impl Condition {
             Condition::DwarvenThrowing => "wielding a dwarven thrower",
             Condition::HolyAvenging => "wielding a holy avenger",
             Condition::Envenomed => "wielding a coated dagger of venom",
+            Condition::Vorpal => "wielding a vorpal sword",
+            Condition::MaceSmiting => "wielding a mace of smiting",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",
         }

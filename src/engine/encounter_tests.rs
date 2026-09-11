@@ -94772,6 +94772,248 @@ fn power_word_kill_is_not_necrotic_damage() {
     );
 }
 
+/// The Vorpal Sword beheads a purple worm and leaves an ancient dragon
+/// its head.
+///
+/// RAW's exemption list is the whole item — a Legendary sword that
+/// killed on a twenty with no clause attached would end every encounter
+/// it was carried into — and the clause doing the work on this bestiary
+/// is *"has Legendary Actions"*. Every boss here has a repertoire; the
+/// purple worm is the largest, meanest thing that does not.
+///
+/// Both directions in one test for the reason the Dragon Slayer's
+/// sweep gives: a gate that never passes and a gate that always passes
+/// look identical from either side alone.
+#[test]
+fn the_vorpal_sword_spares_everything_with_a_legendary_repertoire() {
+    use crate::actors::creatures::dragons::ANCIENT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::VORPAL_SWORD;
+
+    for (template, is_legendary) in [
+        (&*PURPLE_WORM_TEMPLATE, false),
+        (&*ANCIENT_RED_DRAGON_TEMPLATE, true),
+    ] {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(template, Coordinate::new(12, 12), 1, 0)
+            .unwrap();
+        assert_eq!(
+            !e.actors[&victim].legendary_actions().is_empty(),
+            is_legendary,
+            "the fixture's premise: {} {} a legendary repertoire",
+            e.actor_name(victim),
+            if is_legendary { "has" } else { "has no" }
+        );
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&VORPAL_SWORD);
+        let mut effects = Vec::new();
+        push_on_hit_riders(
+            &mut e,
+            &mut effects,
+            fighter,
+            victim,
+            RiderSwing {
+                is_melee: true,
+                is_spell: false,
+                is_crit: true,
+                natural_twenty: true,
+                damage_so_far: 0,
+                damage_type: DamageType::Slashing,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&victim].hitpoints() == 0,
+            !is_legendary,
+            "{}: the head came off when it should not have (or did not when it should):\n{}",
+            e.actor_name(victim),
+            e.messages().join("\n")
+        );
+    }
+}
+
+/// The Mace of Smiting hits a construct twice as hard and destroys the
+/// one it leaves under twenty-five hit points.
+///
+/// Three rows off one marker, and the middle one is where the mistakes
+/// live: RAW's *"7, or 14 if the target is a Construct"* is an
+/// alternative and the table only has addition, so the construct
+/// surcharge is a second row and the sum has to come out right in both
+/// directions.
+///
+/// The destruction is pinned on a construct the swing leaves inside the
+/// threshold, which is also what pins the ordering — the follow-up's
+/// `hp_threshold` predicts a post-swing total, so the base die has to
+/// have been counted into `damage_so_far` by the time it is asked.
+#[test]
+fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
+    use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::engine::types::CreatureType;
+    use crate::items::item_template::MACE_OF_SMITING;
+
+    let swing = |damage_so_far: u32| RiderSwing {
+        is_melee: true,
+        is_spell: false,
+        // Not a critical hit, so the dice are not doubled and the two
+        // bands below stay 2d6 and 4d6 rather than overlapping.
+        is_crit: false,
+        natural_twenty: true,
+        damage_so_far,
+        damage_type: DamageType::Bludgeoning,
+    };
+
+    let mut flesh = (u32::MAX, 0u32);
+    let mut metal = (u32::MAX, 0u32);
+    for seed in 0..40u64 {
+        for is_construct in [false, true] {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = if is_construct {
+                e.instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            } else {
+                e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            }
+            .unwrap();
+            assert_eq!(
+                e.actors[&victim].creature_type() == CreatureType::Construct,
+                is_construct
+            );
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .pickup_item(&MACE_OF_SMITING);
+            let mut effects = Vec::new();
+            // Nothing dealt yet, so the threshold sees only the mace's
+            // own dice and the armour stays above twenty-five.
+            let rolled =
+                push_on_hit_riders(&mut e, &mut effects, fighter, victim, swing(0));
+            let slot = if is_construct { &mut metal } else { &mut flesh };
+            slot.0 = slot.0.min(rolled);
+            slot.1 = slot.1.max(rolled);
+        }
+    }
+    assert!(
+        (2..=12).contains(&flesh.0) && (2..=12).contains(&flesh.1),
+        "against an ogre the mace pays 2d6, saw {flesh:?}"
+    );
+    assert!(
+        (4..=24).contains(&metal.0) && (4..=24).contains(&metal.1),
+        "against a construct it pays 4d6, saw {metal:?}"
+    );
+    assert!(
+        metal.1 > flesh.1,
+        "the construct clause has to be the bigger of the two, saw {metal:?} vs {flesh:?}"
+    );
+
+    // And the destruction, on a construct the swing leaves inside RAW's
+    // twenty-five.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let armor = e
+        .instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&MACE_OF_SMITING);
+    let mut effects = Vec::new();
+    // A swing that has already taken it to the edge: the threshold is
+    // read against `damage_so_far` plus the rider's own dice.
+    let hp = e.actors[&armor].hitpoints();
+    push_on_hit_riders(
+        &mut e,
+        &mut effects,
+        fighter,
+        armor,
+        swing(hp.saturating_sub(20)),
+    );
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&armor].hitpoints(),
+        0,
+        "the armour was left under twenty-five and not destroyed:\n{}",
+        e.messages().join("\n")
+    );
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("mace of smiting") && m.contains("destroyed outright")),
+        "the destruction went unnamed:\n{}",
+        e.messages().join("\n")
+    );
+}
+
+/// The Mace of Terror spends a charge and stays a mace.
+///
+/// The clause `BurstSaveConditionItem::charge_cost` exists for. Every
+/// other row on that chassis is a wand or a scroll, billed through
+/// `spend_item_use`, which drops the object when the pool empties —
+/// correct for a wand and a disaster for a magic weapon. Three waves of
+/// fear must leave the wielder holding a mace.
+#[test]
+fn the_mace_of_terror_runs_dry_without_leaving_the_wielder_empty_handed() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::items::item_template::MACE_OF_TERROR;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&MACE_OF_TERROR);
+    let wave = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "sound mace of terror")
+        .expect("holding the mace offers the wave");
+    let at = vec![e.actors[&goblin].location()];
+
+    for round in 0..MACE_OF_TERROR.charges {
+        assert!(
+            wave.validate_input(&e, fighter, None, Some(&at), None),
+            "round {round}: the mace should still have a charge"
+        );
+        for ef in wave.execute(&mut e, fighter, None, Some(&at), None) {
+            ef.apply(&mut e);
+        }
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    }
+    assert!(
+        !wave.validate_input(&e, fighter, None, Some(&at), None),
+        "a fourth wave came out of a three-charge mace"
+    );
+    assert!(
+        e.actors[&fighter].has_item_named(MACE_OF_TERROR.name),
+        "the pool ran dry and took the mace with it"
+    );
+}
+
 /// Destroy Undead destroys, rather than dealing enough damage to look
 /// like it destroyed.
 ///

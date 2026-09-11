@@ -3189,6 +3189,105 @@ pub static NINE_LIVES_STEALER: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Vorpal Sword** (Weapon, any Slashing sword; Legendary) — "You gain
+/// a +3 bonus to attack rolls and damage rolls made with this magic
+/// weapon… When you roll a 20 on the d20 for an attack roll with this
+/// weapon, you cut off one of the target's heads. The creature dies if
+/// it can't survive without the head."
+///
+/// The second Legendary weapon on the table and the sharper of the two:
+/// the Holy Avenger's `+3` is the same `+3`, and this one comes with a
+/// clause that ends a fight on a five-percent roll. What keeps it from
+/// ending *every* fight is RAW's exemption list, which is where the
+/// interesting play is — the creature it cannot behead is, near enough,
+/// the creature worth the sword. Every boss on this bestiary has
+/// Legendary Actions. See `Condition::Vorpal`.
+///
+/// RAW's "ignores Resistance to Slashing damage" clause is not modeled:
+/// the engine binds no swing to an item, so there is no slashing
+/// resistance for the sword's own blade to be exempt from.
+pub static VORPAL_SWORD: Item = Item {
+    name: "Vorpal Sword",
+    glyph: 'V',
+    bonuses: ItemBonuses {
+        attack_bonus: 3,
+        damage_bonus: 3,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::Vorpal],
+    ..Item::DEFAULTS
+};
+
+/// **Mace of Smiting** (Weapon, mace; Rare) — "You gain a +1 bonus to
+/// attack rolls and damage rolls made with this magic weapon. The bonus
+/// increases to +3 when you use the mace to attack a Construct. When
+/// you roll a 20 on the d20 for an attack roll with this weapon, the
+/// target takes an extra 7 Bludgeoning damage, or 14 Bludgeoning damage
+/// if the target is a Construct. If a Construct has 25 Hit Points or
+/// fewer after taking this damage, it is destroyed."
+///
+/// The Mace of Disruption's opposite number — same shape, same Rare
+/// tier, and a gate that answers to the golems and animated armours
+/// where the other answers to the fiends and the undead. Between them
+/// the two maces cover most of what a `+1` weapon is useless against.
+///
+/// The `+3`-against-Constructs clause is the one thing here that does
+/// not ship; `ItemBonuses` has no target-conditional lane and inventing
+/// one for a single item would have meant threading the target through
+/// every stat accessor. The construct-only die on `ON_HIT_RIDERS`
+/// carries that clause's value instead.
+pub static MACE_OF_SMITING: Item = Item {
+    name: "Mace of Smiting",
+    glyph: '&',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::MaceSmiting],
+    ..Item::DEFAULTS
+};
+
+/// **Mace of Terror** (Weapon, mace; Rare) — "This magic mace has 3
+/// charges, and it regains 1d3 expended charges daily at dawn. While
+/// holding it, you can expend 1 charge as a Magic action to emit a wave
+/// of terror. Each creature of your choice within 30 feet of you must
+/// succeed on a DC 15 Wisdom saving throw or have the Frightened
+/// condition for 1 minute."
+///
+/// The only weapon in the armoury whose clause is not about hitting
+/// anything, and the only one with a charge pool. Three waves of
+/// thirty-foot fear at DC 15 is a fight-shaping resource on a mace with
+/// no `+1` on it — which is RAW, and is what makes carrying it a choice
+/// rather than an upgrade.
+///
+/// Running the pool dry leaves a mace, not a gap in the pack: the action
+/// is priced in `Resource::ItemCharges` rather than billed through
+/// `spend_item_use`, which is the lane that drops a wand when its last
+/// charge goes. See `item_actions::BurstSaveConditionItem::charge_cost`.
+///
+/// `grants_magical_attacks` even with no bonus, for the reason the Mace
+/// of Disruption has it: RAW calls it a magic mace, and a magic weapon
+/// beats a resistance to nonmagical attacks whether or not it beats the
+/// armour class.
+pub static MACE_OF_TERROR: Item = Item {
+    name: "Mace of Terror",
+    glyph: 'Y',
+    grants_magical_attacks: true,
+    on_use: &[&crate::actions::item_actions::SOUND_MACE_OF_TERROR],
+    charges: 3,
+    // RAW's "1d3 expended charges daily at dawn", against the file's
+    // usual 1d6+1 — a smaller pool refills more slowly, which is what
+    // keeps three charges feeling like three.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// **Dagger of Venom** (Weapon, dagger; Rare) — "You gain a +1 bonus to
 /// attack rolls and damage rolls made with this magic weapon. As a
 /// Bonus Action, you can cause thick, black poison to coat it. The
@@ -3795,6 +3894,9 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &SWORD_OF_LIFE_STEALING,
     &NINE_LIVES_STEALER,
     &DAGGER_OF_VENOM,
+    &VORPAL_SWORD,
+    &MACE_OF_SMITING,
+    &MACE_OF_TERROR,
     &ADAMANTINE_ARMOR,
 ];
 
@@ -4488,6 +4590,18 @@ pub static LOOT_POOL: &[&Item] = &[
     &SWORD_OF_LIFE_STEALING,
     &NINE_LIVES_STEALER,
     &DAGGER_OF_VENOM,
+    // The third batch: the two crit-gated finishers the family was
+    // still missing, and the one weapon on the shelf whose clause has
+    // nothing to do with hitting anything.
+    //
+    // The Vorpal Sword is the rarest thing in the file and is *not*
+    // weighted down for it, because the exemption list is its own
+    // balance: it beheads a purple worm and does nothing at all to the
+    // ancient red, and a party that finds it still has to find
+    // something without Legendary Actions worth beheading.
+    &VORPAL_SWORD,
+    &MACE_OF_SMITING,
+    &MACE_OF_TERROR,
     // The wondrous half of the same batch — items whose clause is a
     // defence or a sense rather than a die on a swing. Single entries
     // apiece for the same reason the armoury gets them: each answers one
@@ -4637,10 +4751,18 @@ mod tests {
     /// rider reads is a sword that does nothing, and it looks exactly
     /// like a sword that works.
     ///
-    /// The two kindled blades are the exception, and they are exempted
-    /// by name rather than by "has no passive conditions": their marker
-    /// is installed by an action instead, so the sweep checks the rider
+    /// The kindled items are the exception, and they are exempted by
+    /// name rather than by "has no passive conditions": their marker is
+    /// installed by an action instead, so the sweep checks the rider
     /// row exists and lets the item off the inventory half.
+    ///
+    /// Two entries on the shelf carry no rider at all, and they are
+    /// named in `NO_RIDER` below rather than absorbed into an
+    /// off-by-N on the length assertion. That assertion used to read
+    /// `wiring.len() + 1`, the `1` being the Adamantine Armor and the
+    /// reason for it living in a comment; when a second riderless entry
+    /// arrived, the choice was between a `+ 2` that says even less and
+    /// a list that says which two and why.
     #[test]
     fn every_weapon_in_the_armoury_is_wired_to_a_rider() {
         use crate::conditions::Condition;
@@ -4664,7 +4786,26 @@ mod tests {
             (&SWORD_OF_LIFE_STEALING, Condition::LifeStealing, false),
             (&NINE_LIVES_STEALER, Condition::NineLivesStealing, false),
             (&DAGGER_OF_VENOM, Condition::Envenomed, true),
+            (&VORPAL_SWORD, Condition::Vorpal, false),
+            (&MACE_OF_SMITING, Condition::MaceSmiting, false),
         ];
+        // The entries whose value is not a die on a swing, and so have
+        // no rider row to be wired to. Named rather than counted — see
+        // the docstring.
+        //
+        //   - the **Adamantine Armor** is not a weapon at all; its
+        //     whole clause is a demotion read in `engine::criticals`.
+        //   - the **Mace of Terror** is a weapon whose clause never
+        //     touches a swing: three charges of area fear, spent
+        //     through `Resource::ItemCharges` on an Action.
+        let no_rider: &[&Item] = &[&ADAMANTINE_ARMOR, &MACE_OF_TERROR];
+        for item in no_rider {
+            assert!(
+                item.passive_conditions.is_empty(),
+                "{} installs a marker and is listed as carrying no rider",
+                item.name
+            );
+        }
         for (item, marker, kindled) in wiring {
             assert!(
                 riders.contains(marker),
@@ -4692,9 +4833,10 @@ mod tests {
             }
         }
         assert_eq!(
-            wiring.len() + 1,
+            wiring.len() + no_rider.len(),
             MAGIC_ARMOURY.len(),
-            "the armoury grew and this sweep did not — every weapon on it needs a row here"
+            "the armoury grew and this sweep did not — every entry on it needs a row \
+             in `wiring` or a place in `no_rider`"
         );
     }
 

@@ -21392,15 +21392,36 @@ mod tests {
     /// The family is read off `MAGIC_ARMOURY` rather than off the whole
     /// loot pool, because "an item with an `on_use`" is every potion and
     /// scroll in the file, and "an action whose name starts with light"
-    /// is a torch. An armoury item that offers an action is a blade that
-    /// has to be drawn — that is what the armoury *is* — so the set is
-    /// exactly right and stays right as both sides grow.
+    /// is a torch.
+    ///
+    /// **Which armoury actions are primes** is the one thing the sweep
+    /// has to decide, and it decides it the way the AI does rather than
+    /// by name. A prime is self-aimed and does nothing to anybody — it
+    /// arms a rider and ends — so it is `NoArgs` and not harmful, and
+    /// `try_kindle_weapon` is the only rung that will ever reach it.
+    /// Anything else on an armoury item is an *effect*: the Mace of
+    /// Terror's wave of fear is a harmful burst, which
+    /// `try_attack_aoe`'s `available_actions()` walk finds on its own
+    /// and which would be actively wrong on the kindle rung — that one
+    /// fires the moment an enemy is within sixteen tiles, and thirty
+    /// feet of fear aimed at nothing is a charge gone.
+    ///
+    /// The sweep used to say "an armoury item that offers an action is a
+    /// blade that has to be drawn — that is what the armoury *is*". That
+    /// was true of the shelf when it was written and stopped being true
+    /// the first time a weapon's clause was not about swinging it.
     #[test]
     fn every_kindled_blade_on_the_loot_table_is_one_the_ai_can_light() {
+        use crate::actions::action_template::TargetingSchema;
         use crate::items::item_template::{LOOT_POOL, MAGIC_ARMOURY};
 
         for item in MAGIC_ARMOURY {
             for action in item.on_use {
+                let is_prime = matches!(action.targeting_schema(), TargetingSchema::NoArgs)
+                    && !action.is_harmful();
+                if !is_prime {
+                    continue;
+                }
                 assert!(
                     KINDLED_WEAPONS
                         .iter()

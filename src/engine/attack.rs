@@ -6975,6 +6975,103 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: true,
         },
+        // SRD 5.2 **Vorpal Sword** (Weapon, any Slashing sword;
+        // Legendary): "When you roll a 20 on the d20 for an attack roll
+        // with this weapon, you cut off one of the target's heads. The
+        // creature dies if it can't survive without the head. A
+        // creature is immune to this effect if it is immune to
+        // Slashing damage, doesn't have or need a head, has Legendary
+        // Actions, or the GM decides that the creature is too big for
+        // its head to be cut off."
+        //
+        // RAW's exemption list is the whole row, and it lives on
+        // `target_gate` — the column added for the bane weapons, doing
+        // the opposite job here. Three of RAW's four clauses are things
+        // the actor can answer about itself; the fourth is the GM's and
+        // has nobody to ask.
+        //
+        // The Legendary-Actions clause is not a nicety. Every dragon,
+        // lich, kraken, sphinx and tarrasque on this bestiary carries a
+        // legendary repertoire, so without it a Legendary sword would
+        // end the Legendary encounter on a twenty. See
+        // `Condition::Vorpal`.
+        OnHitRider {
+            condition: Condition::Vorpal,
+            dice: Dice::new(0, 0),
+            label: "vorpal sword",
+            damage_type: RiderDamage::Fixed(DamageType::Slashing),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: Some(SmiteFollowUp {
+                // No save. RAW's sentence is "you cut off one of the
+                // target's heads", and the creature that could have
+                // avoided it is the creature the gate already let go.
+                save_ability: None,
+                dc_ability: AbilityScoreType::Strength,
+                fixed_dc: None,
+                effect: FollowUpEffect::Slay,
+                label: "vorpal sword",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: Some(|t| {
+                t.creature_type() != CreatureType::Ooze
+                    && t.legendary_actions().is_empty()
+                    && !t.is_immune_to(DamageType::Slashing)
+            }),
+            requires_natural_twenty: true,
+        },
+        // SRD 5.2 **Mace of Smiting** (Weapon, mace; Rare): "When you
+        // roll a 20 on the d20 for an attack roll with this weapon, the
+        // target takes an extra 7 Bludgeoning damage, or 14 Bludgeoning
+        // damage if the target is a Construct. If a Construct has 25 Hit
+        // Points or fewer after taking this damage, it is destroyed."
+        //
+        // Three rows off one marker — the base die, the construct
+        // surcharge, and the destruction. RAW's flat 7 and 14 become
+        // 2d6 and 2d6+2d6; see `Condition::MaceSmiting` for why dice
+        // rather than a constant.
+        OnHitRider {
+            condition: Condition::MaceSmiting,
+            dice: Dice::new(2, 6),
+            label: "mace of smiting",
+            damage_type: RiderDamage::Fixed(DamageType::Bludgeoning),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: true,
+        },
+        OnHitRider {
+            condition: Condition::MaceSmiting,
+            dice: Dice::new(2, 6),
+            label: "mace of smiting (construct)",
+            damage_type: RiderDamage::Fixed(DamageType::Bludgeoning),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            // The destruction rides *this* row rather than the one
+            // above, because RAW gates it on the same word the
+            // surcharge is gated on. Its `hp_threshold` predicts the
+            // target's post-swing total, so `damage_so_far` has already
+            // absorbed the base die by the time it is asked — which is
+            // exactly RAW's "after taking this damage".
+            follow_up: Some(SmiteFollowUp {
+                save_ability: None,
+                dc_ability: AbilityScoreType::Strength,
+                fixed_dc: None,
+                effect: FollowUpEffect::Slay,
+                label: "mace of smiting",
+                hp_threshold: Some(25),
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: Some(|t| t.creature_type() == CreatureType::Construct),
+            requires_natural_twenty: true,
+        },
         // SRD 5.2 **Nine Lives Stealer** (Weapon, any sword; Very Rare):
         // "When you roll a 20 on the d20 for an attack roll with this
         // weapon, the target must succeed on a DC 15 Constitution saving
