@@ -534,6 +534,36 @@ pub struct ZoneEffect {
     /// See `EncounterInstance::touch_zone`, which is where all three
     /// clauses are enforced.
     pub ward: Option<WardTrigger>,
+    /// The one side this area was written to leave alone — SRD's
+    /// *"you and creatures you designate when you cast the spell can
+    /// pass through and be near the wall without harm"*.
+    ///
+    /// `None` for every area but one, and that is the layer's design
+    /// rather than an oversight: a web catches the wizard who spun it,
+    /// a cloudkill poisons whoever is standing in it, and the module
+    /// docstring says so at length. The reason the exception exists is
+    /// that Prismatic Wall's exemption is *printed*, in the same
+    /// sentence as the effect it exempts you from — unlike every other
+    /// area here, where sparing the caster's side would be a house
+    /// rule.
+    ///
+    /// Distinct from `ward`'s `EnemiesOf`, which it superficially
+    /// resembles. A ward's trigger is about who can *spring* something
+    /// that is otherwise invisible and spent when it fires; this is
+    /// about who a standing, visible, permanent area does nothing to.
+    /// A ward that spared a team still detonates on them once somebody
+    /// else trips it — see `detonate_ward` — and this never fires on
+    /// the named side at all.
+    ///
+    /// Read at `EncounterInstance::touch_zone`, which is the single
+    /// chokepoint for the enter-or-start-your-turn trigger. It is
+    /// deliberately **not** read by `deters_walkers`: the pathfinder's
+    /// hazard question is asked of a tile rather than of a creature, so
+    /// the caster's own side routes around its own light. That costs a
+    /// step and no hit points, which is the right direction for an
+    /// approximation to err in, and the alternative is threading a
+    /// team through every hazard predicate on the layer for one spell.
+    pub spares_team: Option<usize>,
 }
 
 impl ZoneEffect {
@@ -546,6 +576,7 @@ impl ZoneEffect {
         suppresses_magic: false,
         darkens: None,
         ward: None,
+        spares_team: None,
     };
 
     /// The Darkness spell: heavily obscured *and* unlit.
@@ -568,6 +599,7 @@ impl ZoneEffect {
         suppresses_magic: false,
         darkens: Some(Self::DARKNESS_SPELL_LEVEL),
         ward: None,
+        spares_team: None,
     };
 
     /// The level the Darkness spell is cast at, and therefore the level
@@ -586,6 +618,7 @@ impl ZoneEffect {
         suppresses_magic: false,
         darkens: None,
         ward: None,
+        spares_team: None,
     };
 
     /// A zone whose only clause is that magic does not work inside it
@@ -599,6 +632,7 @@ impl ZoneEffect {
         suppresses_magic: true,
         darkens: None,
         ward: None,
+        spares_team: None,
     };
 
     /// A zone that is difficult terrain and fires `contact` (Web,
@@ -612,6 +646,7 @@ impl ZoneEffect {
             suppresses_magic: false,
             darkens: None,
             ward: None,
+            spares_team: None,
         }
     }
 
@@ -626,6 +661,7 @@ impl ZoneEffect {
             suppresses_magic: false,
             darkens: None,
             ward: None,
+            spares_team: None,
         }
     }
 
@@ -641,6 +677,7 @@ impl ZoneEffect {
             suppresses_magic: false,
             darkens: None,
             ward: None,
+            spares_team: None,
         }
     }
 
@@ -655,6 +692,7 @@ impl ZoneEffect {
             suppresses_magic: false,
             darkens: None,
             ward: None,
+            spares_team: None,
         }
     }
 
@@ -675,6 +713,7 @@ impl ZoneEffect {
             suppresses_magic: false,
             darkens: None,
             ward: Some(WardTrigger::EnemiesOf(setter_team)),
+            spares_team: None,
         }
     }
 
@@ -689,7 +728,21 @@ impl ZoneEffect {
             suppresses_magic: false,
             darkens: None,
             ward: Some(WardTrigger::Anyone { find_dc }),
+            spares_team: None,
         }
+    }
+
+    /// Name the one side this area does nothing to — see
+    /// `spares_team`.
+    ///
+    /// Chainable rather than a constructor argument because it is a
+    /// qualifier on an area that already exists in every other
+    /// respect: Prismatic Wall's glare is a `hazard` with a save, and
+    /// the exemption is a second sentence in RAW rather than a
+    /// different kind of area.
+    pub const fn sparing(mut self, team: usize) -> Self {
+        self.spares_team = Some(team);
+        self
     }
 
     /// True if standing here can cost a creature something — the

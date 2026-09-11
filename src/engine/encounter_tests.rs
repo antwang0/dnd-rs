@@ -98192,13 +98192,37 @@ fn prismatic_wall_raises_a_wall_a_light_and_a_glare() {
         e.zones().iter().any(|z| z.name == "prismatic glare"),
         "and blinds what comes near it"
     );
-    // The caster is nine tiles away, which is outside the eight-tile
-    // glare — RAW's exemption for the caster has no channel here, so
-    // the spell's placement is what keeps the wizard out of its own
-    // light. See `spells::PrismaticWall`.
+    // RAW's *"you and creatures you designate"* — the caster's whole
+    // side. Asserted by standing an ally in the glare and walking it
+    // into the trigger, beside an enemy on the same tile band that the
+    // same trigger does catch.
+    let zone_id = e.zones().iter().find(|z| z.name == "prismatic glare").unwrap().id;
+    let ally = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(14, 10),
+            0,
+            1,
+        )
+        .unwrap();
+    let enemy = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(15, 10),
+            1,
+            0,
+        )
+        .unwrap();
+    e.touch_zone(zone_id, ally);
+    e.touch_zone(zone_id, enemy);
     assert!(
-        !e.actors[&wizard].has_condition(crate::conditions::Condition::Blinded),
-        "the wizard raised it from outside its glare"
+        !e.actors[&ally].has_condition(crate::conditions::Condition::Blinded),
+        "the caster's side passes through its own light without harm"
+    );
+    assert!(
+        e.actors[&enemy].has_condition(crate::conditions::Condition::Blinded)
+            || e.messages().iter().any(|m| m.contains("Constitution save")),
+        "and everybody else at least has to roll for it"
     );
 }
 

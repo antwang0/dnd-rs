@@ -36581,13 +36581,21 @@ pub static ANIMAL_SHAPES: LazyLock<AnimalShapes> = LazyLock::new(|| AnimalShapes
 /// # Friend or foe
 ///
 /// RAW exempts *"you and creatures you designate when you cast the
-/// spell"*. The zone layer is friend-or-foe blind by design — see
-/// `engine::zones`, which spells out why, and the one exception it
-/// makes for wards — and there is no channel for a cast-time list of
-/// names. So the glare catches the caster's side too, which is the
-/// same bargain Web, Cloudkill and Sleet Storm already strike: the area
-/// is visible to the AI's pathfinder, so the party's answer is to
-/// stand somewhere else.
+/// spell"*, and this is the one area on a friend-or-foe-blind layer
+/// that gets to — see `ZoneEffect::spares_team` for why the exception
+/// is this spell's and not a policy. The engine has no channel for a
+/// cast-time list of names, so the caster's whole side is designated,
+/// which is who a caster would have named anyway.
+///
+/// It is not a nicety. The glare reaches eight tiles and the wall goes
+/// up where the caster can see it; a version that caught its own side
+/// would be a ninth-level slot that blinds the party, and the AI's
+/// wall rung — which raises walls two tiles from the caster's own feet
+/// — would have been blinding the caster with it every time.
+///
+/// The pathfinder is still blind to the exemption: `deters_walkers`
+/// asks about a tile rather than about a creature, so the party walks
+/// around its own light. That costs a step and no hit points.
 ///
 /// # The remaining divergences, named
 ///
@@ -36676,7 +36684,11 @@ impl Action for PrismaticWall {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let (dc, caster_at) = (caster.spellcasting_save_dc(), caster.location());
+        let (dc, caster_at, caster_team) = (
+            caster.spellcasting_save_dc(),
+            caster.location(),
+            caster.team(),
+        );
         // The light lands in the builder rather than as a queued effect,
         // for Daylight's reason: it is one sentence with the wall, and a
         // reordering that raised the wall into an unlit room would put
@@ -36722,7 +36734,16 @@ impl Action for PrismaticWall {
                         dc,
                         Condition::Blinded,
                         ConditionTimer::Rounds(Self::BLIND_ROUNDS),
-                    )),
+                    ))
+                    // RAW's *"you and creatures you designate when you
+                    // cast the spell can pass through and be near the
+                    // wall without harm"*. The engine has no channel
+                    // for a cast-time list of names, so the whole of
+                    // the caster's side is designated — which is what
+                    // a caster would designate anyway, and is the
+                    // difference between a ninth-level slot and a
+                    // ninth-level slot that blinds the party.
+                    .sparing(caster_team),
                     rounds_remaining: Self::ROUNDS,
                     // The wall holds itself up; see the `false` above.
                     concentration: false,

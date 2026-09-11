@@ -8718,6 +8718,19 @@ impl EncounterInstance {
         {
             return;
         }
+        // The layer's *other* friend-or-foe clause, and the only one
+        // that is about an area doing nothing rather than about who can
+        // set one off: SRD's Prismatic Wall spares the caster's side by
+        // name. See `ZoneEffect::spares_team`, which explains why it is
+        // one spell's exemption and not a general policy.
+        if let Some(spared) = zone.effect.spares_team
+            && self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.team() == spared)
+        {
+            return;
+        }
         self.zone_contacts_this_turn.insert((zone_id, actor_id));
         self.apply_zone_contact(zone_id, actor_id);
         if ward.is_some() {
