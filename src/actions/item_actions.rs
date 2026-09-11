@@ -1961,6 +1961,28 @@ impl Action for BurstSaveConditionItem {
         false
     }
 
+    fn spares_allies(&self) -> bool {
+        // The resolver below walks `enemy_burst_targets`, so this
+        // chassis has *never* caught an ally — the wand of web does not
+        // stick the party to the floor and the pipes do not frighten
+        // the cleric. The picker did not know that, and the AI's two
+        // area rungs veto any placement that catches a friendly: a
+        // wielder standing in their own line could not fire one of
+        // these at all, and neither could one standing in a melee
+        // scrum, which is the only situation an area is for.
+        //
+        // Not a new rule, then — the declaration the resolver was
+        // always owed. Its absence was invisible in the way an ability
+        // nobody selects always is: twelve items, every one of them
+        // working perfectly whenever a human aimed it.
+        //
+        // `BurstSaveDamageItem` one lane over deliberately does *not*
+        // declare this. That chassis resolves through
+        // `resolve_burst_save_damage`, which is friend-or-foe, and a
+        // Scroll of Fireball really does burn the party.
+        true
+    }
+
     fn cost(
         &self,
         _e: &EncounterInstance,

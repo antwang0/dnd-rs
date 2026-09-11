@@ -12269,6 +12269,15 @@ mod tests {
             "Frost Brand",
             "Vicious Weapon",
             "Sword of Wounding",
+            "Holy Avenger",
+            "Dwarven Thrower",
+            "Sword of Sharpness",
+            "Sword of Life Stealing",
+            "Nine Lives Stealer",
+            "Dagger of Venom",
+            "Vorpal Sword",
+            "Mace of Smiting",
+            "Mace of Terror",
             "Adamantine Armor",
             "Spellguard Shield",
             "Goggles of Night",
@@ -12299,6 +12308,22 @@ mod tests {
             "frost brand",
             "vicious weapon",
             "sword of wounding",
+            // The second and third batches. Six of these are gated on
+            // something the generator has to have drawn — a fiend, a
+            // giant, a construct, a natural 20 — so they are floor
+            // material rather than required by name, exactly as the
+            // Giant Slayer has always been. The Dwarven Thrower is the
+            // exception and is required below beside the two originals:
+            // it has no gate at all on its base die.
+            "holy avenger",
+            "dwarven thrower",
+            "sword of sharpness",
+            "sword of life stealing",
+            "nine lives stealer",
+            "dagger of venom",
+            "vorpal sword",
+            "mace of smiting",
+            "mace of terror",
             "adamantine armor",
             "missile snaring",
         ];
@@ -12395,7 +12420,7 @@ mod tests {
         // The test would be worth very little if every new lane simply
         // never fired — a smoke test that smokes nothing passes forever.
         //
-        // The two ungated riders are required by name. Vicious Weapon
+        // The three ungated riders are required by name. Vicious Weapon
         // and Frost Brand have no target gate, no save and no
         // activation, so any swing that lands anywhere carries them;
         // either one going missing means the item-to-rider wiring has
@@ -12409,15 +12434,21 @@ mod tests {
         // its own test that arranges its own conditions; what this one
         // adds is that they fire in a real fight, together, without
         // anything falling over.
-        for required in ["vicious weapon", "frost brand"] {
+        for required in ["vicious weapon", "frost brand", "dwarven thrower"] {
             assert!(
                 seen.contains(required),
                 "the {required} rider never fired across twelve full fights, \
                  and it has no gate that could have stopped it: {seen:?}"
             );
         }
+        // Seventeen of the nineteen fire on the current seeds; the floor
+        // is set below that rather than at it, because the two that
+        // do not are draw-dependent — the two slayers need a dragon and
+        // a giant in the room — and pinning the exact number would make
+        // this test a tripwire for the encounter generator rather than
+        // for the armoury.
         assert!(
-            seen.len() >= 6,
+            seen.len() >= 12,
             "only {} of the armoury's {} logged lanes fired in twelve fights: {seen:?}",
             seen.len(),
             WATCHED.len()
@@ -21378,6 +21409,93 @@ mod tests {
             "a lit blade is not worth another bonus action"
         );
     }
+
+    /// A Wand of Web is fired through the party, because a Wand of Web
+    /// has never caught the party.
+    ///
+    /// The chassis behind twelve items — every wand, scroll and set of
+    /// pipes whose payload is a save-or-condition area — resolves
+    /// through `enemy_burst_targets`, so it has always skipped the
+    /// wielder's own side. It did not *say* so, and the AI's two area
+    /// rungs veto any placement that catches a friendly, so the whole
+    /// family was unreachable in the one situation an area is for: a
+    /// melee scrum with allies standing in it.
+    ///
+    /// The symptom was the shape that hides best — twelve items working
+    /// perfectly whenever a human aimed them, and never once selected
+    /// by a monster or a companion. See
+    /// `BurstSaveConditionItem::spares_allies`.
+    #[test]
+    fn an_enemy_only_wand_is_aimed_through_its_wielders_own_allies() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::Coordinate;
+        use crate::items::item_template::WAND_OF_WEB;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Two goblins in a scrum, with one of the party's own fighters
+        // in among them — the placement the old gate refused.
+        for i in 0..2 {
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2 + i), 1, i as usize)
+                .unwrap();
+        }
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 3), 0, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .pickup_item(&WAND_OF_WEB);
+        assert!(
+            best_burst_placement(&e, wizard, |a| a.name() == "use wand of web").is_some(),
+            "the wand only ever catches enemies and the picker should know it"
+        );
+    }
+
+    /// The Mace of Terror's wave is visible to the burst picker, which
+    /// is the only rung that will ever fire it.
+    ///
+    /// The item does not belong on `KINDLED_WEAPONS` — a prime is
+    /// self-aimed and free, and thirty feet of fear costs a charge and
+    /// has to be aimed at something — so the whole of its reachability
+    /// is `best_burst_placement`'s `available_actions()` walk. That walk
+    /// filters on `is_harmful` and on the schema declaring an area
+    /// shape, neither of which an item is obliged to get right, and a
+    /// mace that no rung can find is three charges nobody spends.
+    ///
+    /// Two clustered goblins because the picker's floor is two enemies
+    /// caught cleanly: one is not worth an area action and it says so.
+    #[test]
+    fn the_burst_picker_can_find_the_mace_of_terror() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::types::Coordinate;
+        use crate::items::item_template::MACE_OF_TERROR;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for i in 0..2 {
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2 + i), 1, i as usize)
+                .unwrap();
+        }
+        assert!(
+            best_burst_placement(&e, fighter, |a| a.name() == "sound mace of terror").is_none(),
+            "a fighter with no mace has no wave to raise"
+        );
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&MACE_OF_TERROR);
+        let aei = best_burst_placement(&e, fighter, |a| a.name() == "sound mace of terror")
+            .expect("two clustered goblins are what the wave is for");
+        assert!(aei.validate(&e));
+    }
+
 
     /// Every kindled blade the item table ships is one the AI knows to
     /// light.
