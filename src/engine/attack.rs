@@ -1871,10 +1871,17 @@ fn pick_ranged_magnet(
         .collect();
     // Nearest first, ties broken on id so a seeded run reproduces.
     candidates.sort_unstable();
-    candidates
-        .into_iter()
-        .map(|(_, id)| id)
-        .find(|id| !row.costs_reaction || magnet_is_worth_it(encounter, *id, aimed_at))
+    candidates.into_iter().map(|(_, id)| id).find(|id| {
+        // A Reaction is a response to something its holder perceives,
+        // which is the gate `reactive_reducer_eligible` applies to every
+        // other reaction in the engine and the reason it belongs here:
+        // a bearer who cannot see the archer cannot step in front of the
+        // arrow. The curse asks nothing of the bearer's senses — it is
+        // not a thing they are doing.
+        !row.costs_reaction
+            || (encounter.viewer_can_see(*id, p.caster_id)
+                && magnet_is_worth_it(encounter, *id, aimed_at))
+    })
 }
 
 /// Is stepping in front of this shot a thing a bearer would actually
@@ -1899,8 +1906,11 @@ fn magnet_is_worth_it(
     let Some(bearer) = encounter.actors.get(&bearer_id) else {
         return false;
     };
-    (bearer.armor_class() as i32 + bearer.total_item_bonuses().ranged_ac)
-        > aimed_at.armor_class() as i32
+    // Both sides through the same accessor, and both with their
+    // anti-arrow bonus folded in — an ally who is *also* holding one of
+    // these shields is not somebody worth taking an arrow for.
+    let effective = |a: &ActorInstance| a.armor_class() as i32 + ranged_only_ac(a, false);
+    effective(bearer) > effective(aimed_at)
 }
 
 /// Walk `ATTACK_REDIRECTS` for `lane` and fire the first row the target
@@ -3243,6 +3253,17 @@ pub fn apply_ranged_weapon_resistance(
     if !halves {
         return 0;
     }
+    // Whether `apply_nonmagical_resistance` has already scaled this
+    // swing's payloads — the other half of the one-halving check, and
+    // the half that is easy to miss. The target's *own sheet* is
+    // `halves_damage_of_type`; the **source-qualified** rows are
+    // deliberately not on it (`effective_damage` does not consult them),
+    // and they were applied a moment ago against exactly the swings this
+    // clause also catches. Without this a creature that halves mundane
+    // arrows and carries the shield would take a quarter.
+    let mundane_lane_fired =
+        crate::engine::magic::resistance_bypass(encounter, p.caster_id, p.target_id, p.is_spell)
+            .is_none();
     let mut removed: u32 = 0;
     let mut notes: Vec<String> = Vec::new();
     for effect in effects.iter_mut() {
@@ -3252,12 +3273,15 @@ pub fn apply_ranged_weapon_resistance(
         if aimed_at != p.target_id || amount == 0 {
             continue;
         }
-        // Already halved by the target's own sheet — 5e halves once.
-        if encounter
-            .actors
-            .get(&p.target_id)
-            .is_some_and(|a| a.halves_damage_of_type(damage_type))
-        {
+        // Already halved — by the target's own sheet, or by the
+        // source-qualified lane that ran just before this one. 5e halves
+        // once, however many sources agree.
+        let already_halved = encounter.actors.get(&p.target_id).is_some_and(|a| {
+            a.halves_damage_of_type(damage_type)
+                || (mundane_lane_fired
+                    && a.nonmagical_damage_modifier(damage_type).is_some())
+        });
+        if already_halved {
             continue;
         }
         let scaled = amount / 2;

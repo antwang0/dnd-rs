@@ -95718,6 +95718,76 @@ fn the_cursed_shield_pulls_every_arrow_in_for_free_and_halves_once() {
         saw_a_stone_hit,
         "forty seeds and the stone-skinned fighter was never hit"
     );
+
+    // The other way a blow can already be halved, and the one that is
+    // easy to miss: a creature whose *source-qualified* rows halve a
+    // mundane arrow. Those rows are deliberately absent from
+    // `halves_damage_of_type` — `effective_damage` does not consult
+    // them — and they are applied by the lane that runs immediately
+    // before this one, against exactly the swings it also catches.
+    // Without the second question a cambion with the shield would take
+    // a quarter of every arrow.
+    use crate::actors::creatures::cambions::CAMBION_TEMPLATE;
+    let mut saw_a_mundane_hit = false;
+    for seed in 0..40u64 {
+        let mut carried = ei_with_terrain(30, 30, &[]);
+        let bearer = carried
+            .instantiate_creature(&CAMBION_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let shooter = carried
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(22, 10), 1, 0)
+            .unwrap();
+        let mut bare = ei_with_terrain(30, 30, &[]);
+        let bare_bearer = bare
+            .instantiate_creature(&CAMBION_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let bare_shooter = bare
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(22, 10), 1, 0)
+            .unwrap();
+        // The control holds the plain Shield so both roll against the
+        // same AC; the cursed one is the only difference.
+        carried
+            .actors
+            .get_mut(&bearer)
+            .unwrap()
+            .pickup_item(&SHIELD_OF_MISSILE_ATTRACTION);
+        bare.actors
+            .get_mut(&bare_bearer)
+            .unwrap()
+            .pickup_item(&crate::items::item_template::SHIELD);
+        let before = (
+            carried.actors[&bearer].hitpoints(),
+            bare.actors[&bare_bearer].hitpoints(),
+        );
+        for (e, s, v) in [
+            (&mut carried, shooter, bearer),
+            (&mut bare, bare_shooter, bare_bearer),
+        ] {
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            for ef in bow.execute(e, s, Some(&vec![v]), None, None) {
+                ef.apply(e);
+            }
+        }
+        let took = (
+            before.0 - carried.actors[&bearer].hitpoints(),
+            before.1 - bare.actors[&bare_bearer].hitpoints(),
+        );
+        if took.1 > 0 {
+            saw_a_mundane_hit = true;
+            assert_eq!(
+                took.0, took.1,
+                "seed {seed}: the shield halved a blow the mundane lane had already \
+                 halved ({} vs {}):\n{}",
+                took.0,
+                took.1,
+                carried.messages().join("\n")
+            );
+        }
+    }
+    assert!(
+        saw_a_mundane_hit,
+        "forty seeds and the cambion was never hit"
+    );
 }
 
 /// The Thunderous Greatclub pays its thunder on every hit, and its
