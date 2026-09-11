@@ -9547,6 +9547,35 @@ impl EncounterInstance {
         self.cover_ac_bonus(attacker_id, target_id)
     }
 
+    /// `cover_ac_bonus` for a **spell** attack, with SRD 5.2's Wand of
+    /// the War Mage taken off it — *"you ignore Half Cover when making a
+    /// spell attack roll."*
+    ///
+    /// The spell lane's answer to `cover_ac_bonus_for_attack`, which is
+    /// where Sharpshooter takes cover off a *shot*, and the two are
+    /// deliberately separate wrappers rather than one: the feat takes
+    /// half **and** three-quarters cover off a ranged weapon attack, and
+    /// the wand takes only half off a spell attack. Folding them
+    /// together would have to pick one of those, and both of them are
+    /// printed.
+    ///
+    /// Half only, so the creature crouched behind a wall keeps its `+5`
+    /// — which is the clause that stops the wand from being a general
+    /// answer to cover and leaves it as an answer to a bodyguard
+    /// standing in the way.
+    pub fn spell_cover_ac_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
+        let cover = self.cover_ac_bonus(attacker_id, target_id);
+        if cover == Self::HALF_COVER_AC
+            && self
+                .actors
+                .get(&attacker_id)
+                .is_some_and(|a| a.ignores_half_cover_on_spell_attacks())
+        {
+            return 0;
+        }
+        cover
+    }
+
     pub fn cover_ac_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
         let (Some(a), Some(b)) = (
             self.actors.get(&attacker_id),

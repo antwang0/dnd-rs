@@ -10147,6 +10147,25 @@ impl ActorInstance {
         self.total_item_bonuses().attack_bonus
     }
 
+    /// Sum of every carried item's `spell_attack_bonus` field — the
+    /// Wand of the War Mage's tier, and nothing else on the loot table.
+    ///
+    /// Kept out of `item_attack_bonus` above and folded in at the
+    /// spell-attack chokepoint instead, because RAW's clause names
+    /// spell attack rolls: a lane shared with the weapon chokepoint
+    /// would hand the wand's bonus to the sword in the holder's other
+    /// hand. See `items::item_template::ItemBonuses::spell_attack_bonus`.
+    pub fn item_spell_attack_bonus(&self) -> i32 {
+        self.total_item_bonuses().spell_attack_bonus
+    }
+
+    /// True while the actor holds something that lets a spell attack
+    /// roll through Half Cover — the Wand of the War Mage, and nothing
+    /// else. Read by `EncounterInstance::spell_cover_ac_bonus`.
+    pub fn ignores_half_cover_on_spell_attacks(&self) -> bool {
+        self.items.iter().any(|i| i.ignores_half_cover_on_spells)
+    }
+
     /// Sum of every carried item's `damage_bonus` field. Folded into the
     /// damage-roll site in `engine::attack` / spell-attack chokepoint so
     /// `+N weapon`-style items pick up their +N damage half once per swing.

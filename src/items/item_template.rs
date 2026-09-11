@@ -51,6 +51,20 @@ pub struct ItemBonuses {
     /// the opposite reason — its clauses name Ranged *weapons* and the
     /// engine widens them; see `feats::SHARPSHOOTER_TAG`.
     pub ranged_ac: i32,
+    /// Flat bonus added to **spell** attack rolls and to nothing else —
+    /// SRD 5.2's Wand of the War Mage, *"you gain a bonus to spell
+    /// attack rolls determined by the wand's rarity."*
+    ///
+    /// The narrow sibling of `attack_bonus` above, which reaches every
+    /// d20 the holder rolls to hit with. A wand is the item that cannot
+    /// ride that lane: RAW confines it to spell attacks, and an
+    /// Eldritch Knight holding one would otherwise be swinging a
+    /// longsword at `+3` for having a stick in their off hand.
+    ///
+    /// Summed at the spell-attack chokepoint only, rather than inside
+    /// `EncounterInstance::caster_attack_buffs` — that helper is shared
+    /// with the weapon chokepoint, which is the whole problem.
+    pub spell_attack_bonus: i32,
 }
 
 impl ItemBonuses {
@@ -67,6 +81,7 @@ impl ItemBonuses {
         attack_bonus: 0,
         damage_bonus: 0,
         ranged_ac: 0,
+        spell_attack_bonus: 0,
     };
 }
 
@@ -81,6 +96,7 @@ impl std::ops::Add for ItemBonuses {
             attack_bonus: self.attack_bonus + other.attack_bonus,
             damage_bonus: self.damage_bonus + other.damage_bonus,
             ranged_ac: self.ranged_ac + other.ranged_ac,
+            spell_attack_bonus: self.spell_attack_bonus + other.spell_attack_bonus,
         }
     }
 }
@@ -244,6 +260,23 @@ pub struct Item {
     /// to be asked for rather than inherited, and it is: that function
     /// skips any type the target's own sheet already halves.
     pub halves_ranged_weapon_damage: bool,
+    /// True when holding this item lets a **spell** attack roll through
+    /// Half Cover — the second clause of SRD 5.2's Wand of the War
+    /// Mage, *"you ignore Half Cover when making a spell attack roll."*
+    ///
+    /// A flag rather than a threshold derived from
+    /// `ItemBonuses::spell_attack_bonus`, for the reason
+    /// `grants_magical_attacks` is not derived from `attack_bonus`: the
+    /// two are separate sentences in RAW, and the first item that has
+    /// one without the other would make a derivation silently wrong
+    /// rather than loudly absent.
+    ///
+    /// Read by `EncounterInstance::spell_cover_ac_bonus`, which is the
+    /// spell lane's answer to the wrapper Sharpshooter rides — and
+    /// deliberately a *different* wrapper, because the feat takes both
+    /// degrees of cover off a shot and the wand takes only the lesser
+    /// one off a cast.
+    pub ignores_half_cover_on_spells: bool,
     /// True when carrying this item gives its bearer Advantage on
     /// saving throws against spells — the Spellguard Shield's first
     /// clause, and the whole of the Mantle of Spell Resistance.
@@ -345,6 +378,7 @@ impl Item {
         grants_unfettered_breathing: false,
         blunts_critical_hits: false,
         halves_ranged_weapon_damage: false,
+        ignores_half_cover_on_spells: false,
         grants_spell_save_advantage: false,
         imposes_spell_attack_disadvantage: false,
         charges: 0,
@@ -3579,6 +3613,82 @@ pub static SPELLGUARD_SHIELD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Wand of the War Mage, +1** (Wand, Uncommon) — *"While holding
+/// this wand, you gain a bonus to spell attack rolls determined by the
+/// wand's rarity. In addition, you ignore Half Cover when making a
+/// spell attack roll."*
+///
+/// The caster's `+N Weapon`, and the gap it fills is the one the
+/// offensive loot ladder left open: a party's wizard has never had an
+/// item that made their Fire Bolt land more often. Every `+N` in the
+/// file until now was either a weapon (and so wasted on a caster's
+/// cantrip lane in all but the accounting) or a blanket `attack_bonus`
+/// the engine hands to both lanes at once. RAW's wand is the other
+/// half — spell attacks only — and it needed a field of its own to say
+/// so; see `ItemBonuses::spell_attack_bonus`.
+///
+/// **The cover clause is the half that changes how a caster stands.**
+/// Half cover is what the engine's own board hands out constantly — one
+/// creature between the shooter and the target is +2 AC — and a wizard
+/// who can fire through their own front line is a wizard who does not
+/// have to walk around it. Three-quarters cover still bites, which is
+/// RAW and is what keeps the wand from being a general answer.
+///
+/// No charges. RAW prints none: the wand is a passive the whole time it
+/// is held, which makes it the only item in the file whose clause is
+/// worth exactly as much on the last round of a dungeon as on the
+/// first.
+pub static WAND_OF_THE_WAR_MAGE_PLUS_ONE: Item = Item {
+    name: "+1 Wand of the War Mage",
+    glyph: '-',
+    bonuses: ItemBonuses {
+        spell_attack_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    ignores_half_cover_on_spells: true,
+    ..Item::DEFAULTS
+};
+
+/// **Wand of the War Mage, +2** (Wand, Rare) — the middle rung. See
+/// `WAND_OF_THE_WAR_MAGE_PLUS_ONE`; the cover clause is the same on all
+/// three, because RAW prints it once for the family rather than scaling
+/// it.
+pub static WAND_OF_THE_WAR_MAGE_PLUS_TWO: Item = Item {
+    name: "+2 Wand of the War Mage",
+    glyph: '-',
+    bonuses: ItemBonuses {
+        spell_attack_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    ignores_half_cover_on_spells: true,
+    ..Item::DEFAULTS
+};
+
+/// **Wand of the War Mage, +3** (Wand, Very Rare) — the top rung. See
+/// `WAND_OF_THE_WAR_MAGE_PLUS_ONE`.
+pub static WAND_OF_THE_WAR_MAGE_PLUS_THREE: Item = Item {
+    name: "+3 Wand of the War Mage",
+    glyph: '-',
+    bonuses: ItemBonuses {
+        spell_attack_bonus: 3,
+        ..ItemBonuses::ZERO
+    },
+    ignores_half_cover_on_spells: true,
+    ..Item::DEFAULTS
+};
+
+/// The caster's `+N` ladder, in rung order — the third and last of
+/// SRD 5.2's three, after the weapons and the armour.
+///
+/// Read by `the_war_mages_ladder_climbs_and_ignores_only_half_cover`,
+/// which checks the numbers go up and that the cover clause does *not*
+/// scale with them.
+pub static WAR_MAGE_LADDER: &[&Item] = &[
+    &WAND_OF_THE_WAR_MAGE_PLUS_ONE,
+    &WAND_OF_THE_WAR_MAGE_PLUS_TWO,
+    &WAND_OF_THE_WAR_MAGE_PLUS_THREE,
+];
+
 /// **Ring of the Ram** (Ring, Rare) — *"This ring has 3 charges and
 /// regains 1d3 expended charges daily at dawn. While wearing the ring,
 /// you can take a Magic action to expend 1 to 3 charges to make a
@@ -4964,6 +5074,14 @@ pub static LOOT_POOL: &[&Item] = &[
     // Three shots of artillery on a finger, and the only ranged shove in
     // the pool. Single entry.
     &RING_OF_THE_RAM,
+    // The caster's `+N` ladder, weighted like the other two: the `+1`
+    // common, the dearer rungs single. The pool has never had an item
+    // that made a cantrip land more often, so the bottom rung is the
+    // one that matters most for how a party's wizard plays.
+    &WAND_OF_THE_WAR_MAGE_PLUS_ONE,
+    &WAND_OF_THE_WAR_MAGE_PLUS_ONE,
+    &WAND_OF_THE_WAR_MAGE_PLUS_TWO,
+    &WAND_OF_THE_WAR_MAGE_PLUS_THREE,
     // The shield's save clause without the shield, and the one a
     // greatsword fighter can actually wear.
     &MANTLE_OF_SPELL_RESISTANCE,
@@ -5375,6 +5493,52 @@ mod tests {
     #[test]
     fn every_magic_weapon_tier_is_in_the_loot_pool() {
         for item in [&WEAPON_PLUS_ONE, &WEAPON_PLUS_TWO, &WEAPON_PLUS_THREE] {
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == item.name),
+                "{} cannot be found by anybody",
+                item.name
+            );
+        }
+    }
+
+    /// The War Mage ladder climbs, is findable, and does not scale the
+    /// clause RAW prints once.
+    ///
+    /// The third `+N` ladder in the file and the one whose two clauses
+    /// pull apart: the bonus is per-rarity and the cover exemption is
+    /// the same on all three rungs. A `+3` that also took
+    /// three-quarters cover off would be a different item, and nothing
+    /// but this would say so.
+    ///
+    /// Also the negative claim, which is the whole reason
+    /// `spell_attack_bonus` is its own field: a wand adds nothing to a
+    /// sword. An Eldritch Knight with one in their off hand must swing
+    /// at exactly the number they swung at before.
+    #[test]
+    fn the_war_mages_ladder_climbs_and_ignores_only_half_cover() {
+        for (rung, item) in WAR_MAGE_LADDER.iter().enumerate() {
+            assert_eq!(
+                item.bonuses.spell_attack_bonus,
+                rung as i32 + 1,
+                "{} is not the +{} it says it is",
+                item.name,
+                rung + 1
+            );
+            assert!(
+                item.ignores_half_cover_on_spells,
+                "{} dropped the clause the whole family shares",
+                item.name
+            );
+            assert_eq!(
+                item.bonuses.attack_bonus, 0,
+                "{} sharpens the sword in the wizard's other hand",
+                item.name
+            );
+            assert_eq!(
+                item.bonuses.damage_bonus, 0,
+                "{} adds damage RAW does not print",
+                item.name
+            );
             assert!(
                 LOOT_POOL.iter().any(|l| l.name == item.name),
                 "{} cannot be found by anybody",

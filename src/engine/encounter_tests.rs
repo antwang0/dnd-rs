@@ -95151,6 +95151,113 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Wand of the War Mage sharpens a cast and nothing else, and
+/// fires through a bodyguard but not through a wall.
+///
+/// Three claims, and each is a separate field or wrapper that would
+/// have been tempting to collapse into one:
+///
+///   - **The bonus is on the cast.** `spell_attack_bonus` is its own
+///     lane precisely so a wand in the off hand does not sharpen the
+///     sword in the main one, and the sword half is checked by asking
+///     a fighter's swing to be unmoved.
+///   - **Half cover comes off.** One ally standing on the line is `+2`
+///     AC and the wand-holder ignores it, which is the clause that
+///     changes where a caster stands.
+///   - **Three-quarters cover does not.** RAW takes only the lesser
+///     degree off, which is what keeps the wand from being a general
+///     answer to cover — and is the one way it differs from the
+///     Sharpshooter feat, whose clause takes both.
+#[test]
+fn the_war_mage_wand_sharpens_the_cast_and_only_ignores_half_cover() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::WAND_OF_THE_WAR_MAGE_PLUS_THREE;
+
+    // Wizard at one end, goblin at the other, and `blockers` allies
+    // standing on the line between them.
+    let board = |blockers: usize| {
+        let mut e = ei_with_terrain(40, 40, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(24, 10), 1, 0)
+            .unwrap();
+        for i in 0..blockers {
+            e.instantiate_creature(
+                &GOBLIN_TEMPLATE,
+                Coordinate::new(12 + 4 * i as isize, 10),
+                1,
+                0,
+            )
+            .unwrap();
+        }
+        (e, wizard, goblin)
+    };
+
+    // The cover the board actually hands out, with and without the
+    // wand. Both degrees have to show up or the sweep is vacuous.
+    let mut degrees: Vec<i32> = Vec::new();
+    for blockers in 1..=2usize {
+        let (mut e, wizard, goblin) = board(blockers);
+        let bare = e.spell_cover_ac_bonus(wizard, goblin);
+        degrees.push(bare);
+        assert_eq!(
+            bare,
+            e.cover_ac_bonus(wizard, goblin),
+            "{blockers} blockers: the wrapper moved cover with no wand in the room"
+        );
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .pickup_item(&WAND_OF_THE_WAR_MAGE_PLUS_THREE);
+        let warded = e.spell_cover_ac_bonus(wizard, goblin);
+        if bare == crate::engine::encounter::EncounterInstance::HALF_COVER_AC {
+            assert_eq!(warded, 0, "{blockers} blockers: half cover survived the wand");
+        } else {
+            assert_eq!(
+                warded, bare,
+                "{blockers} blockers: the wand took off cover RAW leaves on"
+            );
+        }
+        // A weapon swing is untouched either way — the wand's clause
+        // names spell attack rolls.
+        assert_eq!(
+            e.cover_ac_bonus_for_attack(wizard, goblin, false),
+            bare,
+            "{blockers} blockers: the wand reached the weapon lane"
+        );
+    }
+    use crate::engine::encounter::EncounterInstance as EI;
+    assert!(
+        degrees.contains(&EI::HALF_COVER_AC) && degrees.contains(&EI::THREE_QUARTERS_COVER_AC),
+        "the board never produced both degrees of cover, so the sweep proved nothing: {degrees:?}"
+    );
+
+    // And the bonus lands on the cast and not on the swing.
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let before = e.actors[&fighter].item_attack_bonus();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&WAND_OF_THE_WAR_MAGE_PLUS_THREE);
+    assert_eq!(
+        e.actors[&fighter].item_attack_bonus(),
+        before,
+        "the wand sharpened the fighter's longsword"
+    );
+    assert_eq!(
+        e.actors[&fighter].item_spell_attack_bonus(),
+        3,
+        "the wand's own lane came up empty"
+    );
+}
+
 /// The Ring of the Ram rolls its own attack, shoves what it hits, and
 /// stays a ring when the pool runs dry.
 ///

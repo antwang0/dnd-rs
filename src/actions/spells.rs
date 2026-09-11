@@ -163,8 +163,10 @@ pub fn spell_attack_roll(
         .unwrap_or(10);
     // 5e Cover: intervening creatures bump the target's effective AC,
     // same as for weapon swings. Spell attacks (Fire Bolt, Guiding Bolt,
-    // Scorching Ray, etc.) honor the rule identically.
-    let cover_bonus = encounter.cover_ac_bonus(caster_id, target_id);
+    // Scorching Ray, etc.) honor the rule identically — through the
+    // spell-aware wrapper, which is where SRD 5.2's Wand of the War Mage
+    // takes *half* cover off a cast. See `spell_cover_ac_bonus`.
+    let cover_bonus = encounter.spell_cover_ac_bonus(caster_id, target_id);
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
     // spell attacks honor the same +4 AC envelope as weapon swings —
     // RAW says "when a creature hits you with an attack" without a
@@ -232,6 +234,17 @@ pub fn spell_attack_roll(
     // still active when we sum the bonus. Mirrors the same ordering
     // fix in `resolve_attack`.
     let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(caster_id);
+    // And the one flat to-hit source that is *not* shared with weapon
+    // swings: SRD 5.2's Wand of the War Mage, whose bonus RAW confines
+    // to spell attack rolls. It is summed here rather than inside
+    // `caster_attack_buffs` for exactly that reason — a lane that
+    // reached both chokepoints would hand a wizard's wand to the sword
+    // in their other hand. See `ItemBonuses::spell_attack_bonus`.
+    let wand = encounter
+        .actors
+        .get(&caster_id)
+        .map_or(0, |a| a.item_spell_attack_bonus());
+    let buff = buff + wand;
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
     // Burn through the one-shot rider stack (Helped, Hidden, per-target
     // help grant, Invisibility concentration, Inspired). Same hook as
