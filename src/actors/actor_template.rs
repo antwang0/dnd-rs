@@ -7401,6 +7401,22 @@ impl ActorInstance {
         self.items.iter().any(|i| i.blunts_critical_hits)
     }
 
+    /// True while the actor carries something that halves the damage of
+    /// an attack made with a ranged weapon — the Shield of Missile
+    /// Attraction, and nothing else on the loot table.
+    ///
+    /// A source-qualified resistance rather than a typed one, which is
+    /// why it is a flag here instead of a row on the item's
+    /// `damage_resistances`: RAW's clause asks what the attack was made
+    /// *with*, and the four lanes `effective_damage` folds together all
+    /// ask what the damage *is*. Read by
+    /// `engine::attack::apply_ranged_weapon_resistance` at the weapon
+    /// chokepoint, which is the last place in the engine that still
+    /// knows an arrow was an arrow.
+    pub fn halves_ranged_weapon_damage(&self) -> bool {
+        self.items.iter().any(|i| i.halves_ranged_weapon_damage)
+    }
+
     /// True while the actor carries a silvered weapon. Answers strictly
     /// less than `wields_enchanted_weapon` — silver gets through the
     /// five lycanthrope stat blocks and nothing else.

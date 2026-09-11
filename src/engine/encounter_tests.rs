@@ -95151,6 +95151,278 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Arrow-Catching Shield raises AC against arrows only, and steps
+/// in front of the one aimed at the ally beside it.
+///
+/// Both clauses of one item, and the second is what the magnet cohort
+/// was built for. Three claims:
+///
+///   - **The AC is ranged-only.** A shield that turned sword blows as
+///     well would be strictly better than the `+2 Shield` a rarity
+///     below it, and `ItemBonuses::ranged_ac` exists to stop that. The
+///     melee half is checked by asking `armor_class()` — the number the
+///     panel prints and the AI reasons on — to be unmoved by the bonus.
+///   - **The swap happens.** A goblin shooting at the wizard finds the
+///     fighter, who was standing next to them.
+///   - **The swap lands on the bearer's own sheet.** The whole reason
+///     the magnet runs before the roll rather than moving the damage
+///     after it: the arrow has to be rolled against the shield.
+#[test]
+fn the_arrow_catching_shield_guards_against_arrows_and_volunteers_for_them() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::ARROW_CATCHING_SHIELD;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let bare_ac = e.actors[&fighter].armor_class();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&ARROW_CATCHING_SHIELD);
+
+    // The shield's own +2 is ordinary AC; the anti-arrow +2 is not, and
+    // must not reach the number the rest of the engine reads.
+    assert_eq!(
+        e.actors[&fighter].armor_class(),
+        bare_ac + 2,
+        "the ranged-only bonus leaked into the creature's Armour Class"
+    );
+    assert_eq!(
+        crate::engine::attack::ranged_only_ac(&e.actors[&fighter], true),
+        0,
+        "a sword swing found the anti-arrow bonus"
+    );
+    assert_eq!(
+        crate::engine::attack::ranged_only_ac(&e.actors[&fighter], false),
+        2,
+        "an arrow did not"
+    );
+
+    // The volunteer clause. The wizard stands one tile from the
+    // fighter — well inside five feet — and a goblin shoots at it from
+    // across the room. The fighter's AC is the better of the two, so
+    // the reaction is worth spending.
+    let board = || {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(11, 10), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&ARROW_CATCHING_SHIELD);
+        (e, fighter, wizard, goblin)
+    };
+    let (probe, probe_f, probe_w, probe_g) = board();
+    assert!(
+        probe.actors[&probe_f].armor_class() > probe.actors[&probe_w].armor_class(),
+        "the premise of the heuristic does not hold for this pair"
+    );
+    let bow = *probe.actors[&probe_g]
+        .available_actions()
+        .iter()
+        .find(|a| a.name().contains("bow"))
+        .expect("the goblin carries a bow");
+
+    for seed in 0..30u64 {
+        let (mut e, fighter, wizard, goblin) = board();
+        let wizard_hp = e.actors[&wizard].hitpoints();
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        for ef in bow.execute(&mut e, goblin, Some(&vec![wizard]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.messages()
+                .iter()
+                .any(|m| m.contains("arrow-catching shield")),
+            "seed {seed}: the shield said nothing:\n{}",
+            e.messages().join("\n")
+        );
+        assert_eq!(
+            e.actors[&wizard].hitpoints(),
+            wizard_hp,
+            "seed {seed}: the arrow reached the wizard the shield volunteered for:\n{}",
+            e.messages().join("\n")
+        );
+        // And the reaction is real: the fighter has spent theirs.
+        assert!(
+            !e.actors[&fighter].has_reaction(),
+            "seed {seed}: the shield volunteered for free"
+        );
+    }
+}
+
+/// The Shield of Missile Attraction drags the shot in for free, only
+/// reaches ten feet, and halves what lands exactly once.
+///
+/// The cursed twin of the shield above, and every assertion here is one
+/// of the three reasons it is a separate cohort row rather than a flag
+/// on that one:
+///
+///   - **It costs no Reaction.** That is what makes it a curse rather
+///     than a service: the bearer cannot decline, and cannot run out.
+///   - **It reaches ten feet, not five**, which is how it manages to
+///     be a liability on a board where the party spreads out.
+///   - **It halves once.** The lane sits outside
+///     `ActorInstance::effective_damage`, where the other four
+///     resistance lanes cancel each other out, so the "resistances
+///     don't stack" rule has to be asked for. A Stoneskinned bearer
+///     already halves the arrow's Piercing, and the shield must add
+///     nothing on top.
+#[test]
+fn the_cursed_shield_pulls_every_arrow_in_for_free_and_halves_once() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::SHIELD_OF_MISSILE_ATTRACTION;
+
+    // A goblin archer twelve tiles away, the party wizard it is aiming
+    // at, and the cursed fighter standing beside the wizard.
+    let board = |gap: isize| {
+        let mut e = ei_with_terrain(40, 40, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10 - gap, 10), 0, 0)
+            .unwrap();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(22, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&SHIELD_OF_MISSILE_ATTRACTION);
+        (e, fighter, wizard, goblin)
+    };
+
+    // Out of range: RAW's ten feet is four tiles of footprint gap, and a
+    // Medium creature is two tiles across, so a bearer eight tiles of
+    // *coordinate* away is five tiles of gap away and is a bystander.
+    let (mut e, _f, wizard, goblin) = board(8);
+    let bow = *e.actors[&goblin]
+        .available_actions()
+        .iter()
+        .find(|a| a.name().contains("bow"))
+        .expect("the goblin carries a bow");
+    e.roller = crate::engine::dice::FastRandRoller::with_seed(7);
+    for ef in bow.execute(&mut e, goblin, Some(&vec![wizard]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        !e.messages().iter().any(|m| m.contains("missile attraction")),
+        "the curse reached past its ten feet:\n{}",
+        e.messages().join("\n")
+    );
+
+    // In range, and free. Swept because the arrow still has to hit
+    // something for the damage half to be observable.
+    let mut saw_a_hit = false;
+    for seed in 0..40u64 {
+        let (mut e, fighter, wizard, goblin) = board(2);
+        let wizard_hp = e.actors[&wizard].hitpoints();
+        let fighter_hp = e.actors[&fighter].hitpoints();
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        for ef in bow.execute(&mut e, goblin, Some(&vec![wizard]), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.messages().iter().any(|m| m.contains("missile attraction")),
+            "seed {seed}: the curse let one through:\n{}",
+            e.messages().join("\n")
+        );
+        assert_eq!(
+            e.actors[&wizard].hitpoints(),
+            wizard_hp,
+            "seed {seed}: the arrow reached the wizard anyway"
+        );
+        assert!(
+            e.actors[&fighter].has_reaction(),
+            "seed {seed}: a curse billed the bearer a Reaction"
+        );
+        if e.actors[&fighter].hitpoints() < fighter_hp {
+            saw_a_hit = true;
+            assert!(
+                e.messages()
+                    .iter()
+                    .any(|m| m.contains("turns the missile aside")),
+                "seed {seed}: the arrow landed in full:\n{}",
+                e.messages().join("\n")
+            );
+        }
+    }
+    assert!(saw_a_hit, "forty seeds and the goblin never landed one");
+
+    // And once. A Stoneskinned bearer already halves Piercing; the
+    // shield must not halve it again.
+    //
+    // The control run swaps the cursed shield for the plain `SHIELD`
+    // rather than dropping it, because both are `ac: 2` — a control
+    // with two fewer points of Armour Class would roll a different
+    // number of hits and the two runs would not be comparable at all.
+    let mut saw_a_stone_hit = false;
+    for seed in 0..40u64 {
+        let (mut plain, plain_f, _w, plain_g) = board(2);
+        let (mut stone, stone_f, _w2, stone_g) = board(2);
+        for (e, f) in [(&mut plain, plain_f), (&mut stone, stone_f)] {
+            e.actors.get_mut(&f).unwrap().add_condition(
+                Condition::Stoneskinned,
+                crate::conditions::ConditionTimer::Permanent,
+            );
+        }
+        let control = plain.actors.get_mut(&plain_f).unwrap();
+        control.remove_item_by_name(SHIELD_OF_MISSILE_ATTRACTION.name);
+        control.pickup_item(&crate::items::item_template::SHIELD);
+        assert_eq!(
+            plain.actors[&plain_f].armor_class(),
+            stone.actors[&stone_f].armor_class(),
+            "the control and the test are not rolling against the same AC"
+        );
+        let before = (
+            plain.actors[&plain_f].hitpoints(),
+            stone.actors[&stone_f].hitpoints(),
+        );
+        for (e, shooter, victim) in [
+            (&mut plain, plain_g, plain_f),
+            (&mut stone, stone_g, stone_f),
+        ] {
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            for ef in bow.execute(e, shooter, Some(&vec![victim]), None, None) {
+                ef.apply(e);
+            }
+        }
+        let took = (
+            before.0 - plain.actors[&plain_f].hitpoints(),
+            before.1 - stone.actors[&stone_f].hitpoints(),
+        );
+        if took.0 > 0 {
+            saw_a_stone_hit = true;
+            assert_eq!(
+                took.0, took.1,
+                "seed {seed}: the shield halved a blow Stoneskin had already halved \
+                 ({} vs {}):\n{}",
+                took.0,
+                took.1,
+                stone.messages().join("\n")
+            );
+        }
+    }
+    assert!(
+        saw_a_stone_hit,
+        "forty seeds and the stone-skinned fighter was never hit"
+    );
+}
+
 /// The Thunderous Greatclub pays its thunder on every hit, and its
 /// clap comes out as a wedge rather than a ring.
 ///

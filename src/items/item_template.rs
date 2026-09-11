@@ -30,6 +30,27 @@ pub struct ItemBonuses {
     /// damage-roll site in `engine::attack` / `spells.rs`'s spell-attack
     /// chokepoint. 0 by default.
     pub damage_bonus: i32,
+    /// Armour Class that answers a **ranged** attack roll and nothing
+    /// else — SRD 5.2's Arrow-Catching Shield, *"you gain a +2 bonus to
+    /// Armor Class against ranged attack rolls"*, and the only defence
+    /// on the roster that asks what kind of swing is coming.
+    ///
+    /// A second AC field rather than a bigger `ac`, because the two are
+    /// not interchangeable in either direction: a shield that turned
+    /// sword blows as well as arrows would be strictly better than the
+    /// `+2 Shield` one rarity below it, and the bearer's own sheet
+    /// still has to report one number. It is added to `ac` at the two
+    /// attack chokepoints, and only when the swing is ranged — which is
+    /// where a qualification about the attacker belongs.
+    /// `ActorInstance::armor_class` answers *"what is this creature's
+    /// AC"* and has nobody to ask.
+    ///
+    /// Spell attacks count. RAW's clause names "ranged attack rolls"
+    /// rather than "Ranged weapons", and a Fire Bolt at forty feet is a
+    /// ranged attack roll. The Sharpshooter feat reads the other way for
+    /// the opposite reason — its clauses name Ranged *weapons* and the
+    /// engine widens them; see `feats::SHARPSHOOTER_TAG`.
+    pub ranged_ac: i32,
 }
 
 impl ItemBonuses {
@@ -45,6 +66,7 @@ impl ItemBonuses {
         save: 0,
         attack_bonus: 0,
         damage_bonus: 0,
+        ranged_ac: 0,
     };
 }
 
@@ -58,6 +80,7 @@ impl std::ops::Add for ItemBonuses {
             save: self.save + other.save,
             attack_bonus: self.attack_bonus + other.attack_bonus,
             damage_bonus: self.damage_bonus + other.damage_bonus,
+            ranged_ac: self.ranged_ac + other.ranged_ac,
         }
     }
 }
@@ -200,6 +223,27 @@ pub struct Item {
     /// of non-magical-in-the-relevant-sense plate, and would have to be
     /// reinstalled after every long rest.
     pub blunts_critical_hits: bool,
+    /// True when carrying this item halves the damage of an attack made
+    /// with a **ranged weapon** — SRD 5.2's Shield of Missile
+    /// Attraction, *"you have Resistance to damage from attacks made
+    /// with Ranged weapons"*, and nothing else on the roster.
+    ///
+    /// A flag rather than a row on `damage_resistances` because the two
+    /// answer different questions. Every entry on that slice names a
+    /// damage *type* and is folded into `ActorInstance::effective_damage`
+    /// alongside the template, condition and feature lanes, where 5e's
+    /// stacking rules cancel each other out. This clause names what the
+    /// attack was **made with**, which `effective_damage` has no way to
+    /// ask — by the time a payload reaches it, an arrow and a falling
+    /// rock are both Piercing. So it is applied at the weapon
+    /// chokepoint instead, by
+    /// `engine::attack::apply_ranged_weapon_resistance`, which is the
+    /// last place that still knows.
+    ///
+    /// Sitting outside `effective_damage` means the one-halving rule has
+    /// to be asked for rather than inherited, and it is: that function
+    /// skips any type the target's own sheet already halves.
+    pub halves_ranged_weapon_damage: bool,
     /// True when carrying this item gives its bearer Advantage on
     /// saving throws against spells — the Spellguard Shield's first
     /// clause, and the whole of the Mantle of Spell Resistance.
@@ -300,6 +344,7 @@ impl Item {
         grants_silvered_attacks: false,
         grants_unfettered_breathing: false,
         blunts_critical_hits: false,
+        halves_ranged_weapon_damage: false,
         grants_spell_save_advantage: false,
         imposes_spell_attack_disadvantage: false,
         charges: 0,
@@ -3534,6 +3579,83 @@ pub static SPELLGUARD_SHIELD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Arrow-Catching Shield** (Armor, Shield; Rare) — *"You gain a +2
+/// bonus to Armor Class against ranged attack rolls while you wield
+/// this Shield. This bonus is in addition to the Shield's normal bonus
+/// to AC. Whenever an attacker makes a ranged attack roll against a
+/// target within 5 feet of you, you can take a Reaction to become the
+/// target of the attack instead."*
+///
+/// The Spellguard Shield's opposite number: one answers a caster and
+/// this one answers a firing line, and each is an ordinary shield
+/// against the other. Both clauses ship, and they are printed on one
+/// shield because they are one idea — the bearer steps in front of an
+/// ally's arrow *and* is the creature it is hardest to hit with one.
+/// The engine composes them in that order: the swap happens before
+/// anything is rolled, so the shot lands against the AC the shield
+/// raised. See `RANGED_ATTACK_MAGNETS`.
+///
+/// `ac: 2` is the shield's own, and the `+2` against arrows rides
+/// `ranged_ac` beside it — which is why this is the one item in the
+/// file with two AC numbers and no contradiction between them.
+///
+/// **RAW hands the reaction's timing to the bearer and the engine has
+/// to decide.** Two gates stand in: the shot must come from somebody
+/// hostile (nobody spends a reaction to intercept their own side), and
+/// the swap must actually make the arrow harder to land — see
+/// `attack::magnet_is_worth_it`. A bearer with worse AC than the ally
+/// they would be covering declines, which is the direction a player
+/// would decline in too.
+pub static ARROW_CATCHING_SHIELD: Item = Item {
+    name: "Arrow-Catching Shield",
+    glyph: '(',
+    bonuses: ItemBonuses {
+        ac: 2,
+        ranged_ac: 2,
+        ..ItemBonuses::ZERO
+    },
+    passive_conditions: &[crate::conditions::Condition::ArrowCatching],
+    ..Item::DEFAULTS
+};
+
+/// **Shield of Missile Attraction** (Armor, Shield; Rare, **cursed**) —
+/// *"While holding this Shield, you have Resistance to damage from
+/// attacks made with Ranged weapons. Curse. … Whenever an attack with a
+/// Ranged weapon targets a creature within 10 feet of you, the curse
+/// causes you to become the target instead."*
+///
+/// The first cursed item in the file, and the first whose two clauses
+/// point in opposite directions on purpose: the shield halves every
+/// arrow that reaches its bearer, and then makes sure every arrow in
+/// the room reaches its bearer. Twice the radius of the Arrow-Catching
+/// Shield above, no reaction to pay, and no choice about it — a party
+/// archer firing past the bearer at an enemy standing beside them hits
+/// the bearer, which is the sentence RAW wrote and the reason the item
+/// is filed under Cursed Items rather than beside the Spellguard.
+///
+/// Whether it is worth carrying is a real question rather than a
+/// rhetorical one, which is what makes it interesting loot: a
+/// high-AC front-liner who halves what does get through is exactly the
+/// creature a party would *want* eating the enemy's arrows, and the
+/// same shield on a wizard is a way to die.
+///
+/// **RAW's curse outlasts taking the shield off and the engine's does
+/// not** — see `Condition::MissileAttracting`. There is no attunement
+/// here to be stuck in, and a curse that survived dropping the object
+/// would have to survive a long rest and a Dispel Magic too, which is
+/// three lanes for one item.
+pub static SHIELD_OF_MISSILE_ATTRACTION: Item = Item {
+    name: "Shield of Missile Attraction",
+    glyph: '(',
+    bonuses: ItemBonuses {
+        ac: 2,
+        ..ItemBonuses::ZERO
+    },
+    halves_ranged_weapon_damage: true,
+    passive_conditions: &[crate::conditions::Condition::MissileAttracting],
+    ..Item::DEFAULTS
+};
+
 /// **Mantle of Spell Resistance** (Wondrous item, Rare) — *"While
 /// wearing this cloak, you have Advantage on saving throws against
 /// spells."*
@@ -4799,6 +4921,14 @@ pub static LOOT_POOL: &[&Item] = &[
     // an ambush), and finding the one that matches the room is the
     // point.
     &SPELLGUARD_SHIELD,
+    // The other two shields whose value is a clause. The Arrow-Catching
+    // Shield answers a firing line the way the Spellguard answers a
+    // caster; the Shield of Missile Attraction answers it too and then
+    // makes sure the line is aimed at you. Single entries apiece — the
+    // cursed one is not weighted down for being cursed, because whether
+    // it is a curse depends entirely on who picks it up.
+    &ARROW_CATCHING_SHIELD,
+    &SHIELD_OF_MISSILE_ATTRACTION,
     // The shield's save clause without the shield, and the one a
     // greatsword fighter can actually wear.
     &MANTLE_OF_SPELL_RESISTANCE,
@@ -5216,6 +5346,91 @@ mod tests {
                 item.name
             );
         }
+    }
+
+    /// Exactly the two magnet shields attract, and both do.
+    ///
+    /// Both directions, for the reason `exactly_the_weapons_carry_the_magic`
+    /// checks both: a shield that installs a marker no cohort row reads
+    /// is a shield that does nothing and looks exactly like one that
+    /// works, and a marker installed by something that is *not* one of
+    /// these two shields would drag arrows onto a creature for reasons
+    /// nobody wrote down.
+    ///
+    /// Also pins the split between the two halves of the Arrow-Catching
+    /// Shield, which is the thing about it that is easiest to get wrong
+    /// from either end: the `+2` against arrows is `ranged_ac` and
+    /// **not** `ac`, and the volunteering is the marker and not the
+    /// bonus. A shield that put its anti-arrow bonus on `ac` would be
+    /// strictly better than the `+2 Shield` a rarity below it and
+    /// nothing would say so.
+    #[test]
+    fn exactly_the_magnet_shields_attract() {
+        use crate::conditions::Condition;
+        use crate::engine::attack::ranged_magnet_conditions;
+
+        let rows = ranged_magnet_conditions();
+        let wiring: &[(&Item, Condition)] = &[
+            (&ARROW_CATCHING_SHIELD, Condition::ArrowCatching),
+            (
+                &SHIELD_OF_MISSILE_ATTRACTION,
+                Condition::MissileAttracting,
+            ),
+        ];
+        assert_eq!(
+            rows.len(),
+            wiring.len(),
+            "the magnet cohort grew and this sweep did not"
+        );
+        for (item, marker) in wiring {
+            assert!(
+                rows.contains(marker),
+                "{} installs {} and no magnet row reads it",
+                item.name,
+                marker.name()
+            );
+            assert!(
+                item.passive_conditions.contains(marker),
+                "{} does not install the marker its row reads",
+                item.name
+            );
+        }
+
+        // Nothing else in the file installs either marker.
+        let markers: Vec<Condition> = wiring.iter().map(|(_, m)| *m).collect();
+        for item in LOOT_POOL {
+            for marker in &markers {
+                if item.passive_conditions.contains(marker) {
+                    assert!(
+                        wiring.iter().any(|(w, _)| w.name == item.name),
+                        "{} attracts missiles and is not a magnet shield",
+                        item.name
+                    );
+                }
+            }
+        }
+
+        // The Arrow-Catching Shield's two numbers, and which is which.
+        assert_eq!(
+            ARROW_CATCHING_SHIELD.bonuses.ac, SHIELD.bonuses.ac,
+            "the arrow-catching shield is a shield first"
+        );
+        assert_eq!(
+            ARROW_CATCHING_SHIELD.bonuses.ranged_ac, 2,
+            "RAW's +2 against ranged attack rolls went missing"
+        );
+        assert_eq!(
+            SHIELD_OF_MISSILE_ATTRACTION.bonuses.ranged_ac, 0,
+            "the cursed shield turns arrows aside with Resistance, not with AC"
+        );
+        assert!(
+            SHIELD_OF_MISSILE_ATTRACTION.halves_ranged_weapon_damage,
+            "the cursed shield's only upside went missing"
+        );
+        assert!(
+            !ARROW_CATCHING_SHIELD.halves_ranged_weapon_damage,
+            "the arrow-catching shield does not halve what it catches"
+        );
     }
 
     /// The two defensive `+N` ladders climb, top out where RAW tops

@@ -1683,6 +1683,226 @@ const ATTACK_REDIRECTS: &[AttackRedirect] = &[
     },
 ];
 
+/// The part of a creature's Armour Class that only answers a ranged
+/// swing — SRD 5.2's Arrow-Catching Shield, and nothing else on the
+/// roster.
+///
+/// Read at both attack chokepoints beside `armor_class()` rather than
+/// inside it, because the qualification is about the *attacker* and
+/// `armor_class()` has no attacker to ask about: it answers "what is
+/// this creature's AC", which is also the number the UI panel prints
+/// and the AI's threat estimates run on. Folding a conditional into it
+/// would make all three of those wrong for every swing that is not an
+/// arrow.
+///
+/// See `ItemBonuses::ranged_ac` for why spell attacks count.
+pub fn ranged_only_ac(target: &ActorInstance, is_melee: bool) -> i32 {
+    if is_melee {
+        0
+    } else {
+        target.total_item_bonuses().ranged_ac
+    }
+}
+
+/// Cohort row: a shield whose bearer pulls a ranged attack aimed at
+/// somebody standing near them onto themselves.
+///
+/// The mirror image of `AttackRedirect` one table up, and worth the
+/// separate cohort rather than a third column on that one, because the
+/// two run at opposite ends of the swing and key off opposite
+/// creatures. A redirect is keyed on the creature *being attacked* and
+/// fires once the d20 is known, moving damage. A magnet is keyed on a
+/// **bystander** and fires before anything is rolled, moving the
+/// target — so the arrow is then rolled against the bearer's AC,
+/// through the bearer's cover, into the bearer's resistances, and the
+/// whole pipeline behind it never learns it was aimed somewhere else.
+///
+/// That ordering is the point. SRD 5.2's two shields both exist to make
+/// the bearer's own defences answer somebody else's incoming fire, and
+/// a lane that moved the damage instead would have run those defences
+/// on the wrong creature.
+#[derive(Clone, Copy)]
+struct RangedAttackMagnet {
+    /// The marker the shield installs while it is carried.
+    condition: Condition,
+    /// How far from the creature actually aimed at the bearer may
+    /// stand, as a footprint gap on the 2.5-ft grid.
+    radius: isize,
+    /// True when RAW makes the swap a Reaction the bearer chooses.
+    ///
+    /// The column the cohort exists for. One shield is a choice made
+    /// once a round and the other is a curse that does not ask, and
+    /// every other difference between them follows from this one: a
+    /// voluntary row has to be worth spending a reaction on, so it
+    /// fires only when it actually protects somebody and only against
+    /// a hostile shot; an involuntary row fires at every arrow in the
+    /// room, including the party's own.
+    costs_reaction: bool,
+    /// Log-friendly identity.
+    label: &'static str,
+    /// The clause the log line reads with, between the bearer's name
+    /// and the creature the shot was meant for.
+    flavor: &'static str,
+}
+
+/// Every ranged-magnet row, walked by `attract_ranged_attack` at the
+/// head of the weapon chokepoint.
+///
+/// **Weapon attacks only, and that is RAW rather than a limitation.**
+/// Both rows name a Ranged *weapon* (the cursed shield) or an attacker
+/// making a ranged attack roll (the Arrow-Catching Shield); the engine
+/// asks the narrower question for both, because the spell chokepoint is
+/// a different function and a Fire Bolt that re-aimed itself would need
+/// the same care taken twice. The Arrow-Catching Shield's *AC* clause
+/// does cover spell attacks — see `ItemBonuses::ranged_ac` — and the
+/// asymmetry is deliberate: raising your own AC against a Fire Bolt is
+/// a defence, stepping in front of one is a decision.
+///
+/// Order is significant only for a bearer holding both shields, which
+/// no loot table hands out and nothing forbids. The curse is listed
+/// first because it costs nothing: a bearer who is going to eat the
+/// arrow anyway should not also be billed a Reaction for it.
+const RANGED_ATTACK_MAGNETS: &[RangedAttackMagnet] = &[
+    // SRD 5.2 **Shield of Missile Attraction** (Armor, Shield; Rare,
+    // cursed): "Whenever an attack with a Ranged weapon targets a
+    // creature within 10 feet of you, the curse causes you to become
+    // the target instead."
+    //
+    // No team filter and no choice — the whole of what makes it a
+    // curse. The party's own archer firing past the bearer at an enemy
+    // beside them hits the bearer, which is the sentence RAW wrote and
+    // the reason the shield is filed under Cursed Items.
+    RangedAttackMagnet {
+        condition: Condition::MissileAttracting,
+        // 10 ft = 4 tiles on the 2.5-ft grid.
+        radius: 4,
+        costs_reaction: false,
+        label: "missile attraction",
+        flavor: "drags the shot meant for",
+    },
+    // SRD 5.2 **Arrow-Catching Shield** (Armor, Shield; Rare):
+    // "Whenever an attacker makes a ranged attack roll against a target
+    // within 5 feet of you, you can take a Reaction to become the
+    // target of the attack instead."
+    //
+    // RAW leaves the choice to the bearer and the engine has to make
+    // it. Two gates stand in for the judgement: the shot must come from
+    // somebody hostile to the bearer (nobody spends a reaction to
+    // intercept their own side's arrow), and the swap must actually be
+    // protective — see `magnet_is_worth_it`.
+    RangedAttackMagnet {
+        condition: Condition::ArrowCatching,
+        // 5 ft = 2 tiles.
+        radius: 2,
+        costs_reaction: true,
+        label: "arrow-catching shield",
+        flavor: "steps in front of the shot meant for",
+    },
+];
+
+/// Move `p.target_id` onto a nearby shield-bearer if one of the rows on
+/// `RANGED_ATTACK_MAGNETS` claims the shot.
+///
+/// Called at the head of `resolve_attack_outcome_with_rider`, before a
+/// single thing about the swing has been read — which is what lets
+/// every rule downstream (the AC, the cover walk, Sanctuary, the
+/// riders, the resistances) run against the creature that is actually
+/// going to be hit.
+///
+/// Does nothing at all for a melee swing, a spell attack, or a board
+/// with neither shield on it, which is every swing in almost every
+/// fight: the condition check is a `HashMap` probe per candidate and
+/// the candidate list is empty unless somebody within four tiles is
+/// carrying one.
+fn attract_ranged_attack(encounter: &mut EncounterInstance, p: &mut AttackParams) {
+    if p.is_melee || p.is_spell {
+        return;
+    }
+    for row in RANGED_ATTACK_MAGNETS {
+        let Some(bearer) = pick_ranged_magnet(encounter, p, row) else {
+            continue;
+        };
+        if row.costs_reaction
+            && !encounter
+                .actors
+                .get_mut(&bearer)
+                .is_some_and(|a| a.consume_resource(Resource::Reaction))
+        {
+            continue;
+        }
+        let (bearer_name, was_aimed_at, attacker_name) = (
+            encounter.actor_name(bearer),
+            encounter.actor_name(p.target_id),
+            encounter.actor_name(p.caster_id),
+        );
+        encounter.log(format!(
+            "[{}] {} {} {} — {}'s {} finds the shield instead.",
+            row.label, bearer_name, row.flavor, was_aimed_at, attacker_name, p.action_name
+        ));
+        p.target_id = bearer;
+        return;
+    }
+}
+
+/// Resolve `row`'s bearer, or `None` when nobody nearby is holding that
+/// shield or the swap would not be worth making.
+fn pick_ranged_magnet(
+    encounter: &EncounterInstance,
+    p: &AttackParams,
+    row: &RangedAttackMagnet,
+) -> Option<usize> {
+    let aimed_at = encounter.actors.get(&p.target_id)?;
+    // A bearer who is already the target has nothing to attract, and
+    // one who is the shooter cannot shoot themselves.
+    let mut candidates: Vec<(isize, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != p.target_id
+                && **id != p.caster_id
+                && a.is_combat_active()
+                && a.has_condition(row.condition)
+        })
+        .filter(|(_, a)| !row.costs_reaction || a.team() != encounter.actors[&p.caster_id].team())
+        .filter_map(|(id, _)| {
+            let dist = encounter.footprint_distance(p.target_id, *id)?;
+            (dist <= row.radius).then_some((dist, *id))
+        })
+        .collect();
+    // Nearest first, ties broken on id so a seeded run reproduces.
+    candidates.sort_unstable();
+    candidates
+        .into_iter()
+        .map(|(_, id)| id)
+        .find(|id| !row.costs_reaction || magnet_is_worth_it(encounter, *id, aimed_at))
+}
+
+/// Is stepping in front of this shot a thing a bearer would actually
+/// spend their Reaction on?
+///
+/// RAW hands the decision to the player and says nothing about when to
+/// make it, so the engine answers the one question that has a defensible
+/// answer: the arrow should be harder to land on the volunteer than on
+/// the creature it was aimed at. The shield's own `ranged_ac` is folded
+/// in on the bearer's side, because that is the AC the shot will
+/// actually be rolled against once the swap happens — which is the
+/// whole reason the two clauses are printed on one shield.
+///
+/// A tie declines. Spending a reaction to take the same arrow on the
+/// same odds is a reaction spent for nothing, and the bearer will want
+/// it for the next one.
+fn magnet_is_worth_it(
+    encounter: &EncounterInstance,
+    bearer_id: usize,
+    aimed_at: &ActorInstance,
+) -> bool {
+    let Some(bearer) = encounter.actors.get(&bearer_id) else {
+        return false;
+    };
+    (bearer.armor_class() as i32 + bearer.total_item_bonuses().ranged_ac)
+        > aimed_at.armor_class() as i32
+}
+
 /// Walk `ATTACK_REDIRECTS` for `lane` and fire the first row the target
 /// qualifies for, moving the swing onto somebody else.
 ///
@@ -1837,10 +2057,18 @@ pub fn resolve_attack_outcome_with_rider(
     p: AttackParams,
     rider: &dyn ActionOnHitRider,
 ) -> (Vec<Box<dyn ApplicableSideEffect>>, u32) {
+    // SRD 5.2's two magnet shields, before anything about the swing has
+    // been read. A shot that is going to land on the bearer must be
+    // rolled against the *bearer's* AC and cover and resistances, so the
+    // swap happens here and nothing downstream needs to know about it.
+    // See `RANGED_ATTACK_MAGNETS`.
+    let mut p = p;
+    attract_ranged_attack(encounter, &mut p);
+    let p = p;
     let Some(target_ac) = encounter
         .actors
         .get(&p.target_id)
-        .map(|a| a.armor_class() as i32)
+        .map(|a| a.armor_class() as i32 + ranged_only_ac(a, p.is_melee))
     else {
         return (Vec::new(), 0);
     };
@@ -2737,6 +2965,12 @@ pub fn resolve_attack_outcome_with_rider(
         p.target_id,
         p.is_spell,
     ));
+    // SRD 5.2 **Shield of Missile Attraction**, *"Resistance to damage
+    // from attacks made with Ranged weapons"* — the same walk against a
+    // different qualification. Runs immediately after its sibling for
+    // the same reason that one runs here: the payload has to be
+    // finished before anything scales it.
+    damage = damage.saturating_sub(apply_ranged_weapon_resistance(encounter, &mut effects, &p));
     // SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*.
     // Runs after the source-qualified lane above, so the two bypasses
     // compose rather than race: whatever that walk left halved, this one
@@ -2958,6 +3192,85 @@ pub fn apply_nonmagical_resistance(
         let name = encounter.actor_name(target_id);
         encounter.log(format!(
             "  {} shrugs off the mundane blow ({})",
+            name,
+            notes.join(", ")
+        ));
+    }
+    removed
+}
+
+/// Halve every damage payload this swing aimed at its target when the
+/// swing was a **ranged weapon attack** and the target is carrying
+/// something that shrugs those off — SRD 5.2's Shield of Missile
+/// Attraction, *"you have Resistance to damage from attacks made with
+/// Ranged weapons"*. Returns the total removed, so the caller's
+/// `damage_dealt` figure stays honest.
+///
+/// The sibling of `apply_nonmagical_resistance` above, and it shares
+/// that function's two load-bearing details for the same reasons: it
+/// skips payloads aimed at anyone but the target (a Fire Shield's
+/// retaliation is not this swing's business), and it early-outs before
+/// touching the effects at all on the overwhelmingly common swing that
+/// nobody is holding a shield against.
+///
+/// **The one halving rule is enforced by skipping a type the target
+/// already halves.** 5e is explicit that resistances do not stack, and
+/// this lane sits outside `ActorInstance::effective_damage` — which is
+/// where the other four lanes cancel each other — so it has to ask.
+/// `halves_damage_of_type` is the right question rather than
+/// `resists_damage_type`: a creature that resists piercing *and* is
+/// vulnerable to it takes full damage already, and halving on top of
+/// that would make the shield better against a creature whose own sheet
+/// says the arrow hurts more.
+///
+/// **Ranged weapons, not ranged attacks.** RAW names the weapon, so a
+/// Fire Bolt is not covered and never reaches this function anyway —
+/// the spell chokepoint is a different one. The Arrow-Catching Shield's
+/// AC clause does cover spell attacks, and the asymmetry between the two
+/// shields is RAW's own wording rather than the engine's convenience.
+pub fn apply_ranged_weapon_resistance(
+    encounter: &mut EncounterInstance,
+    effects: &mut [Box<dyn ApplicableSideEffect>],
+    p: &AttackParams,
+) -> u32 {
+    if p.is_melee || p.is_spell {
+        return 0;
+    }
+    let halves = encounter
+        .actors
+        .get(&p.target_id)
+        .is_some_and(|a| a.halves_ranged_weapon_damage());
+    if !halves {
+        return 0;
+    }
+    let mut removed: u32 = 0;
+    let mut notes: Vec<String> = Vec::new();
+    for effect in effects.iter_mut() {
+        let Some((aimed_at, damage_type, amount)) = effect.damage_payload() else {
+            continue;
+        };
+        if aimed_at != p.target_id || amount == 0 {
+            continue;
+        }
+        // Already halved by the target's own sheet — 5e halves once.
+        if encounter
+            .actors
+            .get(&p.target_id)
+            .is_some_and(|a| a.halves_damage_of_type(damage_type))
+        {
+            continue;
+        }
+        let scaled = amount / 2;
+        if scaled == amount || !effect.set_damage_amount(scaled) {
+            continue;
+        }
+        removed = removed.saturating_add(amount - scaled);
+        notes.push(format!("{} \u{2192} {} {:?}", amount, scaled, damage_type));
+    }
+    if !notes.is_empty() {
+        let name = encounter.actor_name(p.target_id);
+        encounter.log(format!(
+            "  the shield turns the missile aside for {} ({})",
             name,
             notes.join(", ")
         ));
@@ -7266,6 +7579,18 @@ pub fn on_hit_rider_ledger_tags() -> Vec<&'static str> {
         .iter()
         .filter_map(|r| r.once_per_turn_tag)
         .collect()
+}
+
+/// Every bystander-side condition `RANGED_ATTACK_MAGNETS` keys a row
+/// off, read back out of the private table.
+///
+/// The sibling of `on_hit_rider_conditions` above, and it exists for the
+/// same reason: the two magnet shields are an item in one file and a
+/// cohort row in another, and a shield whose marker no row reads is a
+/// shield that quietly does nothing. See
+/// `items::item_template::tests::exactly_the_magnet_shields_attract`.
+pub fn ranged_magnet_conditions() -> Vec<Condition> {
+    RANGED_ATTACK_MAGNETS.iter().map(|r| r.condition).collect()
 }
 
 /// The blast radius the Bursting Arrow row actually delivers, read back

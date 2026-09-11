@@ -151,7 +151,15 @@ pub fn spell_attack_roll(
     let target_ac = encounter
         .actors
         .get(&target_id)
-        .map(|a| a.armor_class() as i32)
+        // The Arrow-Catching Shield's AC clause names "ranged attack
+        // rolls" and a spell attack at forty feet is one — see
+        // `ItemBonuses::ranged_ac`. Its *other* clause, the reaction
+        // that volunteers for the shot, is weapon-only and lives at the
+        // weapon chokepoint; see `RANGED_ATTACK_MAGNETS` for why the
+        // two halves part company here.
+        .map(|a| {
+            a.armor_class() as i32 + crate::engine::attack::ranged_only_ac(a, is_melee)
+        })
         .unwrap_or(10);
     // 5e Cover: intervening creatures bump the target's effective AC,
     // same as for weapon swings. Spell attacks (Fire Bolt, Guiding Bolt,

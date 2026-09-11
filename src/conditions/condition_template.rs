@@ -3244,6 +3244,44 @@ pub enum Condition {
     /// structures, fissures and a fifty-foot circle of ground, and the
     /// engine has none of the three.
     Thundering,
+    /// Holding a SRD 5.2 **Arrow-Catching Shield** — *"Whenever an
+    /// attacker makes a ranged attack roll against a target within 5
+    /// feet of you, you can take a Reaction to become the target of the
+    /// attack instead."*
+    ///
+    /// The volunteer half of the ranged-magnet cohort in
+    /// `engine::attack`, and the first marker in the armoury that
+    /// changes who a swing is *aimed at* rather than what it does when
+    /// it lands. The shield's other clause — `+2` AC against ranged
+    /// attack rolls — is not this marker's business: it rides the
+    /// item's own `ItemBonuses::ranged_ac`, and the two compose exactly
+    /// as RAW intends, because the arrow the bearer volunteers for is
+    /// then rolled against the AC the shield raised.
+    ArrowCatching,
+    /// Holding a SRD 5.2 **Shield of Missile Attraction** — *"Whenever
+    /// an attack with a Ranged weapon targets a creature within 10 feet
+    /// of you, the curse causes you to become the target instead."*
+    ///
+    /// The involuntary half of the ranged-magnet cohort, and the reason
+    /// that cohort has a column for whether the swap costs a Reaction:
+    /// the Arrow-Catching Shield beside it is a choice its bearer makes
+    /// once a round, and this is a curse that does not ask, does not
+    /// stop, and does not care whose arrow it is. A party archer firing
+    /// past the bearer at an enemy standing next to them shoots the
+    /// bearer.
+    ///
+    /// The upside — Resistance to damage from attacks made with Ranged
+    /// weapons — is not this marker's business either; it rides
+    /// `Item::halves_ranged_weapon_damage` and is applied at the attack
+    /// chokepoint, where the question "was this a ranged weapon" is
+    /// still answerable. That is the whole item: it drags every arrow
+    /// in the room onto a bearer who takes half from each of them.
+    ///
+    /// RAW's *"until you are targeted by a Remove Curse spell"* is not
+    /// modeled, and the divergence is in the player's favour: the
+    /// engine's curse ends when the bearer drops the shield, where
+    /// RAW's does not. There is no attunement here to be stuck in.
+    MissileAttracting,
     /// A wound that will not close — 5e's *"can't regain Hit Points"*,
     /// wherever it comes from.
     ///
@@ -3609,6 +3647,8 @@ impl Condition {
             Condition::Vorpal => "wielding a vorpal sword",
             Condition::MaceSmiting => "wielding a mace of smiting",
             Condition::Thundering => "wielding a thunderous greatclub",
+            Condition::ArrowCatching => "holding an arrow-catching shield",
+            Condition::MissileAttracting => "cursed to attract missiles",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",
         }
