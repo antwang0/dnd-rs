@@ -17,7 +17,11 @@
 //! |------|----------|---------------|
 //! | Alert | Origin | the initiative roll |
 //! | Savage Attacker | Origin | one weapon damage roll a turn |
+//! | Tough | Origin | the hit point maximum, by twice the level |
 //! | Grappler | General | attack rolls against what you are holding |
+//! | Speedy | General | ten feet of walking speed |
+//! | Charger | General | 1d8 on the swing at the end of a run |
+//! | War Caster | General | the concentration save |
 //! | Boon of Combat Prowess | Epic Boon | one miss a turn becomes a hit |
 //! | Boon of Dimensional Travel | Epic Boon | thirty feet after the swing |
 //! | Boon of Fate | Epic Boon | 2d4 onto a d20 that came up short |
@@ -46,6 +50,21 @@
 //! constant below, and the sweep in
 //! `every_feat_is_carried_by_a_playable_chassis` is what keeps a boon
 //! from quietly becoming a constant nobody can take.
+//!
+//! ## What is still not here
+//!
+//! The General column is long and this file is not. Every feat above
+//! earned its place by landing on a lane that already existed; the ones
+//! still missing are missing because they need a lane nobody has built,
+//! and the two shapes recur. **A mid-roll choice** — Lucky's luck
+//! points, Great Weapon Master's bonus-action follow-up, Sentinel's
+//! reaction — needs a channel for a decision taken between a roll and
+//! its consequence, which the engine has in exactly one place (the
+//! reaction dispatcher) and cannot generalise cheaply. **A swing bound
+//! to a weapon** — Polearm Master, Dual Wielder, Crusher/Piercer/Slasher
+//! — needs the attack pipeline to know which object made the attack,
+//! and it does not: see `conditions::Condition::DragonSlaying` for the
+//! same absence viewed from the magic armoury.
 //!
 //! ## Why tags rather than fields
 //!
@@ -151,6 +170,132 @@ pub const SAVAGE_ATTACKER_TAG: &str = "feat.savage_attacker";
 ///     itself unmodeled; a grappler walks away and the hold breaks on
 ///     the range check instead.
 pub const GRAPPLER_TAG: &str = "feat.grappler";
+
+/// **Tough** (Origin feat) — *"Your Hit Point maximum increases by an
+/// amount equal to twice your character level when you gain this feat.
+/// Whenever you gain a level thereafter, your Hit Point maximum
+/// increases by an additional 2 Hit Points."*
+///
+/// The two sentences collapse to one number on a finished stat block:
+/// twice the level, whatever the level is now. The engine builds
+/// characters at a level rather than walking them up to one, so "when
+/// you gain it" and "thereafter" describe the same total.
+///
+/// Read at `ActorInstance::max_hitpoints`, through
+/// `passive_feature_max_hp_bonus` — the lane this feat is the first
+/// member of, and the reason it is a lane rather than a term: the
+/// accessor already folded in a total from the inventory, and a second
+/// hardcoded `if` beside it is how that accessor turns into the
+/// thirty-branch pile the rest of the engine keeps tables to avoid.
+///
+/// Worth more in this engine than the flat number suggests, because the
+/// number is not flat against anything: hit points are the one resource
+/// no action in the game restores in bulk mid-fight, so twice a level
+/// on the sheet is close to a free casting of Cure Wounds that arrives
+/// before the fight starts and cannot be dispelled.
+pub const TOUGH_TAG: &str = "feat.tough";
+
+/// Hit points **Tough** grants per character level — RAW's *"twice your
+/// character level"*, named because the multiplication happens in a
+/// different file from the sentence.
+pub const TOUGH_HP_PER_LEVEL: u32 = 2;
+
+/// **Speedy** (General feat) — of whose three clauses the engine carries
+/// the one that moves a number every turn: *"Your Speed increases by 10
+/// feet."*
+///
+/// One row on `PASSIVE_FEATURE_SPEED_BONUSES`, beside the Barbarian's
+/// Fast Movement and the Monk's Unarmored Movement, which are the same
+/// bump arriving from a class instead of a choice.
+///
+/// Ten feet is four tiles on the 2.5-ft grid, and on this engine's
+/// boards that is the difference between reaching the caster this turn
+/// and reaching them next turn. It is also what lets a skirmisher
+/// disengage out of one melee and into another in the same turn, which
+/// is the fantasy the feat is sold on.
+///
+/// **Two clauses are absent.** *"When you take the Dash action,
+/// Difficult Terrain doesn't cost you extra movement for the rest of
+/// the turn"* would need the Dash action to hand a per-turn exemption
+/// to the movement cost table, which has no channel for one; and
+/// *"Opportunity Attacks have Disadvantage against you when you Dash"*
+/// would need the opportunity-attack lane to ask what the provoker
+/// spent their own turn on, which it does not record.
+pub const SPEEDY_TAG: &str = "feat.speedy";
+
+/// Feet of walking speed the **Speedy** feat grants its holder.
+pub const SPEEDY_SPEED_BONUS: f32 = 10.0;
+
+/// **Charger** (General feat) — *"Charge Attack. If you move at least 10
+/// feet in a straight line immediately before hitting with a melee
+/// attack as part of the Attack action, choose one: the target takes an
+/// extra 1d8 damage of the weapon's type, or you push the target up to
+/// 10 feet away from you."*
+///
+/// A `ChargeRider`, which is the lane the bestiary's boars and the
+/// Cavalier's Ferocious Charger already ride — and the reason this feat
+/// costs almost nothing to add is that the Cavalier got there first and
+/// paid for the two columns a *character's* charge needs: `weapon: None`
+/// (a character is carrying whatever the party found, where a boar has
+/// tusks) and a once-per-turn ledger key (Extra Attack would otherwise
+/// cash one run twice).
+///
+/// RAW's choice is resolved as the damage die, and this is one of the
+/// few places the engine picks for the player where a player might
+/// genuinely differ. A push is worth more than 1d8 exactly when the
+/// shove buys a turn the party needs and the die does not finish the
+/// target — a judgement about the whole board, which is what the AI
+/// making the choice would have to model. The die is the answer that is
+/// never wrong, only sometimes second-best.
+///
+/// **Improved Dash** (*"when you take the Dash action, your Speed
+/// increases by 10 feet for that action"*) is absent: the engine's Dash
+/// is a flat doubling of the turn's movement allowance with no per-
+/// action speed to raise.
+pub const CHARGER_TAG: &str = "feat.charger";
+
+/// Charger as a `ChargeRider`, read through `ActorInstance::charge` —
+/// see `CHARGER_TAG`.
+///
+/// `knocks_prone: false`, unlike Ferocious Charger beside it: RAW's two
+/// options are a die and a push, and neither is a knockdown.
+pub const CHARGER: crate::engine::attack::ChargeRider = crate::engine::attack::ChargeRider {
+    weapon: None,
+    dice: crate::engine::dice::Dice::new(1, 8),
+    damage_type: crate::engine::types::DamageType::Bludgeoning,
+    run_tiles: crate::engine::attack::charge_run_tiles(10),
+    knocks_prone: false,
+    label: "charger",
+    knockdown_label: "charger",
+    once_per_turn_tag: Some(CHARGER_TAG),
+    prone_follow_up: None,
+    max_target_size: None,
+};
+
+/// **War Caster** (General feat) — *"Concentration. You have Advantage
+/// on Constitution saving throws that you make to maintain
+/// Concentration."*
+///
+/// One `add_if` in `EncounterInstance::roll_concentration_save`, beside
+/// the Warlock's Eldritch Mind invocation, which is the same advantage
+/// arriving from a different direction — and this is the direction a
+/// caster who has *chosen* to stand in melee comes from.
+///
+/// It is the feat that makes a front-line caster a real chassis rather
+/// than a mistake. Every concentration spell worth a slot — Haste,
+/// Spirit Guardians, Greater Invisibility, Hold Monster — is one hit
+/// away from being wasted, and advantage on the save roughly halves how
+/// often the hit costs the spell. The Bladesinger's Intelligence bonus
+/// to the same save is the other half of that answer, and the two
+/// compose.
+///
+/// **Two clauses are absent.** *"Reactive Spell"* — casting a spell in
+/// place of an opportunity attack — would need the reaction dispatcher
+/// to offer an action menu where it currently offers a swing, and to
+/// decide which spell; that is a picker, not a flag. *"Somatic
+/// Components"* is an exemption from a hand-occupancy rule the engine
+/// does not enforce.
+pub const WAR_CASTER_TAG: &str = "feat.war_caster";
 
 /// **Boon of Combat Prowess** (Epic Boon) — *"Peerless Aim. When you
 /// miss with an attack roll, you can hit instead. Once you use this
@@ -404,7 +549,11 @@ pub const EPIC_BOON_TAGS: &[&str] = &[
 pub const FEAT_TAGS: &[&str] = &[
     ALERT_TAG,
     SAVAGE_ATTACKER_TAG,
+    TOUGH_TAG,
     GRAPPLER_TAG,
+    SPEEDY_TAG,
+    CHARGER_TAG,
+    WAR_CASTER_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,

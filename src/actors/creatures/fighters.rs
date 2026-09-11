@@ -850,6 +850,12 @@ pub static RUNE_KNIGHT_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
     let mut features = FIGHTER_TEMPLATE.features.clone();
     features.insert(GIANTS_MIGHT_TAG);
     features.insert(FIRE_RUNE_TAG);
+    // SRD 5.2's **Tough** feat, and the Rune Knight is who it belongs
+    // to: the one fighter on the roster whose subclass is literally
+    // about getting bigger. Giant's Might already lends the body for a
+    // minute at a time; Tough is what the body keeps. See
+    // `crate::actions::feats::TOUGH_TAG`.
+    features.insert(crate::actions::feats::TOUGH_TAG);
     CreatureTemplate {
         name: "Rune Knight",
         glyph: 'R',

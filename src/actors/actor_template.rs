@@ -1651,6 +1651,15 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
         flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
         bonus_ft: crate::actions::class_features::ROVING_SPEED_BONUS,
     },
+    // SRD 5.2's **Speedy** feat — the first row on this cohort that is
+    // a *choice* rather than a class feature, and mechanically
+    // identical to the three above it for exactly that reason: ten feet
+    // is ten feet whether a monk trained for it or a duellist picked
+    // it. See `crate::actions::feats::SPEEDY_TAG`.
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::feats::SPEEDY_TAG),
+        bonus_ft: crate::actions::feats::SPEEDY_SPEED_BONUS,
+    },
     // 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE) —
     // passive +10 ft walking-speed bump on the scout rogue chassis. RAW
     // also grants matching climbing / swimming speeds; both fold into
@@ -5793,6 +5802,20 @@ impl ActorInstance {
         // `ability_modifier`, which folds in whatever the template's own
         // item list has already done to the creature's Constitution.
         actor.breath_rounds = actor.hold_breath_capacity();
+        // A creature walks into the encounter at its own maximum, and
+        // its maximum is not the hit-point roll alone — `max_hitpoints`
+        // folds in the passive features the template shipped with, of
+        // which SRD 5.2's **Tough** is the first. Set after the literal
+        // for the same reason the breath clock is: the number is read
+        // off the finished sheet.
+        //
+        // Deliberately *only* here, at creation. An Amulet of Health
+        // picked up in round three raises the ceiling and not the
+        // current total, which is RAW and is the whole difference
+        // between a hit point and a hit point maximum; what a feat the
+        // creature was built with should not do is leave it two points
+        // down at initiative for a bonus it has always had.
+        actor.hitpoints = actor.max_hitpoints();
         Ok(actor)
     }
 
@@ -8122,13 +8145,33 @@ impl ActorInstance {
         self.cr
     }
 
+    /// How senior this creature is, on the one scale that works for
+    /// both halves of the roster: its earned `level` or its printed
+    /// `cr`, whichever is higher.
+    ///
+    /// `level` starts at 1 on every instantiated actor and only climbs
+    /// through `gain_xp` over a dungeon run, so it is the wrong number
+    /// on its own for anything that ships as a finished stat block —
+    /// which is every creature in the bestiary and every playable
+    /// chassis. `cr` is the number those were *built* at. A character
+    /// who out-levels their own chassis mid-run takes the larger of the
+    /// two, which is what the `max` is for.
+    ///
+    /// Extracted from `proficiency_bonus`, which inlined it and was for
+    /// a long time the only thing that needed it. SRD 5.2's **Tough**
+    /// feat is the second — *"twice your character level"* — and the
+    /// expression copied to a second site is one edit away from two
+    /// different answers to "how senior is this creature".
+    pub fn effective_level(&self) -> u32 {
+        self.level.max(self.cr.floor().max(1.0) as u32)
+    }
+
     /// 5e proficiency bonus: +2 at L1-4, +3 at L5-8, +4 at L9-12, etc.
     /// Both PCs (driven by `level`) and monsters (whose CR is roughly
     /// equivalent to a player level) read from the same scale via
     /// `proficiency_bonus_for_level` so the curve lives in one place.
     pub fn proficiency_bonus(&self) -> i32 {
-        let effective_level = self.level.max(self.cr.floor().max(1.0) as u32);
-        crate::engine::util::proficiency_bonus_for_level(effective_level)
+        crate::engine::util::proficiency_bonus_for_level(self.effective_level())
     }
 
     /// Linear XP value: CR × 200. Linear is good enough for the dungeon
@@ -9422,12 +9465,35 @@ impl ActorInstance {
     }
 
     pub fn max_hitpoints(&self) -> u32 {
-        let bonus = self.total_item_bonuses().max_hp;
+        let bonus = self.total_item_bonuses().max_hp + self.passive_feature_max_hp_bonus();
         // No exhaustion clause: SRD 5.2's ladder is a D20-Test penalty
         // and a speed reduction, and the 2014 printing's "hit point
         // maximum halved" at tier 4 is not in it. See
         // `EXHAUSTION_D20_PENALTY_PER_LEVEL`.
         (self.base_hitpoints as i32 + bonus).max(1) as u32
+    }
+
+    /// Hit points this creature's passive features add to its maximum —
+    /// the sibling of the inventory's `ItemBonuses::max_hp`, and a lane
+    /// rather than a branch for the reason every cohort in this file is
+    /// one: the second entry is what turns an `if` into a pile.
+    ///
+    /// One member so far. SRD 5.2's **Tough** feat is *"twice your
+    /// character level"*, which is the whole of why this scales rather
+    /// than adding a constant — an Amulet of Health is worth the same
+    /// to everybody and a feat taken at level one is worth more every
+    /// year. See `crate::actions::feats::TOUGH_TAG`.
+    fn passive_feature_max_hp_bonus(&self) -> i32 {
+        if self.has_passive_feature(crate::actions::feats::TOUGH_TAG) {
+            // `effective_level`, not `level`: every playable chassis in
+            // the engine ships as a finished stat block and instantiates
+            // at level 1, so RAW's "character level" is the level the
+            // chassis was *built* at. Reading the bare field would make
+            // the feat worth two hit points to a CR-9 fighter.
+            (self.effective_level() * crate::actions::feats::TOUGH_HP_PER_LEVEL) as i32
+        } else {
+            0
+        }
     }
 
     /// True if the actor has taken any damage relative to their full HP
@@ -10258,8 +10324,23 @@ impl ActorInstance {
     }
 
     /// This creature's 5e Charge / Pounce clause, if it has one.
+    ///
+    /// The stat block's own clause wins, and the **Charger** feat is the
+    /// fallback. Two reasons for that order rather than a sum. RAW has
+    /// no rule for stacking two charge clauses and reading them as
+    /// additive would hand a charging boar that took the feat two runs'
+    /// worth of damage off one run; and the bestiary's clauses are
+    /// specific where the feat is generic — a boar's names its tusks,
+    /// so a boar with Charger keeping only the tusk clause loses
+    /// nothing it would have been allowed to use anyway.
+    ///
+    /// Nothing on the current roster holds both, so the precedence is a
+    /// decision recorded rather than one being exercised.
     pub fn charge(&self) -> Option<ChargeRider> {
-        self.charge
+        self.charge.or_else(|| {
+            self.has_passive_feature(crate::actions::feats::CHARGER_TAG)
+                .then_some(crate::actions::feats::CHARGER)
+        })
     }
 
     /// Whether this creature's anatomy admits a rider at all. See

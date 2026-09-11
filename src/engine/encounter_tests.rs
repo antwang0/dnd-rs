@@ -15657,6 +15657,194 @@ fn alert_adds_the_proficiency_bonus_to_initiative() {
     );
 }
 
+/// The **Tough** feat: *"Your Hit Point maximum increases by an amount
+/// equal to twice your character level."*
+///
+/// Twice the *level*, which is what makes it a lane rather than a
+/// constant beside the Amulet of Health: an item is worth the same to
+/// everybody and this is not. Measured on one actor before and after
+/// the tag rather than across two chassis, because hit points are
+/// rolled per instance and two fighters are not the same fighter.
+#[test]
+fn tough_adds_twice_the_level_to_the_hit_point_maximum() {
+    use crate::actions::feats::{TOUGH_HP_PER_LEVEL, TOUGH_TAG};
+    use crate::actors::creatures::fighters::{FIGHTER_TEMPLATE, RUNE_KNIGHT_FIGHTER_TEMPLATE};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let knight = e
+        .instantiate_creature(&RUNE_KNIGHT_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    assert!(
+        e.actors[&knight].has_passive_feature(TOUGH_TAG),
+        "the rune knight chassis takes Tough"
+    );
+    assert!(
+        !e.actors[&plain].has_passive_feature(TOUGH_TAG),
+        "and the baseline fighter does not"
+    );
+
+    let before = e.actors[&plain].max_hitpoints();
+    let level = e.actors[&plain].effective_level();
+    e.actors
+        .get_mut(&plain)
+        .unwrap()
+        .grant_feature_for_test(TOUGH_TAG);
+    assert_eq!(
+        e.actors[&plain].max_hitpoints() - before,
+        level * TOUGH_HP_PER_LEVEL,
+        "twice the level, and nothing else moved"
+    );
+    // And on a chassis that actually took the feat, the hit points are
+    // there when the fight starts rather than being headroom to heal
+    // into — which is the half a `max_hitpoints()` accessor can get
+    // wrong without anything noticing.
+    assert_eq!(
+        e.actors[&knight].hitpoints(),
+        e.actors[&knight].max_hitpoints(),
+        "the rune knight walks in at full, feat included"
+    );
+}
+
+/// The **Speedy** feat: *"Your Speed increases by 10 feet."*
+#[test]
+fn speedy_adds_ten_feet_to_the_walking_speed() {
+    use crate::actions::feats::{SPEEDY_SPEED_BONUS, SPEEDY_TAG};
+    use crate::actors::creatures::rogues::{ROGUE_TEMPLATE, SWASHBUCKLER_ROGUE_TEMPLATE};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let duelist = e
+        .instantiate_creature(&SWASHBUCKLER_ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    assert!(e.actors[&duelist].has_passive_feature(SPEEDY_TAG));
+    assert!(!e.actors[&plain].has_passive_feature(SPEEDY_TAG));
+    assert_eq!(
+        e.actors[&duelist].speed() - e.actors[&plain].speed(),
+        SPEEDY_SPEED_BONUS,
+        "ten feet, and the two chassis are otherwise the same legs"
+    );
+}
+
+/// The **War Caster** feat: *"You have Advantage on Constitution saving
+/// throws that you make to maintain Concentration."*
+///
+/// Driven through `roll_concentration_save` across seeds rather than by
+/// reading a flag, because the flag is not where this can go wrong: the
+/// advantage is one entry on a tally that several other sources also
+/// write to, and a row added to the wrong tally — or to the wrong save
+/// — reads exactly the same in the template.
+#[test]
+fn war_caster_rolls_the_concentration_save_at_advantage() {
+    use crate::actions::feats::WAR_CASTER_TAG;
+    use crate::actors::creatures::artificers::{
+        ARTIFICER_TEMPLATE, BATTLE_SMITH_ARTIFICER_TEMPLATE,
+    };
+    use crate::actors::actor_template::ConcentrationData;
+
+    let mut held = (0u32, 0u32);
+    for seed in 0..200u64 {
+        for (i, template) in [
+            &*ARTIFICER_TEMPLATE,
+            &*BATTLE_SMITH_ARTIFICER_TEMPLATE,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            if i == 1 {
+                assert!(e.actors[&caster].has_passive_feature(WAR_CASTER_TAG));
+            } else {
+                assert!(!e.actors[&caster].has_passive_feature(WAR_CASTER_TAG));
+            }
+            e.actors
+                .get_mut(&caster)
+                .unwrap()
+                .start_concentration(ConcentrationData::new("Placeholder"));
+            // A DC well above what one d20 clears reliably, so the
+            // second roll advantage buys is the whole difference.
+            if e.roll_concentration_save(caster, 18).passed() {
+                if i == 0 {
+                    held.0 += 1;
+                } else {
+                    held.1 += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        held.1 > held.0,
+        "war caster should hold concentration more often than the same chassis without it, \
+         saw {} vs {}",
+        held.1,
+        held.0
+    );
+}
+
+/// The **Charger** feat: *"If you move at least 10 feet in a straight
+/// line immediately before hitting with a melee attack… the target
+/// takes an extra 1d8 damage."*
+///
+/// The run is the feature, so the test walks one: a paladin that has not
+/// moved collects nothing, and the same paladin after ten straight feet
+/// collects the die. Without the first half this would pass against a
+/// rider that fires on every swing.
+#[test]
+fn charger_pays_a_die_for_a_straight_run_and_nothing_for_standing_still() {
+    use crate::actions::feats::CHARGER_TAG;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::paladins::VENGEANCE_PALADIN_TEMPLATE;
+
+    // (did it charge, on how many seeds) for each of the two lanes.
+    let run_at_the_ogre = |seed: u64, run: bool| -> bool {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let paladin = e
+            .instantiate_creature(&VENGEANCE_PALADIN_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .unwrap();
+        assert!(e.actors[&paladin].has_passive_feature(CHARGER_TAG));
+        assert!(
+            e.actors[&paladin].charge().is_some(),
+            "the feat is the paladin's charge clause"
+        );
+        e.actors.get_mut(&paladin).unwrap().reset_for_new_round();
+        if run {
+            walk_straight(&mut e, paladin, 1, 0, 6);
+        }
+        let swing = e.actors[&paladin]
+            .find_action("greatsword")
+            .expect("the paladin chassis swings a greatsword");
+        for ef in swing.execute(&mut e, paladin, Some(&vec![ogre]), None, None) {
+            ef.apply(&mut e);
+        }
+        e.messages().iter().any(|m| m.contains("charger"))
+    };
+
+    let mut charged = false;
+    for seed in 0..40u64 {
+        assert!(
+            !run_at_the_ogre(seed, false),
+            "seed {seed}: a paladin who never moved charged nobody"
+        );
+        charged |= run_at_the_ogre(seed, true);
+    }
+    assert!(
+        charged,
+        "forty runs should land at least one greatsword at the end of one"
+    );
+}
+
 /// Alert survives into the rogue's subclasses.
 ///
 /// Three of them built their feature set with `HashSet::from([TAG])`

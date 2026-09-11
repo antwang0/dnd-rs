@@ -395,7 +395,17 @@ pub static BATTLE_SMITH_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
         name: "Battle Smith Artificer",
         glyph: 'S',
         actions,
-        features: HashSet::from([FLASH_OF_GENIUS_TAG, STEEL_DEFENDER_TAG, ARCANE_JOLT_TAG]),
+        // SRD 5.2's **War Caster** feat rides here for the reason the
+        // subclass exists: the Battle Smith is the half-caster who
+        // chose to stand in the front rank, and every spell worth a
+        // slot on this chassis is a concentration spell one hit away
+        // from being wasted. See `crate::actions::feats::WAR_CASTER_TAG`.
+        features: HashSet::from([
+            FLASH_OF_GENIUS_TAG,
+            STEEL_DEFENDER_TAG,
+            ARCANE_JOLT_TAG,
+            crate::actions::feats::WAR_CASTER_TAG,
+        ]),
         // RAW's Extra Attack lands at Battle Smith level 5 and is the
         // other half of why this is the martial artificer.
         has_extra_attack: true,

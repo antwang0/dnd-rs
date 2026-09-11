@@ -294,11 +294,19 @@ pub static SWASHBUCKLER_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::n
     // connects first.
     let mut actions = ROGUE_TEMPLATE.actions.clone();
     actions.push(&OFF_HAND_DAGGER);
+    // SRD 5.2's **Speedy** feat. The Swashbuckler's whole shape is
+    // closing to contact alone and staying mobile inside it — Fancy
+    // Footwork buys the exit from one melee and ten feet of speed is
+    // what pays for the entrance to the next. See
+    // `crate::actions::feats::SPEEDY_TAG`.
+    let mut features = ROGUE_TEMPLATE.features.clone();
+    features.insert(crate::actions::feats::SPEEDY_TAG);
     CreatureTemplate {
         name: "Swashbuckler Rogue",
         glyph: 'S',
         charisma: 14,
         actions,
+        features,
         has_rakish_audacity: true,
         has_fancy_footwork: true,
         ..ROGUE_TEMPLATE.clone()

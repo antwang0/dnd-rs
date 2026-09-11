@@ -509,6 +509,12 @@ pub static VENGEANCE_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     let mut features = PALADIN_TEMPLATE.features.clone();
     features.insert(VOW_OF_ENMITY_TAG);
     features.insert(ABJURE_ENEMY_TAG);
+    // SRD 5.2's **Charger** feat. The oath is a hunt — Vow of Enmity
+    // names one creature and Abjure Enemy pins it in place — and what
+    // the chassis lacked was a way to *arrive*. A ten-foot straight run
+    // and 1d8 on the swing is the closing half of the sentence the
+    // other two features start. See `crate::actions::feats::CHARGER_TAG`.
+    features.insert(crate::actions::feats::CHARGER_TAG);
     CreatureTemplate {
         name: "Vengeance Paladin",
         glyph: 'V',

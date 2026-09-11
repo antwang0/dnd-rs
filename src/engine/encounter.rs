@@ -6430,6 +6430,22 @@ impl EncounterInstance {
                 .is_some_and(|a| a.feature_available(ELDRITCH_MIND_TAG)),
             RollMode::Advantage,
         );
+        // SRD 5.2 **War Caster**, first clause: "You have Advantage on
+        // Constitution saving throws that you make to maintain
+        // Concentration."
+        //
+        // The same advantage the invocation above grants, arriving from
+        // a feat instead of a pact — and unlike the invocation it is
+        // not a charge, so it does not go through `feature_available`.
+        // A tally rather than a second branch, so a caster holding both
+        // gets one advantage and not two, which is 5e's rule for every
+        // pair of advantages in the game.
+        extra.add_if(
+            self.actors.get(&actor_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::feats::WAR_CASTER_TAG)
+            }),
+            RollMode::Advantage,
+        );
         // 5e Bladesinging Wizard **Bladesong**: "you gain a bonus to
         // Constitution saving throws you make to maintain your
         // concentration on a spell" equal to the wizard's Intelligence
