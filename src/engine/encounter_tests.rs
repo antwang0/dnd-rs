@@ -97835,3 +97835,369 @@ fn the_defender_of_a_contest_gets_the_same_rescue() {
     }
     panic!("eighty seeds and the defender-side rescue never fired");
 }
+
+/// Animal Friendship charms the beast, and the charm carries the link
+/// that stops the beast from swinging back at the druid.
+///
+/// Seed-swept because the wolf gets a Wisdom save; the assertion is
+/// that the outcome is reachable, which is the convention every other
+/// save-gated spell test here uses.
+#[test]
+fn animal_friendship_charms_a_beast_and_records_who_charmed_it() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::ANIMAL_FRIENDSHIP;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+    use crate::conditions::Condition;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(7, 4), 1, 0)
+            .unwrap();
+        let aei =
+            ActionExecutionInfo::new(&*ANIMAL_FRIENDSHIP, druid, Some(vec![wolf]), None, None);
+        assert!(aei.validate(&e), "a wolf is a Beast within thirty feet");
+        e.push_action(aei);
+        e.process_stack();
+        if !e.actors[&wolf].has_condition(Condition::Charmed) {
+            continue;
+        }
+        assert_eq!(
+            e.actors[&wolf].linked_by(Condition::Charmed),
+            Some(druid),
+            "seed {seed}: the charm has to know who cast it"
+        );
+        assert!(
+            e.charm_blocks_hostility(wolf, druid),
+            "seed {seed}: a befriended wolf cannot bite the druid"
+        );
+        assert!(
+            e.actors[&wolf].condition_is_fragile(Condition::Charmed),
+            "seed {seed}: Animal Friendship's charm is the kind that ends on damage"
+        );
+        return;
+    }
+    panic!("forty seeds and the wolf never failed the save");
+}
+
+/// The Beast gate: the same spell aimed at something that is not one is
+/// refused before a slot is spent.
+#[test]
+fn animal_friendship_refuses_anything_that_is_not_a_beast() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::ANIMAL_FRIENDSHIP;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(7, 4), 1, 0)
+        .unwrap();
+    let aei = ActionExecutionInfo::new(
+        &*ANIMAL_FRIENDSHIP,
+        druid,
+        Some(vec![skeleton]),
+        None,
+        None,
+    );
+    assert!(
+        !aei.validate(&e),
+        "a skeleton is Undead, and the spell says Beast"
+    );
+}
+
+/// The end clause, end to end: one point of damage frees the beast.
+///
+/// Driven through `DealDamage` rather than by clearing the flag by hand,
+/// because the sweep that reads the mark lives there and the whole
+/// question is whether the blow reaches it.
+#[test]
+fn damage_ends_a_fragile_charm_and_leaves_an_ordinary_one_alone() {
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+    use crate::engine::side_effects::{
+        ApplicableSideEffect, DealDamage, install_condition_with_link,
+        install_fragile_condition,
+    };
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let druid_side = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let befriended = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+        .unwrap();
+    let merely_charmed = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+
+    for eff in install_fragile_condition(
+        Condition::Charmed,
+        befriended,
+        druid_side,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+    for eff in install_condition_with_link(
+        Condition::Charmed,
+        merely_charmed,
+        druid_side,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&befriended].condition_is_fragile(Condition::Charmed));
+    assert!(!e.actors[&merely_charmed].condition_is_fragile(Condition::Charmed));
+
+    for victim in [befriended, merely_charmed] {
+        DealDamage {
+            actor_id: victim,
+            amount: 1,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+    }
+
+    assert!(
+        !e.actors[&befriended].has_condition(Condition::Charmed),
+        "the arrow ends Animal Friendship"
+    );
+    assert_eq!(
+        e.actors[&befriended].linked_by(Condition::Charmed),
+        None,
+        "and the back-link goes with it"
+    );
+    assert!(
+        e.actors[&merely_charmed].has_condition(Condition::Charmed),
+        "a Charm Person charm survives being shot — that is the difference \
+         between the two spells"
+    );
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("the damage breaks the hold")),
+        "the log has to say why the creature is suddenly free"
+    );
+}
+
+/// Hypnotic Pattern's own end clause, which arrived on the same lane:
+/// *"the spell ends for an affected creature if it takes any damage."*
+///
+/// The trance is `Incapacitated`, and the point of the test is that the
+/// arrow ends *this* one without teaching the engine that Incapacitated
+/// ends on damage in general — Hold Person would be a very different
+/// spell if it did.
+#[test]
+fn a_hypnotised_creature_snaps_out_of_it_when_hit() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::HYPNOTIC_PATTERN;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+    use crate::engine::types::DamageType;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], seed);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 3), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(
+            &*HYPNOTIC_PATTERN,
+            wizard,
+            None,
+            Some(vec![Coordinate::new(12, 3)]),
+            None,
+        );
+        if !aei.validate(&e) {
+            continue;
+        }
+        e.push_action(aei);
+        e.process_stack();
+        if !e.actors[&goblin].has_condition(Condition::Incapacitated) {
+            continue;
+        }
+        DealDamage {
+            actor_id: goblin,
+            amount: 1,
+            damage_type: DamageType::Piercing,
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&goblin].has_condition(Condition::Incapacitated),
+            "seed {seed}: one point of damage shakes the pattern off"
+        );
+        return;
+    }
+    panic!("forty seeds and no goblin ever failed the pattern's save");
+}
+
+/// Find Traps turns every concealed ward in the room into one the
+/// pathfinder can see, with no roll anywhere.
+#[test]
+fn find_traps_reveals_every_ward_in_range() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::FIND_TRAPS;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::engine::traps::{HIDDEN_PIT, SPIKED_PIT};
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let near = e.install_zone(HIDDEN_PIT.zone_at(Coordinate::new(9, 4)));
+    let far = e.install_zone(SPIKED_PIT.zone_at(Coordinate::new(14, 9)));
+    assert!(
+        e.zones().iter().all(|z| !z.revealed),
+        "both pits start hidden"
+    );
+
+    let aei = ActionExecutionInfo::new(&*FIND_TRAPS, cleric, None, None, None);
+    assert!(aei.validate(&e), "there are traps, so the spell has a target");
+    e.push_action(aei);
+    e.process_stack();
+
+    for id in [near, far] {
+        assert!(
+            e.zones().iter().find(|z| z.id == id).unwrap().revealed,
+            "every trap inside 120 ft is found, however far the roll would \
+             have had to reach"
+        );
+    }
+}
+
+/// And it refuses to spend the slot on a floor with nothing under it.
+#[test]
+fn find_traps_declines_on_a_clean_floor() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::FIND_TRAPS;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let aei = ActionExecutionInfo::new(&*FIND_TRAPS, cleric, None, None, None);
+    assert!(
+        !aei.validate(&e),
+        "nothing to find, and unlike Search there is no roll that could \
+         have failed instead"
+    );
+}
+
+/// Animal Shapes turns the party — the druid included — into the pack,
+/// and hands each of them the beast form's pool.
+#[test]
+fn animal_shapes_puts_the_whole_party_on_four_legs() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::class_features::BEAST_FORM_TEMP_HP;
+    use crate::actions::spells::ANIMAL_SHAPES;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+    // Far enough away to be outside the thirty-foot range, and on the
+    // enemy team besides.
+    let goblin = e
+        .instantiate_creature(
+            &crate::actors::creatures::goblins::GOBLIN_TEMPLATE,
+            Coordinate::new(6, 6),
+            1,
+            0,
+        )
+        .unwrap();
+
+    let aei = ActionExecutionInfo::new(&*ANIMAL_SHAPES, druid, None, None, None);
+    assert!(aei.validate(&e), "two unshaped allies are in range");
+    e.push_action(aei);
+    e.process_stack();
+
+    for id in [druid, fighter] {
+        assert!(
+            e.actors[&id].has_condition(Condition::WildShaped),
+            "every willing ally in range takes a form"
+        );
+        assert_eq!(e.actors[&id].temp_hp(), BEAST_FORM_TEMP_HP);
+    }
+    assert!(
+        !e.actors[&goblin].has_condition(Condition::WildShaped),
+        "the spell is ally-scoped; nobody buffs the goblin"
+    );
+
+    // And a party that is already a pack is not worth an eighth-level
+    // slot a second time.
+    let again = ActionExecutionInfo::new(&*ANIMAL_SHAPES, druid, None, None, None);
+    assert!(
+        !again.validate(&e),
+        "re-shaping an already-shaped party would burn the slot to refresh \
+         a timer"
+    );
+}
+
+/// Prismatic Wall writes all three layers it touches: the map takes the
+/// wall, the lighting layer takes the glare, and the zone layer takes
+/// the twenty feet of blindness around it.
+#[test]
+fn prismatic_wall_raises_a_wall_a_light_and_a_glare() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::PRISMATIC_WALL;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::terrain::TerrainType;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 10), 0, 0)
+        .unwrap();
+    let anchor = Coordinate::new(12, 10);
+    let aei = ActionExecutionInfo::new(
+        &*PRISMATIC_WALL,
+        wizard,
+        None,
+        Some(vec![anchor]),
+        None,
+    );
+    assert!(aei.validate(&e));
+    e.push_action(aei);
+    e.process_stack();
+
+    assert_eq!(
+        e.terrain_at(anchor).map(|t| t.terrain_type),
+        Some(TerrainType::Wall),
+        "the plane of light is solid on the terrain layer"
+    );
+    assert!(
+        e.light_sources().iter().any(|s| s.name == "prismatic wall"),
+        "and it sheds bright light"
+    );
+    assert!(
+        e.zones().iter().any(|z| z.name == "prismatic glare"),
+        "and blinds what comes near it"
+    );
+    // The caster is nine tiles away, which is outside the eight-tile
+    // glare — RAW's exemption for the caster has no channel here, so
+    // the spell's placement is what keeps the wizard out of its own
+    // light. See `spells::PrismaticWall`.
+    assert!(
+        !e.actors[&wizard].has_condition(crate::conditions::Condition::Blinded),
+        "the wizard raised it from outside its glare"
+    );
+}

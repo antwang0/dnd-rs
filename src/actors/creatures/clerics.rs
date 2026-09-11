@@ -298,6 +298,11 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // caster, so the spell carries its own floor (see its docs).
     actions.push(&*crate::actions::spells::LIFE_TRANSFERENCE);
     actions.push(&*PRESERVE_LIFE);
+    // lv2 **Find Traps** — on the cleric list RAW, and the only spell on
+    // this sheet aimed at the dungeon rather than at a creature. Costs
+    // nothing on an untrapped board: the cast refuses outright when the
+    // floor is clean.
+    actions.push(&*crate::actions::spells::FIND_TRAPS);
     CreatureTemplate {
         name: "Cleric",
         glyph: 'C',

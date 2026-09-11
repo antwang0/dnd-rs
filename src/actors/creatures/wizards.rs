@@ -776,6 +776,17 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::GRAVITY_SINKHOLE);
     actions.push(&*crate::actions::spells::FAR_STEP);
     actions.push(&*crate::actions::spells::BLADE_OF_DISASTER);
+    // lv9 **Prismatic Wall** — the wizard's other ninth-level slot
+    // spend, and the only one that is not a burst. Wish, Time Stop and
+    // Meteor Swarm all end something; this one divides the room and
+    // then stays there without concentration, which is what makes it a
+    // different purchase rather than a worse Meteor Swarm. See
+    // `spells::PRISMATIC_WALL` for what the seven layers became.
+    actions.push(&*crate::actions::spells::PRISMATIC_WALL);
+    // lv2 **Find Traps** — RAW puts it on the Cleric, Druid and Ranger
+    // lists and not on the wizard's, and it stays off this sheet for
+    // that reason. Named here because the wizard is the chassis a
+    // reader would expect to carry a divination about the floor.
     CreatureTemplate {
         name: "Wizard",
         // 'M' (mage) — keeps 'W' free for Wolf, which already claims it.

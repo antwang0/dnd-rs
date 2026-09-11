@@ -5285,6 +5285,54 @@ pub struct ActorInstance {
     /// consumer's `unwrap_or(base)` lands on the printed level rather
     /// than on a stale one.
     condition_slot_levels: HashMap<Condition, u32>,
+    /// The conditions on this actor that *this particular install* ends
+    /// when the holder takes damage — the fourth sibling of the three
+    /// tables above, carrying nothing at all where those carry an actor
+    /// id, a damage type and a slot level. Membership is the payload.
+    ///
+    /// SRD 5.2 writes the clause about one spell rather than about a
+    /// condition, and writes it twice:
+    ///
+    ///   - **Hypnotic Pattern** — *"the spell ends for an affected
+    ///     creature if it takes any damage."*
+    ///   - **Animal Friendship** — *"if you or one of your allies deals
+    ///     damage to the target, the spell ends."*
+    ///
+    /// Both shipped here with the clause dropped, and the reason it is
+    /// an instance table rather than a row on `Condition` is what they
+    /// install: `Incapacitated` and `Charmed`, neither of which ends on
+    /// damage in general. A creature Paralyzed by Hold Person that is
+    /// hit by an arrow stays Paralyzed — that is most of what Hold
+    /// Person is for — and a condition-level rule could not tell the
+    /// two apart. The fragility belongs to the *cast*, so it is
+    /// recorded against the creature the cast landed on.
+    ///
+    /// Sleep's *"the effect ends on a target if it takes damage"* is
+    /// deliberately **not** here: that one genuinely belongs to the
+    /// condition, every source of `Asleep` carries it, and it stays the
+    /// one hardcoded strip in `DealDamage`.
+    ///
+    /// Hideous Laughter is the near miss and is not on this lane: RAW
+    /// gives its victim *"another Wisdom saving throw… with Advantage
+    /// if the save is triggered by damage"*, which is a repeat rather
+    /// than an ending. That shape belongs beside
+    /// `crate::engine::repeat_saves`, whose ledger already rolls the
+    /// same clause at the end of a turn and would need only a trigger
+    /// column to roll it here too.
+    ///
+    /// Keyed by condition for the reason all three tables above are: it
+    /// makes the teardown structural. `remove_condition` drops the
+    /// entry on the same line it drops the link, the damage type and
+    /// the slot level, so a mark cannot outlive the condition it
+    /// qualifies and the next install of the same condition cannot
+    /// inherit somebody else's fragility. The read accessor
+    /// (`condition_is_fragile`) closes the other direction by answering
+    /// `false` unless the condition is actually held.
+    ///
+    /// `crate::engine::side_effects::install_fragile_condition` is the
+    /// install-side counterpart, the way `LINKED_CONDITIONS` is for the
+    /// first table; `DealDamage` is the only reader.
+    fragile_conditions: HashSet<Condition>,
     /// The lair's repertoire, copied off the template. Empty for
     /// everything that isn't the resident of somewhere.
     lair_actions: &'static [crate::engine::lair_actions::LairAction],
@@ -5716,6 +5764,7 @@ impl ActorInstance {
             condition_links: HashMap::new(),
             condition_damage_types: HashMap::new(),
             condition_slot_levels: HashMap::new(),
+            fragile_conditions: HashSet::new(),
             lair_actions: ct.lair_actions,
             legendary_actions: ct.legendary_actions,
             last_lair_action: None,
@@ -5976,6 +6025,53 @@ impl ActorInstance {
                 self.condition_slot_levels.remove(&c);
             }
         }
+    }
+
+    /// True when `c` is held *and* the install that granted it ends the
+    /// moment this creature takes damage — see `fragile_conditions`.
+    ///
+    /// The `has_condition` guard is `linked_by`'s, `damage_type_of`'s
+    /// and `slot_level_of`'s, for their reason: a bare set read would
+    /// answer `true` off a mark whose condition had already lapsed, and
+    /// the one consumer (`DealDamage`) would then spend a log line
+    /// announcing that an arrow broke a trance nobody was in.
+    pub fn condition_is_fragile(&self, c: Condition) -> bool {
+        self.has_condition(c) && self.fragile_conditions.contains(&c)
+    }
+
+    /// Mark `c` as ending on damage (or clear the mark with `false`).
+    ///
+    /// Callers normally reach this through
+    /// `engine::side_effects::install_fragile_condition` rather than
+    /// directly, so the mark travels with the `ApplyCondition` that
+    /// grants the flag — the same contract `set_condition_link` states
+    /// one table up, and for the same reason: a half-written pair is a
+    /// trance that outlives the fireball that should have ended it.
+    pub fn set_condition_fragile(&mut self, c: Condition, fragile: bool) {
+        if fragile {
+            self.fragile_conditions.insert(c);
+        } else {
+            self.fragile_conditions.remove(&c);
+        }
+    }
+
+    /// Every condition this creature is holding that damage ends, in a
+    /// deterministic order.
+    ///
+    /// Sorted for the reason `tick_condition_timers` sorts: the set's
+    /// iteration order is not stable across runs, and the removals it
+    /// drives each emit a log line. An unsorted sweep would fight the
+    /// same fight twice and print it two different ways, which is what
+    /// `the_same_seed_fights_the_same_fight_twice` exists to catch.
+    pub fn fragile_conditions_held(&self) -> Vec<Condition> {
+        let mut held: Vec<Condition> = self
+            .fragile_conditions
+            .iter()
+            .copied()
+            .filter(|c| self.has_condition(*c))
+            .collect();
+        held.sort_unstable();
+        held
     }
 
     pub fn has_evasion(&self) -> bool {
@@ -8630,6 +8726,13 @@ impl ActorInstance {
             // a Spirit Guardians cast at 9th that has lapsed must not
             // leave a 9 behind for the next 3rd-level cast to inherit.
             self.condition_slot_levels.remove(&c);
+            // And the fragility mark, which is the same shape a fourth
+            // time: a trance that has already lapsed must not leave
+            // "…and damage ends this" behind for the next install of
+            // the same condition to inherit. A Hold Person landing on a
+            // creature who spent last round in a Hypnotic Pattern would
+            // otherwise break on the first arrow.
+            self.fragile_conditions.remove(&c);
             if c == Condition::MirroredImages {
                 self.mirror_images = 0;
             }

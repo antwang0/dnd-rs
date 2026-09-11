@@ -1167,6 +1167,28 @@ impl ApplicableSideEffect for DealDamage {
         if landed > 0 {
             actor.remove_condition(crate::conditions::Condition::Asleep);
         }
+        // The per-install version of the same sentence. Sleep's clause
+        // belongs to the condition and is written above; Hypnotic
+        // Pattern's and Animal Friendship's belong to the *cast* — what
+        // they install is Incapacitated and Charmed, neither of which
+        // ends on damage in general — so they ride a mark on the
+        // creature instead. See `ActorInstance::fragile_conditions`.
+        //
+        // Collected before the removals rather than during, because
+        // `remove_condition` is what drops the mark and a sweep that
+        // read the set while emptying it would be iterating what it is
+        // mutating. Logged, unlike the sleeper above: a trance breaking
+        // is the damage *doing something other than damage*, and a
+        // reader who cannot see the line has no way to tell why the
+        // creature is suddenly taking its turn again.
+        let broken: Vec<Condition> = if landed > 0 {
+            actor.fragile_conditions_held()
+        } else {
+            Vec::new()
+        };
+        for condition in &broken {
+            actor.remove_condition(*condition);
+        }
         // 5e Displacer Beast: displacement flickers off the moment the
         // creature takes any damage. It restores at the start of its
         // next turn (handled by start_turn_for).
@@ -1212,6 +1234,16 @@ impl ApplicableSideEffect for DealDamage {
             "  {} takes {} {:?} damage",
             name, landed, self.damage_type
         ));
+        // After the damage line rather than before it, because the
+        // sentence reads in that order: the blow lands, and the blow is
+        // what ends the trance.
+        for condition in broken {
+            ei.log(format!(
+                "  the damage breaks the hold: {} is no longer {}.",
+                name,
+                condition.name()
+            ));
+        }
         // 5e Swallow, the escape clause's bookkeeping: "if the worm
         // takes 30 damage or more on a single turn **from a creature
         // inside it**". Tallied here rather than at each attack site
@@ -2902,6 +2934,62 @@ pub fn install_condition_at_slot_level(
             level: Some(level),
         }),
     ]
+}
+
+/// Record that one install of a condition ends when its holder takes
+/// damage — the fourth member of the payload family beside
+/// `SetConditionLink`, `SetConditionDamageType` and
+/// `SetConditionSlotLevel`.
+///
+/// Carries no value, because membership is the value: see
+/// `ActorInstance::fragile_conditions` for the three RAW clauses that
+/// wanted this and why none of them could be a row on `Condition`.
+/// Reach it through `install_fragile_condition` rather than emitting it
+/// by hand.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct SetConditionFragile {
+    pub target_id: usize,
+    pub condition: crate::conditions::Condition,
+    pub fragile: bool,
+}
+
+impl ApplicableSideEffect for SetConditionFragile {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_condition_fragile(self.condition, self.fragile);
+        }
+    }
+}
+
+/// Install a condition that ends the moment its holder takes damage:
+/// whatever `install_condition_with_link` would have emitted, plus the
+/// `SetConditionFragile` that marks it.
+///
+/// Routed through the link-aware installer rather than emitting a bare
+/// `ApplyCondition`, because the two payloads compose and one caller
+/// already needs both: Animal Friendship's charm carries a back-link
+/// (so the befriended beast cannot swing at the druid) *and* ends on
+/// damage. A helper that emitted its own `ApplyCondition` would have
+/// silently dropped the link.
+///
+/// The mark is emitted second, and it has to be: it is keyed by
+/// condition and `ActorInstance::condition_is_fragile` refuses to
+/// answer for a condition that is not held, so a mark that landed
+/// before the flag would be read back as `false` — not wrong, but
+/// invisible, which is worse.
+pub fn install_fragile_condition(
+    condition: crate::conditions::Condition,
+    target_id: usize,
+    caster_id: usize,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let mut effects = install_condition_with_link(condition, target_id, caster_id, timer);
+    effects.push(Box::new(SetConditionFragile {
+        target_id,
+        condition,
+        fragile: true,
+    }));
+    effects
 }
 
 /// Grant `count` Mirror Image decoys to the target. Re-application

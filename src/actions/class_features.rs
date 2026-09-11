@@ -5324,7 +5324,7 @@ pub const COMBAT_WILD_SHAPE_TAG: &str = "druid.combat_wild_shape";
 /// a flat 30: the pool describes the *form*, not the caster, and
 /// `ActorInstance::level` tracks in-run XP progression from 1 rather
 /// than the build level a class template targets.
-const BEAST_FORM_TEMP_HP: u32 = 34;
+pub const BEAST_FORM_TEMP_HP: u32 = 34;
 
 /// Wild Shape — Circle of the Moon Druid bonus action, one charge per
 /// short rest. Installs `Condition::WildShaped` and hands the druid the

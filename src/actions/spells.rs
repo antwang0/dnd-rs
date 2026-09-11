@@ -19,6 +19,7 @@ use crate::{
         side_effects::{
             ApplicableSideEffect, ApplyCondition, ConjureTerrain, DealDamage, GainTempHp, Heal,
             InstallZone, MoveZone, Resource, StartConcentration, install_condition_with_link,
+            install_fragile_condition,
         },
         terrain::TerrainType,
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
@@ -6779,11 +6780,19 @@ impl Action for HypnoticPattern {
             if save.passed() {
                 continue;
             }
-            effects.push(Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Incapacitated,
-                timer: ConditionTimer::Rounds(5),
-            }));
+            // RAW's other end clause: *"the effect ends for an affected
+            // creature if it takes any damage"* — which is what makes
+            // the pattern a *set-up* rather than a lock, and the reason
+            // a party that walks into one does not simply shoot
+            // everybody in it. Per-install rather than per-condition:
+            // Incapacitated in general survives an arrow. See
+            // `ActorInstance::fragile_conditions`.
+            effects.extend(install_fragile_condition(
+                Condition::Incapacitated,
+                target_id,
+                caster_id,
+                ConditionTimer::Rounds(5),
+            ));
             conditions_tracked.push((target_id, Condition::Incapacitated));
         }
         if !conditions_tracked.is_empty() {
@@ -36099,3 +36108,620 @@ impl Action for Passwall {
 }
 
 pub static PASSWALL: LazyLock<Passwall> = LazyLock::new(|| Passwall {});
+
+/// **Animal Friendship** — SRD 5.2 level-1 enchantment (Bard, Druid,
+/// Ranger). *"Target a Beast that you can see within range. The target
+/// must succeed on a Wisdom saving throw or have the Charmed condition
+/// for the duration. If you or one of your allies deals damage to the
+/// target, the spell ends."*
+///
+/// The cheapest way in the game to take a creature out of a fight
+/// without hurting it, and the only one that costs a first-level slot.
+/// It is also the only charm on the roster that *ends when you hit the
+/// thing*, which is the whole of its balance: a druid who befriends the
+/// dire wolf and then lets the fighter swing at it has spent a slot on
+/// one round of confusion.
+///
+/// Three lanes, all of which existed before this spell did:
+///
+///   - The **Beast gate** is `DominateBeast`'s, read off
+///     `creature_type()` in `custom_validate_input`. A bestiary full of
+///     wolves, bears and giant spiders is what makes a Beast-only charm
+///     worth a slot at all.
+///   - The **charm** is `install_charmed_by`'s — the flag plus the
+///     back-link that stops the befriended beast from swinging at the
+///     druid who befriended it.
+///   - The **end clause** is the fragile-condition mark, which arrived
+///     with this spell and with Hypnotic Pattern; see
+///     `ActorInstance::fragile_conditions` for why it cannot be a rule
+///     about `Charmed` in general.
+///
+/// **"You or one of your allies" is read as "anybody".** RAW spares the
+/// beast's *own* side: an orc that shoots the charmed wolf does not
+/// free it. The engine's damage chokepoint carries no attacker — see
+/// `side_effects::DealDamage`, whose whole payload is a target, an
+/// amount and a type — so the clause cannot ask whose arrow it was.
+/// Reading it as "anybody" errs in the direction that costs the caster
+/// rather than the board: a charm that an enemy could not break would
+/// be strictly better than RAW's, and this one is strictly worse.
+///
+/// **Duration.** RAW's 24 hours, capped to the `Rounds(10)` every other
+/// charm in the engine caps to — see `install_charmed_by`. The
+/// difference is invisible: nothing here outlives the fight.
+///
+/// **The upcast is absent.** *"You can target one additional Beast for
+/// each spell slot level above 1"* would need a target list whose
+/// length is read off the slot, and `TargetingSchema::SingleActor` is
+/// one actor by construction.
+pub struct AnimalFriendship {}
+
+impl Action for AnimalFriendship {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
+    fn name(&self) -> &str {
+        "animal friendship"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["befriend", "afriend"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    /// The whole spell is one condition, which is what lets the AI's
+    /// lockdown rung tell a beast it has already befriended from one it
+    /// has not.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Charmed)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Beast-only, the same gate and the same fail-closed convention
+        // as Dominate Beast one tier up.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| a.creature_type() == crate::engine::types::CreatureType::Beast)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spellcasting_save_dc();
+        // Caster-aware save so Heightened Spell can force disadvantage,
+        // the same lane every other charm in the file rolls on.
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
+        if save.passed() {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!("  animal friendship: {} calms and turns.", name));
+        install_fragile_condition(
+            Condition::Charmed,
+            target_id,
+            caster_id,
+            ConditionTimer::Rounds(10),
+        )
+    }
+}
+
+pub static ANIMAL_FRIENDSHIP: LazyLock<AnimalFriendship> = LazyLock::new(|| AnimalFriendship {});
+
+/// **Find Traps** — SRD 5.2 level-2 divination (Cleric, Druid, Ranger).
+/// *"You sense any trap within range that is within line of sight. […]
+/// the spell would sense the Alarm or Glyph of Warding spell or a
+/// mechanical pit trap."*
+///
+/// The one spell on the roster whose target is the *floor*. Everything
+/// it looks for already exists: `engine::traps` lays SRD's example
+/// traps as concealed wards, Glyph of Warding and Symbol set their own,
+/// and `EncounterInstance::concealed_zones_near` is the candidate walk
+/// the Search action already runs over them.
+///
+/// What the slot buys over Search is the two things a Wisdom check
+/// cannot: **no roll** and **forty-eight tiles**. Search rolls
+/// Perception against each trap's own DC inside ten tiles, and a party
+/// that wants a corridor cleared pays an Action per attempt and may
+/// still walk onto the plate. This finds every one of them, at 120
+/// feet, once.
+///
+/// **RAW's "not its location" is not modeled, and cannot be.** The book
+/// is careful that the spell says *a trap is here somewhere*; this
+/// engine has one bit for a ward, `Zone::revealed`, and it is the bit
+/// the pathfinder reads to start walking around the thing. There is no
+/// state between "invisible to everybody" and "drawn on the map", and a
+/// sensed trap the party still marched into would be indistinguishable
+/// from an unsensed one — which would make the spell cost a slot for
+/// nothing. Revealing is the honest reading of the only lever there is.
+///
+/// A found trap is still armed: RAW's disarm is an iron spike and ten
+/// minutes, and this spell does not claim otherwise — see
+/// `EncounterInstance::reveal_zone`.
+pub struct FindTraps {}
+
+impl FindTraps {
+    /// 120 ft = 48 tiles.
+    const REACH: isize = 48;
+}
+
+impl Action for FindTraps {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
+    fn name(&self) -> &str {
+        "find traps"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["findtraps", "ftraps"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // A slot spent on an empty floor is a slot spent on nothing, and
+        // unlike Search there is no roll that could have failed instead.
+        // Same fail-closed shape as Passwall's "is there a wall there".
+        !encounter
+            .concealed_zones_near(caster_id, Self::REACH)
+            .is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // Resolved inline rather than as queued effects for the reason
+        // the Search action resolves its own half inline: `reveal_zone`
+        // is a change to the board rather than to an actor, and the
+        // side-effect queue is the actor lane.
+        //
+        // The DC each walk hands back is discarded, which is the
+        // difference between this spell and the Search action that
+        // shares the walk: there is nothing to beat.
+        let found: Vec<usize> = encounter
+            .concealed_zones_near(caster_id, Self::REACH)
+            .into_iter()
+            .map(|(zone_id, _dc)| zone_id)
+            .collect();
+        let mut revealed = 0usize;
+        for zone_id in found {
+            if encounter.reveal_zone(zone_id) {
+                revealed += 1;
+            }
+        }
+        if revealed == 0 {
+            encounter.log("  find traps: the floor is clean.".to_string());
+        }
+        Vec::new()
+    }
+}
+
+pub static FIND_TRAPS: LazyLock<FindTraps> = LazyLock::new(|| FindTraps {});
+
+/// **Animal Shapes** — SRD 5.2 level-8 transmutation (Druid). *"Choose
+/// any number of willing creatures that you can see within range. Each
+/// target shape-shifts into a Large or smaller Beast of your choice
+/// that has a Challenge Rating of 4 or lower. […] The target gains a
+/// number of Temporary Hit Points equal to the Hit Points of the first
+/// form into which it shape-shifts."*
+///
+/// Wild Shape, cast at the party. The druid's own transformation has
+/// been a bonus action and a condition since the Circle of the Moon
+/// arrived; this is the same condition and the same pool handed to
+/// *everybody standing near the druid*, which at eighth level is what
+/// an eighth-level slot ought to buy.
+///
+/// **It is not a buff, and the AI's self-buff cohort should not read it
+/// as one.** `Condition::WildShaped` blocks spell slots outright, so a
+/// druid who casts this on the party's wizard has turned off the
+/// wizard. That is RAW — *"it can't cast spells"* — and it is the
+/// decision the spell is: the front line gains 34 temporary hit points
+/// and a beast's claws, and every caster in the blast stops being one.
+/// A caster aiming it at a line of fighters is spending the slot
+/// correctly.
+///
+/// **The form is the one form.** RAW offers a different beast per
+/// target; the engine's beast form is a condition rather than a stat
+/// block swap, so there is one shape and it is the bear the Circle of
+/// the Moon already becomes — see `class_features::BEAST_FORM_TEMP_HP`
+/// for why that pool is flat and `class_attacks::BEAST_FORM_CLAWS` for
+/// what it swings.
+///
+/// **Three clauses are absent.** *"On later turns, you can take a Magic
+/// action to transform the targets again"* is a re-cast of a spell that
+/// is already up. *"The target can end it as a Bonus Action"* would
+/// need a shed-this-buff action nothing else in the engine has. And the
+/// druid's own copy is included where RAW's *"willing creatures"*
+/// leaves the caster free to skip themselves — the ally-scoped burst
+/// helper counts the caster as an ally, which is the same reading every
+/// other party-wide buff in the file uses.
+pub struct AnimalShapes {}
+
+impl AnimalShapes {
+    /// 30 ft = 12 tiles.
+    const RADIUS: isize = 12;
+    /// RAW's 24 hours, capped to the ten rounds Wild Shape's own form
+    /// runs for. Nothing here outlives the fight either way.
+    const ROUNDS: u32 = 10;
+}
+
+impl Action for AnimalShapes {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn name(&self) -> &str {
+        "animal shapes"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ashapes", "herd"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::WildShaped)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(8)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Somebody in range has to still be a person. Re-shaping a party
+        // that is already a pack would burn an eighth-level slot to
+        // refresh a timer and re-grant a pool that `GainTempHp` mostly
+        // discards — the gate Wild Shape itself states one file over.
+        let Some(at) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return false;
+        };
+        encounter
+            .ally_burst_targets(caster_id, at, Self::RADIUS)
+            .into_iter()
+            .any(|id| {
+                encounter
+                    .actors
+                    .get(&id)
+                    .is_some_and(|a| !a.has_condition(Condition::WildShaped))
+            })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(at) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let targets: Vec<usize> = encounter
+            .ally_burst_targets(caster_id, at, Self::RADIUS)
+            .into_iter()
+            .filter(|id| {
+                encounter
+                    .actors
+                    .get(id)
+                    .is_some_and(|a| !a.has_condition(Condition::WildShaped))
+            })
+            .collect();
+        if targets.is_empty() {
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  animal shapes: {} of the party run on four legs ({} temp HP each).",
+            targets.len(),
+            crate::actions::class_features::BEAST_FORM_TEMP_HP
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for id in targets {
+            effects.push(Box::new(ApplyCondition {
+                actor_id: id,
+                condition: Condition::WildShaped,
+                timer: ConditionTimer::Rounds(Self::ROUNDS),
+            }));
+            effects.push(Box::new(GainTempHp {
+                actor_id: id,
+                amount: crate::actions::class_features::BEAST_FORM_TEMP_HP,
+            }));
+        }
+        effects
+    }
+}
+
+pub static ANIMAL_SHAPES: LazyLock<AnimalShapes> = LazyLock::new(|| AnimalShapes {});
+
+/// **Prismatic Wall** — SRD 5.2 level-9 abjuration (Bard, Wizard). *"A
+/// shimmering, multicolored plane of light forms a vertical opaque
+/// wall… The wall sheds Bright Light within 100 feet and Dim Light for
+/// an additional 100 feet… If another creature that can see the wall
+/// moves within 20 feet of it or starts its turn there, the creature
+/// must succeed on a Constitution saving throw or have the Blinded
+/// condition for 1 minute."*
+///
+/// Three layers of the engine at once, and the first spell that uses
+/// all three: the terrain map takes the wall, the lighting layer takes
+/// the glare, and the zone layer takes the twenty feet of blindness
+/// around it. Each of the three has had exactly one kind of spell on it
+/// — Wall of Stone, Daylight, Web — and this is what they compose into.
+///
+/// # The seven layers are the wall
+///
+/// RAW's centrepiece is a table: seven coloured sheets, each demanding
+/// a Dexterity save for 12d6 of its own damage type, walked *one at a
+/// time* by anything that tries to cross. The engine raises
+/// `TerrainType::Wall` instead, which nothing crosses at all.
+///
+/// That is a collapse, and it is the one that changes the least. A
+/// creature that walks the table takes seven saves against 12d6 —
+/// 42 average per layer, 294 in total, against a fifth of which
+/// (poison, fire, cold, acid) resistance is common and immunity is not
+/// unheard of. Nothing on this roster survives it; the tarrasque has
+/// 697 hit points and would spend more than a third of them on the
+/// crossing. A wall that kills whatever enters it and a wall that
+/// cannot be entered differ on paper and not on the board, and the
+/// version that cannot be entered is the one the pathfinder and the
+/// line-of-sight walk already understand.
+///
+/// What is genuinely lost is the *destruction* clause — each layer
+/// falling to a specific counter, Cold on the red, a Gust of Wind on
+/// the orange, 60 Force on the yellow. That is a whole counterplay
+/// lane, and it would need conjured terrain to have hit points, which
+/// nothing on that layer has.
+///
+/// # What it buys over Wall of Force
+///
+/// Four slot levels and the twenty feet. Wall of Force is a wall; this
+/// is a wall nobody can stand next to. The glare makes the approach
+/// cost a Constitution save per round — and unlike every damage-based
+/// area, failing it does not bring the target closer to dying, so a
+/// creature cannot simply decide to eat the cost and get on with it.
+///
+/// # Friend or foe
+///
+/// RAW exempts *"you and creatures you designate when you cast the
+/// spell"*. The zone layer is friend-or-foe blind by design — see
+/// `engine::zones`, which spells out why, and the one exception it
+/// makes for wards — and there is no channel for a cast-time list of
+/// names. So the glare catches the caster's side too, which is the
+/// same bargain Web, Cloudkill and Sleet Storm already strike: the area
+/// is visible to the AI's pathfinder, so the party's answer is to
+/// stand somewhere else.
+///
+/// # The remaining divergences, named
+///
+///   - **The occupied-space clause.** RAW ends the spell instantly if
+///     the wall would appear in a creature's space. The conjured
+///     terrain layer leaves a creature-shaped gap instead, which is its
+///     standing policy for every wall in the file; see
+///     `engine::conjured_terrain`.
+///   - **The globe form** is not offered — one shape per action, the
+///     same reading `SizeShiftSpell` and every other RAW option table
+///     in this file gets.
+///   - **Antimagic Field and Dispel Magic.** RAW says the first has no
+///     effect on the wall and the second reaches only the violet layer.
+///     Conjured terrain is not dispellable here to begin with, so the
+///     immunity is already true and the exception is already absent.
+pub struct PrismaticWall {}
+
+impl PrismaticWall {
+    /// Nine tiles of wall, four either side of the anchor — Wall of
+    /// Stone's reach, and for its reason: RAW's ninety feet is
+    /// thirty-six tiles on the 2.5-ft grid and would replace the room
+    /// rather than divide it.
+    const REACH: isize = 4;
+    /// RAW's *"within 20 feet of it"* — eight tiles, measured from the
+    /// anchor rather than from each panel. Slightly generous at the
+    /// wall's ends and slightly mean beyond them; the alternative is a
+    /// zone shape the layer does not have, and one circle centred on
+    /// the wall is the same twenty feet everywhere it matters.
+    const GLARE_RADIUS: isize = 8;
+    /// RAW's ten minutes. Longer than any fight on these boards, which
+    /// is the point of a wall that costs no concentration: the caster
+    /// raises it and then casts something else, and it is still there
+    /// at the end.
+    const ROUNDS: u32 = 100;
+    /// RAW's *"Blinded condition for 1 minute"*.
+    const BLIND_ROUNDS: u32 = 10;
+    /// RAW's *"Bright Light within 100 feet and Dim Light for an
+    /// additional 100 feet"* — forty tiles of each on the 2.5-ft grid.
+    const BRIGHT_TILES: isize = 40;
+}
+
+impl Action for PrismaticWall {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "prismatic wall"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["prismwall", "pswall"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(9)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let (dc, caster_at) = (caster.spellcasting_save_dc(), caster.location());
+        // The light lands in the builder rather than as a queued effect,
+        // for Daylight's reason: it is one sentence with the wall, and a
+        // reordering that raised the wall into an unlit room would put
+        // the glare up a tick after the thing that is glowing.
+        encounter.add_light_source(LightSource {
+            id: 0,
+            name: "prismatic wall",
+            anchor: LightAnchor::Fixed(point),
+            bright_tiles: Self::BRIGHT_TILES,
+            dim_tiles: Self::BRIGHT_TILES,
+            rounds_remaining: Some(Self::ROUNDS),
+            spell_level: 9,
+            innate: false,
+            // Not a flame: a gale does not blow out a plane of light.
+            // See `snuff_open_flames`.
+            open_flame: false,
+        });
+        vec![
+            Box::new(ConjureTerrain {
+                patch: ConjuredTerrain::new(
+                    "prismatic wall",
+                    caster_id,
+                    TerrainType::Wall,
+                    wall_tiles(caster_at, point, Self::REACH),
+                    Self::ROUNDS,
+                    // No concentration: RAW's duration is a flat ten
+                    // minutes, and the whole reason to spend a ninth
+                    // slot on a wall rather than a fourth is that the
+                    // caster's grip is left free for what comes next.
+                    false,
+                )
+                .with_verb("raises a shimmering plane of light across"),
+            }),
+            Box::new(InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: "prismatic glare",
+                    owner_id: caster_id,
+                    origin: point,
+                    radius: Self::GLARE_RADIUS,
+                    effect: ZoneEffect::hazard(ZoneContact::save_or(
+                        AbilityScoreType::Constitution,
+                        dc,
+                        Condition::Blinded,
+                        ConditionTimer::Rounds(Self::BLIND_ROUNDS),
+                    )),
+                    rounds_remaining: Self::ROUNDS,
+                    // The wall holds itself up; see the `false` above.
+                    concentration: false,
+                    motion: ZoneMotion::Fixed,
+                    revealed: false,
+                },
+                // RAW's trigger is *"moves within 20 feet of it or
+                // starts its turn there"* — a creature already standing
+                // there when the wall goes up has done neither, and
+                // will roll at the top of its own turn like everybody
+                // else. Web's `true` is the opposite case and says so
+                // in its own comment.
+                catch_present: false,
+            }),
+        ]
+    }
+}
+
+pub static PRISMATIC_WALL: LazyLock<PrismaticWall> = LazyLock::new(|| PrismaticWall {});

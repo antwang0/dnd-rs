@@ -167,6 +167,14 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // class templates target a balanced playable level, not lockstep
     // PHB progression.
     actions.push(&VANISH);
+    // lv1 **Animal Friendship** and lv2 **Find Traps** — both on the
+    // ranger list RAW, and between them the two halves of what the
+    // class is for outside a fight: the animals and the ground. The
+    // half-caster's slots are scarce enough that neither is a default
+    // opener, and both decline to cast when there is nothing to answer
+    // — Animal Friendship needs a Beast, Find Traps needs a trap.
+    actions.push(&*crate::actions::spells::ANIMAL_FRIENDSHIP);
+    actions.push(&*crate::actions::spells::FIND_TRAPS);
     CreatureTemplate {
         name: "Ranger",
         glyph: 'R',

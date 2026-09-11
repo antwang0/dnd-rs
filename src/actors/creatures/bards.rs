@@ -229,6 +229,16 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the bard list RAW. See `ZoneEffect::ward`.
     actions.push(&*crate::actions::spells::GLYPH_OF_WARDING);
     actions.push(&*crate::actions::spells::SYMBOL);
+    // lv1 **Animal Friendship** — on the bard list RAW, and the cheapest
+    // thing on any list here that removes a creature from a fight. The
+    // bard is the chassis that already spends its first-level slots on
+    // charms; this is the one that works on the wolves.
+    actions.push(&*crate::actions::spells::ANIMAL_FRIENDSHIP);
+    // lv9 **Prismatic Wall** — the bard's apex, and RAW gives it to
+    // exactly two lists. Terrain, light and a twenty-foot glare in one
+    // action, and no concentration, so the bard raises it and then goes
+    // back to inspiring people. See `spells::PRISMATIC_WALL`.
+    actions.push(&*crate::actions::spells::PRISMATIC_WALL);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

@@ -408,6 +408,25 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the tag), so pushing the action here is harmless for the
     // baseline — `custom_validate_input` gates on the feature flag.
     actions.push(&*crate::actions::class_features::NATURAL_RECOVERY);
+    // lv1 **Animal Friendship** — the bottom of the same lane Dominate
+    // Beast caps, and the only charm in the engine that ends when
+    // somebody hits the thing. A first-level slot takes the dire wolf
+    // out of the fight for as long as the party leaves it alone, which
+    // on a board where the druid is the one who decides what the party
+    // shoots at is a real bargain rather than a trap.
+    actions.push(&*crate::actions::spells::ANIMAL_FRIENDSHIP);
+    // lv2 **Find Traps** — the druid's row on the dungeon lane, and the
+    // only spell on any list here whose target is the floor. Declines
+    // to cast on a clean board, so it costs nothing in the open and
+    // clears the corridor when the generator has trapped one.
+    actions.push(&*crate::actions::spells::FIND_TRAPS);
+    // lv8 **Animal Shapes** — Wild Shape cast at the party, and the
+    // druid's apex buff. Deliberately above Heroes' Feast in slot cost
+    // and below Storm of Vengeance: it is the eighth-level answer for a
+    // front line rather than for a board. See `spells::ANIMAL_SHAPES`
+    // for why it switches off every caster it lands on, and why that is
+    // the spell rather than a bug in it.
+    actions.push(&*crate::actions::spells::ANIMAL_SHAPES);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
