@@ -21640,7 +21640,7 @@ mod tests {
     /// The symptom was the shape that hides best — twelve items working
     /// perfectly whenever a human aimed them, and never once selected
     /// by a monster or a companion. See
-    /// `BurstSaveConditionItem::spares_allies`.
+    /// `AreaSaveConditionItem::spares_allies`.
     #[test]
     fn an_enemy_only_wand_is_aimed_through_its_wielders_own_allies() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;

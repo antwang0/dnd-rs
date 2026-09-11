@@ -2742,7 +2742,7 @@ impl EncounterInstance {
     /// (a vanished target can't take the install anyway). Centralizes
     /// the `self.actors.get(&id).is_some_and(|t|
     /// t.effectively_immune_to_condition(c))` chain — used by the
-    /// `BurstSaveConditionItem` / `SingleSaveConditionItem` / Wand of
+    /// `AreaSaveConditionItem` / `SingleSaveConditionItem` / Wand of
     /// Polymorph save-roll skip and any other site that needs to short-
     /// circuit a save against a target whose install can't land.
     pub fn actor_immune_to_condition(&self, id: usize, c: Condition) -> bool {

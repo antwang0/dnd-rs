@@ -6779,6 +6779,31 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
         },
+        // SRD 5.2 **Thunderous Greatclub** (Weapon, greatclub; Very
+        // Rare): "The weapon deals an extra 1d8 Thunder damage to any
+        // creature it hits."
+        //
+        // The armoury's second ungated rider, and the one that reads as
+        // the Vicious Weapon's opposite number: a smaller die that is
+        // almost never halved, against a larger one that is dealt as
+        // bludgeoning and therefore halved by every skeleton on the
+        // board. See `Condition::Thundering`.
+        //
+        // `MeleeWeapon` rather than `AnyWeapon`, unlike the Vicious
+        // Weapon beside it: RAW names the greatclub, and a greatclub
+        // has no thrown or ranged mode to reach anything with.
+        OnHitRider {
+            condition: Condition::Thundering,
+            dice: Dice::new(1, 8),
+            label: "thunderous greatclub",
+            damage_type: RiderDamage::Fixed(DamageType::Thunder),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+        },
         // 5e **Sword of Wounding** (Weapon, one of six blades; Rare):
         // "the target takes an extra 2d6 Necrotic damage and must
         // succeed on a DC 15 Constitution saving throw or be unable to

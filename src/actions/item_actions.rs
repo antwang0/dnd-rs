@@ -8,6 +8,7 @@ use crate::{
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
+        areas::AreaShape,
         dice::Dice,
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
@@ -1871,12 +1872,12 @@ pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     reach: 6,
 };
 
-/// Config struct for "burst save-or-condition" consumable items — the
+/// Config struct for "area save-or-condition" consumable items — the
 /// shared shape behind Wand of Web (Restrained), Pipes of Haunting
 /// (Frightened), and any future area-control consumable that hits a
 /// tile with a save-or-suck install instead of damage. Each static
 /// instance encodes a single item's per-cast configuration; the `Action`
-/// impl below sweeps every combat-active enemy inside the burst,
+/// impl below sweeps every combat-active enemy the area catches,
 /// routes each save through `roll_save_against_caster` (so Heightened
 /// Spell metamagic still bites the first save) and queues an
 /// `ApplyCondition` on every failed save.
@@ -1886,9 +1887,20 @@ pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
 /// Prone on a DEX save) is a one-static declaration — no new `Action`
 /// impl needed. Enemy-only filtering matches the player-friendly
 /// design of every other harmful item: the player's allies caught in
-/// the burst zone never make a save, mirroring `enemy_burst_targets`'s
+/// the area never make a save, mirroring `enemy_area_targets`'s
 /// "spare the friendly side" envelope.
-pub struct BurstSaveConditionItem {
+///
+/// **It was `AreaSaveConditionItem` and burst-only**, which was the
+/// right shape for the eleven wands and scrolls that arrived on it and
+/// wrong for two of them the whole time: a Scroll of Fear casts *"each
+/// creature in a 30-foot Cone"* and was resolving as a thirty-foot
+/// sphere, which is four times the ground and catches the creatures
+/// standing behind the reader. The chassis carries an `AreaShape` now
+/// and derives its schema from it, which is the pattern
+/// `engine::breath::BreathWeapon` already used for the dragons whose
+/// breath is a cone on one stat block and a line on the next. See
+/// `TargetingSchema::from_area`.
+pub struct AreaSaveConditionItem {
     /// Player-facing action name (e.g. "use wand of web").
     pub action_name: &'static str,
     /// Picker aliases (e.g. ["web", "wand of web"]).
@@ -1899,13 +1911,25 @@ pub struct BurstSaveConditionItem {
     /// substituted with the caster's name; no other formatting is
     /// performed.
     pub log_text: &'static str,
-    /// Save ability for the burst (e.g. DEX for Web, WIS for Haunting).
+    /// Save ability for the area (e.g. DEX for Web, WIS for Haunting).
     pub save: AbilityScoreType,
     /// Save DC (typically 15 for SRD scrolls / wands).
     pub dc: i32,
-    /// Burst radius in tiles.
-    pub radius: isize,
-    /// Maximum reach in tiles for the targeting picker.
+    /// The ground this item covers — a burst thrown at a tile, or a
+    /// cone or line projected from the reader's own body. Both the
+    /// targeting schema and the resolver's sweep are derived from it,
+    /// so there is one place to change a cone into a burst.
+    pub shape: AreaShape,
+    /// Maximum reach in tiles for the targeting picker, **for a burst
+    /// only**.
+    ///
+    /// A projected area is aimed by naming a tile inside it, so its
+    /// reach *is* its length and `AreaShape::aim_reach` answers it;
+    /// `reach_tiles` below prefers that answer and falls back here. A
+    /// burst has no such relation — a Fireball's 150-foot range has
+    /// nothing to do with its 20-foot radius — which is exactly why
+    /// that method returns `None` for one arm and a number for the
+    /// other. A cone row may leave this at `0`.
     pub reach: isize,
     /// Condition to install on a failed save.
     pub condition: Condition,
@@ -1932,7 +1956,7 @@ pub struct BurstSaveConditionItem {
     pub charge_cost: Option<u32>,
 }
 
-impl Action for BurstSaveConditionItem {
+impl Action for AreaSaveConditionItem {
     fn name(&self) -> &str {
         self.action_name
     }
@@ -1942,13 +1966,11 @@ impl Action for BurstSaveConditionItem {
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst {
-            radius: self.radius,
-        }
+        TargetingSchema::from_area(self.shape)
     }
 
     fn reach_tiles(&self) -> Option<isize> {
-        Some(self.reach)
+        Some(self.shape.aim_reach().unwrap_or(self.reach))
     }
 
     fn requires_los(&self) -> bool {
@@ -2046,7 +2068,7 @@ impl Action for BurstSaveConditionItem {
         // The AI's `try_attack_aoe` heuristic already filters tiles that
         // catch allies; this lets the player aim through their own line
         // without burning the consumable on allies that pass / fail RAW.
-        for tid in encounter.enemy_burst_targets(caster_id, center, self.radius) {
+        for tid in encounter.enemy_area_targets(caster_id, self.shape, center) {
             // Skip targets immune to this condition — the install would
             // no-op at `add_condition` anyway. The bigger reason for the
             // skip is the Sorcerer Heightened Spell prime: it consumes
@@ -2194,15 +2216,15 @@ const WAND_OF_FEAR_NAME: &str = "Wand of Fear";
 /// caster-ability tie). 5e RAW: 7 charges casting the Web spell; we
 /// collapse to a single-use fire-and-forget cast — no concentration,
 /// no charges tracked. Fires through the shared
-/// `BurstSaveConditionItem` impl.
-pub static USE_WAND_OF_WEB: BurstSaveConditionItem = BurstSaveConditionItem {
+/// `AreaSaveConditionItem` impl.
+pub static USE_WAND_OF_WEB: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "use wand of web",
     action_aliases: &["web", "web wand"],
     item_name: WAND_OF_WEB_NAME,
     log_text: "{actor} flicks the wand of web; sticky strands erupt.",
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 60 ft range RAW; 24 tiles in the 2.5ft grid.
     reach: 24,
     condition: Condition::Restrained,
@@ -2216,15 +2238,15 @@ pub static USE_WAND_OF_WEB: BurstSaveConditionItem = BurstSaveConditionItem {
 /// shape as the other burst-save consumables. Pairs with the Wand of
 /// Fear single-target variant — Pipes covers the "soft area fear"
 /// niche, the wand covers the "hard single-target fear" niche. Fires
-/// through the shared `BurstSaveConditionItem` impl.
-pub static PLAY_PIPES_OF_HAUNTING: BurstSaveConditionItem = BurstSaveConditionItem {
+/// through the shared `AreaSaveConditionItem` impl.
+pub static PLAY_PIPES_OF_HAUNTING: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "play pipes of haunting",
     action_aliases: &["pipes", "haunt"],
     item_name: PIPES_OF_HAUNTING_NAME,
     log_text: "{actor} plays the pipes of haunting; a mournful dirge fills the air.",
     save: AbilityScoreType::Wisdom,
     dc: 13,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 30 ft cone RAW; 12 tiles in the 2.5ft grid.
     reach: 12,
     condition: Condition::Frightened,
@@ -2251,7 +2273,7 @@ pub static PLAY_PIPES_OF_HAUNTING: BurstSaveConditionItem = BurstSaveConditionIt
 /// The mace carries no `+1`: RAW's does not, which is what separates it
 /// from the Mace of Smiting and makes three charges of area fear the
 /// whole of what it is worth.
-pub static SOUND_MACE_OF_TERROR: BurstSaveConditionItem = BurstSaveConditionItem {
+pub static SOUND_MACE_OF_TERROR: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "sound mace of terror",
     action_aliases: &["mace of terror", "terror", "wave of terror"],
     item_name: MACE_OF_TERROR_NAME,
@@ -2262,7 +2284,7 @@ pub static SOUND_MACE_OF_TERROR: BurstSaveConditionItem = BurstSaveConditionItem
     // grid. The reach is the same number for the same reason — the wave
     // starts where the wielder is standing, so the aimed-at point is
     // never further away than the radius.
-    radius: 12,
+    shape: AreaShape::Burst { radius: 12 },
     reach: 12,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
@@ -2270,6 +2292,54 @@ pub static SOUND_MACE_OF_TERROR: BurstSaveConditionItem = BurstSaveConditionItem
 };
 
 const MACE_OF_TERROR_NAME: &str = "Mace of Terror";
+
+/// **Clap of Thunder** — the Thunderous Greatclub's Magic action:
+/// *"strike the weapon against a hard surface to create a loud clap of
+/// thunder… You also create a 30-foot Cone of thunderous energy. Each
+/// creature in the Cone must succeed on a DC 15 Strength saving throw
+/// or have the Prone condition."*
+///
+/// The second weapon on this chassis after the Mace of Terror, and the
+/// first row of any kind that RAW prints as a **Cone** — which is what
+/// the shape field was added for. The wedge matters more here than it
+/// would for a fear effect: Prone is the engine's cheapest force
+/// multiplier (every melee ally swings at advantage, the flattened
+/// creature spends half its next turn standing), so an area that could
+/// point backwards would be one the wielder's own line could not
+/// afford to stand in front of.
+///
+/// **RAW puts no limit on it and the engine puts three charges on it.**
+/// The clause is a Magic action with no charge, no recharge and no
+/// once-per-turn — which on a board where a turn is six seconds and
+/// Prone costs a target half its movement means the only thing its
+/// wielder would ever do is swing the club at the floor. Three charges
+/// refilling at `1d3` a dawn is the Mace of Terror's cadence, chosen
+/// for the same reason: it makes the clause a decision rather than a
+/// default, and it errs in the direction the engine prefers to err.
+///
+/// RAW's fourth clause — Earthquake — is not here. Its text is about
+/// structures taking 50 damage, ten-foot fissures and a fifty-foot
+/// circle of ground, and this board has no structures, no fissures and
+/// no ground that can be broken.
+pub static CLAP_OF_THUNDER: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "clap of thunder",
+    action_aliases: &["clap", "thunderclap", "greatclub"],
+    item_name: THUNDEROUS_GREATCLUB_NAME,
+    log_text: "{actor} slams the greatclub down and the air splits with thunder.",
+    save: AbilityScoreType::Strength,
+    dc: 15,
+    // 30 ft RAW; 12 tiles on the 2.5-ft grid, and its own reach.
+    shape: AreaShape::Cone { length: 12 },
+    reach: 0,
+    // Permanent, like every other knockdown in the engine: a prone
+    // creature stands up by spending movement, not by waiting out a
+    // timer.
+    condition: Condition::Prone,
+    timer: ConditionTimer::Permanent,
+    charge_cost: Some(1),
+};
+
+const THUNDEROUS_GREATCLUB_NAME: &str = "Thunderous Greatclub";
 
 /// Wand of Paralysis — Action; single-target line, CON save vs DC 15,
 /// fail = Paralyzed for 10 rounds. Single-use consumable. 5e RAW: 7
@@ -2373,16 +2443,16 @@ pub static READ_HOLD_MONSTER_SCROLL: SingleSaveConditionItem = SingleSaveConditi
 /// to the burst envelope every other AoE CC consumable rides. Top-of-
 /// pool burst CC alongside Wand of Paralysis (single-target Paralyzed)
 /// — the wand of confusion trades single-target lockdown for a wider
-/// soft-CC blanket. Fires through the shared `BurstSaveConditionItem`
+/// soft-CC blanket. Fires through the shared `AreaSaveConditionItem`
 /// impl.
-pub static USE_WAND_OF_CONFUSION: BurstSaveConditionItem = BurstSaveConditionItem {
+pub static USE_WAND_OF_CONFUSION: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "use wand of confusion",
     action_aliases: &["confusion", "confuse"],
     item_name: WAND_OF_CONFUSION_NAME,
     log_text: "{actor} flourishes the wand of confusion; minds unravel.",
     save: AbilityScoreType::Wisdom,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 90 ft range RAW; 36 tiles in the 2.5ft grid.
     reach: 36,
     condition: Condition::Confused,
@@ -2397,15 +2467,15 @@ pub static USE_WAND_OF_CONFUSION: BurstSaveConditionItem = BurstSaveConditionIte
 /// consumable rides. Lower DC (14 vs the Wand of Confusion's 15)
 /// reflects the "common burst CC" niche between Pipes of Haunting
 /// (DC 13 Frightened) and Wand of Confusion (DC 15 Confused). Fires
-/// through the shared `BurstSaveConditionItem` impl.
-pub static READ_HYPNOTIC_PATTERN_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+/// through the shared `AreaSaveConditionItem` impl.
+pub static READ_HYPNOTIC_PATTERN_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read hypnotic pattern scroll",
     action_aliases: &["hp pattern", "hypnotic scroll"],
     item_name: SCROLL_OF_HYPNOTIC_PATTERN_NAME,
     log_text: "{actor} reads a scroll of hypnotic pattern; swirling lights mesmerize.",
     save: AbilityScoreType::Wisdom,
     dc: 14,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 120 ft range RAW; 48 tiles in the 2.5ft grid.
     reach: 48,
     condition: Condition::Incapacitated,
@@ -2783,15 +2853,15 @@ pub static READ_BLINDNESS_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
 /// to a burst envelope every other AoE CC consumable rides. Mirror of
 /// `READ_BLESS_SCROLL` on the debuff lane — enemies caught in the
 /// burst eat the penalty for 10 rounds. Fires through the shared
-/// `BurstSaveConditionItem` impl.
-pub static READ_BANE_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+/// `AreaSaveConditionItem` impl.
+pub static READ_BANE_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read bane scroll",
     action_aliases: &["bane scroll", "bane"],
     item_name: SCROLL_OF_BANE_NAME,
     log_text: "{actor} reads a scroll of bane; a creeping shadow seeps over the foes.",
     save: AbilityScoreType::Charisma,
     dc: 13,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 30 ft range RAW; 12 tiles.
     reach: 12,
     condition: Condition::Baned,
@@ -2804,16 +2874,16 @@ pub static READ_BANE_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
 /// benefit from Hidden / Invisible). 5e RAW: level-1 evocation,
 /// concentration, DEX save; the scroll drops the concentration gate.
 /// Fills the "burst Outlined" niche alongside the existing single-target
-/// outline sources. Fires through the shared `BurstSaveConditionItem`
+/// outline sources. Fires through the shared `AreaSaveConditionItem`
 /// impl.
-pub static READ_FAERIE_FIRE_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+pub static READ_FAERIE_FIRE_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read faerie fire scroll",
     action_aliases: &["faerie fire", "ff scroll"],
     item_name: SCROLL_OF_FAERIE_FIRE_NAME,
     log_text: "{actor} reads a scroll of faerie fire; motes of pale light tag the foes.",
     save: AbilityScoreType::Dexterity,
     dc: 13,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 60 ft range RAW; 24 tiles.
     reach: 24,
     condition: Condition::Outlined,
@@ -3041,15 +3111,15 @@ pub static USE_WAND_OF_SLEEP: SingleSaveConditionItem = SingleSaveConditionItem 
 /// drops the concentration gate. Mirrors Scroll of Bane / Faerie Fire on
 /// the burst-debuff lane — Slowed is the AC/movement counterpart to
 /// Bane's roll penalties. Fires through the shared
-/// `BurstSaveConditionItem` impl.
-pub static READ_SLOW_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+/// `AreaSaveConditionItem` impl.
+pub static READ_SLOW_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read slow scroll",
     action_aliases: &["slow", "slow scroll"],
     item_name: SCROLL_OF_SLOW_NAME,
     log_text: "{actor} reads a scroll of slow; the air around the foes thickens.",
     save: AbilityScoreType::Wisdom,
     dc: 13,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles. 24 (60 ft) matches the engine's typical
     // burst-CC scroll reach.
     reach: 24,
@@ -3065,15 +3135,15 @@ pub static READ_SLOW_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
 /// envelope and drops the concentration gate. Fills the burst-Poisoned
 /// niche in the loot pool alongside Pipes of Haunting (burst Frightened)
 /// and Wand of Web (burst Restrained). Fires through the shared
-/// `BurstSaveConditionItem` impl.
-pub static READ_STINKING_CLOUD_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+/// `AreaSaveConditionItem` impl.
+pub static READ_STINKING_CLOUD_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read stinking cloud scroll",
     action_aliases: &["stinking", "stink"],
     item_name: SCROLL_OF_STINKING_CLOUD_NAME,
     log_text: "{actor} reads a scroll of stinking cloud; a sickly yellow fog billows.",
     save: AbilityScoreType::Constitution,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 90 ft RAW; 36 tiles. 24 (60 ft) matches the engine's typical
     // burst-CC scroll reach.
     reach: 24,
@@ -3258,24 +3328,33 @@ pub static READ_BANISHMENT_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     timer: ConditionTimer::Rounds(10),
 };
 
-/// Scroll of Fear — Action; 4-tile burst, WIS save vs DC 15, fail =
+/// Scroll of Fear — Action; 30-ft cone, WIS save vs DC 15, fail =
 /// `Frightened` for 10 rounds. 5e RAW: level-3 illusion, concentration,
-/// 30-ft cone; the scroll drops concentration and uses a burst envelope.
+/// 30-ft cone; the scroll drops the concentration and keeps the cone.
 /// Harder DC counterpart to Pipes of Haunting (burst DC 13 Frightened);
 /// sits alongside Wand of Fear (single-target DC 15 Frightened) so the
-/// loot pool covers all three combinations of (burst/single, soft/hard
+/// loot pool covers all three combinations of (area/single, soft/hard
 /// DC) on the Frightened lane. Fires through the shared
-/// `BurstSaveConditionItem` impl.
-pub static READ_FEAR_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+/// `AreaSaveConditionItem` impl.
+///
+/// **It was a 4-tile burst** for as long as the chassis only had
+/// bursts, with a comment saying so. The two shapes are not close: a
+/// cone comes out of the reader and cannot catch anything behind them,
+/// where a sphere centred four tiles out is as happy pointing backwards
+/// — and a Frightened that lands on the party's own front line is a
+/// front line that cannot approach the thing it is fighting.
+pub static READ_FEAR_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read fear scroll",
-    action_aliases: &["fear scroll", "fear burst"],
+    action_aliases: &["fear scroll", "fear cone"],
     item_name: SCROLL_OF_FEAR_NAME,
     log_text: "{actor} reads a scroll of fear; shadows leap from the parchment.",
     save: AbilityScoreType::Wisdom,
     dc: 15,
-    radius: 4,
-    // 30 ft RAW; 12 tiles.
-    reach: 12,
+    // 30 ft RAW; 12 tiles on the 2.5-ft grid. A cone is aimed by
+    // naming a tile inside it, so `reach` is unread here — see the
+    // field.
+    shape: AreaShape::Cone { length: 12 },
+    reach: 0,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     charge_cost: None,
@@ -3388,15 +3467,15 @@ pub static READ_ICE_STORM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
 /// Scroll of Web — Action; 4-tile burst, DEX save vs DC 13, fail =
 /// `Restrained` for 10 rounds. Cheap-tier counterpart to Wand of Web (DC 15
 /// burst Restrained) — same shape, easier DC. Fires through the shared
-/// `BurstSaveConditionItem` impl.
-pub static READ_WEB_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+/// `AreaSaveConditionItem` impl.
+pub static READ_WEB_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read web scroll",
     action_aliases: &["web scroll", "web burst"],
     item_name: SCROLL_OF_WEB_NAME,
     log_text: "{actor} reads a scroll of web; sticky strands erupt across the ground.",
     save: AbilityScoreType::Dexterity,
     dc: 13,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
     condition: Condition::Restrained,
@@ -3515,16 +3594,16 @@ pub static USE_WAND_OF_SUGGESTION: SingleSaveConditionItem = SingleSaveCondition
 /// scroll collapses to the Charm-installer half (the engine-relevant
 /// combat clause) and drops the concentration gate. Burst counterpart
 /// to Scroll of Charm Person (single-target, same DC 13) on the
-/// Charmed lane. Fires through the shared `BurstSaveConditionItem`
+/// Charmed lane. Fires through the shared `AreaSaveConditionItem`
 /// impl.
-pub static READ_CALM_EMOTIONS_SCROLL: BurstSaveConditionItem = BurstSaveConditionItem {
+pub static READ_CALM_EMOTIONS_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "read calm emotions scroll",
     action_aliases: &["calm", "calm emotions"],
     item_name: SCROLL_OF_CALM_EMOTIONS_NAME,
     log_text: "{actor} reads a scroll of calm emotions; a soothing wave washes over the foes.",
     save: AbilityScoreType::Charisma,
     dc: 13,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
     condition: Condition::Charmed,
@@ -4050,22 +4129,27 @@ pub static USE_EYES_OF_CHARMING: SingleSaveConditionItem = SingleSaveConditionIt
     timer: ConditionTimer::Rounds(10),
 };
 
-/// Gem of Brightness — Action; 4-tile burst, CON save vs DC 14, fail =
-/// `Blinded` for 10 rounds. 5e RAW (DMG): a prism gem with three charge
-/// modes (light, blind one, blind cone); the engine collapses the
-/// multi-mode utility to the only combat-relevant clause (cone Blinded)
-/// and uses a single-use envelope. Routes through the shared
-/// `BurstSaveConditionItem` impl.
-pub static USE_GEM_OF_BRIGHTNESS: BurstSaveConditionItem = BurstSaveConditionItem {
+/// Gem of Brightness — Action; 30-ft cone, CON save vs DC 14, fail =
+/// `Blinded` for 10 rounds. SRD 5.2: a prism with three command words
+/// (a lamp, a single blinding beam, and a blinding flare in a 30-foot
+/// Cone); the engine keeps the third, which is the only one of the
+/// three that is a fight.
+///
+/// **The cone was a burst** until the chassis could hold a shape, with
+/// a comment naming RAW's cone one line under the radius that was not
+/// one. A flare that comes out of the gem cannot blind the party
+/// standing behind the person holding it, and a sphere centred four
+/// tiles away can.
+pub static USE_GEM_OF_BRIGHTNESS: AreaSaveConditionItem = AreaSaveConditionItem {
     action_name: "use gem of brightness",
     action_aliases: &["gem", "brightness"],
     item_name: GEM_OF_BRIGHTNESS_NAME,
     log_text: "{actor} discharges the gem of brightness; a searing prismatic flare blooms.",
     save: AbilityScoreType::Constitution,
     dc: 14,
-    radius: 4,
-    // 30 ft RAW for the cone-of-light variant; 12 tiles in the 2.5ft grid.
-    reach: 12,
+    // 30 ft RAW; 12 tiles on the 2.5-ft grid, and its own reach.
+    shape: AreaShape::Cone { length: 12 },
+    reach: 0,
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
     charge_cost: None,
@@ -4175,7 +4259,7 @@ pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveCondit
 pub static READ_SLEEP_SCROLL: ReadSleepScrollItem = ReadSleepScrollItem {};
 
 /// Scroll of Sleep — bespoke item action that mirrors the SLEEP spell's
-/// pool-sweep envelope. Doesn't fit `BurstSaveConditionItem` because that
+/// pool-sweep envelope. Doesn't fit `AreaSaveConditionItem` because that
 /// factor uses the installed condition for the immunity-prune (Asleep
 /// here) — Sleep RAW uses "mind-affecting" immunity (Charmed proxy in
 /// this engine), so undead / constructs are correctly spared via the

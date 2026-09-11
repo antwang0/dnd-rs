@@ -1803,7 +1803,7 @@ pub static SCROLL_OF_ICE_STORM: Item = Item {
 /// = `Restrained` for 10 rounds. 5e RAW: level-2 conjuration, concentration,
 /// 60-ft range / 20-ft cube, no concentration on the scroll. Sibling to
 /// Wand of Web (DC 15 Restrained burst) at the cheap-tier weight — same
-/// shape, easier DC. Both ride the shared `BurstSaveConditionItem` impl.
+/// shape, easier DC. Both ride the shared `AreaSaveConditionItem` impl.
 pub static SCROLL_OF_WEB: Item = Item {
     name: "Scroll of Web",
     glyph: 'W',
@@ -1889,7 +1889,7 @@ pub static WAND_OF_SUGGESTION: Item = Item {
 /// combat clause) and drops the concentration gate. Burst counterpart
 /// to Scroll of Charm Person (single-target, same DC) and
 /// debuff-burst-AoE counterpart to Scroll of Bane (CHA-save burst).
-/// Fires through the shared `BurstSaveConditionItem` impl.
+/// Fires through the shared `AreaSaveConditionItem` impl.
 pub static SCROLL_OF_CALM_EMOTIONS: Item = Item {
     name: "Scroll of Calm Emotions",
     glyph: 's',
@@ -3387,7 +3387,7 @@ pub static MACE_OF_SMITING: Item = Item {
 /// Running the pool dry leaves a mace, not a gap in the pack: the action
 /// is priced in `Resource::ItemCharges` rather than billed through
 /// `spend_item_use`, which is the lane that drops a wand when its last
-/// charge goes. See `item_actions::BurstSaveConditionItem::charge_cost`.
+/// charge goes. See `item_actions::AreaSaveConditionItem::charge_cost`.
 ///
 /// `grants_magical_attacks` even with no bonus, for the reason the Mace
 /// of Disruption has it: RAW calls it a magic mace, and a magic weapon
@@ -3402,6 +3402,56 @@ pub static MACE_OF_TERROR: Item = Item {
     // RAW's "1d3 expended charges daily at dawn", against the file's
     // usual 1d6+1 — a smaller pool refills more slowly, which is what
     // keeps three charges feeling like three.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
+/// **Thunderous Greatclub** (Weapon, greatclub; Very Rare) — *"While
+/// you are attuned to this magic weapon, your Strength is 20 unless
+/// your Strength is already equal to or greater than that score. The
+/// weapon deals an extra 1d8 Thunder damage to any creature it hits."*
+/// Plus a Magic action, Clap of Thunder, and one clause the engine has
+/// no ground for.
+///
+/// The armoury's second item with a charge pool, and the second whose
+/// clause is an area rather than a swing — which makes it the Mace of
+/// Terror's opposite number twice over. The mace buys three waves of
+/// fear and no bonus; the club buys three knockdowns *and* a die on
+/// every hit, and its knockdown comes out in a wedge rather than a
+/// ring. See `item_actions::CLAP_OF_THUNDER` for why the charges exist
+/// at all when RAW prints none, and `Condition::Thundering` for the
+/// die.
+///
+/// **The Strength-20 clause is a damage bonus**, which is the
+/// translation the Belt of Giant Strength already makes and for the
+/// same reason: the engine builds finished stat blocks and has no lane
+/// that overwrites an ability score. `+2` is the shift a typical
+/// martial chassis sees moving to a 20 (from `+3` to `+5`), and it is
+/// deliberately *not* paired with an attack bonus — RAW prints no `+N`
+/// on this weapon, and the Strength it grants is already folded into
+/// the swing's own attack roll for anybody the clause would help.
+///
+/// The bonus is the engine's usual over-grant on this lane: it rides
+/// every swing the holder makes rather than only the club's. That is
+/// `BRACERS_OF_ARCHERY`'s bargain and `WEAPON_PLUS_TWO`'s, and the
+/// alternative is an item model that binds a swing to an object — see
+/// `Condition::DragonSlaying`.
+pub static THUNDEROUS_GREATCLUB: Item = Item {
+    name: "Thunderous Greatclub",
+    glyph: 'T',
+    bonuses: ItemBonuses {
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::Thundering],
+    on_use: &[&crate::actions::item_actions::CLAP_OF_THUNDER],
+    charges: 3,
+    // The Mace of Terror's refill, for a pool the same size. See
+    // `CLAP_OF_THUNDER` for why there is a pool.
     recharge: Some(DiceExpr {
         dice: Some(crate::engine::dice::Dice::new(1, 3)),
         constant: 0,
@@ -4018,6 +4068,7 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &VORPAL_SWORD,
     &MACE_OF_SMITING,
     &MACE_OF_TERROR,
+    &THUNDEROUS_GREATCLUB,
     &ADAMANTINE_ARMOR,
 ];
 
@@ -4737,6 +4788,10 @@ pub static LOOT_POOL: &[&Item] = &[
     &VORPAL_SWORD,
     &MACE_OF_SMITING,
     &MACE_OF_TERROR,
+    // The mace's opposite number: three charges of area control and a
+    // die on every swing, where the mace has the charges and no die.
+    // Single entry, like every other clause-weapon on the shelf.
+    &THUNDEROUS_GREATCLUB,
     // The wondrous half of the same batch — items whose clause is a
     // defence or a sense rather than a die on a swing. Single entries
     // apiece for the same reason the armoury gets them: each answers one
@@ -4923,6 +4978,7 @@ mod tests {
             (&DAGGER_OF_VENOM, Condition::Envenomed, true),
             (&VORPAL_SWORD, Condition::Vorpal, false),
             (&MACE_OF_SMITING, Condition::MaceSmiting, false),
+            (&THUNDEROUS_GREATCLUB, Condition::Thundering, false),
         ];
         // The entries whose value is not a die on a swing, and so have
         // no rider row to be wired to. Named rather than counted — see

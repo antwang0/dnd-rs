@@ -95151,9 +95151,119 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Thunderous Greatclub pays its thunder on every hit, and its
+/// clap comes out as a wedge rather than a ring.
+///
+/// Two claims about one weapon, because the two halves are what it is
+/// for:
+///
+///   - **The die is ungated.** It is the armoury's second such rider
+///     after the Vicious Weapon, and the pair are a deliberate
+///     contrast — a smaller die of a type almost nothing on this
+///     bestiary resists, against a larger one dealt as the weapon's
+///     own type. A skeleton is the creature that tells them apart, so
+///     a skeleton is what this swings at.
+///   - **The clap is a Cone.** Every row on the condition chassis was
+///     a burst until the shape field arrived, so what is pinned is the
+///     thing a burst cannot do: an enemy standing *behind* the wielder
+///     is outside a wedge thrown forward and would have been squarely
+///     inside a thirty-foot sphere.
+#[test]
+fn the_thunderous_greatclub_thunders_on_every_hit_and_claps_forward() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::items::item_template::THUNDEROUS_GREATCLUB;
+
+    // The die. A skeleton resists Bludgeoning and does not resist
+    // Thunder, and the rider is pushed as its own typed payload — so
+    // what comes back is 1d8 whatever the club's own swing does.
+    let mut seen = (u32::MAX, 0u32);
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let bones = e
+            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&THUNDEROUS_GREATCLUB);
+        let mut effects = Vec::new();
+        let rolled = push_on_hit_riders(
+            &mut e,
+            &mut effects,
+            fighter,
+            bones,
+            RiderSwing {
+                is_melee: true,
+                is_spell: false,
+                is_crit: false,
+                natural_twenty: false,
+                damage_so_far: 0,
+                damage_type: DamageType::Bludgeoning,
+            },
+        );
+        seen.0 = seen.0.min(rolled);
+        seen.1 = seen.1.max(rolled);
+    }
+    assert!(
+        (1..=8).contains(&seen.0) && (1..=8).contains(&seen.1) && seen.0 < seen.1,
+        "the club should pay 1d8 on every hit, saw {seen:?}"
+    );
+
+    // The wedge. One goblin ahead of the wielder and one behind, both
+    // four tiles out, both well inside a thirty-foot sphere.
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    let mut behind_was_spared = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let ahead = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+            .unwrap();
+        let behind = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&THUNDEROUS_GREATCLUB);
+        let clap = *e.actors[&fighter]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "clap of thunder")
+            .expect("holding the club offers the clap");
+        let at = vec![e.actors[&ahead].location()];
+        for ef in clap.execute(&mut e, fighter, None, Some(&at), None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&behind].has_condition(Condition::Prone),
+            "seed {seed}: the clap reached round behind the wielder:\n{}",
+            e.messages().join("\n")
+        );
+        behind_was_spared = true;
+        // And the wedge has to actually reach forward, or the assertion
+        // above is vacuous. The goblin ahead gets a save, so this is
+        // asked across the sweep rather than per seed.
+        if e.actors[&ahead].has_condition(Condition::Prone) {
+            return;
+        }
+    }
+    assert!(behind_was_spared);
+    panic!("forty seeds and the clap never flattened the goblin standing in it");
+}
+
 /// The Mace of Terror spends a charge and stays a mace.
 ///
-/// The clause `BurstSaveConditionItem::charge_cost` exists for. Every
+/// The clause `AreaSaveConditionItem::charge_cost` exists for. Every
 /// other row on that chassis is a wand or a scroll, billed through
 /// `spend_item_use`, which drops the object when the pool empties —
 /// correct for a wand and a disaster for a magic weapon. Three waves of

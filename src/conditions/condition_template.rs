@@ -3220,6 +3220,30 @@ pub enum Condition {
     /// lane; the construct-only die is where that clause's value goes
     /// instead.
     MaceSmiting,
+    /// Holding a SRD 5.2 **Thunderous Greatclub** — *"The weapon deals
+    /// an extra 1d8 Thunder damage to any creature it hits."*
+    ///
+    /// The second ungated rider in the armoury after `Vicious`, and the
+    /// pair are worth reading together: RAW gives the Vicious Weapon
+    /// 2d6 of *the weapon's own type* and the greatclub 1d8 of thunder,
+    /// which is a smaller average against a wider share of the
+    /// bestiary. A greatclub deals bludgeoning, and bludgeoning is what
+    /// the skeletons resist and the oozes shrug at; thunder is resisted
+    /// by almost nothing on this roster. The club's smaller die gets
+    /// through where the larger one is halved.
+    ///
+    /// RAW's *"an extra 3d8 Thunder damage to objects it hits that
+    /// aren't being worn or carried"* has nowhere to land: this board
+    /// carries terrain and creatures and no destructible objects.
+    ///
+    /// The weapon's other clauses are not this marker's business. The
+    /// Strength-20 line rides the item's own `bonuses` — see
+    /// `items::item_template::THUNDEROUS_GREATCLUB` for why a score-set
+    /// becomes a damage bonus — and Clap of Thunder is an Action on the
+    /// item. Earthquake is not modeled at all: its text is about
+    /// structures, fissures and a fifty-foot circle of ground, and the
+    /// engine has none of the three.
+    Thundering,
     /// A wound that will not close — 5e's *"can't regain Hit Points"*,
     /// wherever it comes from.
     ///
@@ -3584,6 +3608,7 @@ impl Condition {
             Condition::Envenomed => "wielding a coated dagger of venom",
             Condition::Vorpal => "wielding a vorpal sword",
             Condition::MaceSmiting => "wielding a mace of smiting",
+            Condition::Thundering => "wielding a thunderous greatclub",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",
         }
