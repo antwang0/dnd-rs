@@ -6801,7 +6801,14 @@ impl Action for HypnoticPattern {
                 data: ConcentrationData::with_conditions(
                     "Hypnotic Pattern",
                     conditions_tracked,
-                ),
+                )
+                // RAW prints no repeat save for this spell, and the two
+                // clauses it *does* print — ends on damage, ends when
+                // somebody shakes you — are what it is balanced on. The
+                // `Incapacitated` row on `ROUND_END_SAVES` belongs to
+                // Hideous Laughter, and the pattern had been inheriting
+                // a free Wisdom save a turn from it.
+                .without_round_end_escape(),
             }));
         }
         effects
@@ -9219,7 +9226,17 @@ impl Action for TashasHideousLaughter {
                         (target_id, Condition::Prone),
                         (target_id, Condition::Incapacitated),
                     ],
-                ),
+                )
+                // RAW's second sentence, which had no lane until the
+                // damage-triggered sweep arrived: *"At the end of each
+                // of its turns **and each time it takes damage**, it
+                // makes another Wisdom saving throw. The target has
+                // Advantage on the save if the save is triggered by
+                // damage."* The end-of-turn half has always ridden the
+                // `Incapacitated` row on `ROUND_END_SAVES`; this is the
+                // other half, and it is what stops the spell from being
+                // a first-level Hold Person with no upper size limit.
+                .breaking_on_damage(),
             }),
         ]
     }

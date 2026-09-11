@@ -17265,6 +17265,21 @@ impl EncounterInstance {
             let Some(cid) = caster_id else {
                 continue;
             };
+            // …and whether the spell that caster is holding actually
+            // printed the repeat clause. This table is keyed by
+            // condition and the clause belongs to the spell: Hideous
+            // Laughter and Hypnotic Pattern both install
+            // `Incapacitated` under concentration, and only the first
+            // of them offers a save. See
+            // `ConcentrationData::grants_round_end_escape`.
+            if self
+                .actors
+                .get(&cid)
+                .and_then(|a| a.concentration())
+                .is_some_and(|c| !c.grants_round_end_escape)
+            {
+                continue;
+            }
             let dc = self
                 .actors
                 .get(&cid)
@@ -17277,6 +17292,86 @@ impl EncounterInstance {
             let name = self.actor_name(actor_id);
             self.log(format!("  {} {}", name, entry.log_verb));
             let save = self.roll_save(actor_id, entry.save_ability, dc);
+            if save.passed() {
+                if let Some(actor) = self.actors.get_mut(&actor_id) {
+                    actor.remove_condition(entry.condition);
+                }
+                self.log(format!("  {} breaks free!", name));
+                self.drop_concentration(cid);
+            }
+        }
+    }
+
+    /// The *other* trigger on the same clause: SRD's *"at the end of
+    /// each of its turns **and each time it takes damage**, it makes
+    /// another Wisdom saving throw. The target has Advantage on the
+    /// save if the save is triggered by damage."*
+    ///
+    /// Called from `side_effects::DealDamage` once the blow has
+    /// resolved, and it reads the same `ROUND_END_SAVES` rows
+    /// `apply_round_end_saves` does — RAW says *"another"* saving
+    /// throw, which means the same one, so a second table would be a
+    /// second place to keep one number.
+    ///
+    /// Opt-in per cast, unlike the round-end sweep which is opt-out:
+    /// Hideous Laughter prints this sentence and Hold Person does not,
+    /// and a lock that ended on the first arrow would not be a lock.
+    /// See `ConcentrationData::grants_damage_escape`.
+    ///
+    /// Nothing is rolled for a victim who is down: a creature at zero
+    /// hit points is not shaking anything off, and the condition will
+    /// be cleaned up with the body or survive to be rolled against at
+    /// the end of its next turn if it is healed back up. That is the
+    /// same call `tick_repeat_saves` makes for the same case.
+    pub(crate) fn apply_damage_triggered_escapes(&mut self, actor_id: usize) {
+        if self
+            .actors
+            .get(&actor_id)
+            .is_none_or(|a| !a.is_combat_active())
+        {
+            return;
+        }
+        for entry in ROUND_END_SAVES {
+            if self
+                .actors
+                .get(&actor_id)
+                .is_none_or(|a| !a.has_condition(entry.condition))
+            {
+                continue;
+            }
+            let Some(cid) = self.find_concentration_owner(actor_id, entry.condition) else {
+                continue;
+            };
+            if self
+                .actors
+                .get(&cid)
+                .and_then(|a| a.concentration())
+                .is_none_or(|c| !c.grants_damage_escape)
+            {
+                continue;
+            }
+            let dc = self
+                .actors
+                .get(&cid)
+                .map(|a| {
+                    a.best_spell_save_dc([
+                        crate::engine::types::AbilityScoreType::Wisdom,
+                        crate::engine::types::AbilityScoreType::Charisma,
+                        crate::engine::types::AbilityScoreType::Intelligence,
+                    ])
+                })
+                .unwrap_or(13);
+            let name = self.actor_name(actor_id);
+            self.log(format!("  the blow shakes {}: {}", name, entry.log_verb));
+            // RAW's Advantage, and the reason this is not simply a
+            // second call to the round-end sweep: the trigger changes
+            // the roll. Layered onto the `CONDITION_SAVE_ADVANTAGES`
+            // tally rather than replacing it, so a victim who already
+            // had advantage against this condition gets one advantage
+            // and not two — 5e's rule for every pair in the game.
+            let mut extra = self.condition_save_tally(actor_id, Some(entry.condition));
+            extra.add(RollMode::Advantage);
+            let save = self.roll_save_with_extra_mode(actor_id, entry.save_ability, dc, extra);
             if save.passed() {
                 if let Some(actor) = self.actors.get_mut(&actor_id) {
                     actor.remove_condition(entry.condition);

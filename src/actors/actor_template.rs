@@ -2960,6 +2960,51 @@ pub struct ConcentrationData {
     /// Set true for concentration data whose effect ends when the caster
     /// makes any attack roll (clear_attack_advantage_riders consumes it).
     pub breaks_on_attack: bool,
+    /// Whether the conditions above hand their victims SRD's *"repeats
+    /// the save at the end of each of its turns"* — read by
+    /// `EncounterInstance::apply_round_end_saves` through
+    /// `ROUND_END_SAVES`.
+    ///
+    /// True by default, because almost every concentration lock in the
+    /// game says the sentence. The field exists for the ones that do
+    /// not, and it exists because that table is keyed by *condition*
+    /// where the clause belongs to the *spell* — the same mismatch
+    /// `fragile_conditions` was built for, seen from the other end.
+    ///
+    /// Two spells install `Incapacitated` under concentration and only
+    /// one of them offers the escape. Hideous Laughter says *"at the
+    /// end of each of its turns… it makes another Wisdom saving
+    /// throw"*; Hypnotic Pattern says nothing of the kind — it ends on
+    /// damage, or when somebody spends an action shaking the victim,
+    /// and that is deliberately the whole of it. Keyed by condition,
+    /// the table could not tell them apart, and the pattern quietly
+    /// handed every victim a free save a turn it was never entitled
+    /// to.
+    ///
+    /// Declined per-cast rather than per-condition, so the next spell
+    /// to install a shared condition without a repeat clause is one
+    /// builder call rather than a new condition invented to carry the
+    /// difference.
+    pub grants_round_end_escape: bool,
+    /// The other half of the same sentence, for the spells that print
+    /// it: *"At the end of each of its turns **and each time it takes
+    /// damage**, it makes another Wisdom saving throw."*
+    ///
+    /// False by default — most concentration locks are shaken off on a
+    /// clock and not on a blow, and a damage-triggered save handed out
+    /// generally would make every one of them end on the first arrow.
+    ///
+    /// Hideous Laughter is the one caller, and RAW gives its victim
+    /// **Advantage** on the save when it is damage that triggered it,
+    /// which is folded in at the roll rather than carried here: a
+    /// clause worded "if the save is triggered by damage" is a property
+    /// of the trigger, and this field *is* the trigger.
+    ///
+    /// The save, the ability and the DC are the round-end ones — RAW
+    /// says *"another"* saving throw, meaning the same one — so the
+    /// sweep reads the same `ROUND_END_SAVES` rows rather than carrying
+    /// a second table.
+    pub grants_damage_escape: bool,
 }
 
 /// 5e Help grant — a snapshot of "actor X has helped actor Y get
@@ -2992,6 +3037,8 @@ impl ConcentrationData {
             save_buffs: Vec::new(),
             damage_buffs: Vec::new(),
             breaks_on_attack: false,
+            grants_round_end_escape: true,
+            grants_damage_escape: false,
         }
     }
 
@@ -2999,6 +3046,28 @@ impl ConcentrationData {
     /// roll. Used by Invisibility (vanilla) but not Greater Invisibility.
     pub fn breaking_on_attack(mut self) -> Self {
         self.breaks_on_attack = true;
+        self
+    }
+
+    /// Declare that this cast's conditions come with no end-of-turn
+    /// escape, whatever `ROUND_END_SAVES` says about the condition in
+    /// the abstract — see `grants_round_end_escape`.
+    ///
+    /// Hypnotic Pattern is the one caller and the reason the field
+    /// exists. A second is easy to imagine and has not arrived: any
+    /// future spell whose lock shares a condition with a spell that
+    /// *does* offer the repeat.
+    pub fn without_round_end_escape(mut self) -> Self {
+        self.grants_round_end_escape = false;
+        self
+    }
+
+    /// Declare that this cast's conditions are also shaken off by a
+    /// blow — RAW's *"and each time it takes damage"* — rolled with
+    /// Advantage, at the same DC and on the same ability as the
+    /// round-end save. See `grants_damage_escape`.
+    pub fn breaking_on_damage(mut self) -> Self {
+        self.grants_damage_escape = true;
         self
     }
 

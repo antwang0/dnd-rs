@@ -98201,3 +98201,153 @@ fn prismatic_wall_raises_a_wall_a_light_and_a_glare() {
         "the wizard raised it from outside its glare"
     );
 }
+
+/// Two spells install `Incapacitated` under concentration and only one
+/// of them printed a repeat save. The table that rolls it is keyed by
+/// condition, so for as long as it was the only gate, Hypnotic Pattern
+/// handed every victim a free Wisdom save at the end of every turn —
+/// Hideous Laughter's clause, arriving on a spell that has none.
+///
+/// The assertion is about the sweep rather than about the dice: the
+/// round-end pass either prints its "tries to stop laughing" line for
+/// the victim or it does not, and for the pattern it must not.
+#[test]
+fn a_hypnotic_pattern_offers_no_end_of_turn_escape_and_laughter_still_does() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::{HYPNOTIC_PATTERN, TASHAS_HIDEOUS_LAUGHTER};
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::Condition;
+
+    /// Cast `action` and report whether the round-end sweep offered the
+    /// victim a save, or `None` if the goblin made its opening save.
+    fn escape_offered(
+        action: &'static dyn crate::actions::action_template::Action,
+        aim_at_point: bool,
+        seed: u64,
+    ) -> Option<bool> {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], seed);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 3), 1, 0)
+            .unwrap();
+        let aei = if aim_at_point {
+            ActionExecutionInfo::new(
+                action,
+                wizard,
+                None,
+                Some(vec![Coordinate::new(10, 3)]),
+                None,
+            )
+        } else {
+            ActionExecutionInfo::new(action, wizard, Some(vec![goblin]), None, None)
+        };
+        if !aei.validate(&e) {
+            return None;
+        }
+        e.push_action(aei);
+        e.process_stack();
+        if !e.actors[&goblin].has_condition(Condition::Incapacitated) {
+            return None;
+        }
+        let before = e.messages().len();
+        e.round_end();
+        Some(
+            e.messages()[before..]
+                .iter()
+                .any(|m| m.contains("tries to stop laughing")),
+        )
+    }
+
+    let mut checked_pattern = false;
+    let mut checked_laughter = false;
+    for seed in 0..60u64 {
+        if !checked_pattern
+            && let Some(offered) = escape_offered(&*HYPNOTIC_PATTERN, true, seed)
+        {
+            assert!(
+                !offered,
+                "seed {seed}: Hypnotic Pattern prints no repeat save, and \
+                 must not inherit Hideous Laughter's"
+            );
+            checked_pattern = true;
+        }
+        if !checked_laughter
+            && let Some(offered) = escape_offered(&*TASHAS_HIDEOUS_LAUGHTER, false, seed)
+        {
+            assert!(
+                offered,
+                "seed {seed}: Hideous Laughter's own clause still has to fire"
+            );
+            checked_laughter = true;
+        }
+        if checked_pattern && checked_laughter {
+            return;
+        }
+    }
+    panic!(
+        "sixty seeds and one of the two spells never landed \
+         (pattern checked: {checked_pattern}, laughter checked: {checked_laughter})"
+    );
+}
+
+/// The other trigger on Hideous Laughter's clause: *"and each time it
+/// takes damage… with Advantage."*
+///
+/// Swept over seeds because the save can fail; the assertion is that
+/// the roll is *offered* — the log line the damage-triggered sweep
+/// prints — which is what had no lane at all before.
+#[test]
+fn hitting_a_laughing_creature_lets_it_try_to_stop() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::spells::TASHAS_HIDEOUS_LAUGHTER;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+    use crate::engine::types::DamageType;
+
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], seed);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+            .unwrap();
+        // An ogre, for its hit points: the point of the test is the
+        // save the blow triggers, and a goblin would simply die.
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 3), 1, 0)
+            .unwrap();
+        let aei = ActionExecutionInfo::new(
+            &*TASHAS_HIDEOUS_LAUGHTER,
+            wizard,
+            Some(vec![ogre]),
+            None,
+            None,
+        );
+        if !aei.validate(&e) {
+            continue;
+        }
+        e.push_action(aei);
+        e.process_stack();
+        if !e.actors[&ogre].has_condition(Condition::Incapacitated) {
+            continue;
+        }
+        let before = e.messages().len();
+        DealDamage {
+            actor_id: ogre,
+            amount: 3,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        assert!(
+            e.messages()[before..]
+                .iter()
+                .any(|m| m.contains("the blow shakes")),
+            "seed {seed}: damage has to trigger the repeat save"
+        );
+        return;
+    }
+    panic!("sixty seeds and the ogre never failed the opening save");
+}

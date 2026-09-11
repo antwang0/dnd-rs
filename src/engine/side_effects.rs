@@ -1347,6 +1347,16 @@ impl ApplicableSideEffect for DealDamage {
             }
             DamageOutcome::Reduced => {}
         }
+        // SRD's *"and each time it takes damage"* — the damage-triggered
+        // half of the same repeat save the round-end sweep rolls, for
+        // the one spell that prints the clause. Opt-in per cast; see
+        // `ConcentrationData::grants_damage_escape`. Placed after the
+        // outcome match so a blow that put the victim down does not
+        // also ask them to shake something off — the sweep declines for
+        // anybody who is not on their feet.
+        if landed > 0 {
+            ei.apply_damage_triggered_escapes(self.actor_id);
+        }
         // 5e Warding Bond reflect: mirror the post-resistance damage onto
         // the bonding partner. Skip when the partner is the actor itself
         // (a self-bond is a no-op), the partner is missing, the partner
