@@ -2315,6 +2315,21 @@ const LOCKDOWNS: &[LockdownPick] = &[
     // turn, which is RAW and is the reason the captain is CR 6.
     LockdownPick { name: "enthralling panache", condition: Some(Condition::Charmed) },
     LockdownPick { name: "captain's charm", condition: Some(Condition::Charmed) },
+    // The cheapest charm anybody pays a slot for, and the only one on
+    // the tier that is gated on what the target *is*: Animal
+    // Friendship's `custom_validate_input` refuses anything that is not
+    // a Beast, so the walk steps past the ogre and lands on the dire
+    // wolf beside it — the same way Dominate Beast's row does four
+    // levels up.
+    //
+    // It ends the moment anybody damages the target, which on a rung
+    // the caster's own allies cannot see is a real cost. Kept anyway,
+    // and for the reason `AREA_CONTROL_SPELLS` keeps Hypnotic Pattern:
+    // a first-level slot that takes a wolf out of the fight for even
+    // one round is the cheapest thing on this list, and the party
+    // shooting it is the party choosing to spend the charm on a round
+    // of the wolf not biting anybody.
+    LockdownPick { name: "animal friendship", condition: Some(Condition::Charmed) },
     LockdownPick { name: "crown of madness", condition: Some(Condition::Charmed) },
     LockdownPick { name: "suggestion", condition: Some(Condition::Charmed) },
     LockdownPick { name: "charm monster", condition: Some(Condition::Charmed) },
@@ -15015,6 +15030,45 @@ mod tests {
             pick.action().name()
         );
         assert_eq!(pick.action().name(), "forcecage");
+    }
+
+    /// The lockdown lane picks the beast out of a mixed line, because
+    /// the only row it can reach refuses anything else.
+    ///
+    /// Animal Friendship's Beast gate lives in the action's own
+    /// `custom_validate_input`, which means the rung needs no knowledge
+    /// of it: the candidate walk simply steps past everything the cast
+    /// would not validate against. The test is that the walk really
+    /// does step past, rather than stalling on the toughest body in the
+    /// room and giving up.
+    #[test]
+    fn a_druid_befriends_the_wolf_and_not_the_ogre_beside_it() {
+        use crate::actors::creatures::druids::DRUID_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let druid = e
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        // The ogre is the tougher body and stands nearer, so a rung
+        // that did not consult the action would land on it.
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+            .unwrap();
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(10, 4), 1, 1)
+            .unwrap();
+
+        let pick = try_lockdown(&e, druid).expect("the druid has a lock it can reach");
+        assert_eq!(pick.action().name(), "animal friendship");
+        assert_eq!(pick.target_ids(), Some(&[wolf][..]));
+        assert_ne!(
+            pick.target_ids(),
+            Some(&[ogre][..]),
+            "an ogre is a Giant, and the spell says Beast"
+        );
     }
 
     /// The two spells their classes are named after get cast, and the
