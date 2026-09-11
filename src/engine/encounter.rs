@@ -9522,9 +9522,12 @@ impl EncounterInstance {
     /// named rungs are the only two this function can return.
     ///
     /// Kept as a wrapper rather than folded into `cover_ac_bonus`,
-    /// which has callers that are not attacks — the AI's target
-    /// ranking, the Hide gate, the watcher sweep — and which would
-    /// otherwise have to invent an `is_melee` they do not have. The
+    /// which has callers that are not attacks — the Hide gate, the
+    /// watcher sweep — and which would otherwise have to invent an
+    /// `is_melee` they do not have. (The AI's target ranking *does*
+    /// have one, and reads this form: a shooter that ignores cover must
+    /// not rank the target behind the low wall below the one in the
+    /// open, because to it they are the same shot.) The
     /// adjacency short-circuit inside it is *nearly* the same gate and
     /// deliberately not reused for this: a glaive swung at three tiles
     /// is past `MELEE_REACH` and is not a ranged weapon.

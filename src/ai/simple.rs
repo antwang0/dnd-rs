@@ -10039,7 +10039,14 @@ fn try_attack_focus_fire(
         let mode = encounter.peek_attack_mode(actor_id, target_id, is_melee);
         let mode_pri = mode_priority(mode);
         let hp = target.effective_hitpoints();
-        let cover = encounter.cover_ac_bonus(actor_id, target_id);
+        // Through the ranged-aware wrapper, which is the form that
+        // knows about Sharpshooter — a shooter who ignores half and
+        // three-quarters cover should not be ranking the target behind
+        // the low wall below the one in the open, because to it they
+        // are the same shot. `is_melee` is already in hand two lines
+        // up, which is the whole reason the wrapper can be used here
+        // and not at the Hide gate or the watcher sweep.
+        let cover = encounter.cover_ac_bonus_for_attack(actor_id, target_id, is_melee);
         let pick = match &best {
             None => true,
             Some((bm, bh, bc, br, _)) => {
