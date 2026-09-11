@@ -1031,14 +1031,33 @@ pub static POTION_OF_SUPERIOR_HEALING: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Potion of Stoneskin — Action; installs `DamageResistant` for 10
-/// rounds (halve all incoming damage). Mirrors the Stoneskin spell's
-/// envelope (the spell installs the same condition). Single-use
-/// consumable.
+/// Potion of Stoneskin — Action; installs `Stoneskinned` for 10 rounds:
+/// Resistance to Bludgeoning, Piercing and Slashing, which is the
+/// Stoneskin spell's own envelope and the reason to bottle it.
+/// Single-use consumable.
+///
+/// It installed the blanket `DamageResistant` until the spell stopped
+/// meaning that — see `Condition::Stoneskinned`. The bottle that really
+/// does halve everything is `POTION_OF_INVULNERABILITY` below, and the
+/// two are a rarity apart for exactly that reason.
 pub static POTION_OF_STONESKIN: Item = Item {
     name: "Potion of Stoneskin",
     glyph: 'T',
     on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_STONESKIN],
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Invulnerability** (Potion, Rare) — *"For 1 minute after
+/// you drink this potion, you have Resistance to all damage."*
+///
+/// The strongest defensive consumable in the file, and the only owner
+/// the blanket `DamageResistant` condition has ever had on the loot
+/// table — see `item_actions::DRINK_POTION_OF_INVULNERABILITY` for how
+/// the lane came to be empty.
+pub static POTION_OF_INVULNERABILITY: Item = Item {
+    name: "Potion of Invulnerability",
+    glyph: 'U',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_INVULNERABILITY],
     ..Item::DEFAULTS
 };
 
@@ -5186,6 +5205,9 @@ pub static LOOT_POOL: &[&Item] = &[
     // Vorpal Sword's opposite number at the same rarity: a `+1` that
     // never misfires against a beheading that mostly does.
     &LUCK_BLADE,
+    // A minute of halving everything, against the Stoneskin bottle's
+    // three physical types one rarity below it. Single entry.
+    &POTION_OF_INVULNERABILITY,
     // The second cursed item, and not weighted down for it — like the
     // shield, whether the curse is a curse depends entirely on who
     // picks it up and what they were going to do with their turn.

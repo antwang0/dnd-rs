@@ -95151,6 +95151,59 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Potion of Invulnerability halves everything, where the Potion of
+/// Stoneskin halves three things.
+///
+/// The pair is the point. `Condition::DamageResistant` is the blanket
+/// lane and every item that used to reach for it has been correctly
+/// narrowed away — the fire and cold potions onto `EnergyWarded`, the
+/// Stoneskin bottle onto `Stoneskinned` — which left the blanket with
+/// no owner at all. RAW prints exactly one potion whose sentence is the
+/// blanket, and a regression that pointed either bottle at the other's
+/// condition would be invisible against a room of sword-swingers and
+/// glaring against a fireball.
+#[test]
+fn the_invulnerability_potion_halves_what_the_stoneskin_potion_does_not() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{POTION_OF_INVULNERABILITY, POTION_OF_STONESKIN};
+
+    let halves = |item: &'static crate::items::item_template::Item,
+                  dt: DamageType|
+     -> bool {
+        let mut e = ei_with_terrain(12, 12, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().pickup_item(item);
+        let drink = *e.actors[&id]
+            .available_actions()
+            .iter()
+            .find(|a| a.name().starts_with("drink potion"))
+            .expect("holding the bottle offers the drink");
+        for ef in drink.execute(&mut e, id, None, None, None) {
+            ef.apply(&mut e);
+        }
+        e.actors[&id].effective_damage(20, dt) == 10
+    };
+
+    for dt in [DamageType::Slashing, DamageType::Fire, DamageType::Psychic] {
+        assert!(
+            halves(&POTION_OF_INVULNERABILITY, dt),
+            "the invulnerability potion let {dt:?} through in full"
+        );
+    }
+    assert!(
+        halves(&POTION_OF_STONESKIN, DamageType::Slashing),
+        "the stoneskin potion should still halve a sword"
+    );
+    for dt in [DamageType::Fire, DamageType::Psychic] {
+        assert!(
+            !halves(&POTION_OF_STONESKIN, dt),
+            "the stoneskin potion halved {dt:?}, which is the blanket's job"
+        );
+    }
+}
+
 /// The Berserker Axe pays in hit points that scale, and then bills the
 /// wielder for them.
 ///

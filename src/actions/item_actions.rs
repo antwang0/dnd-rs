@@ -1319,6 +1319,41 @@ pub static DRINK_POTION_OF_STONESKIN: SelfConditionItem = SelfConditionItem {
     ward: TypedWard::None,
 };
 
+/// **Potion of Invulnerability** (Potion, Rare) — *"For 1 minute after
+/// you drink this potion, you have Resistance to all damage."*
+///
+/// The blanket `DamageResistant` condition's first and only owner on
+/// the loot table, and the reason it is worth having one: the condition
+/// has been in the engine since the beginning and every item that used
+/// to reach for it has been narrowed away from it. The Potions of Fire
+/// and Cold Resistance installed it under comments apologising that the
+/// engine had no per-type lane; the Potion of Stoneskin installed it
+/// until the spell stopped meaning that. Each narrowing was right, and
+/// between them they left a blanket-resistance lane with nothing in a
+/// bottle to fill it — which is a gap, because RAW prints exactly one
+/// potion whose sentence is the blanket and this is it.
+///
+/// It is the strongest defensive consumable on the table by a distance,
+/// which is RAW's own pricing: a minute of halving *everything* is what
+/// a Rare potion buys, against a Stoneskin bottle's three physical
+/// types and a resistance potion's one element. Single entry in the
+/// pool, and a single-use bottle.
+pub static DRINK_POTION_OF_INVULNERABILITY: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of invulnerability",
+    action_aliases: &["invulnerability", "invuln"],
+    item_name: POTION_OF_INVULNERABILITY_NAME,
+    log_text: "{actor} drinks a potion of invulnerability; the air around them turns to iron.",
+    condition: Condition::DamageResistant,
+    // RAW's one minute, which is the engine's ten rounds.
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+};
+
+const POTION_OF_INVULNERABILITY_NAME: &str = "Potion of Invulnerability";
+
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
 
 /// Scroll of Lightning Bolt: 8d6 lightning DEX-save **line** — RAW's
