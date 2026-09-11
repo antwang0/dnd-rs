@@ -1852,6 +1852,11 @@ fn pick_ranged_magnet(
     row: &RangedAttackMagnet,
 ) -> Option<usize> {
     let aimed_at = encounter.actors.get(&p.target_id)?;
+    // Hoisted out of the filter below, and fallible rather than indexed:
+    // a `[]` there would panic on the one call in the engine that
+    // reaches this with a shooter who has already left the board, and
+    // would re-look-up the same actor once per candidate besides.
+    let shooter_team = encounter.actors.get(&p.caster_id)?.team();
     // A bearer who is already the target has nothing to attract, and
     // one who is the shooter cannot shoot themselves.
     let mut candidates: Vec<(isize, usize)> = encounter
@@ -1863,7 +1868,7 @@ fn pick_ranged_magnet(
                 && a.is_combat_active()
                 && a.has_condition(row.condition)
         })
-        .filter(|(_, a)| !row.costs_reaction || a.team() != encounter.actors[&p.caster_id].team())
+        .filter(|(_, a)| !row.costs_reaction || a.team() != shooter_team)
         .filter_map(|(id, _)| {
             let dist = encounter.footprint_distance(p.target_id, *id)?;
             (dist <= row.radius).then_some((dist, *id))
