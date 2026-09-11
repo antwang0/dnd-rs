@@ -94772,6 +94772,148 @@ fn power_word_kill_is_not_necrotic_damage() {
     );
 }
 
+/// Destroy Undead destroys, rather than dealing enough damage to look
+/// like it destroyed.
+///
+/// The two are indistinguishable on the current bestiary, which is the
+/// whole reason this test exists: nothing undead here resists Radiant,
+/// and the one save that could have bitten — a zombie's Undead
+/// Fortitude — exempts Radiant by its own wording. The old shape landed
+/// correctly on every body it could reach and had no reason to, and the
+/// first radiant-resistant CR-1 undead added to the bestiary would have
+/// started shrugging off a cleric's Channel Divinity with nothing in the
+/// suite going red.
+///
+/// So what is pinned is the *lane* and not the outcome: the zombie is at
+/// zero, and it got there through the destruction line rather than
+/// through a damage line. A regression to a typed `DealDamage` passes
+/// the first assertion and fails the second.
+///
+/// Swept across seeds because the burst's own Wisdom save is real: the
+/// zombie is allowed to resist being turned, and what is being pinned is
+/// what happens when it does not.
+#[test]
+fn destroy_undead_destroys_rather_than_dealing_lethal_damage() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut destroyed_one = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let turn = e.actors[&cleric]
+            .find_action("turn undead")
+            .expect("the cleric chassis carries Channel Divinity");
+        for ef in turn.execute(&mut e, cleric, None, None, None) {
+            ef.apply(&mut e);
+        }
+        if !e
+            .messages()
+            .iter()
+            .any(|m| m.contains("destroys undead"))
+        {
+            continue;
+        }
+        destroyed_one = true;
+        assert_eq!(
+            e.actors[&zombie].hitpoints(),
+            0,
+            "seed {seed}: the zombie shrugged off being destroyed:\n{}",
+            e.messages().join("\n")
+        );
+        assert!(
+            e.messages()
+                .iter()
+                .any(|m| m.contains("destroy undead") && m.contains("destroyed outright")),
+            "seed {seed}: the zombie fell to damage rather than to the clause:\n{}",
+            e.messages().join("\n")
+        );
+        assert!(
+            !e.messages()
+                .iter()
+                .any(|m| m.contains("takes") && m.contains("Radiant")),
+            "seed {seed}: a destruction clause dealt typed damage:\n{}",
+            e.messages().join("\n")
+        );
+        break;
+    }
+    assert!(
+        destroyed_one,
+        "forty seeds should beat one zombie's Wisdom save at least once"
+    );
+}
+
+/// Relentless Endurance does not answer a death effect, and Death Ward
+/// does.
+///
+/// Two features that both read as "you do not die", separated by six
+/// words of RAW. The half-orc's is *"reduced to 0 Hit Points **but not
+/// killed outright**"* and the Ancients Paladin's Undying Sentinel says
+/// the same; Death Ward's second sentence is the one written about a
+/// clause that kills with no damage at all. So one of them has a vote
+/// here and the other does not — which is the distinction a
+/// `DealDamage` sized to the victim's hit points erased, because to the
+/// damage pipeline every death is a reduction to zero.
+#[test]
+fn a_death_effect_beats_relentless_endurance_and_loses_to_a_ward() {
+    use crate::actions::class_features::RELENTLESS_ENDURANCE_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::SlayActor;
+
+    // The premise: the feature really does catch an ordinary killing
+    // blow on this chassis.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let full = e.actors[&fighter].hitpoints();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .grant_feature_for_test(RELENTLESS_ENDURANCE_TAG);
+    crate::engine::side_effects::DealDamage {
+        actor_id: fighter,
+        amount: full,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&fighter].hitpoints(),
+        1,
+        "the feature catches a blow that merely reduces to 0"
+    );
+
+    // And declines the one that does not go through damage at all.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .grant_feature_for_test(RELENTLESS_ENDURANCE_TAG);
+    SlayActor {
+        actor_id: fighter,
+        label: "test",
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&fighter].hitpoints(),
+        0,
+        "\"but not killed outright\" is not an idle clause"
+    );
+    assert!(
+        e.actors[&fighter].feature_available(RELENTLESS_ENDURANCE_TAG),
+        "and the charge is not even spent declining"
+    );
+}
+
 /// Death Ward is the one clause that answers a death effect, and
 /// answering it costs the ward.
 ///

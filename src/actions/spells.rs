@@ -33188,17 +33188,22 @@ pub static ANTIMAGIC_FIELD: LazyLock<AntimagicField> = LazyLock::new(|| Antimagi
 /// which rolls one number and shares it.
 ///
 /// Instant death rather than dying: RAW says "dies", not "drops to 0",
-/// and there is no death save to make. Routed as radiant damage equal
-/// to the target's remaining hit points, which is the shape Power Word
-/// Kill already uses for the same sentence, and for the same reason:
-/// every ledger the engine keeps about a kill — the log line, the
-/// concentration drop, the team's liveness check — then sees it the
-/// way it sees any other lethal blow.
+/// and there is no death save to make. Routed through
+/// `side_effects::SlayActor`, which is the lane the engine grew for
+/// exactly this sentence — every ledger it keeps about a kill (the log
+/// line, the concentration drop, the team's liveness check) still sees
+/// it, and nothing on the target's sheet gets a vote.
 ///
-/// The cost of that shape is that a creature resistant to the typing
-/// survives a word RAW says kills it. Radiant is the least bad typing
-/// available for a cleric's word of creation, and the trade is the one
-/// the engine already made at the ninth level.
+/// It used to be radiant damage equal to the target's remaining hit
+/// points, copying the shape Power Word Kill had at the time, and it
+/// inherited the same holes: a creature resistant to the typing survived
+/// a word RAW says kills it, and the *"drop to 1 hit point instead"*
+/// cohort — a half-orc's Relentless Endurance, an Ancients Paladin's
+/// Undying Sentinel — fired on it, though every one of those features
+/// is written **"reduced to 0 hit points but not killed outright"**.
+/// "Radiant is the least bad typing available" was the standing
+/// justification, and the answer turned out to be that no typing is
+/// available: a word that unmakes you is not damage.
 ///
 /// **Not modeled.** RAW's second paragraph banishes celestials,
 /// elementals, fey and fiends to their home plane. The engine has no
@@ -33303,10 +33308,9 @@ impl Action for DivineWord {
             let name = encounter.actor_name(target_id);
             if conditions.is_empty() {
                 encounter.log(format!("  divine word: {} is unmade", name));
-                effects.push(Box::new(DealDamage {
+                effects.push(Box::new(crate::engine::side_effects::SlayActor {
                     actor_id: target_id,
-                    amount: hp,
-                    damage_type: DamageType::Radiant,
+                    label: "divine word",
                 }));
                 continue;
             }

@@ -6286,27 +6286,26 @@ fn resolve_turn_burst(
         // phrasing on both features, and falling through on any gate
         // miss (wrong type, above-ceiling CR, caster without the tag).
         if let Some(rung) = escalation
-            && let Some((cr, hp)) = encounter
+            && let Some(cr) = encounter
                 .actors
                 .get(&id)
                 .filter(|t| (rung.type_filter)(t.creature_type()))
-                .map(|t| (t.cr(), t.hitpoints()))
-                .filter(|(cr, _)| *cr <= rung.cr_ceiling)
+                .map(|t| t.cr())
+                .filter(|cr| *cr <= rung.cr_ceiling)
         {
             encounter.log(format!(
                 "  {}: {} (CR {} ≤ {}).",
                 label, rung.log_verb, cr, rung.cr_ceiling
             ));
             match rung.effect {
-                // Damage equal to the target's *current* HP rather than
-                // its maximum: enough to finish it against any
-                // resistance profile, without overshooting into the
-                // massive-damage instant-kill lane.
-                TurnEscalationEffect::Destroy { damage_type } => {
-                    effects.push(Box::new(crate::engine::side_effects::DealDamage {
+                // RAW's *"the creature is destroyed"*, and not a damage
+                // instance sized to match it. See
+                // `TurnEscalationEffect::Destroy` for what the old
+                // shape was and why the roster hid the difference.
+                TurnEscalationEffect::Destroy => {
+                    effects.push(Box::new(crate::engine::side_effects::SlayActor {
                         actor_id: id,
-                        amount: hp,
-                        damage_type,
+                        label: "destroy undead",
                     }));
                 }
                 TurnEscalationEffect::Install { condition, timer } => {
@@ -6462,11 +6461,33 @@ pub struct TurnEscalation {
 /// What a `TurnEscalation` does to a creature that clears its gates.
 #[derive(Clone, Copy)]
 pub enum TurnEscalationEffect {
-    /// Deal damage equal to the target's remaining hit points — the
-    /// cleric's Destroy Undead. `damage_type` so the kill still reads
-    /// through the target's resistance profile rather than bypassing
-    /// it.
-    Destroy { damage_type: DamageType },
+    /// End the creature outright — the cleric's **Destroy Undead**,
+    /// whose RAW is *"the creature is destroyed"* with no damage and no
+    /// type attached to it.
+    ///
+    /// Carries no data since the damage type went: it used to be
+    /// `Destroy { damage_type }`, dealing the target's own hit points
+    /// as Radiant on the reasoning that the kill should "read through
+    /// the target's resistance profile" — which is precisely what a
+    /// typed damage instance does *not* guarantee. Resistance halves
+    /// it and immunity zeroes it, and a clause that reads "the
+    /// creature is destroyed" offers neither.
+    ///
+    /// **No creature on the current roster could tell the difference**,
+    /// and that is worth saying rather than dressing the change up as a
+    /// bug fix. Nothing undead here resists Radiant, and the one save
+    /// that would have bitten — a zombie's Undead Fortitude — exempts
+    /// Radiant damage by its own wording, so the old shape happened to
+    /// land correctly on every body it could reach. What it did not
+    /// have was a reason to: the correctness was a coincidence of two
+    /// unrelated tables, and the first radiant-resistant CR-1 undead
+    /// added to the bestiary would have quietly started surviving a
+    /// cleric's Channel Divinity.
+    ///
+    /// Routed through `side_effects::SlayActor` now, which is the lane
+    /// every "it dies" in the engine shares. See its docstring for the
+    /// four different outs the damage pipeline hands a victim.
+    Destroy,
     /// Install a condition in place of the burst's usual one — the
     /// Arcana Cleric's Arcane Abjuration, which banishes rather than
     /// frightens. Routed through `install_condition_with_link` exactly
@@ -6551,9 +6572,7 @@ pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
         tag: DESTROY_UNDEAD_TAG,
         type_filter: |ct| ct.is_undead(),
         cr_ceiling: DESTROY_UNDEAD_CR_CEILING,
-        effect: TurnEscalationEffect::Destroy {
-            damage_type: DamageType::Radiant,
-        },
+        effect: TurnEscalationEffect::Destroy,
         log_verb: "destroys undead",
     }),
 });
