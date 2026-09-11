@@ -4,7 +4,7 @@
 //! Every other charge-bearing item in the book is a wand, and a wand is
 //! one spell: *"expend 1 of its charges to cast Fireball"*. The engine
 //! models those with the config structs in [`crate::actions::item_actions`]
-//! — a `AreaSaveDamageItem` naming a dice pool, a DC and a radius —
+//! — an `AreaSaveDamageItem` naming a dice pool, a DC and an area —
 //! which is a re-statement of the spell, close enough for one entry and
 //! wrong to write nine times.
 //!

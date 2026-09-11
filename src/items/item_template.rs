@@ -12,6 +12,25 @@ pub struct ItemBonuses {
     /// Speed bonus is integer feet (5e items always grant whole-foot
     /// values like +10 boots). Stored as i32 to allow future debuffs.
     pub speed: i32,
+    /// Hit points this item adds to its holder's maximum **per level** —
+    /// SRD 5.2's Berserker Axe, *"your Hit Point maximum increases by 1
+    /// for each level you have attained"*, and nothing else on the loot
+    /// table.
+    ///
+    /// A second field rather than a bigger `max_hp`, because the two
+    /// scale differently and that difference is the item: an Amulet of
+    /// Health is worth the same to everybody, and the axe is worth more
+    /// to whoever has survived longer. The engine already draws exactly
+    /// this distinction one lane over — see
+    /// `ActorInstance::passive_feature_max_hp_bonus`, where the Tough
+    /// feat's "twice your character level" lives for the same reason.
+    ///
+    /// Multiplied by `effective_level`, not by the bare `level` field,
+    /// which matters for the same reason it matters there: every chassis
+    /// in the engine ships as a finished stat block and instantiates at
+    /// level 1, so RAW's "level you have attained" is the level it was
+    /// *built* at.
+    pub max_hp_per_level: i32,
     /// Flat bonus added to every saving throw modifier.
     pub save: i32,
     /// Flat bonus added to every attack roll the holder makes (weapon
@@ -77,6 +96,7 @@ impl ItemBonuses {
         ac: 0,
         max_hp: 0,
         speed: 0,
+        max_hp_per_level: 0,
         save: 0,
         attack_bonus: 0,
         damage_bonus: 0,
@@ -92,6 +112,7 @@ impl std::ops::Add for ItemBonuses {
             ac: self.ac + other.ac,
             max_hp: self.max_hp + other.max_hp,
             speed: self.speed + other.speed,
+            max_hp_per_level: self.max_hp_per_level + other.max_hp_per_level,
             save: self.save + other.save,
             attack_bonus: self.attack_bonus + other.attack_bonus,
             damage_bonus: self.damage_bonus + other.damage_bonus,
@@ -277,6 +298,22 @@ pub struct Item {
     /// degrees of cover off a shot and the wand takes only the lesser
     /// one off a cast.
     pub ignores_half_cover_on_spells: bool,
+    /// True when carrying this item makes its holder roll a DC 15
+    /// Wisdom save every time damage lands on them, and go berserk on a
+    /// failure — SRD 5.2's Berserker Axe, and nothing else on the loot
+    /// table.
+    ///
+    /// A flag rather than a `passive_condition`, because the condition
+    /// this produces is not one holding the axe grants: `Berserk` is
+    /// what a *failed save* installs, and the axe's contribution is the
+    /// save. The three `passive_conditions` on the other cursed and
+    /// clause-bearing items are markers a rider reads; this is a
+    /// trigger.
+    ///
+    /// Read by `EncounterInstance::trigger_berserker_axe` from
+    /// `DealDamage::apply`, the one place in the engine that sees every
+    /// point of damage after mitigation.
+    pub berserks_its_bearer: bool,
     /// True when carrying this item gives its bearer Advantage on
     /// saving throws against spells — the Spellguard Shield's first
     /// clause, and the whole of the Mantle of Spell Resistance.
@@ -379,6 +416,7 @@ impl Item {
         blunts_critical_hits: false,
         halves_ranged_weapon_damage: false,
         ignores_half_cover_on_spells: false,
+        berserks_its_bearer: false,
         grants_spell_save_advantage: false,
         imposes_spell_attack_disadvantage: false,
         charges: 0,
@@ -3538,6 +3576,46 @@ pub static THUNDEROUS_GREATCLUB: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Berserker Axe** (Weapon, battleaxe/greataxe/halberd; Rare,
+/// **cursed**) — *"You gain a +1 bonus to attack rolls and damage rolls
+/// made with this magic weapon. In addition, while you are attuned to
+/// this weapon, your Hit Point maximum increases by 1 for each level you
+/// have attained. Curse. … Whenever another creature damages you while
+/// the weapon is in your possession, you must succeed on a DC 15 Wisdom
+/// saving throw or go berserk."*
+///
+/// The armoury's second cursed item after the Shield of Missile
+/// Attraction, and the pair make the same bargain from opposite
+/// directions: the shield gives you a defence and then arranges for you
+/// to need it, and the axe gives you hit points and then arranges for
+/// you to spend them badly.
+///
+/// **The hit points scale**, which is what `ItemBonuses::max_hp_per_level`
+/// exists for and what separates this from the Amulet of Health beside
+/// it on the loot table: a flat bonus is worth the same to everybody,
+/// and this is worth more to whoever has survived longer. On this
+/// engine's chassis it is a modest number and a real one — it arrives
+/// before the fight starts and nothing in a fight can take it away.
+///
+/// **Going berserk is a tax rather than a compulsion.** See
+/// `Condition::Berserk` for why the engine's translation of every "you
+/// must attack X" clause is Disadvantage against everyone else, and what
+/// the two unmodeled clauses are.
+pub static BERSERKER_AXE: Item = Item {
+    name: "Berserker Axe",
+    glyph: 'b',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        // RAW's "1 for each level you have attained".
+        max_hp_per_level: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    berserks_its_bearer: true,
+    ..Item::DEFAULTS
+};
+
 /// **Luck Blade** (Weapon, one of seven blades; Legendary) — *"You gain
 /// a +1 bonus to attack rolls and damage rolls made with this magic
 /// weapon. While the weapon is on your person, you also gain a +1 bonus
@@ -4380,6 +4458,7 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &MACE_OF_TERROR,
     &THUNDEROUS_GREATCLUB,
     &LUCK_BLADE,
+    &BERSERKER_AXE,
     &ADAMANTINE_ARMOR,
 ];
 
@@ -5107,6 +5186,10 @@ pub static LOOT_POOL: &[&Item] = &[
     // Vorpal Sword's opposite number at the same rarity: a `+1` that
     // never misfires against a beheading that mostly does.
     &LUCK_BLADE,
+    // The second cursed item, and not weighted down for it — like the
+    // shield, whether the curse is a curse depends entirely on who
+    // picks it up and what they were going to do with their turn.
+    &BERSERKER_AXE,
     // The wondrous half of the same batch — items whose clause is a
     // defence or a sense rather than a die on a swing. Single entries
     // apiece for the same reason the armoury gets them: each answers one
@@ -5323,7 +5406,11 @@ mod tests {
         //   - the **Mace of Terror** is a weapon whose clause never
         //     touches a swing: three charges of area fear, spent
         //     through `Resource::ItemCharges` on an Action.
-        let no_rider: &[&Item] = &[&ADAMANTINE_ARMOR, &MACE_OF_TERROR];
+        //   - the **Berserker Axe** installs nothing on pickup either;
+        //     its curse is a *trigger* (`berserks_its_bearer`) and the
+        //     `Berserk` it can produce is what a failed save installs,
+        //     not what carrying it grants.
+        let no_rider: &[&Item] = &[&ADAMANTINE_ARMOR, &MACE_OF_TERROR, &BERSERKER_AXE];
         for item in no_rider {
             assert!(
                 item.passive_conditions.is_empty(),

@@ -7417,6 +7417,14 @@ impl ActorInstance {
         self.items.iter().any(|i| i.halves_ranged_weapon_damage)
     }
 
+    /// True while the actor carries something that makes them roll
+    /// against going berserk every time damage lands — the Berserker
+    /// Axe, and nothing else on the loot table. Read by
+    /// `EncounterInstance::trigger_berserker_axe`.
+    pub fn carries_berserking_weapon(&self) -> bool {
+        self.items.iter().any(|i| i.berserks_its_bearer)
+    }
+
     /// True while the actor carries a silvered weapon. Answers strictly
     /// less than `wields_enchanted_weapon` — silver gets through the
     /// five lycanthrope stat blocks and nothing else.
@@ -9648,7 +9656,16 @@ impl ActorInstance {
     }
 
     pub fn max_hitpoints(&self) -> u32 {
-        let bonus = self.total_item_bonuses().max_hp + self.passive_feature_max_hp_bonus();
+        let items = self.total_item_bonuses();
+        // Two item lanes rather than one, because 5e's magic items add
+        // hit points in two shapes and the difference is the item: an
+        // Amulet of Health is a flat number and a Berserker Axe is "1
+        // for each level you have attained". `effective_level` is the
+        // same reading `passive_feature_max_hp_bonus` takes of the Tough
+        // feat's own per-level clause — see there.
+        let bonus = items.max_hp
+            + items.max_hp_per_level * self.effective_level() as i32
+            + self.passive_feature_max_hp_bonus();
         // No exhaustion clause: SRD 5.2's ladder is a D20-Test penalty
         // and a speed reduction, and the 2014 printing's "hit point
         // maximum halved" at tier 4 is not in it. See

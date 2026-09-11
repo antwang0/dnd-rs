@@ -1100,6 +1100,12 @@ struct FailedSaveRerollSource {
 /// nat-1", except we already model that as `has_lucky` at the roll
 /// site rather than the fail site; a hypothetical racial reroll, a
 /// future "Reroll One" feat) drops in as a new entry.
+/// The Wisdom save a Berserker Axe's bearer rolls when damage lands —
+/// RAW's DC 15, named beside the cohorts rather than inline at
+/// `trigger_berserker_axe` so the number and the sentence that prints it
+/// sit together.
+const BERSERKER_AXE_DC: i32 = 15;
+
 const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
     FailedSaveRerollSource {
         label: "indomitable",
@@ -2656,6 +2662,16 @@ const FOCUS_LINK_DISADVANTAGES: &[Condition] = &[
     Condition::Dueled,
     Condition::Goaded,
     Condition::AncestrallyHaunted,
+    // SRD 5.2 **Berserker Axe**, the curse: *"While berserk, you regard
+    // the creature nearest to you that you can see or hear as your
+    // enemy… you must move as close to the creature as possible and
+    // take the Attack action, targeting the creature."*
+    //
+    // The fifth arrival at this shape and the first from an *object*.
+    // RAW's clause is a requirement rather than a penalty, and this
+    // cohort is the engine's standing translation of every such clause —
+    // see `Condition::Berserk` for why a tax stands in for a compulsion.
+    Condition::Berserk,
     // SRD 5.2 **Grappled**, second clause: *"You have Disadvantage on
     // attack rolls against any target other than the grappler."*
     //
@@ -13711,6 +13727,102 @@ impl EncounterInstance {
     /// holder — matching RAW's "on your turn" phrasing.
     pub fn current_turn_actor_id(&self) -> Option<usize> {
         self.initiative_tracker.current_player()
+    }
+
+    /// SRD 5.2 **Berserker Axe**, the curse: *"Whenever another creature
+    /// damages you while the weapon is in your possession, you must
+    /// succeed on a DC 15 Wisdom saving throw or go berserk."*
+    ///
+    /// Called from `DealDamage::apply` on every blow that actually
+    /// lands, which is the one place in the engine that sees damage
+    /// after mitigation. Returns immediately — before touching a die —
+    /// for the overwhelmingly common case of a creature that is not
+    /// carrying the axe.
+    ///
+    /// **"Another creature" is read through `current_turn_actor_id`**,
+    /// the same proxy `note_damage_from_inside` and the Mage Slayer feat
+    /// use and for the same reason: the damage chokepoint carries no
+    /// attacker. It is exact on somebody else's turn and fails *closed*
+    /// on the bearer's own — a wielder who walks into their own Wall of
+    /// Fire does not go berserk, where RAW would not have made them roll
+    /// either. The one thing the proxy gets wrong is a reaction or a
+    /// readied shot arriving on the bearer's turn, which stays unrolled;
+    /// that is the safe direction.
+    ///
+    /// **Already-berserk wielders do not re-roll.** RAW's berserk state
+    /// ends on its own terms rather than being refreshed, and a save
+    /// rolled every time an axe-carrier is hit would be four saves a
+    /// round against a multiattacker.
+    ///
+    /// The link points at the nearest creature the wielder can see,
+    /// which is RAW's *"the creature nearest to you that you can see or
+    /// hear"* with the hearing half dropped — the engine has a sight
+    /// predicate and no hearing one. A wielder who can see nobody does
+    /// not go berserk at all, because there would be nothing for the
+    /// clause to point at.
+    pub fn trigger_berserker_axe(&mut self, bearer_id: usize) {
+        let carries = self
+            .actors
+            .get(&bearer_id)
+            .is_some_and(|a| a.carries_berserking_weapon());
+        if !carries {
+            return;
+        }
+        if self
+            .actors
+            .get(&bearer_id)
+            .is_some_and(|a| a.has_condition(Condition::Berserk))
+        {
+            return;
+        }
+        // "Another creature" — see the docstring.
+        if self.current_turn_actor_id() == Some(bearer_id) {
+            return;
+        }
+        let Some(enemy) = self.nearest_visible_creature_to(bearer_id) else {
+            return;
+        };
+        let save = self.roll_save(
+            bearer_id,
+            crate::engine::types::AbilityScoreType::Wisdom,
+            BERSERKER_AXE_DC,
+        );
+        if save.passed() {
+            return;
+        }
+        let (bearer, target) = (self.actor_name(bearer_id), self.actor_name(enemy));
+        self.log(format!(
+            "  the axe takes {} — they go berserk and fix on {}.",
+            bearer, target
+        ));
+        for effect in crate::engine::side_effects::install_condition_with_link(
+            Condition::Berserk,
+            bearer_id,
+            enemy,
+            crate::conditions::ConditionTimer::Rounds(10),
+        ) {
+            effect.apply(self);
+        }
+    }
+
+    /// The nearest combat-active creature `viewer_id` can see, other
+    /// than itself — the concrete form of RAW's *"the creature nearest
+    /// to you that you can see or hear"*.
+    ///
+    /// No team filter, which is the clause: the Berserker Axe's victim
+    /// regards *whoever* is closest as their enemy, and on a crowded
+    /// front line that is as likely to be an ally. Ties break on id so a
+    /// seeded run reproduces.
+    fn nearest_visible_creature_to(&self, viewer_id: usize) -> Option<usize> {
+        let mut candidates: Vec<(isize, usize)> = self
+            .actors
+            .iter()
+            .filter(|(id, a)| **id != viewer_id && a.is_combat_active())
+            .filter(|(id, _)| self.viewer_can_see(viewer_id, **id))
+            .filter_map(|(id, _)| Some((self.footprint_distance(viewer_id, *id)?, *id)))
+            .collect();
+        candidates.sort_unstable();
+        candidates.first().map(|(_, id)| *id)
     }
 
     /// **A creature just went down** — the shared chokepoint for every

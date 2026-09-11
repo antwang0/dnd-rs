@@ -3285,6 +3285,41 @@ pub enum Condition {
     /// — see `Item::passive_conditions` — and here it reads less like a
     /// bug than usual, since what is being dispelled is a sword's luck.
     BladeLuck,
+    /// Gone **berserk** with a SRD 5.2 **Berserker Axe** — *"Whenever
+    /// another creature damages you while the weapon is in your
+    /// possession, you must succeed on a DC 15 Wisdom saving throw or
+    /// go berserk… While berserk, you regard the creature nearest to you
+    /// that you can see or hear as your enemy… On each of your turns,
+    /// you must move as close to the creature as possible and take the
+    /// Attack action, targeting the creature."*
+    ///
+    /// The first item-sourced compulsion in the engine, and it lands on
+    /// `FOCUS_LINK_DISADVANTAGES` — the cohort Compelled Duel, Goading
+    /// Attack, Ancestral Protectors and the Grappled condition already
+    /// share. RAW's sentence is a *requirement* and the engine's is a
+    /// *tax*: a berserk wielder may still swing at whoever they like and
+    /// rolls at Disadvantage against anyone but the creature the axe has
+    /// picked. That is the engine's standing translation of every "you
+    /// must attack X" clause in the game, and the reason is the same
+    /// each time — there is no channel for taking a creature's turn away
+    /// from whoever is driving it, and a rule that removed the choice
+    /// would remove it from the human player too.
+    ///
+    /// The link is set at install and points at the nearest creature the
+    /// wielder can see, which is RAW's own tie-break made concrete. It
+    /// is *not* re-chosen each turn: RAW re-picks when the target dies
+    /// or goes out of sight, and the engine's version lapses on its
+    /// timer instead, which errs shorter.
+    ///
+    /// Installed by `EncounterInstance::trigger_berserker_axe`, at the
+    /// one place in the engine that sees every point of damage that
+    /// lands. RAW's other two clauses have no surface: *"you are
+    /// unwilling to part with the weapon"* is a rule about a player's
+    /// choices outside the fight, and *"Disadvantage on attack rolls
+    /// with weapons other than this one"* would need the attack pipeline
+    /// to know which object made the swing — the absence
+    /// `Condition::DragonSlaying` names for the whole armoury.
+    Berserk,
     /// Holding a SRD 5.2 **Shield of Missile Attraction** — *"Whenever
     /// an attack with a Ranged weapon targets a creature within 10 feet
     /// of you, the curse causes you to become the target instead."*
@@ -3676,6 +3711,7 @@ impl Condition {
             Condition::Thundering => "wielding a thunderous greatclub",
             Condition::ArrowCatching => "holding an arrow-catching shield",
             Condition::BladeLuck => "carrying a luck blade, luck unspent",
+            Condition::Berserk => "berserk",
             Condition::MissileAttracting => "cursed to attract missiles",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",

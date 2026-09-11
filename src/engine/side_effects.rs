@@ -1254,6 +1254,17 @@ impl ApplicableSideEffect for DealDamage {
         // how the source is attributed without an attacker on the
         // payload.
         ei.note_damage_from_inside(self.actor_id, landed);
+        // SRD 5.2 **Berserker Axe**: "Whenever another creature damages
+        // you while the weapon is in your possession, you must succeed
+        // on a DC 15 Wisdom saving throw or go berserk." Beside the
+        // swallow tally for the same reason it is: this is the one place
+        // that sees every point of damage after mitigation, and the
+        // clause is about damage that actually landed. Returns before
+        // touching a die for anybody not carrying the axe, which is
+        // everybody. See `EncounterInstance::trigger_berserker_axe`.
+        if landed > 0 {
+            ei.trigger_berserker_axe(self.actor_id);
+        }
         for (condition, label) in flinched {
             ei.log(format!("  {}: {} is {}", label, name, condition.name()));
         }
@@ -2624,6 +2635,13 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // burst, the item save chassis and the smite follow-up — which is
     // what made one row here enough.
     crate::conditions::Condition::Frightened,
+    // SRD 5.2 **Berserker Axe**: "While berserk, you regard the creature
+    // nearest to you that you can see or hear as your enemy." The link
+    // is that creature, and without it the condition would be a flat
+    // Disadvantage on everything the wielder swings at — which is not
+    // the clause at all. Same shape as Dueled and Goaded, arriving from
+    // an object rather than from a spell or a maneuver.
+    crate::conditions::Condition::Berserk,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

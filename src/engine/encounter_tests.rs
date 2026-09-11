@@ -95151,6 +95151,154 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Berserker Axe pays in hit points that scale, and then bills the
+/// wielder for them.
+///
+/// Both halves of a cursed item, and each is a lane that did not exist:
+///
+///   - **The hit points scale with level**, which is what separates
+///     `ItemBonuses::max_hp_per_level` from the flat `max_hp` an Amulet
+///     of Health rides. Pinned by giving the same axe to two chassis
+///     built at different levels and demanding different numbers.
+///   - **Damage from somebody else can send the wielder berserk**, and
+///     the resulting `Berserk` is a back-linked condition on the
+///     focus-link cohort: the wielder swings at the creature the axe
+///     picked at Normal, and at anyone else at Disadvantage.
+///
+/// And the proxy's safe direction: damage on the wielder's *own* turn
+/// never rolls, because the chokepoint carries no attacker and the
+/// clause names another creature.
+#[test]
+fn the_berserker_axe_pays_per_level_and_then_takes_the_wielder() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::BERSERKER_AXE;
+
+    // The hit points, on two chassis of different levels.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let brute = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let frail = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 2), 0, 0)
+        .unwrap();
+    let gains: Vec<(u32, u32)> = [brute, frail]
+        .into_iter()
+        .map(|id| {
+            let before = e.actors[&id].max_hitpoints();
+            e.actors.get_mut(&id).unwrap().pickup_item(&BERSERKER_AXE);
+            let after = e.actors[&id].max_hitpoints();
+            (e.actors[&id].effective_level(), after - before)
+        })
+        .collect();
+    for (level, gained) in &gains {
+        assert_eq!(
+            *gained, *level,
+            "the axe paid {gained} hit points to a level-{level} wielder"
+        );
+    }
+    assert!(
+        gains[0].0 > 0 && gains[1].0 > 0,
+        "both chassis need a level for this to say anything: {gains:?}"
+    );
+
+    // The curse. A goblin shoots the axe's bearer on the goblin's turn,
+    // so the "another creature" proxy is satisfied; the wielder's own
+    // ally stands closest, which is exactly the clause RAW writes.
+    let mut went_berserk = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let bearer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(12, 10), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(22, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&bearer)
+            .unwrap()
+            .pickup_item(&BERSERKER_AXE);
+        // Walk the queue round to the goblin, so the "another creature"
+        // proxy attributes the arrow to it rather than to the bearer.
+        for _ in 0..12 {
+            if e.current_turn_actor_id() == Some(goblin) {
+                break;
+            }
+            e.skip_turn();
+        }
+        assert_eq!(
+            e.current_turn_actor_id(),
+            Some(goblin),
+            "could not get the queue round to the goblin"
+        );
+        let bow = *e.actors[&goblin]
+            .available_actions()
+            .iter()
+            .find(|a| a.name().contains("bow"))
+            .expect("the goblin carries a bow");
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        for ef in bow.execute(&mut e, goblin, Some(&vec![bearer]), None, None) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&bearer].has_condition(Condition::Berserk) {
+            went_berserk = true;
+            assert_eq!(
+                e.actors[&bearer].linked_by(Condition::Berserk),
+                Some(ally),
+                "seed {seed}: the axe fixed on somebody other than the nearest \
+                 creature:\n{}",
+                e.messages().join("\n")
+            );
+            break;
+        }
+    }
+    assert!(
+        went_berserk,
+        "forty arrows and the axe never took its wielder"
+    );
+
+    // And the proxy's safe direction: the wielder's own turn rolls
+    // nothing at all, however much damage lands.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let bearer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&bearer)
+        .unwrap()
+        .pickup_item(&BERSERKER_AXE);
+    for _ in 0..12 {
+        if e.current_turn_actor_id() == Some(bearer) {
+            break;
+        }
+        e.skip_turn();
+    }
+    assert_eq!(
+        e.current_turn_actor_id(),
+        Some(bearer),
+        "could not get the queue round to the bearer"
+    );
+    for _ in 0..20 {
+        crate::engine::side_effects::DealDamage {
+            actor_id: bearer,
+            amount: 1,
+            damage_type: DamageType::Fire,
+        }
+        .apply(&mut e);
+    }
+    assert!(
+        !e.actors[&bearer].has_condition(Condition::Berserk),
+        "the axe berserked its wielder over damage nobody dealt them:\n{}",
+        e.messages().join("\n")
+    );
+}
+
 /// A Scroll of Lightning Bolt is a bolt, and a Scroll of Burning Hands
 /// comes out of the reader's hands.
 ///
