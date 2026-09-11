@@ -3579,6 +3579,38 @@ pub static SPELLGUARD_SHIELD: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of the Ram** (Ring, Rare) — *"This ring has 3 charges and
+/// regains 1d3 expended charges daily at dawn. While wearing the ring,
+/// you can take a Magic action to expend 1 to 3 charges to make a
+/// ranged spell attack… On a hit, for each charge you spend, the target
+/// takes 2d10 Force damage and is pushed 5 feet away from you."*
+///
+/// The first item in the file that rolls an attack, and the only ranged
+/// shove in the loot table. See `item_actions::USE_RING_OF_THE_RAM` for
+/// why a use is one charge rather than RAW's one-to-three, and
+/// `item_actions::SpellAttackDamageItem` for why the `+7` belongs to the
+/// ring rather than to whoever is wearing it.
+///
+/// Sits on the rings' shelf next to the resistance band, and is nothing
+/// like them: every other ring in the file is a number on the wearer's
+/// sheet, and this one is three shots of artillery. Running its pool dry
+/// leaves a ring with no clause rather than an empty finger — the
+/// action is priced in `Resource::ItemCharges`, the lane the Mace of
+/// Terror established.
+pub static RING_OF_THE_RAM: Item = Item {
+    name: "Ring of the Ram",
+    glyph: '=',
+    on_use: &[&crate::actions::item_actions::USE_RING_OF_THE_RAM],
+    charges: 3,
+    // RAW's "1d3 expended charges daily at dawn" — the Mace of Terror's
+    // refill, for a pool the same size.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// **Arrow-Catching Shield** (Armor, Shield; Rare) — *"You gain a +2
 /// bonus to Armor Class against ranged attack rolls while you wield
 /// this Shield. This bonus is in addition to the Shield's normal bonus
@@ -4929,6 +4961,9 @@ pub static LOOT_POOL: &[&Item] = &[
     // it is a curse depends entirely on who picks it up.
     &ARROW_CATCHING_SHIELD,
     &SHIELD_OF_MISSILE_ATTRACTION,
+    // Three shots of artillery on a finger, and the only ranged shove in
+    // the pool. Single entry.
+    &RING_OF_THE_RAM,
     // The shield's save clause without the shield, and the one a
     // greatsword fighter can actually wear.
     &MANTLE_OF_SPELL_RESISTANCE,

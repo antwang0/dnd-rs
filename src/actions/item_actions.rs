@@ -885,6 +885,216 @@ impl Action for SingleSaveDamageItem {
     }
 }
 
+/// Config struct for "roll a ranged spell attack, then hit for damage
+/// and a shove" items — SRD 5.2's Ring of the Ram, and the first item
+/// action in the engine that **rolls to hit at all**.
+///
+/// Every other offensive chassis in this module is a save (the burst and
+/// single-target save rows) or an auto-hit (the Magic Missile volley,
+/// the Guiding Bolt scroll), and that was a deliberate simplification
+/// with a cost that only became visible when an item arrived whose whole
+/// printed identity is its own attack bonus: *"The ring produces a
+/// spectral ram's head and makes its attack roll with a +7 bonus."*
+/// That `+7` belongs to the ring, not to the wearer — it is the
+/// `SmiteFollowUp::fixed_dc` argument in a different key, and an item
+/// that derived its bonus from whoever picked it up would be sharper in
+/// a fighter's hands than in a wizard's, which is both wrong and exactly
+/// backwards for a ring.
+///
+/// Routes through `spells::spell_attack_roll`, the shared spell-attack
+/// chokepoint, rather than rolling its own d20 — so the ram honours
+/// cover, Sanctuary, Mirror Image, the reactive clamps, Bless and Bane,
+/// and everything else that pipeline knows, exactly as a Fire Bolt does.
+/// Opening a second attack-roll path here is how an item quietly opts
+/// out of two dozen rules; see `ActionOnHitRider`'s docstring for the
+/// same argument made about weapon swings.
+pub struct SpellAttackDamageItem {
+    /// Player-facing action name (e.g. "use ring of the ram").
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name to gate validate / consume on.
+    pub item_name: &'static str,
+    /// Log line prefix. The row reads
+    /// `  {log_label}: {count}d{faces} = {total} {type}`.
+    pub log_label: &'static str,
+    /// The **item's own** attack bonus, used in place of anything the
+    /// holder brings. See the struct docstring for why.
+    pub attack_bonus: i32,
+    /// Damage dice, rolled once and doubled by a critical hit through
+    /// the shared roller.
+    pub dice: Dice,
+    pub damage_type: DamageType,
+    /// Maximum reach in tiles for the targeting picker.
+    pub reach: isize,
+    /// How far a hit shoves the target away from the user, in tiles, or
+    /// `0` for a row that only deals damage.
+    pub push_tiles: u32,
+    /// Charges one use costs, for an item that is **not** consumed by
+    /// using it, or `None` for the consumables that are. Same contract
+    /// as `AreaSaveConditionItem::charge_cost`.
+    pub charge_cost: Option<u32>,
+}
+
+impl Action for SpellAttackDamageItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.damage_type]
+    }
+
+    fn expected_damage(&self, _encounter: &EncounterInstance, _caster_id: usize) -> Option<f32> {
+        // The picker ranks on this, and a row that reported nothing
+        // would be an offensive item the AI never reaches for. Halved
+        // for the attack roll it has to land first, which is a rougher
+        // discount than the weapon chassis's (it prices the roll against
+        // a target it has been handed, and this estimate has none).
+        Some(self.dice.average_roll() / 2.0)
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        if let Some(count) = self.charge_cost {
+            costs.push(Resource::ItemCharges {
+                item: self.item_name,
+                count,
+            });
+        }
+        costs
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // A row priced in charges is billed by `Action::execute`'s tail;
+        // only the consumables bill here.
+        if self.charge_cost.is_none()
+            && !consume_caster_item(encounter, caster_id, self.item_name)
+        {
+            return Vec::new();
+        }
+        let roll = crate::actions::spells::spell_attack_roll(
+            encounter,
+            caster_id,
+            target_id,
+            self.action_name,
+            self.attack_bonus,
+            false,
+        );
+        if !roll.hit {
+            return Vec::new();
+        }
+        let amount = encounter.roll_weapon_damage_dice(self.dice, roll.is_crit);
+        encounter.log(format!(
+            "  {}: {} = {} {}",
+            self.log_label, self.dice, amount, self.damage_type,
+        ));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+            actor_id: target_id,
+            amount,
+            damage_type: self.damage_type,
+        })];
+        if self.push_tiles > 0
+            && let Some(from) = encounter.actors.get(&caster_id).map(|a| a.location())
+        {
+            effects.push(Box::new(crate::engine::side_effects::PushActor {
+                actor_id: target_id,
+                from,
+                max_tiles: self.push_tiles,
+            }));
+        }
+        effects
+    }
+}
+
+/// **Ring of the Ram** (Ring, Rare) — *"you can take a Magic action to
+/// expend 1 to 3 charges to make a ranged spell attack against one
+/// creature you can see within 60 feet of yourself. The ring produces a
+/// spectral ram's head and makes its attack roll with a +7 bonus. On a
+/// hit, for each charge you spend, the target takes 2d10 Force damage
+/// and is pushed 5 feet away from you."*
+///
+/// **One charge per use rather than RAW's one-to-three.** The engine's
+/// `Resource::ItemCharges` prices an action at a fixed count, and
+/// "spend between one and three, and scale the effect" would need the
+/// picker to ask a question it has no way to put — the same absence
+/// that keeps every other variable-cost clause in the engine at its
+/// floor. Three uses of 2d10 and a five-foot shove is the ring the
+/// engine ships; RAW's wearer could spend the pool in one go for 6d10
+/// and fifteen feet.
+///
+/// A single-target shove is worth more here than the force damage
+/// suggests. Five feet is two tiles, which on this grid takes a melee
+/// attacker out of reach for the rest of its turn if it has already
+/// moved — and the ram is the only ranged push in the loot table, so a
+/// party that finds it has found the answer to a creature standing on
+/// their caster.
+///
+/// RAW's second mode — a Strength check to break an object — is not
+/// modeled; the board has no destructible objects, which is the same
+/// absence the Thunderous Greatclub's object clause runs into.
+pub static USE_RING_OF_THE_RAM: SpellAttackDamageItem = SpellAttackDamageItem {
+    action_name: "use ring of the ram",
+    action_aliases: &["ram", "ring of the ram"],
+    item_name: RING_OF_THE_RAM_NAME,
+    log_label: "ring of the ram",
+    // RAW's flat +7, and the ring's own rather than the wearer's.
+    attack_bonus: 7,
+    dice: Dice::new(2, 10),
+    damage_type: DamageType::Force,
+    // 60 ft RAW; 24 tiles on the 2.5-ft grid.
+    reach: 24,
+    // 5 ft RAW; 2 tiles.
+    push_tiles: 2,
+    charge_cost: Some(1),
+};
+
+const RING_OF_THE_RAM_NAME: &str = "Ring of the Ram";
+
 /// Drink an Antitoxin: removes the Poisoned condition and grants a flat
 /// +5 save bonus until the next long rest (5e abstracts this as
 /// "advantage on poison saves for an hour"; we approximate with a flat

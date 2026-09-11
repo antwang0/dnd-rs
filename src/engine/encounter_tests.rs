@@ -95151,6 +95151,123 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Ring of the Ram rolls its own attack, shoves what it hits, and
+/// stays a ring when the pool runs dry.
+///
+/// The first item in the engine that rolls to hit at all — every other
+/// offensive consumable is a save or an auto-hit — and the three claims
+/// are the three things that made it worth a chassis of its own:
+///
+///   - **It misses.** Against an AC nothing could beat, the ram deals
+///     nothing. An auto-hit chassis wearing a `+7` would have been a
+///     strictly better Magic Missile.
+///   - **The `+7` is the ring's.** RAW prints it on the object, so a
+///     wizard's ram hits exactly as often as a fighter's. Checked by
+///     firing the same ring from two very different chassis at the same
+///     target on the same seeds and demanding the same answer.
+///   - **A hit shoves.** Two tiles, away from the wearer, which is the
+///     only ranged push in the loot table.
+#[test]
+fn the_ring_of_the_ram_rolls_to_hit_shoves_and_survives_its_pool() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::RING_OF_THE_RAM;
+
+    let board = |wearer: &'static crate::actors::actor_template::CreatureTemplate| {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let user = e
+            .instantiate_creature(wearer, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&user).unwrap().pickup_item(&RING_OF_THE_RAM);
+        (e, user, goblin)
+    };
+
+    let (probe, probe_user, _g) = board(&FIGHTER_TEMPLATE);
+    let ram = *probe.actors[&probe_user]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "use ring of the ram")
+        .expect("wearing the ring offers the ram");
+
+    // The ring's bonus is the ring's: two chassis, same seeds, same
+    // outcomes.
+    for seed in 0..40u64 {
+        let mut outcomes = Vec::new();
+        for template in [&*FIGHTER_TEMPLATE, &*WIZARD_TEMPLATE] {
+            let (mut e, user, goblin) = board(template);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let before = e.actors[&goblin].hitpoints();
+            for ef in ram.execute(&mut e, user, Some(&vec![goblin]), None, None) {
+                ef.apply(&mut e);
+            }
+            outcomes.push((
+                before - e.actors.get(&goblin).map_or(0, |g| g.hitpoints()).min(before),
+                e.actors.get(&goblin).map(|g| g.location()),
+            ));
+        }
+        assert_eq!(
+            outcomes[0], outcomes[1],
+            "seed {seed}: the ring hit differently in a wizard's hand"
+        );
+    }
+
+    // It shoves what it hits, and it misses some of the time.
+    let (mut e, user, goblin) = board(&FIGHTER_TEMPLATE);
+    let start = e.actors[&goblin].location();
+    let mut hits = 0;
+    let mut misses = 0;
+    for seed in 0..40u64 {
+        let (mut run, user, goblin) = board(&FIGHTER_TEMPLATE);
+        run.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let before = run.actors[&goblin].hitpoints();
+        for ef in ram.execute(&mut run, user, Some(&vec![goblin]), None, None) {
+            ef.apply(&mut run);
+        }
+        match run.actors.get(&goblin) {
+            Some(g) if g.hitpoints() == before => misses += 1,
+            _ => {
+                hits += 1;
+                if let Some(g) = run.actors.get(&goblin) {
+                    assert!(
+                        g.location().x > start.x,
+                        "seed {seed}: a hit did not shove ({:?} → {:?}):\n{}",
+                        start,
+                        g.location(),
+                        run.messages().join("\n")
+                    );
+                }
+            }
+        }
+    }
+    assert!(hits > 0 && misses > 0, "saw {hits} hits and {misses} misses");
+
+    // Three charges, then a ring. The pool empties without taking the
+    // object with it — the lane the Mace of Terror established.
+    let at = vec![goblin];
+    for round in 0..RING_OF_THE_RAM.charges {
+        assert!(
+            ram.validate_input(&e, user, Some(&at), None, None),
+            "round {round}: the ring should still have a charge"
+        );
+        for ef in ram.execute(&mut e, user, Some(&at), None, None) {
+            ef.apply(&mut e);
+        }
+        e.actors.get_mut(&user).unwrap().reset_for_new_round();
+    }
+    assert!(
+        !ram.validate_input(&e, user, Some(&at), None, None),
+        "a fourth ram came out of a three-charge ring"
+    );
+    assert!(
+        e.actors[&user].has_item_named(RING_OF_THE_RAM.name),
+        "the pool ran dry and took the ring with it"
+    );
+}
+
 /// The Arrow-Catching Shield raises AC against arrows only, and steps
 /// in front of the one aimed at the ally beside it.
 ///
