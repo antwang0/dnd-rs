@@ -19227,6 +19227,32 @@ impl EncounterInstance {
                     if offhand_swing {
                         self.mark_offhand_swing(a.caster_id());
                     }
+                    // **The queue is a stack, so these resolve in
+                    // reverse.** `enqueue_event` pushes and the loop
+                    // above pops, so an action that returns
+                    // `vec![a, b, c]` sees `c`, then `b`, then `a`.
+                    //
+                    // Written down here because it is invisible at
+                    // every site that matters: a `side_effects` body
+                    // reads top to bottom and resolves bottom to top,
+                    // and almost nothing in the engine notices — the
+                    // effects an action returns are overwhelmingly
+                    // independent of each other (a damage payload, a
+                    // condition, a concentration mark), which is why
+                    // the order has gone unstated for as long as it
+                    // has.
+                    //
+                    // Where it does matter, the answer is to *fuse*
+                    // rather than to write the pair backwards. See
+                    // `side_effects::ApplyLinkedCondition`, which
+                    // fuses a condition with its back-link, and
+                    // `side_effects::ApplyFragileCondition`, which
+                    // fuses one with the mark that says damage ends
+                    // it — in both cases because the second half reads
+                    // state the first half writes, and a pair that has
+                    // to be emitted in reverse to run forwards is a
+                    // fact about this loop that no reader of a spell
+                    // should have to know.
                     for sen in side_effects.drain(..) {
                         self.enqueue_event(StackElementEntry::SideEffect(sen));
                     }

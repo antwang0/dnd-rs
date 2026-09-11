@@ -98559,3 +98559,187 @@ fn mage_slayer_taxes_the_concentration_save_and_war_caster_cancels_it() {
          {cancelled}"
     );
 }
+
+/// A charm that never landed leaves no mark behind for the next one.
+///
+/// `install_fragile_condition` is a pair — the condition, then the mark
+/// that says damage ends it — and the first half can bounce: a creature
+/// whose mind is blanked takes no charm from Animal Friendship. Without
+/// the write-side guard on `set_condition_fragile` the second half
+/// landed anyway and sat in the set waiting, so the next spell to charm
+/// that creature, by any route, would have ended on the first arrow.
+#[test]
+fn a_bounced_install_leaves_no_fragility_for_the_next_one_to_inherit() {
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::side_effects::{
+        ApplicableSideEffect, DealDamage, install_condition_with_link,
+        install_fragile_condition,
+    };
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let caster = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
+        .unwrap();
+    let target = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(6, 2),
+            1,
+            0,
+        )
+        .unwrap();
+    // Mind Blank: immune to Charmed while it holds, and — unlike an
+    // undead's — a shield that can be taken away again, which is what
+    // makes the second half of the test possible at all.
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .add_condition(Condition::MindBlanked, ConditionTimer::Rounds(100));
+    for eff in install_fragile_condition(
+        Condition::Charmed,
+        target,
+        caster,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&target].has_condition(Condition::Charmed),
+        "the premise: the charm bounced off the blanked mind"
+    );
+
+    // Drop the ward and charm it the ordinary way, then shoot it. The
+    // charm has to survive.
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .remove_condition(Condition::MindBlanked);
+    for eff in install_condition_with_link(
+        Condition::Charmed,
+        target,
+        caster,
+        ConditionTimer::Rounds(10),
+    ) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&target].has_condition(Condition::Charmed));
+    DealDamage {
+        actor_id: target,
+        amount: 1,
+        damage_type: DamageType::Piercing,
+    }
+    .apply(&mut e);
+    assert!(
+        e.actors[&target].has_condition(Condition::Charmed),
+        "an ordinary charm must not inherit the fragility of one that \
+         never landed"
+    );
+}
+
+/// The side-effect queue is a stack, and this is the test that says so.
+///
+/// `process_stack` pushes an action's returned effects and pops them,
+/// so `vec![a, b]` resolves as `b` then `a`. Nothing in the engine's
+/// spell bodies depends on the order — which is exactly why it had gone
+/// unwritten, and exactly why a pair whose second half reads what its
+/// first half wrote has to be fused instead (see
+/// `side_effects::ApplyFragileCondition`).
+///
+/// Pinned with two effects whose order is observable in the log: a heal
+/// and a damage instance on the same actor, each of which prints a
+/// line. If somebody ever changes the queue to run forwards, this fails
+/// and points at the two fused types that were written around it.
+#[test]
+fn an_actions_side_effects_resolve_in_reverse() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo, TargetingSchema};
+    use crate::engine::side_effects::{
+        ApplicableSideEffect, DealDamage, Heal, Resource,
+    };
+    use crate::engine::types::DamageType;
+    use std::collections::HashSet;
+
+    /// Returns a heal first and a damage second. Under the stack the
+    /// damage lands first, so the log reads damage-then-heal.
+    struct HealThenHarm {
+        target: usize,
+    }
+    impl Action for HealThenHarm {
+        fn name(&self) -> &str {
+            "heal then harm"
+        }
+        fn aliases(&self) -> Vec<&str> {
+            Vec::new()
+        }
+        fn targeting_schema(&self) -> TargetingSchema {
+            TargetingSchema::NoArgs
+        }
+        fn is_harmful(&self) -> bool {
+            false
+        }
+        fn deals_damage(&self) -> bool {
+            false
+        }
+        fn cost(
+            &self,
+            _e: &EncounterInstance,
+            _c: usize,
+            _ti: Option<&Vec<usize>>,
+            _tl: Option<&Vec<Coordinate>>,
+            _o: Option<&HashSet<crate::engine::action_overrides::ActionOverride>>,
+        ) -> Vec<Resource> {
+            Vec::new()
+        }
+        fn side_effects(
+            &self,
+            _e: &mut EncounterInstance,
+            _c: usize,
+            _ti: Option<&Vec<usize>>,
+            _tl: Option<&Vec<Coordinate>>,
+            _o: Option<&HashSet<crate::engine::action_overrides::ActionOverride>>,
+        ) -> Vec<Box<dyn ApplicableSideEffect>> {
+            vec![
+                Box::new(Heal {
+                    actor_id: self.target,
+                    amount: 3,
+                }),
+                Box::new(DealDamage {
+                    actor_id: self.target,
+                    amount: 3,
+                    damage_type: DamageType::Force,
+                }),
+            ]
+        }
+    }
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ogre = e
+        .instantiate_creature(
+            &crate::actors::creatures::ogres::OGRE_TEMPLATE,
+            Coordinate::new(4, 4),
+            0,
+            0,
+        )
+        .unwrap();
+    // Room for the heal to do something.
+    e.actors.get_mut(&ogre).unwrap().take_damage(10);
+
+    let action: &'static HealThenHarm = Box::leak(Box::new(HealThenHarm { target: ogre }));
+    let before = e.messages().len();
+    e.push_action(ActionExecutionInfo::new(action, ogre, None, None, None));
+    e.process_stack();
+
+    let log = e.messages()[before..].join("\n");
+    let damage_at = log.find("takes 3").expect("the damage line");
+    let heal_at = log.find("heals").or_else(|| log.find("regains")).expect("the heal line");
+    assert!(
+        damage_at < heal_at,
+        "the vec said heal-then-damage and the stack resolved it the \
+         other way round:\n{log}"
+    );
+}

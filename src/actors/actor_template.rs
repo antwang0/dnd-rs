@@ -6086,9 +6086,26 @@ impl ActorInstance {
     /// grants the flag — the same contract `set_condition_link` states
     /// one table up, and for the same reason: a half-written pair is a
     /// trance that outlives the fireball that should have ended it.
+    ///
+    /// **Marking a condition this creature is not holding does
+    /// nothing**, and that guard is load-bearing rather than defensive.
+    /// The install it rides can *bounce*: `add_condition` refuses a
+    /// creature immune to what is being installed, so an Animal
+    /// Friendship aimed at something with Fey Ancestry lands no charm —
+    /// and, without this, would leave a mark behind for the next
+    /// charm to inherit. A Charm Person cast on that creature an hour
+    /// later would then end on the first arrow, which is a rule nobody
+    /// wrote. The other three payload tables close the same hole from
+    /// the read side (`linked_by` and friends refuse to answer for a
+    /// condition that is not held); this one closes it from the write
+    /// side as well, because a set has no value to refuse — membership
+    /// *is* the value, and a stale member is indistinguishable from a
+    /// deliberate one.
     pub fn set_condition_fragile(&mut self, c: Condition, fragile: bool) {
         if fragile {
-            self.fragile_conditions.insert(c);
+            if self.has_condition(c) {
+                self.fragile_conditions.insert(c);
+            }
         } else {
             self.fragile_conditions.remove(&c);
         }

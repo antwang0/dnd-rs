@@ -2946,60 +2946,71 @@ pub fn install_condition_at_slot_level(
     ]
 }
 
-/// Record that one install of a condition ends when its holder takes
-/// damage — the fourth member of the payload family beside
-/// `SetConditionLink`, `SetConditionDamageType` and
-/// `SetConditionSlotLevel`.
+/// A condition and the mark that says damage ends it, installed
+/// together as one effect — the fourth member of the payload family
+/// beside `SetConditionLink`, `SetConditionDamageType` and
+/// `SetConditionSlotLevel`, and the second of them (after
+/// `ApplyLinkedCondition`) that has to be *fused* rather than paired.
 ///
-/// Carries no value, because membership is the value: see
-/// `ActorInstance::fragile_conditions` for the three RAW clauses that
-/// wanted this and why none of them could be a row on `Condition`.
-/// Reach it through `install_fragile_condition` rather than emitting it
-/// by hand.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct SetConditionFragile {
-    pub target_id: usize,
+/// The mark carries no value, because membership is the value: see
+/// `ActorInstance::fragile_conditions` for the two RAW clauses that
+/// wanted this and why neither could be a row on `Condition`.
+///
+/// **Why one effect and not two.** `ActorInstance::
+/// set_condition_fragile` refuses to mark a condition the creature is
+/// not holding, which is what keeps a bounced install (an Animal
+/// Friendship aimed at something immune to Charmed) from leaving a mark
+/// behind for the next charm to inherit. That guard makes the pair
+/// order-dependent — and the engine's side-effect queue is a *stack*:
+/// `process_stack` pushes an action's effects in order and pops them,
+/// so a returned `vec![a, b]` resolves as `b` then `a`. A pair would
+/// therefore have had to be written backwards to run forwards, which
+/// is a fact about the queue that no reader of a spell should need to
+/// know. Fused, there is no order to get wrong.
+///
+/// Routes its install through `install_condition_with_link` rather than
+/// emitting a bare `ApplyCondition`, because the two payloads compose
+/// and one caller already needs both: Animal Friendship's charm carries
+/// a back-link (so the befriended beast cannot swing at the druid) *and*
+/// ends on damage.
+pub struct ApplyFragileCondition {
+    pub actor_id: usize,
     pub condition: crate::conditions::Condition,
-    pub fragile: bool,
+    pub timer: crate::conditions::ConditionTimer,
+    /// Whoever installed it, for the back-link the inner install lays
+    /// down when the condition is one that carries one.
+    pub source_id: usize,
 }
 
-impl ApplicableSideEffect for SetConditionFragile {
+impl ApplicableSideEffect for ApplyFragileCondition {
     fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.target_id) {
-            actor.set_condition_fragile(self.condition, self.fragile);
+        for effect in
+            install_condition_with_link(self.condition, self.actor_id, self.source_id, self.timer)
+        {
+            effect.apply(ei);
+        }
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.set_condition_fragile(self.condition, true);
         }
     }
 }
 
-/// Install a condition that ends the moment its holder takes damage:
-/// whatever `install_condition_with_link` would have emitted, plus the
-/// `SetConditionFragile` that marks it.
+/// Install a condition that ends the moment its holder takes damage.
 ///
-/// Routed through the link-aware installer rather than emitting a bare
-/// `ApplyCondition`, because the two payloads compose and one caller
-/// already needs both: Animal Friendship's charm carries a back-link
-/// (so the befriended beast cannot swing at the druid) *and* ends on
-/// damage. A helper that emitted its own `ApplyCondition` would have
-/// silently dropped the link.
-///
-/// The mark is emitted second, and it has to be: it is keyed by
-/// condition and `ActorInstance::condition_is_fragile` refuses to
-/// answer for a condition that is not held, so a mark that landed
-/// before the flag would be read back as `false` — not wrong, but
-/// invisible, which is worse.
+/// Returns the one fused [`ApplyFragileCondition`]; see that type for
+/// why it is one effect and not two.
 pub fn install_fragile_condition(
     condition: crate::conditions::Condition,
     target_id: usize,
     caster_id: usize,
     timer: crate::conditions::ConditionTimer,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
-    let mut effects = install_condition_with_link(condition, target_id, caster_id, timer);
-    effects.push(Box::new(SetConditionFragile {
-        target_id,
+    vec![Box::new(ApplyFragileCondition {
+        actor_id: target_id,
         condition,
-        fragile: true,
-    }));
-    effects
+        timer,
+        source_id: caster_id,
+    })]
 }
 
 /// Grant `count` Mirror Image decoys to the target. Re-application
