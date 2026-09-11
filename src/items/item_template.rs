@@ -2864,6 +2864,127 @@ pub static SCROLL_OF_PROTECTION_FROM_POISON: Item = Item {
 };
 
 // ---------------------------------------------------------------------
+// The defensive ladder — SRD 5.2's `Armor, +1, +2, or +3` and
+// `Shield, +1, +2, or +3`, which are the two rungs the loot table had
+// only the offensive half of.
+//
+// `WEAPON_PLUS_ONE` / `_TWO` / `_THREE` have been in the pool since the
+// beginning and read as the whole of 5e's "+N item" idea; they are one
+// of the three ladders RAW prints. The other two are here. Their absence
+// was invisible for the reason an absence usually is — the pool had a
+// Shield, a Ring of Protection and a Cloak of Protection, so a party
+// looking for AC always found *something* — but what it found topped out
+// at +2 and never scaled, while the sword the same party carried went to
+// +3. A dungeon whose monsters climb and whose armour does not is a
+// dungeon that gets harder in one direction only.
+//
+// Six statics rather than two parameterised ones, for the reason the
+// weapon ladder is three: an `Item` is a `&'static` and the engine
+// identifies one by `name`, so a rarity field would have to be read
+// back out at every pickup site to say which shield the player is
+// holding. The repetition is the price of the items being values.
+// ---------------------------------------------------------------------
+
+/// **Armor, +1** (Armor, any Light/Medium/Heavy; Rare) — *"You have a
+/// bonus to Armor Class while wearing this armor. The bonus is
+/// determined by its rarity."*
+///
+/// The defensive half of the `+N` ladder, and the plainest item added
+/// since the Shield: one field, no clause, nothing to read at any gate.
+///
+/// **Not `grants_magical_attacks`**, which the sweep in
+/// `exactly_the_weapons_carry_the_magic` enforces by name and which is
+/// the whole reason that sweep exists: a suit of armour is a magic item
+/// and is not a magic weapon, and the flag answers the second question.
+/// The Adamantine Armor has been the row proving that; these three are
+/// the rows that would have been most tempting to get wrong, since they
+/// sit beside the `+N` weapons and carry the same number.
+pub static ARMOR_PLUS_ONE: Item = Item {
+    name: "+1 Armor",
+    glyph: '[',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Armor, +2** (Armor, any Light/Medium/Heavy; Very Rare) — the
+/// middle rung. See `ARMOR_PLUS_ONE`.
+pub static ARMOR_PLUS_TWO: Item = Item {
+    name: "+2 Armor",
+    glyph: '[',
+    bonuses: ItemBonuses { ac: 2, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Armor, +3** (Armor, any Light/Medium/Heavy; Legendary) — the top
+/// rung, and the single largest flat AC number a party can find.
+///
+/// Worth more in this engine than three points of AC sound, because AC
+/// is the one defensive number that compounds: it does not reduce a
+/// blow, it deletes whole swings, and it deletes them from *every*
+/// attacker on the board at once. Against the bestiary's multiattackers
+/// — a pit fiend's four swings, an ancient dragon's three — +3 is
+/// closer to a third of the incoming damage than to a fifteenth of it.
+pub static ARMOR_PLUS_THREE: Item = Item {
+    name: "+3 Armor",
+    glyph: '[',
+    bonuses: ItemBonuses { ac: 3, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Shield, +1** (Armor, Shield; Uncommon) — *"While holding this
+/// Shield, you have a bonus to Armor Class determined by the Shield's
+/// rarity, **in addition to the Shield's normal bonus to AC**."*
+///
+/// The emphasised half is why this is `ac: 3` and not `ac: 1`: RAW's
+/// magic shield is a shield first, and a shield is +2. The engine has
+/// no "this item is a shield" axis to fold a base into — a player
+/// carrying both the plain `SHIELD` and this one would be wearing two
+/// shields, which is RAW's problem and not the engine's — so the total
+/// is written down here rather than derived. `SHIELD.bonuses.ac + 1` is
+/// spelled out in the sweep below so the two can't drift.
+pub static SHIELD_PLUS_ONE: Item = Item {
+    name: "+1 Shield",
+    glyph: 'S',
+    bonuses: ItemBonuses { ac: 3, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Shield, +2** (Armor, Shield; Rare) — +2 on top of the shield's own
+/// +2. See `SHIELD_PLUS_ONE` for why the number is the total.
+pub static SHIELD_PLUS_TWO: Item = Item {
+    name: "+2 Shield",
+    glyph: 'S',
+    bonuses: ItemBonuses { ac: 4, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Shield, +3** (Armor, Shield; Very Rare) — +3 on top of the
+/// shield's own +2. See `SHIELD_PLUS_ONE` for why the number is the
+/// total.
+pub static SHIELD_PLUS_THREE: Item = Item {
+    name: "+3 Shield",
+    glyph: 'S',
+    bonuses: ItemBonuses { ac: 5, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// The two defensive `+N` ladders as one set, in rung order.
+///
+/// Exists for the same reason `MAGIC_ARMOURY` does: the invariant worth
+/// checking is about the family, and a sweep that listed the family
+/// itself would pass the day somebody added a fourth rung and forgot
+/// it. Read by `the_defensive_ladders_climb_and_are_findable`, which
+/// checks both that the numbers go up and that every rung is reachable.
+pub static DEFENSIVE_LADDER: &[&Item] = &[
+    &ARMOR_PLUS_ONE,
+    &ARMOR_PLUS_TWO,
+    &ARMOR_PLUS_THREE,
+    &SHIELD_PLUS_ONE,
+    &SHIELD_PLUS_TWO,
+    &SHIELD_PLUS_THREE,
+];
+
+// ---------------------------------------------------------------------
 // The magic armoury — SRD 5.2's named magic weapons, and one suit of
 // armour that keeps their company.
 //
@@ -4061,6 +4182,20 @@ pub static LOOT_POOL: &[&Item] = &[
     // rare drop, paired with the existing +1 (common, weight 2) and
     // +2 (single entry) tiers.
     &WEAPON_PLUS_THREE,
+    // The two defensive ladders, weighted to mirror the offensive one
+    // rung for rung: the `+1`s common, the `+2`s single, the `+3`s
+    // single. Keeping the three ladders on one weighting is what makes
+    // "what did the dungeon give us this run" a fair question — a pool
+    // that hands out three swords for every breastplate decides the
+    // party's shape for them.
+    &ARMOR_PLUS_ONE,
+    &ARMOR_PLUS_ONE,
+    &ARMOR_PLUS_TWO,
+    &ARMOR_PLUS_THREE,
+    &SHIELD_PLUS_ONE,
+    &SHIELD_PLUS_ONE,
+    &SHIELD_PLUS_TWO,
+    &SHIELD_PLUS_THREE,
     // Belt of Giant Strength — offensive bruiser trinket: +damage and
     // +max-HP. Single low-weight entry alongside Gauntlets of Ogre
     // Power.
@@ -5022,6 +5157,67 @@ mod tests {
             assert!(
                 LOOT_POOL.iter().any(|l| l.name == item.name),
                 "{} cannot be found by anybody",
+                item.name
+            );
+        }
+    }
+
+    /// The two defensive `+N` ladders climb, top out where RAW tops
+    /// them out, and every rung is findable.
+    ///
+    /// Three claims, and each one guards a different way a ladder of
+    /// near-identical struct literals goes wrong:
+    ///
+    ///   - **It climbs.** Six copy-pasted literals differing in one
+    ///     integer is precisely the shape where a `+3` ships carrying a
+    ///     `2`, and nothing downstream would notice: the item would
+    ///     work, it would simply be the tier below it wearing the wrong
+    ///     name.
+    ///   - **A magic shield is a shield first.** RAW's bonus is *"in
+    ///     addition to the Shield's normal bonus to AC"*, and the
+    ///     engine has no shield axis to add it to — so the total is
+    ///     hardcoded on each literal, and this is what pins it to the
+    ///     plain `SHIELD` it is derived from.
+    ///   - **Every rung is reachable**, which is
+    ///     `every_magic_weapon_tier_is_in_the_loot_pool`'s claim made
+    ///     for the ladders that arrived later. A defensive tier nobody
+    ///     can find is the offensive-only dungeon these items exist to
+    ///     fix, shipped with the fix written down and unreachable.
+    ///
+    /// And the negative claim the weapon sweep makes by name: no rung
+    /// carries `grants_magical_attacks`. See `ARMOR_PLUS_ONE`.
+    #[test]
+    fn the_defensive_ladders_climb_and_are_findable() {
+        let armor = [&ARMOR_PLUS_ONE, &ARMOR_PLUS_TWO, &ARMOR_PLUS_THREE];
+        for (rung, item) in armor.iter().enumerate() {
+            assert_eq!(
+                item.bonuses.ac,
+                rung as i32 + 1,
+                "{} is not the +{} it says it is",
+                item.name,
+                rung + 1
+            );
+        }
+
+        let shields = [&SHIELD_PLUS_ONE, &SHIELD_PLUS_TWO, &SHIELD_PLUS_THREE];
+        for (rung, item) in shields.iter().enumerate() {
+            assert_eq!(
+                item.bonuses.ac,
+                SHIELD.bonuses.ac + rung as i32 + 1,
+                "{} forgot that a magic shield is still a shield",
+                item.name
+            );
+        }
+
+        for item in DEFENSIVE_LADDER {
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == item.name),
+                "{} cannot be found by anybody",
+                item.name
+            );
+            assert!(
+                !item.grants_magical_attacks,
+                "{} is armour and does not sharpen the sword in your hand",
                 item.name
             );
         }
