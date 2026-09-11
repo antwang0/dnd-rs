@@ -1875,7 +1875,11 @@ pub fn resolve_attack_outcome_with_rider(
     // 5e Cover: intervening combat-active creatures bump the target's
     // effective AC (+2 for half cover, +5 for three-quarters). Adjacent
     // melee swings are exempt (the cover routine returns 0 at gap ≤ 1).
-    let cover_bonus = encounter.cover_ac_bonus(p.caster_id, p.target_id);
+    // Asked through the ranged-aware wrapper, which is where SRD's
+    // Sharpshooter takes half and three-quarters cover off a shot — see
+    // `feats::SHARPSHOOTER_TAG`.
+    let cover_bonus =
+        encounter.cover_ac_bonus_for_attack(p.caster_id, p.target_id, p.is_melee);
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics option,
     // lv7): if the target holds `MULTIATTACK_DEFENSE_TAG` AND this
     // attacker has already landed a connecting swing on the target
@@ -1931,8 +1935,19 @@ pub fn resolve_attack_outcome_with_rider(
     // range but within max range impose disadvantage. The `long_range`
     // threshold (in tiles) is set by the weapon definition — melee
     // weapons and spells leave it `None`.
+    //
+    // SRD's **Sharpshooter**, third clause, is the exemption:
+    // *"Attacking at long range doesn't impose Disadvantage on your
+    // attack rolls with Ranged weapons."* It takes the disadvantage and
+    // nothing else — the shot is still capped at the weapon's maximum
+    // range by `reach_tiles`, and it is still an automatic miss beyond
+    // normal range underwater, because that clause is about the water
+    // rather than about the aim. See `feats::SHARPSHOOTER_TAG`.
     if let Some(nr) = p.long_range
         && !p.is_melee
+        && !encounter.actors.get(&p.caster_id).is_some_and(|a| {
+            a.has_passive_feature(crate::actions::feats::SHARPSHOOTER_TAG)
+        })
         && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
         && dist > nr
     {

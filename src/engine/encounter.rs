@@ -4065,7 +4065,22 @@ impl EncounterInstance {
         // Incapacitated, is standing within five feet. All three
         // clauses live in the predicate; see it for what the first
         // draft of this line left out.
-        if !is_melee && self.ranged_attack_is_crowded(attacker_id) {
+        //
+        // SRD's **Sharpshooter**, second clause, is the exemption:
+        // *"You don't have Disadvantage on attack rolls with Ranged
+        // weapons because of being within 5 feet of an enemy."* Read
+        // here rather than at the attack chokepoint because the tax
+        // itself is here, and the two have to be one decision — a
+        // shooter who is charged a disadvantage and refunded it a
+        // moment later is a shooter whose tally briefly held a source
+        // it should never have had, which is exactly the distinction
+        // `RollModeTally` exists to keep.
+        if !is_melee
+            && self.ranged_attack_is_crowded(attacker_id)
+            && !self.actors.get(&attacker_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::feats::SHARPSHOOTER_TAG)
+            })
+        {
             tally.add(RollMode::Disadvantage);
         }
 
@@ -6445,6 +6460,31 @@ impl EncounterInstance {
                 a.has_passive_feature(crate::actions::feats::WAR_CASTER_TAG)
             }),
             RollMode::Advantage,
+        );
+        // SRD 5.2 **Mage Slayer**, Concentration Breaker: *"Whenever you
+        // damage a creature that is concentrating, it has Disadvantage
+        // on the saving throw it makes to maintain Concentration."*
+        //
+        // The other side of the ledger from War Caster directly above,
+        // and a tally rather than a branch so a war-casting wizard
+        // damaged by a mage slayer rolls Normal — 5e's rule for every
+        // pair in the game, arriving here for the first time with two
+        // feats that genuinely meet.
+        //
+        // "You damage a creature" is attributed to whoever's turn it is;
+        // see `feats::MAGE_SLAYER_TAG` for why the damage chokepoint
+        // cannot say, and why the proxy under-grants rather than over-.
+        // The `!= actor_id` guard is what keeps a mage slayer who is
+        // holding their own concentration spell from breaking it on
+        // their own turn by walking into a wall of fire.
+        extra.add_if(
+            self.current_turn_actor_id().is_some_and(|damager| {
+                damager != actor_id
+                    && self.actors.get(&damager).is_some_and(|a| {
+                        a.has_passive_feature(crate::actions::feats::MAGE_SLAYER_TAG)
+                    })
+            }),
+            RollMode::Disadvantage,
         );
         // 5e Bladesinging Wizard **Bladesong**: "you gain a bonus to
         // Constitution saving throws you make to maintain your
@@ -9458,6 +9498,39 @@ impl EncounterInstance {
     /// 2 hits (the bonus saturates at +5). It deliberately doesn't count
     /// `Wall` — that is total cover and gates the attack via LOS, so a
     /// line that crosses one never reaches here.
+    /// `cover_ac_bonus`, asked by an attack that knows whether it is a
+    /// shot or a swing — and therefore the only form that can answer
+    /// SRD's **Sharpshooter**: *"Your attacks with Ranged weapons
+    /// ignore Half Cover and Three-Quarters Cover."*
+    ///
+    /// Total cover is untouched, and there is nothing to untouch: a
+    /// line that crosses a `Wall` never reaches the cover walk at all,
+    /// because line of sight has already refused the attack. RAW's two
+    /// named rungs are the only two this function can return.
+    ///
+    /// Kept as a wrapper rather than folded into `cover_ac_bonus`,
+    /// which has callers that are not attacks — the AI's target
+    /// ranking, the Hide gate, the watcher sweep — and which would
+    /// otherwise have to invent an `is_melee` they do not have. The
+    /// adjacency short-circuit inside it is *nearly* the same gate and
+    /// deliberately not reused for this: a glaive swung at three tiles
+    /// is past `MELEE_REACH` and is not a ranged weapon.
+    pub fn cover_ac_bonus_for_attack(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        is_melee: bool,
+    ) -> i32 {
+        if !is_melee
+            && self.actors.get(&attacker_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::feats::SHARPSHOOTER_TAG)
+            })
+        {
+            return 0;
+        }
+        self.cover_ac_bonus(attacker_id, target_id)
+    }
+
     pub fn cover_ac_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
         let (Some(a), Some(b)) = (
             self.actors.get(&attacker_id),

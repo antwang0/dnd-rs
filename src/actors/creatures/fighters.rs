@@ -945,6 +945,13 @@ pub static ARCANE_ARCHER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     features.insert(ARCANE_SHOT_TAG);
     features.insert(CURVING_SHOT_TAG);
     features.insert(EVER_READY_SHOT_TAG);
+    // **Sharpshooter**, which is the feat this subclass would take with
+    // its first free pick and the one chassis on the roster whose whole
+    // identity it is. All three clauses are about a bow and this
+    // template carries nothing else: no spell attacks for the "Ranged
+    // weapons" qualifier to matter against, and a longbow at the head
+    // of its own action list. See `feats::SHARPSHOOTER_TAG`.
+    features.insert(crate::actions::feats::SHARPSHOOTER_TAG);
     CreatureTemplate {
         name: "Arcane Archer",
         glyph: 'A',

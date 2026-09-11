@@ -98351,3 +98351,187 @@ fn hitting_a_laughing_creature_lets_it_try_to_stop() {
     }
     panic!("sixty seeds and the ogre never failed the opening save");
 }
+
+/// **Sharpshooter**, all three clauses, each measured against the exact
+/// disadvantage it exists to remove.
+///
+/// Measured on one archer with the tag granted mid-test rather than
+/// across two chassis, for `tough_adds_twice_the_level_to_the_hit_point_
+/// maximum`'s reason: the question is what the feat moves, and two
+/// creatures are never the same creature.
+#[test]
+fn sharpshooter_removes_the_three_taxes_on_a_shot() {
+    use crate::actions::feats::SHARPSHOOTER_TAG;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 10, &[]);
+    let archer = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 5), 1, 0)
+        .unwrap();
+    // Bypass Cover: one body on the line is half cover.
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 1)
+        .unwrap();
+    // Firing in Melee: and one standing on the archer — off the
+    // shooting line, so it crowds without also being cover.
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 6), 1, 2)
+        .unwrap();
+
+    assert_eq!(
+        e.cover_ac_bonus_for_attack(archer, target, false),
+        2,
+        "half cover, before the feat"
+    );
+    assert_eq!(
+        e.peek_attack_mode(archer, target, false),
+        RollMode::Disadvantage,
+        "crowded, before the feat"
+    );
+
+    e.actors
+        .get_mut(&archer)
+        .unwrap()
+        .grant_feature_for_test(SHARPSHOOTER_TAG);
+
+    assert_eq!(
+        e.cover_ac_bonus_for_attack(archer, target, false),
+        0,
+        "Bypass Cover"
+    );
+    assert_eq!(
+        e.peek_attack_mode(archer, target, false),
+        RollMode::Normal,
+        "Firing in Melee"
+    );
+    assert_eq!(
+        e.cover_ac_bonus_for_attack(archer, target, true),
+        2,
+        "and a swing is still a swing — RAW names Ranged weapons"
+    );
+    assert_eq!(
+        e.cover_ac_bonus(archer, target),
+        2,
+        "the un-threaded accessor is untouched, so the AI's ranking and \
+         the Hide gate still see the wall that is really there"
+    );
+}
+
+/// Long Shots, at the one chokepoint the clause lives in: a shot past
+/// its weapon's normal range rolls straight.
+///
+/// Driven through `resolve_attack` rather than through the mode helpers,
+/// because the long-range disadvantage is added there and nowhere else —
+/// `peek_attack_mode` cannot see it, which is the whole reason
+/// `attack_mode_tally_with_riders` stops one step short of resolving.
+#[test]
+fn sharpshooter_shoots_past_normal_range_without_disadvantage() {
+    use crate::actions::feats::SHARPSHOOTER_TAG;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack};
+    use crate::engine::dice::Dice;
+    use crate::engine::types::DamageType;
+
+    fn shot(e: &mut EncounterInstance, archer: usize, target: usize) -> Vec<String> {
+        let before = e.messages().len();
+        let _effects = resolve_attack(
+            e,
+            AttackParams {
+                caster_id: archer,
+                target_id: target,
+                action_name: "longbow",
+                attack_bonus: 4,
+                damage_dice: Dice::new(1, 8),
+                damage_bonus: 2,
+                damage_type: DamageType::Piercing,
+                is_melee: false,
+                // Sixteen tiles is forty feet; the target is thirty
+                // tiles away, which is past it.
+                long_range: Some(16),
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        e.messages()[before..].to_vec()
+    }
+
+    let mut e = ei_with_terrain(60, 10, &[]);
+    let archer = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(34, 5), 1, 0)
+        .unwrap();
+
+    let plain = shot(&mut e, archer, target);
+    assert!(
+        plain.iter().any(|m| m.contains("(dis)")),
+        "a shot past normal range is taxed: {plain:?}"
+    );
+
+    e.actors
+        .get_mut(&archer)
+        .unwrap()
+        .grant_feature_for_test(SHARPSHOOTER_TAG);
+    let sharp = shot(&mut e, archer, target);
+    assert!(
+        !sharp.iter().any(|m| m.contains("(dis)")),
+        "Long Shots takes the tax off: {sharp:?}"
+    );
+}
+
+/// **Mage Slayer**: the concentration save of a creature the holder
+/// damaged rolls at disadvantage — and a War Caster who is damaged by
+/// one rolls straight, because 5e cancels every pair.
+#[test]
+fn mage_slayer_taxes_the_concentration_save_and_war_caster_cancels_it() {
+    use crate::actions::feats::{MAGE_SLAYER_TAG, WAR_CASTER_TAG};
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    /// Roll one concentration save and report the mode the log recorded.
+    fn mode_of_save(grant: &[&'static str]) -> String {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let slayer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+            .unwrap();
+        for tag in grant {
+            if *tag == WAR_CASTER_TAG {
+                e.actors.get_mut(&wizard).unwrap().grant_feature_for_test(tag);
+            } else {
+                e.actors.get_mut(&slayer).unwrap().grant_feature_for_test(tag);
+            }
+        }
+        // Put the goblin's turn on the clock: the damage attribution
+        // proxy is "whoever is acting". See `feats::MAGE_SLAYER_TAG`.
+        while e.current_turn_actor_id() != Some(slayer) {
+            e.skip_turn();
+        }
+        let before = e.messages().len();
+        // A DC nothing reaches, so the roll happens and the branch
+        // afterwards never varies.
+        e.roll_concentration_save(wizard, 99);
+        e.messages()[before..].join("\n")
+    }
+
+    let plain = mode_of_save(&[]);
+    assert!(
+        !plain.contains("(dis)"),
+        "a goblin without the feat taxes nothing: {plain}"
+    );
+    let taxed = mode_of_save(&[MAGE_SLAYER_TAG]);
+    assert!(
+        taxed.contains("(dis)"),
+        "Concentration Breaker: {taxed}"
+    );
+    let cancelled = mode_of_save(&[MAGE_SLAYER_TAG, WAR_CASTER_TAG]);
+    assert!(
+        !cancelled.contains("(dis)") && !cancelled.contains("(adv)"),
+        "War Caster's advantage and Mage Slayer's disadvantage cancel: \
+         {cancelled}"
+    );
+}

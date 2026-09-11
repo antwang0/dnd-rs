@@ -842,7 +842,22 @@ pub static MONSTER_SLAYER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
     // `GLORY_PALADIN_TEMPLATE`, `WATCHERS_PALADIN_TEMPLATE`,
     // `FEY_WANDERER_RANGER_TEMPLATE`, `HORIZON_WALKER_RANGER_TEMPLATE`,
     // `SWARMKEEPER_RANGER_TEMPLATE`.
-    RANGER_TEMPLATE.with_subclass_tag("Monster Slayer Ranger", 'M', SLAYERS_PREY_TAG)
+    let mut template =
+        RANGER_TEMPLATE.with_subclass_tag("Monster Slayer Ranger", 'M', SLAYERS_PREY_TAG);
+    // …plus one feat, which is the only place on this roster a
+    // `with_subclass_tag` build adds a second tag by hand. It is here
+    // because the feat and the subclass are the same idea: RAW's
+    // Monster Slayer ends at **Magic-User's Nemesis** (lv11 — force a
+    // caster within 60 feet to fail its spell), and SRD's **Mage
+    // Slayer** is the general-feat version of that sentence. The
+    // capstone itself needs a hook that fires on somebody else's cast,
+    // which the reaction dispatcher does not have; the feat needs only
+    // the concentration save, which the engine already rolls. See
+    // `feats::MAGE_SLAYER_TAG`.
+    template
+        .features
+        .insert(crate::actions::feats::MAGE_SLAYER_TAG);
+    template
 });
 
 /// Swarmkeeper Ranger — Ranger Conclave **Swarmkeeper** subclass build

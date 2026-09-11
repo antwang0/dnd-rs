@@ -297,6 +297,86 @@ pub const CHARGER: crate::engine::attack::ChargeRider = crate::engine::attack::C
 /// does not enforce.
 pub const WAR_CASTER_TAG: &str = "feat.war_caster";
 
+/// **Sharpshooter** (General feat), whose three combat clauses are three
+/// separate disadvantages the engine already rolls, and which ships all
+/// three:
+///
+///   - *"Bypass Cover. Your attacks with Ranged weapons ignore Half
+///     Cover and Three-Quarters Cover."* —
+///     `EncounterInstance::cover_ac_bonus_for_attack`, the ranged-aware
+///     wrapper written for this clause.
+///   - *"Firing in Melee. You don't have Disadvantage on attack rolls
+///     with Ranged weapons because of being within 5 feet of an
+///     enemy."* — the crowding branch at the head of
+///     `EncounterInstance::attack_mode_tally`.
+///   - *"Long Shots. Attacking at long range doesn't impose
+///     Disadvantage on your attack rolls with Ranged weapons."* — the
+///     `long_range` branch in `engine::attack::resolve_attack`.
+///
+/// Between them they are the whole tax on shooting, and taking all
+/// three off changes what an archer *is* on this engine's boards rather
+/// than only what it rolls. A shooter who does not mind being crowded
+/// does not have to kite, which is the single most expensive habit the
+/// AI has: `ranged_lane_beats_staying` spends a step every turn backing
+/// out of contact, and the feat makes that step worth nothing. A
+/// shooter who ignores cover is the answer to a party behind a low
+/// wall, which is otherwise the strongest static position on the map.
+///
+/// **The three RAW clauses name "Ranged weapons" and the engine asks
+/// "is this attack ranged".** The gap is a spell attack fired by a
+/// holder — a Fire Bolt at 200 feet, or cast while something is
+/// standing on you. Two of the three clauses are threaded with the
+/// weapon/spell distinction available (`AttackParams::is_spell`) and
+/// could narrow; the crowding one is not, because it lives in the
+/// shared mode sweep that does not know what is being swung. Rather
+/// than narrow two and leave one wide, all three read "ranged", and the
+/// divergence is closed at the other end: the feat ships on
+/// `fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE`, which casts nothing —
+/// its Arcane Shot is a rider on the arrow. A future holder who casts
+/// would make the gap observable, and the narrowing is two `&&
+/// !p.is_spell`s away.
+///
+/// **The 2014 power attack is not here and is not RAW any more.** The
+/// clause everybody remembers — −5 to hit for +10 damage — belongs to
+/// the older printing; the 2024 feat replaced it with the three above.
+/// This is the 2024 feat.
+pub const SHARPSHOOTER_TAG: &str = "feat.sharpshooter";
+
+/// **Mage Slayer** (General feat) — of whose clauses the engine carries
+/// the one that moves a die: *"Concentration Breaker. Whenever you
+/// damage a creature that is concentrating, it has Disadvantage on the
+/// saving throw it makes to maintain Concentration."*
+///
+/// One `add_if` in `EncounterInstance::roll_concentration_save`, on the
+/// other side of the ledger from War Caster's advantage two constants
+/// up — and the two compose exactly as 5e says a pair should, into
+/// Normal.
+///
+/// It is the first thing in the engine that attacks a *spell* rather
+/// than a caster. Every concentration effect on the roster is one
+/// failed Constitution save from being wasted, and the save is
+/// ordinarily made at better than even odds by anybody who has bothered
+/// to be a caster; disadvantage is worth roughly as much again as the
+/// damage that triggered it.
+///
+/// **Attribution is the turn holder, not the attacker.** The engine's
+/// damage chokepoint carries no source — see `side_effects::DealDamage`
+/// — so "you damage a creature" is read as "the creature whose turn it
+/// is damaged it", the same proxy `trigger_creature_dropped` states for
+/// the same reason. The proxy is exact on a holder's own turn and
+/// **under-grants** off it: a Mage Slayer's opportunity attack into a
+/// fleeing wizard is somebody else's turn, so the wizard rolls its save
+/// straight. That is the safe direction, and the alternative — reading
+/// the clause off whoever happens to be acting — would hand the
+/// disadvantage to a holder who was nowhere near the blow.
+///
+/// **Two clauses are absent.** *"Concentration Breaker"*'s companion
+/// reaction (an attack of opportunity when a creature within 5 feet
+/// casts a spell) would need the reaction dispatcher to trigger on a
+/// cast rather than on a step, which it has no hook for; and *"Guarded
+/// Mind"* is an out-of-combat cleanse.
+pub const MAGE_SLAYER_TAG: &str = "feat.mage_slayer";
+
 /// **Boon of Combat Prowess** (Epic Boon) — *"Peerless Aim. When you
 /// miss with an attack roll, you can hit instead. Once you use this
 /// benefit, you can't use it again until the start of your next turn."*
@@ -554,6 +634,8 @@ pub const FEAT_TAGS: &[&str] = &[
     SPEEDY_TAG,
     CHARGER_TAG,
     WAR_CASTER_TAG,
+    SHARPSHOOTER_TAG,
+    MAGE_SLAYER_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,
