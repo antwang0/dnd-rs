@@ -234,10 +234,16 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // bard is the chassis that already spends its first-level slots on
     // charms; this is the one that works on the wolves.
     actions.push(&*crate::actions::spells::ANIMAL_FRIENDSHIP);
-    // lv9 **Prismatic Wall** — the bard's apex, and RAW gives it to
-    // exactly two lists. Terrain, light and a twenty-foot glare in one
-    // action, and no concentration, so the bard raises it and then goes
-    // back to inspiring people. See `spells::PRISMATIC_WALL`.
+    // lv9 **Prismatic Wall** — RAW gives it to exactly two lists and
+    // this is one of them. Terrain, light and a twenty-foot glare in
+    // one action, and no concentration, so a bard who could reach it
+    // would raise it and go back to inspiring people.
+    //
+    // *Could*: this chassis is CR 2 and its ladder stops at level 4, so
+    // the spell is on the sheet and out of reach — the same way Symbol
+    // is at level 7, and for the same reason. The list is what the
+    // class knows; the ladder is what it can pay for. See
+    // `spells::PRISMATIC_WALL`.
     actions.push(&*crate::actions::spells::PRISMATIC_WALL);
     CreatureTemplate {
         name: "Bard",

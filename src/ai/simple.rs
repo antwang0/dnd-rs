@@ -8778,18 +8778,25 @@ fn try_attack_aoe(
 /// The wall spells the AI will raise to cut a line, in the order it
 /// reaches for them.
 ///
-/// Both write terrain (`crate::engine::conjured_terrain`), both cost a
-/// level-5 slot and the caster's concentration, and both target a
-/// single point whose *orientation* the spell derives — which is why
-/// they need a lane of their own rather than falling out of the burst
-/// picker. A burst is aimed at a creature; a wall is aimed at a gap.
+/// All three write terrain (`crate::engine::conjured_terrain`) and all
+/// three target a single point whose *orientation* the spell derives —
+/// which is why they need a lane of their own rather than falling out
+/// of the burst picker. A burst is aimed at a creature; a wall is aimed
+/// at a gap.
 ///
-/// Wall of Force first: it is the strictly better wall for a caster who
-/// intends to keep casting, because it is transparent, so the line the
-/// wall cuts is the enemy's and not the caster's own. Wall of Stone
-/// blinds both sides equally, which is worth less to somebody who wants
-/// to keep shooting and is therefore the fallback.
-const WALL_SPELLS: &[&str] = &["wall of force", "wall of stone"];
+/// **Order is preference, and it is slot cost ascending.** Wall of
+/// Force first: at the same level-5 price it is the strictly better
+/// wall for a caster who intends to keep casting, because it is
+/// transparent, so the line it cuts is the enemy's and not the
+/// caster's own. Wall of Stone blinds both sides equally and is
+/// therefore the fallback. Prismatic Wall costs four slot levels more
+/// and is last for that alone — it is the better wall on every other
+/// axis (opaque like the stone, but free of concentration, and with
+/// twenty feet of save-or-Blinded around it), and a caster who reaches
+/// it has nothing cheaper left. On this roster that is the wizard with
+/// its grip already full: the two panes in front of it would each cost
+/// the spell it is holding, and this one costs only the slot.
+const WALL_SPELLS: &[&str] = &["wall of force", "wall of stone", "prismatic wall"];
 
 /// How far along the line to the threat the wall goes up. Two tiles is
 /// close enough that a wall aimed at an enemy eight tiles out still
@@ -8810,10 +8817,11 @@ const WALL_STANDOFF: isize = 2;
 ///
 /// Fires when all of:
 ///
-///   - the caster owns one of `WALL_SPELLS` and isn't already holding
-///     a concentration spell (both walls are concentration, so casting
-///     one would drop whatever is up — and everything the AI puts up
-///     above this rung it put up on purpose);
+///   - the caster owns one of `WALL_SPELLS` that it can actually afford
+///     right now — a caster already concentrating keeps only the walls
+///     that cost no concentration, because casting one of the others
+///     would drop whatever is up, and everything the AI puts up above
+///     this rung it put up on purpose;
 ///   - `MIN_THREATS` hostiles or more are closing and about to arrive:
 ///     further than melee reach, no further than `MAX_THREAT_GAP`. Both
 ///     halves matter. A wall does nothing about a creature already
@@ -8847,12 +8855,19 @@ fn try_wall_off_approach(
     const MIN_THREATS: usize = 2;
 
     let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
+    // A caster already holding something does not trade it for a wall —
+    // everything the AI put up above this rung it put up on purpose. The
+    // gate is per-wall rather than on the whole rung, because not every
+    // wall costs the grip: Prismatic Wall's duration is a flat ten
+    // minutes, so a bard concentrating on a Hypnotic Pattern can still
+    // raise one and keep the pattern. A blanket `is_concentrating` bail
+    // would have made the free wall as expensive as the two that are
+    // not.
+    let already_concentrating = actor.is_concentrating();
     let walls: Vec<&'static (dyn Action + Send + Sync)> = WALL_SPELLS
         .iter()
         .filter_map(|name| actor.find_action(name))
+        .filter(|wall| !already_concentrating || !wall.holds_concentration())
         .collect();
     if walls.is_empty() {
         return None;
@@ -19226,6 +19241,76 @@ mod tests {
         }
     }
 
+    /// A caster already holding a spell keeps the walls that cost no
+    /// concentration and gives up the ones that do.
+    ///
+    /// The gate used to be on the whole rung — one `is_concentrating`
+    /// bail at the top — which was right while every wall on the list
+    /// cost the grip. Prismatic Wall does not, and a blanket bail made
+    /// the free wall as expensive as the two that are not: a bard
+    /// holding a Hypnotic Pattern would sooner have raised nothing at
+    /// all than raise a wall it could have had for free.
+    #[test]
+    fn a_concentrating_caster_still_raises_the_wall_that_costs_no_concentration() {
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::actor_template::ConcentrationData;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+        fn arena_with(
+            template: &'static crate::actors::actor_template::CreatureTemplate,
+            concentrating: bool,
+        ) -> (EncounterInstance, usize) {
+            let mut e = empty_arena();
+            let caster = e
+                .instantiate_creature(template, Coordinate::new(4, 10), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+                .unwrap();
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 12), 1, 1)
+                .unwrap();
+            let actor = e.actors.get_mut(&caster).unwrap();
+            actor.give_resource(crate::engine::side_effects::Resource::Action);
+            if concentrating {
+                actor.start_concentration(ConcentrationData::new("Hypnotic Pattern"));
+            }
+            (e, caster)
+        }
+
+        // The bard carries the spell and not the slot — its ladder
+        // stops at level 4, the same way it carries Symbol at level 7 —
+        // so the rung correctly offers it nothing at all. Pinned so the
+        // day the chassis grows a ninth-level slot, somebody has to
+        // come back here and say so.
+        for concentrating in [false, true] {
+            let (e, bard) = arena_with(&BARD_TEMPLATE, concentrating);
+            assert!(
+                super::try_wall_off_approach(&e, bard).is_none(),
+                "the bard has no slot that reaches a ninth-level wall \
+                 (holding: {concentrating})"
+            );
+        }
+
+        // The wizard's cheapest walls both cost the grip, and it has
+        // nothing free below the ninth level — so while it is holding
+        // something, the rung offers it only the wall it can afford.
+        let (free, wiz) = arena_with(&WIZARD_TEMPLATE, false);
+        assert_eq!(
+            super::try_wall_off_approach(&free, wiz)
+                .expect("an unencumbered wizard raises its cheapest wall")
+                .action()
+                .name(),
+            "wall of force",
+            "order is slot cost ascending"
+        );
+        let (held, wiz) = arena_with(&WIZARD_TEMPLATE, true);
+        assert_eq!(
+            super::try_wall_off_approach(&held, wiz).map(|a| a.action().name().to_string()),
+            Some("prismatic wall".to_string()),
+            "the two level-5 panes would have cost the spell it is holding"
+        );
+    }
+
     /// The two gates that keep the lane from firing on its own side or
     /// on a fight it can't affect.
     #[test]
@@ -20768,6 +20853,13 @@ mod tests {
             ("grease", false),
             ("stinking cloud", true),
             ("wall of sand", true),
+            // The three walls the AI will raise across an approach.
+            // Both level-5 panes cost the grip; Prismatic Wall's ten
+            // minutes do not, which is the whole reason a bard already
+            // concentrating can still put one up. See `WALL_SPELLS`.
+            ("wall of force", true),
+            ("wall of stone", true),
+            ("prismatic wall", false),
             ("crown of thorns", true),
             ("slow", true),
         ];
@@ -20807,6 +20899,18 @@ mod tests {
             assert!(
                 expected.iter().any(|(e, _)| e == name),
                 "{name} is on the area-control registry without an answer pinned here"
+            );
+        }
+        // The wall rung joined the gate when Prismatic Wall arrived: it
+        // filters its own list by `holds_concentration` so a caster
+        // already holding something keeps only the walls that cost
+        // nothing to raise. A wall with a wrong answer is either a
+        // caster that silently drops its Hypnotic Pattern to raise a
+        // pane of stone, or one that never raises the free wall at all.
+        for name in WALL_SPELLS {
+            assert!(
+                expected.iter().any(|(e, _)| e == name),
+                "{name} is on the wall registry without an answer pinned here"
             );
         }
         // Sanity that the walk above actually found the cohorts rather
