@@ -15725,12 +15725,22 @@ mod tests {
     /// each candidate point in a melee catches an ally, and the gate
     /// would veto all of them.
     ///
-    /// Targets `try_attack_aoe` directly rather than the full `decide`
+    /// Targets the burst picker directly rather than the full `decide`
     /// pipeline — the wizard chassis opens with self-buffs (Mage Armor,
     /// Mirror Image) that would win the priority ordering long before
     /// the AoE step, and those are a different decision than the one
     /// under test. Both casters get the identical board, so the only
     /// difference is the feature.
+    ///
+    /// **Narrowed to Fireball by name**, which it did not used to be.
+    /// The question here is what a caster does about a blast that would
+    /// burn its own ally, and that needs a blast that would: a wizard
+    /// carries enemy-scoped areas too — Fear, Confusion — and those
+    /// have no friendly fire for Sculpt Spells to carve out, so the
+    /// baseline caster quite correctly aims one into the scrum. Asking
+    /// the unfiltered picker conflated "refuses friendly fire" with
+    /// "has nothing to cast", and the two came apart the moment those
+    /// spells started declaring `spares_allies`.
     #[test]
     fn ai_evoker_blasts_through_allies_that_stop_a_baseline_wizard() {
         use crate::actors::actor_template::CreatureTemplate;
@@ -15750,12 +15760,12 @@ mod tests {
                 .unwrap();
             e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 11), 1, 1)
                 .unwrap();
-            try_attack_aoe(&e, caster).is_some()
+            best_burst_placement(&e, caster, |a| a.name() == "fireball").is_some()
         };
 
         assert!(
             !picks_burst(&WIZARD_TEMPLATE),
-            "baseline wizard should refuse a blast that clips its own ally"
+            "baseline wizard should refuse a fireball that clips its own ally"
         );
         assert!(
             picks_burst(&EVOCATION_WIZARD_TEMPLATE),
@@ -21407,6 +21417,47 @@ mod tests {
         assert!(
             try_kindle_weapon(&e, fighter).is_none(),
             "a lit blade is not worth another bonus action"
+        );
+    }
+
+    /// An enemy-scoped *spell* is aimed through the party for the same
+    /// reason an enemy-scoped wand is, and a friend-or-foe one still
+    /// is not.
+    ///
+    /// Twenty-one abilities resolved through `enemy_burst_targets` or
+    /// `enemy_area_targets` without declaring `spares_allies`, and the
+    /// picker cannot derive it — so every one of them was unreachable
+    /// in a melee scrum, which is the only place an area is worth
+    /// aiming. Fear is the representative: a cone that catches nothing
+    /// on the caster's side, on a chassis that also carries Fireball,
+    /// which catches everything. One board, one caster, two spells, two
+    /// answers.
+    #[test]
+    fn an_enemy_scoped_cone_is_aimed_through_the_party_and_a_fireball_is_not() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // Two zombies with one of the party's fighters toe to toe, so
+        // every placement that catches both catches the fighter.
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(11, 10), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 11), 1, 1)
+            .unwrap();
+
+        assert!(
+            best_burst_placement(&e, wizard, |a| a.name() == "fear").is_some(),
+            "fear catches nobody on the caster's side and should be aimed"
+        );
+        assert!(
+            best_burst_placement(&e, wizard, |a| a.name() == "fireball").is_none(),
+            "and a fireball through the same scrum still burns the fighter"
         );
     }
 

@@ -9987,6 +9987,14 @@ pub static SUGGESTION: LazyLock<Suggestion> = LazyLock::new(|| Suggestion {});
 pub struct MassSuggestion {}
 
 impl Action for MassSuggestion {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -13089,6 +13097,14 @@ pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| Crusad
 pub struct Earthquake {}
 
 impl Action for Earthquake {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -13441,6 +13457,14 @@ pub static CROWN_OF_STARS: LazyLock<CrownOfStarsSpell> = LazyLock::new(|| CrownO
 pub struct Fear {}
 
 impl Action for Fear {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -15099,6 +15123,14 @@ pub static REVERSE_GRAVITY: LazyLock<ReverseGravity> = LazyLock::new(|| ReverseG
 pub struct StormOfVengeance {}
 
 impl Action for StormOfVengeance {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -15714,6 +15746,14 @@ pub static CREATE_UNDEAD: SummonSpell = SummonSpell {
 pub struct Confusion {}
 
 impl Action for Confusion {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -15960,6 +16000,14 @@ pub static LEVITATE: LazyLock<Levitate> = LazyLock::new(|| Levitate {});
 pub struct PlantGrowth {}
 
 impl Action for PlantGrowth {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn name(&self) -> &str {
         "plant growth"
     }
@@ -16505,6 +16553,14 @@ pub static SPIKE_STONES: LazyLock<SpikeStones> = LazyLock::new(|| SpikeStones {}
 pub struct HolyWord {}
 
 impl Action for HolyWord {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn self_burst_radius(&self) -> Option<isize> {
         // RAW: "each creature of your choice that you can see within 30 feet
         // of you".
@@ -16613,6 +16669,14 @@ pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
 pub struct PrismaticSpray {}
 
 impl Action for PrismaticSpray {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -18354,6 +18418,14 @@ pub static POWER_WORD_PAIN: LazyLock<PowerWordPain> = LazyLock::new(|| PowerWord
 pub struct MassPolymorph {}
 
 impl Action for MassPolymorph {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -20086,6 +20158,14 @@ pub static FLAMING_SPHERE: LazyLock<FlamingSphere> = LazyLock::new(|| FlamingSph
 pub struct GuardianOfFaith {}
 
 impl Action for GuardianOfFaith {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -23638,6 +23718,14 @@ pub static ARMS_OF_HADAR: LazyLock<ArmsOfHadar> = LazyLock::new(|| ArmsOfHadar {
 pub struct DragonsBreath {}
 
 impl Action for DragonsBreath {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn self_burst_radius(&self) -> Option<isize> {
         // RAW's exhalation is a 15-foot Cone; the engine resolves it as a
         // 2-tile burst centred on the breather, which is the radius
@@ -25227,6 +25315,14 @@ pub static INCENDIARY_CLOUD: LazyLock<IncendiaryCloud> = LazyLock::new(|| Incend
 pub struct Weird {}
 
 impl Action for Weird {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn name(&self) -> &str {
         "weird"
     }
@@ -33235,6 +33331,14 @@ impl DivineWord {
 }
 
 impl Action for DivineWord {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn self_burst_radius(&self) -> Option<isize> {
         // The same constant the spell resolves with, rather than a
         // second copy of 12 that could drift from it.
@@ -33846,6 +33950,14 @@ impl Scatter {
 }
 
 impl Action for Scatter {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }

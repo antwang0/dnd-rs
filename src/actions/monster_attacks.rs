@@ -5266,6 +5266,14 @@ impl FrightfulPresence {
 }
 
 impl Action for FrightfulPresence {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn installs_condition(&self) -> Option<Condition> {
         // The whole of the effect: a creature that already has it gains
         // nothing from being caught again. See
@@ -6569,6 +6577,14 @@ impl BansheeWail {
 }
 
 impl Action for BansheeWail {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -8529,6 +8545,14 @@ pub static SOLAR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 pub struct MindFlayerMindBlast {}
 
 impl Action for MindFlayerMindBlast {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn name(&self) -> &str {
         "mind blast"
     }
@@ -10205,6 +10229,14 @@ pub static BALOR_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtta
 pub struct BalorFireAura {}
 
 impl Action for BalorFireAura {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn self_burst_radius(&self) -> Option<isize> {
         // RAW: "each creature within 5 feet of it". Not the balor's
         // other 8-tile clause on the same stat block.
@@ -10402,6 +10434,14 @@ impl VrockScreech {
 }
 
 impl Action for VrockScreech {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn self_burst_radius(&self) -> Option<isize> {
         // The radius the ability resolves at, declared so the AI's
         // self-centred-burst rung stops guessing at it. See
@@ -12038,6 +12078,14 @@ pub static WATER_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multi
 pub struct WaterElementalWhelm {}
 
 impl Action for WaterElementalWhelm {
+    fn spares_allies(&self) -> bool {
+        // Resolved through the enemy-scoped area helpers, so the
+        // caster's own side is never in the blast to begin with. The
+        // declaration is what tells the AI's area rungs that — see
+        // `EncounterInstance::enemy_burst_targets`.
+        true
+    }
+
     fn name(&self) -> &str {
         "whelm"
     }

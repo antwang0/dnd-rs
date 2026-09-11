@@ -10441,7 +10441,10 @@ impl EncounterInstance {
 
     /// Sorted ids of combat-active actors the area catches that are
     /// *not* on the caster's team — the shape-general twin of
-    /// `enemy_burst_targets`.
+    /// `enemy_burst_targets`, and carrying the same obligation: an area
+    /// action resolving through this must declare
+    /// `Action::spares_allies`. See that twin for why nothing can
+    /// derive it.
     pub fn enemy_area_targets(
         &self,
         caster_id: usize,
@@ -10482,6 +10485,19 @@ impl EncounterInstance {
     /// Static and similar enemy-only AoEs use this so allies inside the
     /// blast don't catch friendly fire. Caster is implicitly excluded
     /// via the team match.
+    ///
+    /// **An area action that resolves through this must declare
+    /// [`Action::spares_allies`]**, and the reason is that nothing can
+    /// derive it: the AI's two area rungs veto any placement catching a
+    /// friendly, and the only thing that knows this resolver skipped
+    /// them is the resolver. An action that calls this and stays silent
+    /// is one the picker will refuse to aim into a melee scrum — which
+    /// is the only place an area is ever worth aiming — and the symptom
+    /// is an ability nobody selects, which looks exactly like an ability
+    /// nobody needed. Twenty-one of them shipped that way before the
+    /// convention was written down here.
+    ///
+    /// [`Action::spares_allies`]: crate::actions::action_template::Action::spares_allies
     pub fn enemy_burst_targets(
         &self,
         caster_id: usize,
