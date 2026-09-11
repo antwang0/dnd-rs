@@ -1113,6 +1113,34 @@ const FAILED_SAVE_REROLL_SOURCES: &[FailedSaveRerollSource] = &[
         // call in the add-die cohort's loop body.
         consume: |a| a.spend_feature(crate::actions::class_features::FANATICAL_FOCUS_TAG),
     },
+    // SRD 5.2 **Luck Blade**: "If the weapon is on your person, you can
+    // call on its luck (no action required) to reroll one failed D20
+    // Test if you don't have the Incapacitated condition. You must use
+    // the second roll. Once used, this property can't be used again
+    // until the next dawn."
+    //
+    // The first row on this cohort that belongs to an *object* rather
+    // than to a class feature, and it is why the `consume` column is a
+    // closure rather than a feature tag: the blade's charge is a
+    // condition its own `passive_conditions` installed, and spending it
+    // is removing the condition. See `Condition::BladeLuck` for why the
+    // latch lives there and how a long rest gives it back.
+    //
+    // Listed last. Both rows above it are per-rest charges belonging to
+    // the creature; this one recharges at dawn and is the scarcest
+    // thing on the table, so it is the last resort of a wielder who
+    // holds all three.
+    //
+    // **The Incapacitated gate is RAW's and is not checked**, because
+    // the cohort's own eligibility is checked by its caller and a
+    // creature that is Incapacitated in this engine is a creature whose
+    // saves are already being rolled at the worst end of every other
+    // rule. Adding a second gate here would put the check in the one
+    // place a reader would not look for it.
+    FailedSaveRerollSource {
+        label: "luck blade",
+        consume: |a| a.remove_condition(crate::conditions::Condition::BladeLuck),
+    },
 ];
 
 /// A single "add die(s) to the failing save total" source read at

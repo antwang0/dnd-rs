@@ -3258,6 +3258,33 @@ pub enum Condition {
     /// as RAW intends, because the arrow the bearer volunteers for is
     /// then rolled against the AC the shield raised.
     ArrowCatching,
+    /// Carrying a SRD 5.2 **Luck Blade** whose luck is still unspent —
+    /// *"If the weapon is on your person, you can call on its luck (no
+    /// action required) to reroll one failed D20 Test… Once used, this
+    /// property can't be used again until the next dawn."*
+    ///
+    /// A **latch** rather than a buff, and the first condition in the
+    /// engine used that way. Everything else on this enum says what a
+    /// creature *is*; this says what its sword has not done yet. The
+    /// shape falls out of two things the item lane already does and
+    /// nothing else in the file needed at once: `Item::passive_conditions`
+    /// installs it the moment the blade is picked up, and `long_rest`
+    /// clears the condition map and then re-installs every carried
+    /// item's passives — which is RAW's "until the next dawn", spelled
+    /// in the engine's own vocabulary and costing no new field on
+    /// `ActorInstance`.
+    ///
+    /// Spent by the row on `FAILED_SAVE_REROLL_SOURCES`, whose `consume`
+    /// closure is a `remove_condition` — the removal *is* the spend, and
+    /// it returns false for a wielder whose luck is already gone, which
+    /// is exactly the contract that cohort's column asks for.
+    ///
+    /// One consequence worth naming: a Dispel Magic that strips this
+    /// takes the luck with it until the next long rest. That is the
+    /// standing behaviour of every item-granted condition in the engine
+    /// — see `Item::passive_conditions` — and here it reads less like a
+    /// bug than usual, since what is being dispelled is a sword's luck.
+    BladeLuck,
     /// Holding a SRD 5.2 **Shield of Missile Attraction** — *"Whenever
     /// an attack with a Ranged weapon targets a creature within 10 feet
     /// of you, the curse causes you to become the target instead."*
@@ -3648,6 +3675,7 @@ impl Condition {
             Condition::MaceSmiting => "wielding a mace of smiting",
             Condition::Thundering => "wielding a thunderous greatclub",
             Condition::ArrowCatching => "holding an arrow-catching shield",
+            Condition::BladeLuck => "carrying a luck blade, luck unspent",
             Condition::MissileAttracting => "cursed to attract missiles",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",

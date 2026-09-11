@@ -3538,6 +3538,52 @@ pub static THUNDEROUS_GREATCLUB: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Luck Blade** (Weapon, one of seven blades; Legendary) — *"You gain
+/// a +1 bonus to attack rolls and damage rolls made with this magic
+/// weapon. While the weapon is on your person, you also gain a +1 bonus
+/// to saving throws. Luck. If the weapon is on your person, you can call
+/// on its luck (no action required) to reroll one failed D20 Test."*
+///
+/// The armoury's second Legendary weapon after the Vorpal Sword, and
+/// they are opposites: the Vorpal Sword is a five-percent chance of
+/// ending a fight and nothing the other ninety-five percent of the
+/// time, and this is a `+1` that never misfires plus one rescued save a
+/// day.
+///
+/// **The `+1` on saving throws is what makes it a Legendary rather than
+/// an ordinary `+1`.** Nothing else in the armoury touches the save
+/// lane at all — the slayers, the brands and the smiting maces are all
+/// offence — so a party that finds this has found the only weapon that
+/// answers a dragon's breath.
+///
+/// The Luck clause is a latch rather than a charge pool, and the latch
+/// is the `BladeLuck` condition the blade installs: see that condition
+/// for why a long rest is RAW's dawn, and `FAILED_SAVE_REROLL_SOURCES`
+/// for the row that spends it. **Saving throws only**, where RAW says
+/// any failed D20 Test: the reroll cohort the blade rides is the save
+/// lane's, and the attack lane's equivalent (`MISSED_ATTACK_BOOSTS`)
+/// adds dice rather than rerolling, which is a different rule wearing
+/// the same clothes. The narrowing is the safe direction.
+///
+/// **Wish is not modeled.** RAW's blade carries `1d3` charges of a
+/// ninth-level spell the engine does have — but an item that casts Wish
+/// is an item that ends the encounter it is found in, and the spell's
+/// own engine surface is a self-buff rather than the open-ended clause
+/// RAW writes. The `+1`s and the luck are the weapon.
+pub static LUCK_BLADE: Item = Item {
+    name: "Luck Blade",
+    glyph: 'L',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        save: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::BladeLuck],
+    ..Item::DEFAULTS
+};
+
 /// **Dagger of Venom** (Weapon, dagger; Rare) — "You gain a +1 bonus to
 /// attack rolls and damage rolls made with this magic weapon. As a
 /// Bonus Action, you can cause thick, black poison to coat it. The
@@ -4333,6 +4379,7 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &MACE_OF_SMITING,
     &MACE_OF_TERROR,
     &THUNDEROUS_GREATCLUB,
+    &LUCK_BLADE,
     &ADAMANTINE_ARMOR,
 ];
 
@@ -5056,6 +5103,10 @@ pub static LOOT_POOL: &[&Item] = &[
     // die on every swing, where the mace has the charges and no die.
     // Single entry, like every other clause-weapon on the shelf.
     &THUNDEROUS_GREATCLUB,
+    // The only weapon in the file that touches the save lane, and the
+    // Vorpal Sword's opposite number at the same rarity: a `+1` that
+    // never misfires against a beheading that mostly does.
+    &LUCK_BLADE,
     // The wondrous half of the same batch — items whose clause is a
     // defence or a sense rather than a die on a swing. Single entries
     // apiece for the same reason the armoury gets them: each answers one
@@ -5280,6 +5331,26 @@ mod tests {
                 item.name
             );
         }
+        // And the third category, which arrived with the Luck Blade: a
+        // weapon that *does* install a marker, read by a cohort that is
+        // not the rider table. The blade's `BladeLuck` is a latch on
+        // `engine::encounter`'s failed-save reroll cohort, and both
+        // halves of that need saying — the rider table must **not**
+        // read it (a marker on two lanes is a clause firing twice) and
+        // the item must install it.
+        let other_lane: &[(&Item, Condition)] = &[(&LUCK_BLADE, Condition::BladeLuck)];
+        for (item, marker) in other_lane {
+            assert!(
+                !riders.contains(marker),
+                "{}'s marker is read by the rider table as well as its own lane",
+                item.name
+            );
+            assert!(
+                item.passive_conditions.contains(marker),
+                "{} does not install the marker its lane reads",
+                item.name
+            );
+        }
         for (item, marker, kindled) in wiring {
             assert!(
                 riders.contains(marker),
@@ -5307,10 +5378,10 @@ mod tests {
             }
         }
         assert_eq!(
-            wiring.len() + no_rider.len(),
+            wiring.len() + no_rider.len() + other_lane.len(),
             MAGIC_ARMOURY.len(),
             "the armoury grew and this sweep did not — every entry on it needs a row \
-             in `wiring` or a place in `no_rider`"
+             in `wiring`, in `other_lane`, or a place in `no_rider`"
         );
     }
 

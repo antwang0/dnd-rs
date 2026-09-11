@@ -95151,6 +95151,79 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
     );
 }
 
+/// The Luck Blade rescues one failed save, then stops until dawn.
+///
+/// The first item-granted charge in the engine, and the point of the
+/// test is that all three halves of the latch work off machinery that
+/// was already there:
+///
+///   - **Carrying the blade arms it**, through
+///     `Item::passive_conditions`, exactly as a Slippers of Spider
+///     Climbing arms its climb.
+///   - **The reroll spends it**, through the `consume` column on
+///     `FAILED_SAVE_REROLL_SOURCES` — the removal *is* the spend, so
+///     there is no separate ledger to fall out of step with.
+///   - **A long rest gives it back**, because `long_rest` clears the
+///     condition map and then re-installs every carried item's
+///     passives. That is RAW's "until the next dawn" without a new
+///     field anywhere.
+#[test]
+fn the_luck_blade_rescues_one_save_and_then_waits_for_dawn() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::AbilityScoreType;
+    use crate::items::item_template::LUCK_BLADE;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&fighter).unwrap().pickup_item(&LUCK_BLADE);
+    assert!(
+        e.actors[&fighter].has_condition(Condition::BladeLuck),
+        "picking the blade up did not arm its luck"
+    );
+
+    // A DC only a natural 20 reaches: every save fails, and the reroll
+    // cohort's own "could this reroll pass" gate is satisfied, so the
+    // only question left is how many times the blade speaks. (A DC
+    // beyond reach would leave the latch untouched, which is that
+    // gate working as designed and would prove nothing here.)
+    let dc = 20 + e.actors[&fighter].save_modifier(AbilityScoreType::Dexterity);
+    let mut spoke = 0;
+    for _ in 0..12 {
+        let before = e.messages().len();
+        e.roll_save(fighter, AbilityScoreType::Dexterity, dc);
+        if e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("luck blade"))
+        {
+            spoke += 1;
+        }
+    }
+    assert_eq!(spoke, 1, "the blade's luck is once, not {spoke} times");
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::BladeLuck),
+        "the luck was spent and the latch is still up"
+    );
+
+    // Dawn.
+    e.actors.get_mut(&fighter).unwrap().long_rest();
+    assert!(
+        e.actors[&fighter].has_condition(Condition::BladeLuck),
+        "a long rest did not give the blade its luck back"
+    );
+
+    // And dropping the blade takes the luck with it.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .remove_item_by_name(LUCK_BLADE.name);
+    assert!(
+        !e.actors[&fighter].has_condition(Condition::BladeLuck),
+        "the luck outlived the sword it belongs to"
+    );
+}
+
 /// The Wand of the War Mage sharpens a cast and nothing else, and
 /// fires through a bodyguard but not through a wall.
 ///
