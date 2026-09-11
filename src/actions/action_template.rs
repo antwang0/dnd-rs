@@ -851,7 +851,7 @@ pub fn bonus_action_only() -> Vec<Resource> {
 
 /// Action-only cost — one Action, no spell slot. Symmetric counterpart to
 /// `bonus_action_only` for slot-less Action-cost consumables and class
-/// features (e.g. the `BurstSaveDamageItem` scrolls, `Drink Potion of X`
+/// features (e.g. the `AreaSaveDamageItem` scrolls, `Drink Potion of X`
 /// at Action cost). The matching chokepoint half of the toggle below.
 pub fn action_only() -> Vec<Resource> {
     vec![Resource::Action]

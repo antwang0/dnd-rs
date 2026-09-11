@@ -1239,7 +1239,7 @@ pub static SCROLL_OF_BURNING_HANDS: Item = Item {
 /// Scroll of Thunderwave — single-use 2d8 thunder CON-save burst (Action,
 /// 2-tile radius). Fills the thunder lane at the cheap loot tier
 /// alongside the rare Scroll of Shatter (3d8). Mirrors the THUNDERWAVE
-/// spell at level 1, minus the push rider (the shared BurstSaveDamageItem
+/// spell at level 1, minus the push rider (the shared AreaSaveDamageItem
 /// helper doesn't fork into push follow-ups).
 pub static SCROLL_OF_THUNDERWAVE: Item = Item {
     name: "Scroll of Thunderwave",
@@ -1868,7 +1868,7 @@ pub static SCROLL_OF_HEAT_METAL: Item = Item {
 /// fail = 4d8 cold, pass = half. 5e RAW: level-4 evocation that deals
 /// 2d8 bludgeoning + 4d6 cold; we collapse the dual-type damage to a single
 /// cold roll (4d8) so the scroll fires through the shared
-/// `BurstSaveDamageItem` impl. Sits between Wand of Cone of Cold (10d8 cold,
+/// `AreaSaveDamageItem` impl. Sits between Wand of Cone of Cold (10d8 cold,
 /// 6-radius) and the scroll-tier cold burst as the mid-tier cold-burst
 /// scroll.
 pub static SCROLL_OF_ICE_STORM: Item = Item {
@@ -1922,7 +1922,7 @@ pub static POTION_OF_VIGILANCE: Item = Item {
 /// centered on a target tile within 60 ft. Single-bead consumable (RAW
 /// has a multi-bead necklace ladder; we collapse to a single-use scroll-
 /// style envelope so the loot pool stays simple). Fires through the
-/// shared `BurstSaveDamageItem` impl. Sits between Scroll of Fireball
+/// shared `AreaSaveDamageItem` impl. Sits between Scroll of Fireball
 /// (6d6) and Wand of Fireballs (8d6) — same envelope, smaller payload
 /// to mark the bead-tier of the magic-fireball ladder.
 pub static NECKLACE_OF_FIREBALLS: Item = Item {
@@ -2058,7 +2058,7 @@ pub static RING_OF_SPELL_STORING: Item = Item {
 /// single one-shot burst-damage roll. Sits in the rare half of the
 /// poison-burst lane (the only poison-damage burst consumable; Stinking
 /// Cloud uses poison-CONDITION rather than poison-DAMAGE). Fires through
-/// the shared `BurstSaveDamageItem` impl.
+/// the shared `AreaSaveDamageItem` impl.
 pub static SCROLL_OF_CLOUDKILL: Item = Item {
     name: "Scroll of Cloudkill",
     glyph: 'C',
@@ -2123,7 +2123,7 @@ pub static SCROLL_OF_FLESH_TO_STONE: Item = Item {
 /// Scroll of Synaptic Static — 8d6 psychic-damage burst at DC 15 INT save.
 /// Fills the psychic burst-damage niche in the scroll family alongside
 /// Fire / Lightning / Cold / Acid / Thunder / Poison. Fires through the
-/// shared `BurstSaveDamageItem` action impl.
+/// shared `AreaSaveDamageItem` action impl.
 pub static SCROLL_OF_SYNAPTIC_STATIC: Item = Item {
     name: "Scroll of Synaptic Static",
     glyph: 'y',
@@ -2135,7 +2135,7 @@ pub static SCROLL_OF_SYNAPTIC_STATIC: Item = Item {
 /// The only necrotic-damage burst consumable in the loot pool; sits in
 /// the rare half of the lane alongside Synaptic Static (psychic) as a
 /// premium typed-burst scroll. Fires through the shared
-/// `BurstSaveDamageItem` action impl.
+/// `AreaSaveDamageItem` action impl.
 pub static SCROLL_OF_CIRCLE_OF_DEATH: Item = Item {
     name: "Scroll of Circle of Death",
     glyph: 'O',
@@ -2888,7 +2888,7 @@ pub static SCROLL_OF_BARKSKIN: Item = Item {
 /// the lv1 force-burst niche in the loot pool alongside the auto-hit
 /// Scroll of Magic Missile — distinguished by the targeted-point reach +
 /// burst envelope. Skips the spell-side Slowed rider in trade for fitting
-/// the shared `BurstSaveDamageItem` chassis (see the action impl for the
+/// the shared `AreaSaveDamageItem` chassis (see the action impl for the
 /// consumable / spell delta rationale).
 pub static SCROLL_OF_MAGNIFY_GRAVITY: Item = Item {
     name: "Scroll of Magnify Gravity",

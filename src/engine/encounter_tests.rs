@@ -48214,7 +48214,7 @@ fn greater_wand_of_magic_missiles_damages_target_and_consumes() {
 }
 
 /// Scroll of Burning Hands: 3d6 fire DEX-save burst. Tests the
-/// shared `BurstSaveDamageItem` impl handles the burst targeting
+/// shared `AreaSaveDamageItem` impl handles the burst targeting
 /// and consumes the scroll.
 #[test]
 fn scroll_of_burning_hands_damages_burst_and_consumes() {
@@ -52651,7 +52651,7 @@ fn scroll_of_synaptic_static_psychic_immunity_takes_zero() {
 /// Scroll of Circle of Death: necrotic burst. Enemies in the burst
 /// take damage on a failed save. Sweep seeds to assert at least one
 /// failed save dropped HP — the necrotic-typed burst lane shares the
-/// same chokepoint as every other BurstSaveDamageItem.
+/// same chokepoint as every other AreaSaveDamageItem.
 #[test]
 fn scroll_of_circle_of_death_deals_necrotic_burst() {
     use crate::actions::item_actions::READ_CIRCLE_OF_DEATH_SCROLL;
@@ -53607,7 +53607,7 @@ fn mind_sliver_scroll_deals_psychic_damage() {
 /// Scroll of Moonbeam: burst CON save vs DC 15, 5d10 radiant on
 /// fail (half on pass). Sweep seeds until we observe damage
 /// landing. Validates the scroll routes through the
-/// `BurstSaveDamageItem` radiant lane.
+/// `AreaSaveDamageItem` radiant lane.
 #[test]
 fn moonbeam_scroll_deals_burst_radiant_damage() {
     use crate::actions::item_actions::READ_MOONBEAM_SCROLL;
@@ -55751,7 +55751,7 @@ fn horn_of_blasting_damages_enemies_and_deafens_on_fail() {
     assert!(saw_deaf, "horn should deafen the ogre on at least one fail");
 }
 
-/// Javelin of Lightning: thrown lightning burst, BurstSaveDamageItem
+/// Javelin of Lightning: thrown lightning burst, AreaSaveDamageItem
 /// shape. Damages enemies in the small burst, spares the caster, and
 /// consumes the javelin.
 #[test]
@@ -95147,6 +95147,114 @@ fn the_mace_of_smiting_pays_double_against_a_construct_and_finishes_it() {
             .iter()
             .any(|m| m.contains("mace of smiting") && m.contains("destroyed outright")),
         "the destruction went unnamed:\n{}",
+        e.messages().join("\n")
+    );
+}
+
+/// A Scroll of Lightning Bolt is a bolt, and a Scroll of Burning Hands
+/// comes out of the reader's hands.
+///
+/// The item chassis was burst-only for as long as it existed, and seven
+/// of its rows were the wrong shape because of it. Two of them are
+/// pinned here, and they fail in opposite directions on the old code —
+/// which is the point: a burst is not a bad approximation of a line or
+/// a cone, it is a different area that happens to overlap.
+///
+///   - **The bolt runs.** A goblin thirty tiles down the line is
+///     caught; one three tiles off-axis at the same distance is not. A
+///     two-tile sphere thrown to the far end caught the second and
+///     missed everything between.
+///   - **The cone opens.** A goblin standing behind the reader is
+///     outside a fifteen-foot cone thrown forward, and was squarely
+///     inside a two-tile sphere dropped six tiles away in any
+///     direction.
+#[test]
+fn the_lightning_scroll_is_a_line_and_the_burning_hands_scroll_is_a_cone() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::{SCROLL_OF_BURNING_HANDS, SCROLL_OF_LIGHTNING_BOLT};
+
+    // The bolt. Reader at x=4; one goblin straight down the line at
+    // x=34, one at the same range but three tiles off it.
+    let mut e = ei_with_terrain(60, 30, &[]);
+    let reader = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 14), 0, 0)
+        .unwrap();
+    let on_line = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(24, 14), 1, 0)
+        .unwrap();
+    let off_line = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(24, 20), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&reader)
+        .unwrap()
+        .pickup_item(&SCROLL_OF_LIGHTNING_BOLT);
+    let bolt = *e.actors[&reader]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "read lightning bolt scroll")
+        .expect("holding the scroll offers the bolt");
+    let hp = (
+        e.actors[&on_line].hitpoints(),
+        e.actors[&off_line].hitpoints(),
+    );
+    e.roller = crate::engine::dice::FastRandRoller::with_seed(3);
+    // Aimed straight down the rank, at a tile past the far goblin.
+    let aim = vec![Coordinate::new(40, 14)];
+    for ef in bolt.execute(&mut e, reader, None, Some(&aim), None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors
+            .get(&on_line)
+            .is_none_or(|g| g.hitpoints() < hp.0),
+        "the bolt did not reach the goblin standing in it:\n{}",
+        e.messages().join("\n")
+    );
+    assert_eq!(
+        e.actors[&off_line].hitpoints(),
+        hp.1,
+        "the bolt caught a goblin six tiles off the line:\n{}",
+        e.messages().join("\n")
+    );
+
+    // The cone. Reader in the middle, one goblin in front and one
+    // behind, both two tiles away.
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let reader = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+        .unwrap();
+    let ahead = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(18, 14), 1, 0)
+        .unwrap();
+    let behind = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 14), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&reader)
+        .unwrap()
+        .pickup_item(&SCROLL_OF_BURNING_HANDS);
+    let hands = *e.actors[&reader]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "read burning hands scroll")
+        .expect("holding the scroll offers the cone");
+    let hp = (e.actors[&ahead].hitpoints(), e.actors[&behind].hitpoints());
+    e.roller = crate::engine::dice::FastRandRoller::with_seed(3);
+    let aim = vec![e.actors[&ahead].location()];
+    for ef in hands.execute(&mut e, reader, None, Some(&aim), None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors.get(&ahead).is_none_or(|g| g.hitpoints() < hp.0),
+        "the cone did not reach the goblin standing in it:\n{}",
+        e.messages().join("\n")
+    );
+    assert_eq!(
+        e.actors[&behind].hitpoints(),
+        hp.1,
+        "the cone burned a goblin standing behind the reader:\n{}",
         e.messages().join("\n")
     );
 }

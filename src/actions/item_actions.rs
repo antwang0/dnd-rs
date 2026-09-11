@@ -67,19 +67,30 @@ pub fn item_use_cost(
     }
 }
 
-/// Config struct for "burst damage with a save for half" consumable
+/// Config struct for "area damage with a save for half" consumable
 /// items — the shared shape behind Scroll of Fireball / Cone of Cold /
 /// Lightning Bolt and the Wand of Fireballs / Lightning Bolts. Each
 /// static instance encodes a single item's per-cast configuration; the
-/// `Action` impl below routes through `resolve_burst_save_damage` so
+/// `Action` impl below routes through `resolve_area_save_damage` so
 /// evasion / Careful Spell / Heightened Spell shielding all flow
 /// through the same chokepoint as the spell-side equivalents AND the
-/// caster is excluded from their own burst.
+/// caster is excluded from their own area.
 ///
-/// Adding a new burst-save scroll / wand is a one-static declaration —
+/// Adding a new area-save scroll / wand is a one-static declaration —
 /// no new `Action` impl needed. Drops the ~75 lines per item the
 /// previous one-struct-per-scroll approach required.
-pub struct BurstSaveDamageItem {
+///
+/// **It was `AreaSaveDamageItem` and burst-only**, which was wrong
+/// about seven of its own rows and wrong in the way that matters most
+/// for an area: a Lightning Bolt is *"a 100-foot-long, 5-foot-wide
+/// Line"* and was resolving as a two-tile sphere thrown forty tiles,
+/// which is not the same spell in any respect — it cannot run down a
+/// rank of enemies, it can be centred behind the party, and it catches
+/// a ring of bystanders RAW's bolt passes between. Cone of Cold,
+/// Burning Hands and the Horn of Blasting were spheres wearing cones.
+/// The chassis carries an `AreaShape` now, the same way
+/// `AreaSaveConditionItem` and `engine::breath::BreathWeapon` do.
+pub struct AreaSaveDamageItem {
     /// Player-facing action name (e.g. "read fireball scroll"). Returned
     /// from `Action::name`.
     pub action_name: &'static str,
@@ -97,22 +108,27 @@ pub struct BurstSaveDamageItem {
     pub dice: Dice,
     /// Damage type (e.g. Fire, Cold, Lightning). Folded into the
     /// per-target `DealDamage` side-effect emitted by
-    /// `resolve_burst_save_damage`.
+    /// `resolve_area_save_damage`.
     pub damage_type: DamageType,
     /// Save ability for the burst (e.g. DEX for Fireball / Lightning
     /// Bolt; CON for Cone of Cold).
     pub save: AbilityScoreType,
     /// Save DC (typically 15 for SRD scrolls / wands).
     pub dc: i32,
-    /// Burst radius in tiles (e.g. 4 for Fireball, 2 for Lightning Bolt,
-    /// 6 for Cone of Cold).
-    pub radius: isize,
-    /// Maximum reach in tiles for the targeting picker (e.g. 60 for
-    /// Fireball's 150 ft, 40 for Lightning Bolt's 100 ft).
+    /// The ground this item covers — a burst thrown at a tile, a cone
+    /// or a line projected from the reader's own body. Both the
+    /// targeting schema and the resolver's sweep derive from it.
+    pub shape: AreaShape,
+    /// Maximum reach in tiles for the targeting picker, **for a burst
+    /// only** (e.g. 60 for Fireball's 150 ft). A projected area is
+    /// aimed by naming a tile inside it, so its reach is its own
+    /// length and `AreaShape::aim_reach` answers it; a cone or line row
+    /// may leave this at `0`. Same contract as
+    /// `AreaSaveConditionItem::reach`.
     pub reach: isize,
 }
 
-impl Action for BurstSaveDamageItem {
+impl Action for AreaSaveDamageItem {
     fn name(&self) -> &str {
         self.action_name
     }
@@ -122,13 +138,11 @@ impl Action for BurstSaveDamageItem {
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst {
-            radius: self.radius,
-        }
+        TargetingSchema::from_area(self.shape)
     }
 
     fn reach_tiles(&self) -> Option<isize> {
-        Some(self.reach)
+        Some(self.shape.aim_reach().unwrap_or(self.reach))
     }
 
     fn requires_los(&self) -> bool {
@@ -158,9 +172,9 @@ impl Action for BurstSaveDamageItem {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_burst_save_damage;
+        use crate::actions::action_template::resolve_area_save_damage;
 
-        let Some(center) = first_target_location(target_locations) else {
+        let Some(aim) = first_target_location(target_locations) else {
             return Vec::new();
         };
         if !consume_caster_item(encounter, caster_id, self.item_name) {
@@ -173,11 +187,11 @@ impl Action for BurstSaveDamageItem {
             self.log_label, self.dice.count, self.dice.faces, damage
         ));
 
-        resolve_burst_save_damage(
+        resolve_area_save_damage(
             encounter,
             caster_id,
-            center,
-            self.radius,
+            self.shape,
+            aim,
             self.save,
             self.dc,
             damage,
@@ -610,9 +624,9 @@ pub static DRINK_GREATER_HEALING_POTION: SelfHealItem = SelfHealItem {
 };
 
 /// Scroll of Fireball: 6d6 fire DEX-save burst centered on a target tile.
-/// Fires through the shared `BurstSaveDamageItem` impl — see that struct
+/// Fires through the shared `AreaSaveDamageItem` impl — see that struct
 /// for the routing through `resolve_burst_save_damage`.
-pub static READ_FIREBALL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static READ_FIREBALL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read fireball scroll",
     action_aliases: &["fireball", "scroll"],
     item_name: SCROLL_OF_FIREBALL_NAME,
@@ -621,7 +635,7 @@ pub static READ_FIREBALL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Fire,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 150 ft range — well past any current map.
     reach: 60,
 };
@@ -737,7 +751,7 @@ pub static READ_MAGIC_MISSILE_SCROLL: MagicMissileItem = MagicMissileItem {
 /// Config struct for "single-target save-or-take-damage" consumables —
 /// the shared shape behind Scroll of Disintegrate (10d6+40 force, no
 /// save-half) and Scroll of Finger of Death (7d8+30 necrotic, save
-/// halves). Mirrors `BurstSaveDamageItem` for the single-target variant.
+/// halves). Mirrors `AreaSaveDamageItem` for the single-target variant.
 ///
 /// The save is rolled through the caster-aware path so the Sorcerer
 /// Heightened Spell prime (forces the target's first save to
@@ -1307,10 +1321,17 @@ pub static DRINK_POTION_OF_STONESKIN: SelfConditionItem = SelfConditionItem {
 
 const SCROLL_OF_LIGHTNING_BOLT_NAME: &str = "Scroll of Lightning Bolt";
 
-/// Scroll of Lightning Bolt: 8d6 lightning DEX-save burst. Tighter
-/// radius (2 tiles) than the Fireball scroll, longer reach. Fires
-/// through the shared `BurstSaveDamageItem` impl.
-pub static READ_LIGHTNING_BOLT_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Scroll of Lightning Bolt: 8d6 lightning DEX-save **line** — RAW's
+/// *"100-foot-long, 5-foot-wide Line"*, forty tiles long and one tile of
+/// half-width on the 2.5-ft grid, which is the same geometry
+/// `spells::LIGHTNING_BOLT` has carried since it stopped being a ball.
+/// Fires through the shared `AreaSaveDamageItem` impl.
+///
+/// It was a two-tile burst thrown up to forty tiles, with a comment
+/// calling the radius "tighter" — a spell that could be centred behind
+/// the party, could not run down a rank of enemies, and caught a ring
+/// of bystanders the bolt passes between.
+pub static READ_LIGHTNING_BOLT_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read lightning bolt scroll",
     action_aliases: &["lb scroll", "lightning scroll"],
     item_name: SCROLL_OF_LIGHTNING_BOLT_NAME,
@@ -1319,8 +1340,9 @@ pub static READ_LIGHTNING_BOLT_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem
     damage_type: DamageType::Lightning,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 2,
-    reach: 40,
+    // A line is aimed by naming a tile inside it, so `reach` is unread.
+    shape: AreaShape::Line { length: 40, half_width: 1 },
+    reach: 0,
 };
 
 /// Config struct for "single-target heal" consumable items — the shared
@@ -1650,11 +1672,16 @@ pub static WEAR_BOOTS_OF_SPEED: SelfConditionItem = SelfConditionItem {
 const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
 const WAND_OF_MAGIC_MISSILES_NAME: &str = "Wand of Magic Missiles";
 
-/// Scroll of Cone of Cold: 8d8 cold CON-save burst (mirrors the
-/// `CONE_OF_COLD` spell's 6-tile burst approximation of the 60-ft cone).
-/// Distinct from the Fireball / Lightning Bolt scrolls in its save
-/// ability (CON, not DEX) and damage tier (d8 pool, not d6).
-pub static READ_CONE_OF_COLD_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Scroll of Cone of Cold: 8d8 cold CON-save **cone** — RAW's sixty
+/// feet, twenty-four tiles on the 2.5-ft grid, the same wedge
+/// `spells::CONE_OF_COLD` throws. Distinct from the Fireball / Lightning
+/// Bolt scrolls in its save ability (CON, not DEX) and damage tier (d8
+/// pool, not d6).
+///
+/// It was a six-tile sphere, and its own docstring said so — "mirrors
+/// the `CONE_OF_COLD` spell's 6-tile burst approximation", which the
+/// spell stopped being some time ago.
+pub static READ_CONE_OF_COLD_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read cone of cold scroll",
     action_aliases: &["coc scroll", "cone scroll"],
     item_name: SCROLL_OF_CONE_OF_COLD_NAME,
@@ -1663,11 +1690,9 @@ pub static READ_CONE_OF_COLD_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Cold,
     save: AbilityScoreType::Constitution,
     dc: 15,
-    radius: 6,
-    // Self-cone in RAW; we cap the picker at the cone's reach (60 ft
-    // = 24 tiles) so the targeting reticle doesn't drop across the
-    // whole map. Mirrors `CONE_OF_COLD::reach_tiles`.
-    reach: 24,
+    // 60 ft RAW; 24 tiles, and its own reach.
+    shape: AreaShape::Cone { length: 24 },
+    reach: 0,
 };
 
 /// Wand of Magic Missiles — 5 darts of 1d4+1 force each, auto-hit, no
@@ -1723,7 +1748,7 @@ pub static DRINK_POTION_OF_CLIMBING: SelfConditionItem = SelfConditionItem {
 /// Fireball scroll (6d6) — same shape, bigger pool. 5e RAW: 7 charges
 /// at level 3 (+1 per extra charge); we collapse to a single 8d6 cast
 /// per the engine's charge-less loot model.
-pub static USE_WAND_OF_FIREBALLS: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static USE_WAND_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "use wand of fireballs",
     action_aliases: &["fireballs", "fireball wand"],
     item_name: WAND_OF_FIREBALLS_NAME,
@@ -1732,16 +1757,18 @@ pub static USE_WAND_OF_FIREBALLS: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Fire,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     reach: 60,
 };
 
 const WAND_OF_LIGHTNING_BOLTS_NAME: &str = "Wand of Lightning Bolts";
 
-/// Wand of Lightning Bolts: 10d6 lightning DEX-save burst. Sits a tier
-/// above the Lightning Bolt scroll (8d6) — same shape, bigger pool.
-/// Sibling to `USE_WAND_OF_FIREBALLS` for the lightning lane.
-pub static USE_WAND_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Wand of Lightning Bolts: 10d6 lightning DEX-save line. Sits a tier
+/// above the Lightning Bolt scroll (8d6) — same geometry, bigger pool.
+/// Sibling to `USE_WAND_OF_FIREBALLS` for the lightning lane, and the
+/// pair are no longer the same shape: a fireball is a ball and a bolt
+/// is a bolt.
+pub static USE_WAND_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "use wand of lightning bolts",
     action_aliases: &["lightning wand", "lb wand"],
     item_name: WAND_OF_LIGHTNING_BOLTS_NAME,
@@ -1750,8 +1777,8 @@ pub static USE_WAND_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageIte
     damage_type: DamageType::Lightning,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 2,
-    reach: 40,
+    shape: AreaShape::Line { length: 40, half_width: 1 },
+    reach: 0,
 };
 
 const SCROLL_OF_SHATTER_NAME: &str = "Scroll of Shatter";
@@ -1762,7 +1789,7 @@ const SCROLL_OF_SHATTER_NAME: &str = "Scroll of Shatter";
 /// the scroll fires at its baseline 3d8 RAW. Tight 2-tile radius (vs the
 /// Fireball scroll's 4) keeps the thunder lane in the "small but loud"
 /// envelope.
-pub static READ_SHATTER_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static READ_SHATTER_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read shatter scroll",
     action_aliases: &["shatter", "shatter scroll"],
     item_name: SCROLL_OF_SHATTER_NAME,
@@ -1771,19 +1798,19 @@ pub static READ_SHATTER_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Thunder,
     save: AbilityScoreType::Constitution,
     dc: 15,
-    radius: 2,
+    shape: AreaShape::Burst { radius: 2 },
     // 60 ft range = 24 tiles, matching the spell's reach.
     reach: 24,
 };
 
 const WAND_OF_CONE_OF_COLD_NAME: &str = "Wand of Cone of Cold";
 
-/// Wand of Cone of Cold: 10d8 cold CON-save burst. Sits a tier above
-/// the Cone of Cold scroll (8d8) — same shape, bigger pool. Top-of-pool
-/// burst-wand entry alongside Wand of Fireballs (8d6 fire) and Wand of
-/// Lightning Bolts (10d6 lightning). Mirrors `READ_CONE_OF_COLD_SCROLL`'s
-/// CON-save / 6-tile burst footprint.
-pub static USE_WAND_OF_CONE_OF_COLD: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Wand of Cone of Cold: 10d8 cold CON-save cone. Sits a tier above
+/// the Cone of Cold scroll (8d8) — same geometry, bigger pool.
+/// Top-of-pool area-wand entry alongside Wand of Fireballs (8d6 fire)
+/// and Wand of Lightning Bolts (10d6 lightning), and the three are three
+/// different shapes now: a ball, a bolt and a wedge.
+pub static USE_WAND_OF_CONE_OF_COLD: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "use wand of cone of cold",
     action_aliases: &["coc wand", "cone wand"],
     item_name: WAND_OF_CONE_OF_COLD_NAME,
@@ -1792,8 +1819,8 @@ pub static USE_WAND_OF_CONE_OF_COLD: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Cold,
     save: AbilityScoreType::Constitution,
     dc: 15,
-    radius: 6,
-    reach: 24,
+    shape: AreaShape::Cone { length: 24 },
+    reach: 0,
 };
 
 const SCROLL_OF_MASS_HEALING_WORD_NAME: &str = "Scroll of Mass Healing Word";
@@ -2039,12 +2066,17 @@ pub static USE_GREATER_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileIt
     reach: 30,
 };
 
-/// Scroll of Burning Hands — 3d6 fire DEX-save burst, 2-tile radius.
-/// Single-use consumable. Mirrors the `BURNING_HANDS` spell's envelope at
-/// the level-1 baseline (3d6). Fills the entry-level fire-burst niche
-/// between the cantrip Fire Bolt and the Fireball scroll (6d6) in the
-/// loot pool. Fires through the shared `BurstSaveDamageItem` impl.
-pub static READ_BURNING_HANDS_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Scroll of Burning Hands — 3d6 fire DEX-save cone, RAW's fifteen feet
+/// and six tiles, the same wedge `spells::BURNING_HANDS` throws.
+/// Single-use consumable. Fills the entry-level fire-area niche between
+/// the cantrip Fire Bolt and the Fireball scroll (6d6) in the loot pool.
+/// Fires through the shared `AreaSaveDamageItem` impl.
+///
+/// The shape matters more on this row than on any other, because the
+/// cone is short: a two-tile sphere thrown six tiles could be dropped
+/// behind a creature, and a fifteen-foot cone comes out of the reader's
+/// hands and catches whatever is standing in front of them.
+pub static READ_BURNING_HANDS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read burning hands scroll",
     action_aliases: &["bh scroll", "hands scroll"],
     item_name: SCROLL_OF_BURNING_HANDS_NAME,
@@ -2053,21 +2085,20 @@ pub static READ_BURNING_HANDS_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem 
     damage_type: DamageType::Fire,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 2,
-    // 15 ft cone in RAW; capped to 6 tiles for the picker since the
-    // burst origin is the cone's far edge.
-    reach: 6,
+    // 15 ft RAW; 6 tiles, and its own reach.
+    shape: AreaShape::Cone { length: 6 },
+    reach: 0,
 };
 
 /// Scroll of Thunderwave — 2d8 thunder CON-save burst, 2-tile radius.
 /// Single-use consumable. Mirrors the `THUNDERWAVE` spell's damage roll
 /// at the level-1 baseline; the scroll variant drops the RAW push rider
-/// (the helper-shared `BurstSaveDamageItem` doesn't fork into a push
+/// (the helper-shared `AreaSaveDamageItem` doesn't fork into a push
 /// follow-up — that lives on the spell-side custom impl). Sits in the
 /// loot pool as the cheap thunder-burst entry, distinct from the rare
 /// Scroll of Shatter (3d8) and matching the thunder lane's "small but
 /// loud" envelope.
-pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static READ_THUNDERWAVE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read thunderwave scroll",
     action_aliases: &["tw scroll", "thunderwave scroll"],
     item_name: SCROLL_OF_THUNDERWAVE_NAME,
@@ -2076,7 +2107,7 @@ pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Thunder,
     save: AbilityScoreType::Constitution,
     dc: 15,
-    radius: 2,
+    shape: AreaShape::Burst { radius: 2 },
     // 15 ft cube self-centered in RAW; we cap at the picker reach for
     // safety (caster picks the cube's center). 6 tiles ≈ 15 ft.
     reach: 6,
@@ -2092,7 +2123,7 @@ pub static READ_THUNDERWAVE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
 /// Spell metamagic still bites the first save) and queues an
 /// `ApplyCondition` on every failed save.
 ///
-/// Mirrors `BurstSaveDamageItem` for the CC half of the consumable
+/// Mirrors `AreaSaveDamageItem` for the CC half of the consumable
 /// envelope. Adding a new variant (e.g. a Wand of Sleet that spams
 /// Prone on a DEX save) is a one-static declaration — no new `Action`
 /// impl needed. Enemy-only filtering matches the player-friendly
@@ -2208,7 +2239,7 @@ impl Action for AreaSaveConditionItem {
         // nobody selects always is: twelve items, every one of them
         // working perfectly whenever a human aimed it.
         //
-        // `BurstSaveDamageItem` one lane over deliberately does *not*
+        // `AreaSaveDamageItem` one lane over deliberately does *not*
         // declare this. That chassis resolves through
         // `resolve_burst_save_damage`, which is friend-or-foe, and a
         // Scroll of Fireball really does burn the party.
@@ -2701,8 +2732,8 @@ pub static READ_HYPNOTIC_PATTERN_SCROLL: AreaSaveConditionItem = AreaSaveConditi
 /// Fills the acid lane in the burst-damage scroll family — alongside
 /// Fireball (fire), Lightning Bolt (lightning), Cone of Cold (cold),
 /// and Shatter (thunder). Fires through the shared
-/// `BurstSaveDamageItem` impl.
-pub static READ_VITRIOLIC_SPHERE_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// `AreaSaveDamageItem` impl.
+pub static READ_VITRIOLIC_SPHERE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read vitriolic sphere scroll",
     action_aliases: &["vs scroll", "acid scroll"],
     item_name: SCROLL_OF_VITRIOLIC_SPHERE_NAME,
@@ -2711,7 +2742,7 @@ pub static READ_VITRIOLIC_SPHERE_SCROLL: BurstSaveDamageItem = BurstSaveDamageIt
     damage_type: DamageType::Acid,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 150 ft range RAW; well past any current map. Capped at 60 to
     // match the Fireball scroll's picker envelope.
     reach: 60,
@@ -3659,8 +3690,8 @@ pub static READ_HEAT_METAL_SCROLL: SingleSaveConditionItem = SingleSaveCondition
 /// Scroll of Ice Storm — Action; 4-tile burst, DEX save vs DC 15, fail =
 /// 4d8 cold, pass = half. 5e RAW: level-4 evocation, 2d8 bludgeoning + 4d6
 /// cold; the scroll collapses the dual-type damage to a single cold roll
-/// (4d8). Fires through the shared `BurstSaveDamageItem` impl.
-pub static READ_ICE_STORM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// (4d8). Fires through the shared `AreaSaveDamageItem` impl.
+pub static READ_ICE_STORM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read ice storm scroll",
     action_aliases: &["ice storm", "ice"],
     item_name: SCROLL_OF_ICE_STORM_NAME,
@@ -3669,7 +3700,7 @@ pub static READ_ICE_STORM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Cold,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
     reach: 48,
 };
@@ -3747,8 +3778,8 @@ const RING_OF_SPELL_STORING_NAME: &str = "Ring of Spell Storing";
 /// single-use scroll-style envelope so the loot pool stays simple. Sits
 /// between Scroll of Fireball (6d6) and Wand of Fireballs (8d6) on the
 /// fire-burst payload ladder. Fires through the shared
-/// `BurstSaveDamageItem` impl.
-pub static USE_NECKLACE_OF_FIREBALLS: BurstSaveDamageItem = BurstSaveDamageItem {
+/// `AreaSaveDamageItem` impl.
+pub static USE_NECKLACE_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "use necklace of fireballs",
     action_aliases: &["necklace", "bead"],
     item_name: NECKLACE_OF_FIREBALLS_NAME,
@@ -3757,7 +3788,7 @@ pub static USE_NECKLACE_OF_FIREBALLS: BurstSaveDamageItem = BurstSaveDamageItem 
     damage_type: DamageType::Fire,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
 };
@@ -3887,8 +3918,8 @@ const POTION_OF_MIND_BLANK_NAME: &str = "Potion of Mind Blank";
 /// Scroll of Cloudkill — 5d8 poison-damage burst at DC 15 CON save.
 /// The only poison-damage burst consumable in the loot pool; sits
 /// alongside Stinking Cloud's burst-Poisoned condition variant.
-/// Fires through the shared `BurstSaveDamageItem` impl.
-pub static READ_CLOUDKILL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Fires through the shared `AreaSaveDamageItem` impl.
+pub static READ_CLOUDKILL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read cloudkill scroll",
     action_aliases: &["cloudkill", "cloud"],
     item_name: SCROLL_OF_CLOUDKILL_NAME,
@@ -3897,7 +3928,7 @@ pub static READ_CLOUDKILL_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Poison,
     save: AbilityScoreType::Constitution,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles. Capped to map-realistic 48.
     reach: 48,
 };
@@ -3977,9 +4008,9 @@ pub static READ_FLESH_TO_STONE_SCROLL: SingleSaveConditionItem = SingleSaveCondi
 /// 20-ft radius (4 tiles), 120-ft range (48 tiles). Fills the psychic
 /// burst-damage niche in the scroll family alongside Fire / Lightning /
 /// Cold / Acid / Thunder / Poison. Routes through the shared
-/// `BurstSaveDamageItem` impl — evasion / Careful Spell / Heightened
+/// `AreaSaveDamageItem` impl — evasion / Careful Spell / Heightened
 /// Spell all flow through the same chokepoint as every other AoE save.
-pub static READ_SYNAPTIC_STATIC_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static READ_SYNAPTIC_STATIC_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read synaptic static scroll",
     action_aliases: &["synaptic", "static"],
     item_name: SCROLL_OF_SYNAPTIC_STATIC_NAME,
@@ -3988,7 +4019,7 @@ pub static READ_SYNAPTIC_STATIC_SCROLL: BurstSaveDamageItem = BurstSaveDamageIte
     damage_type: DamageType::Psychic,
     save: AbilityScoreType::Intelligence,
     dc: 15,
-    radius: 4,
+    shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles.
     reach: 48,
 };
@@ -3998,8 +4029,8 @@ pub static READ_SYNAPTIC_STATIC_SCROLL: BurstSaveDamageItem = BurstSaveDamageIte
 /// 60-ft radius (we tighten to 6 tiles so the burst stays on-grid for the
 /// typical encounter map), 150-ft range. Fills the necrotic burst-damage
 /// niche in the scroll family — the only necrotic-typed burst consumable
-/// in the loot pool. Routes through the shared `BurstSaveDamageItem` impl.
-pub static READ_CIRCLE_OF_DEATH_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// in the loot pool. Routes through the shared `AreaSaveDamageItem` impl.
+pub static READ_CIRCLE_OF_DEATH_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read circle of death scroll",
     action_aliases: &["circle of death", "death circle"],
     item_name: SCROLL_OF_CIRCLE_OF_DEATH_NAME,
@@ -4010,7 +4041,7 @@ pub static READ_CIRCLE_OF_DEATH_SCROLL: BurstSaveDamageItem = BurstSaveDamageIte
     dc: 15,
     // RAW 60 ft radius — collapsed to 6 tiles so the burst fits the
     // grid envelope every other scroll rides (4-6 tile radius range).
-    radius: 6,
+    shape: AreaShape::Burst { radius: 6 },
     // 150 ft RAW; 48 tiles (engine cap).
     reach: 48,
 };
@@ -4616,8 +4647,8 @@ pub static READ_MIND_SLIVER_SCROLL: SingleSaveDamageItem = SingleSaveDamageItem 
 /// of Scroll of Ice Storm (cold burst) on the radiant burst lane —
 /// fills a single-element niche between the cheap Scroll of Shatter
 /// (3d8 thunder DC 13) and the rare Scroll of Synaptic Static (8d6
-/// psychic DC 15). Routes through the shared `BurstSaveDamageItem` impl.
-pub static READ_MOONBEAM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+/// psychic DC 15). Routes through the shared `AreaSaveDamageItem` impl.
+pub static READ_MOONBEAM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read moonbeam scroll",
     action_aliases: &["moonbeam", "moon scroll"],
     item_name: SCROLL_OF_MOONBEAM_NAME,
@@ -4628,7 +4659,7 @@ pub static READ_MOONBEAM_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     dc: 15,
     // 5ft cylinder radius RAW collapsed to a 3-tile burst — smaller than
     // Fireball's 4 because Moonbeam is RAW a tight zone, not a wide AoE.
-    radius: 3,
+    shape: AreaShape::Burst { radius: 3 },
     // 120 ft RAW; 48 tiles.
     reach: 48,
 };
@@ -4879,11 +4910,11 @@ pub static USE_WAND_OF_BLESS: SingleTargetBuffItem = SingleTargetBuffItem {
 /// 2 radius). Single-bead consumable. Mirror of Necklace of Fireballs
 /// on the lightning lane: same payload shape, different damage type so
 /// resistance landscape differs (fire-resistant enemies shrug Fireball
-/// beads, lightning-resistant enemies shrug these). Tighter burst
-/// radius (2 vs 4) matches the Lightning Bolt scroll envelope — the
-/// lightning lane RAW is a tight line, not a wide AoE. Routes through
-/// the shared `BurstSaveDamageItem` impl.
-pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamageItem {
+/// beads, lightning-resistant enemies shrug these). A **line** rather
+/// than a ball, which the old comment on this row already argued for
+/// while declaring a radius — "the lightning lane RAW is a tight line,
+/// not a wide AoE". Routes through the shared `AreaSaveDamageItem` impl.
+pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "use necklace of lightning bolts",
     action_aliases: &["lightning necklace", "bolt bead"],
     item_name: NECKLACE_OF_LIGHTNING_BOLTS_NAME,
@@ -4892,9 +4923,9 @@ pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: BurstSaveDamageItem = BurstSaveDamag
     damage_type: DamageType::Lightning,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 2,
-    // 100 ft RAW (Lightning Bolt range); 40 tiles.
-    reach: 40,
+    // 100 ft RAW (Lightning Bolt's line); 40 tiles, and its own reach.
+    shape: AreaShape::Line { length: 40, half_width: 1 },
+    reach: 0,
 };
 
 /// Scroll of Mind Blank — Action; self-install `MindBlanked` for 10
@@ -5292,9 +5323,9 @@ const SCROLL_OF_PROTECTION_FROM_POISON_NAME: &str = "Scroll of Protection from P
 /// XGE level-2 transmutation, Fireworks variant. The scroll collapses the
 /// rider Blinded clause of the spell to keep the consumable on the
 /// entry-tier elemental-burst lane alongside Scroll of Burning Hands /
-/// Scroll of Thunderwave. Fires through the shared `BurstSaveDamageItem`
+/// Scroll of Thunderwave. Fires through the shared `AreaSaveDamageItem`
 /// impl.
-pub static READ_PYROTECHNICS_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static READ_PYROTECHNICS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read pyrotechnics scroll",
     action_aliases: &["pyrotechnics scroll", "pyro scroll"],
     item_name: SCROLL_OF_PYROTECHNICS_NAME,
@@ -5303,7 +5334,7 @@ pub static READ_PYROTECHNICS_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Fire,
     save: AbilityScoreType::Constitution,
     dc: 13,
-    radius: 2,
+    shape: AreaShape::Burst { radius: 2 },
     // 60 ft RAW range; 24 tiles.
     reach: 24,
 };
@@ -5392,7 +5423,7 @@ pub static DRINK_POTION_OF_OTHERWORLDLY_GUISE: SelfConditionItem = SelfCondition
 /// exactly the trade a cone makes and a sphere centred on your own feet
 /// cannot.
 ///
-/// Does NOT use the `BurstSaveDamageItem` factor, which is a
+/// Does NOT use the `AreaSaveDamageItem` factor, which is a
 /// point-centred burst chassis and has nowhere to put a direction.
 pub struct HornOfBlastingItem {}
 
@@ -5499,17 +5530,15 @@ const HORN_OF_BLASTING_CONE: isize = 12;
 
 pub static BLOW_HORN_OF_BLASTING: HornOfBlastingItem = HornOfBlastingItem {};
 
-/// Javelin of Lightning — Action; thrown 120 ft (48 tiles), 4d6 lightning
-/// in a 2-tile (10 ft) burst centered on the targeted tile, DEX save vs
-/// DC 13 for half. 5e RAW: the javelin transforms into a 5-ft-wide bolt
-/// of lightning along the throw path; we collapse the line to a small
-/// burst centered on the target tile (matching the Necklace of Lightning
-/// Bolts shape so the lightning lane stays consistent). Single-use
-/// consumable — the javelin is destroyed on hit per RAW's "the javelin
-/// reverts to its normal form after the bolt" clause (we just consume
-/// the item to keep the loot pool flat). Fires through the shared
-/// `BurstSaveDamageItem` impl.
-pub static THROW_JAVELIN_OF_LIGHTNING: BurstSaveDamageItem = BurstSaveDamageItem {
+/// Javelin of Lightning — Action; 4d6 lightning in RAW's *"5-foot-wide,
+/// 120-foot-long Line"*, forty-eight tiles long, DEX save vs DC 13 for
+/// half. The line runs along the throw, which is what the javelin is:
+/// its own docstring used to say "we collapse the line to a small burst
+/// centered on the target tile", and the collapse threw away the only
+/// interesting thing about the weapon. Single-use consumable — the
+/// javelin is consumed rather than reverting, which keeps the loot pool
+/// flat. Fires through the shared `AreaSaveDamageItem` impl.
+pub static THROW_JAVELIN_OF_LIGHTNING: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "throw javelin of lightning",
     action_aliases: &["javelin lightning", "lightning javelin"],
     item_name: JAVELIN_OF_LIGHTNING_NAME,
@@ -5518,9 +5547,9 @@ pub static THROW_JAVELIN_OF_LIGHTNING: BurstSaveDamageItem = BurstSaveDamageItem
     damage_type: DamageType::Lightning,
     save: AbilityScoreType::Dexterity,
     dc: 13,
-    radius: 2,
-    // 120 ft thrown RAW; 48 tiles in the 2.5ft grid.
-    reach: 48,
+    // 120 ft RAW; 48 tiles, and its own reach.
+    shape: AreaShape::Line { length: 48, half_width: 1 },
+    reach: 0,
 };
 
 /// Bead of Force — Action; a single bead torn from a Necklace of Beads
@@ -5532,9 +5561,9 @@ pub static THROW_JAVELIN_OF_LIGHTNING: BurstSaveDamageItem = BurstSaveDamageItem
 /// effect is the force damage). Fills the force-burst niche in the loot
 /// pool: force is the rarely-resisted typed-damage lane (vs Fireball's
 /// fire-resisted lane), so the bead lands consistently against most
-/// resistance loadouts. Fires through the shared `BurstSaveDamageItem`
+/// resistance loadouts. Fires through the shared `AreaSaveDamageItem`
 /// impl.
-pub static THROW_BEAD_OF_FORCE: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static THROW_BEAD_OF_FORCE: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "throw bead of force",
     action_aliases: &["bead force", "force bead"],
     item_name: BEAD_OF_FORCE_NAME,
@@ -5543,7 +5572,7 @@ pub static THROW_BEAD_OF_FORCE: BurstSaveDamageItem = BurstSaveDamageItem {
     damage_type: DamageType::Force,
     save: AbilityScoreType::Dexterity,
     dc: 15,
-    radius: 2,
+    shape: AreaShape::Burst { radius: 2 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
 };
@@ -5769,15 +5798,15 @@ impl Action for ReadConjureAnimalsScrollItem {
 /// vs DC 13, save-for-half 2d8 force damage. 5e RAW (TCE): the spell also
 /// halves failed-save targets' speed until the end of the caster's next
 /// turn; the scroll variant collapses to damage-only since the engine's
-/// `BurstSaveDamageItem` chassis is the cleanest factor for the shape.
+/// `AreaSaveDamageItem` chassis is the cleanest factor for the shape.
 /// The follow-up Slowed rider sits exclusively on the spell-side
 /// `MAGNIFY_GRAVITY` impl — accepting the small consumable / spell delta
 /// keeps the shared scroll factor on its single-effect chokepoint
 /// (mirrors how `READ_PYROTECHNICS_SCROLL` drops the spell's Blinded
-/// rider to stay on the damage-only `BurstSaveDamageItem` lane).
+/// rider to stay on the damage-only `AreaSaveDamageItem` lane).
 /// Friend-or-foe agnostic via `resolve_burst_save_damage` (the gravity
 /// well doesn't discriminate); 24-tile reach matches the spell.
-pub static READ_MAGNIFY_GRAVITY_SCROLL: BurstSaveDamageItem = BurstSaveDamageItem {
+pub static READ_MAGNIFY_GRAVITY_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     action_name: "read magnify gravity scroll",
     action_aliases: &["magnify gravity scroll", "gravity scroll", "mg scroll"],
     item_name: SCROLL_OF_MAGNIFY_GRAVITY_NAME,
@@ -5786,7 +5815,7 @@ pub static READ_MAGNIFY_GRAVITY_SCROLL: BurstSaveDamageItem = BurstSaveDamageIte
     damage_type: DamageType::Force,
     save: AbilityScoreType::Strength,
     dc: 13,
-    radius: 1,
+    shape: AreaShape::Burst { radius: 1 },
     // 60 ft RAW = 24 tiles.
     reach: 24,
 };
