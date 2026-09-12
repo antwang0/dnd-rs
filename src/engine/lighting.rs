@@ -232,6 +232,33 @@ pub enum LightAnchor {
 /// for an additional N feet" — and `dim_tiles` is that *additional*
 /// collar rather than a total, so the two fields read exactly as the
 /// stat line does.
+///
+/// **How much** light a thing sheds, without saying what the thing is
+/// or when it starts — the three fields every lamp in 5e is printed
+/// with, and nothing else.
+///
+/// Separated from `LightSource` below because a source is a thing *on
+/// the board*: it has an id, an anchor, a clock, and a spell level that
+/// decides whether a Darkness sphere can quench it. A profile is a
+/// number on a page. The distinction earns its keep at the two places a
+/// light is declared rather than created — the Flame Tongue's command
+/// word, which turns a profile into a source when somebody speaks it,
+/// and `Item::sheds_light`, which does the same the moment somebody
+/// picks the thing up — and it is why those two can share one shape
+/// despite having nothing else in common.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LightProfile {
+    /// Name the light source carries in the log and on the panel.
+    pub name: &'static str,
+    /// Radius of bright light, in tiles — RAW's feet over the 2.5-ft
+    /// grid.
+    pub bright_tiles: isize,
+    /// *Additional* radius of dim light beyond `bright_tiles`, in
+    /// tiles. The same "additional" collar `LightSource::dim_tiles`
+    /// carries, so a profile and the source it becomes read alike.
+    pub dim_tiles: isize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LightSource {
     /// Assigned by `EncounterInstance::add_light_source`; the handle a

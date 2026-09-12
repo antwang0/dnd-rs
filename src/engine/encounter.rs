@@ -4912,6 +4912,59 @@ impl EncounterInstance {
         self.light_sources.retain(|s| s.id != id);
     }
 
+    /// Light whatever `actor_id` is carrying that glows on its own —
+    /// SRD 5.2's Mace of Disruption, and `Item::sheds_light`'s whole
+    /// read side.
+    ///
+    /// Called wherever an actor *gains* an item, which in this engine
+    /// is two places: `instantiate_creature`, for a stat block that
+    /// ships one, and `pickup_items_at`, for one taken off the floor.
+    /// Nothing calls it on a loop, because nothing needs to — the only
+    /// way a passive lamp leaves a bearer is the bearer leaving the
+    /// board, and `drop_light_sources_carried_by` already handles that
+    /// from the other end.
+    ///
+    /// Idempotent, keyed on the profile's name against the same
+    /// bearer's carried sources. Two Maces of Disruption in one pack is
+    /// one glow, which is both the sane reading and the one that keeps
+    /// this safe to call again from a future third site.
+    pub fn light_carried_items(&mut self, actor_id: usize) {
+        let profiles: Vec<crate::engine::lighting::LightProfile> = match self.actors.get(&actor_id)
+        {
+            Some(actor) => actor.carried_light_profiles(),
+            None => return,
+        };
+        for profile in profiles {
+            if self.light_sources.iter().any(|s| {
+                s.name == profile.name && s.anchor == LightAnchor::Carried(actor_id)
+            }) {
+                continue;
+            }
+            self.add_light_source(crate::engine::lighting::LightSource {
+                id: 0,
+                name: profile.name,
+                anchor: LightAnchor::Carried(actor_id),
+                bright_tiles: profile.bright_tiles,
+                dim_tiles: profile.dim_tiles,
+                rounds_remaining: None,
+                // Magical light, rated the same 3 the kindled blades
+                // carry and for the same reason: a level-2 Darkness
+                // quenches light "created by a spell of 2nd level or
+                // lower", and a rare magic weapon outranks it. See
+                // `LightSource::spell_level`.
+                spell_level: 3,
+                // Carried, not innate — the object glows, not the
+                // bearer, so a dead wielder leaves it burning on the
+                // floor. That difference is the whole of
+                // `LightSource::innate`.
+                innate: false,
+                // Not a flame somebody struck, so the wind has nothing
+                // to blow out. See `engine::weather`.
+                open_flame: false,
+            });
+        }
+    }
+
     /// Un-anchor everything `actor_id` was carrying, leaving it burning
     /// where they fell.
     ///
@@ -13863,6 +13916,9 @@ impl EncounterInstance {
             }
             self.log(format!("{} picks up {}.", actor_name, item.name));
         }
+        // …and if any of it glows, the room brightens as they bend
+        // down. See `Item::sheds_light`.
+        self.light_carried_items(actor_id);
     }
 
     /// Long rest every actor still in the encounter — full HP, all spell
@@ -18681,6 +18737,10 @@ impl EncounterInstance {
         }
 
         self.actors.insert(actor_id, actor);
+        // A stat block that ships a glowing item arrives already
+        // lighting the room. After the insert, because the lane reads
+        // the actor's pack out of the table. See `Item::sheds_light`.
+        self.light_carried_items(actor_id);
 
         self.set_actor_map(actor_id, location)?;
 

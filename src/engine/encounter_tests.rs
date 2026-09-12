@@ -16221,6 +16221,97 @@ fn a_torch_lit_in_a_gale_does_not_stay_lit() {
     assert_eq!(e.light_at(Coordinate::new(4, 4)), LightLevel::Dark);
 }
 
+/// The Mace of Disruption's third clause: *"**Light.** While you hold
+/// this weapon, it sheds Bright Light in a 20-foot radius and Dim Light
+/// for an additional 20 feet."*
+///
+/// The third way something lights a room here, and the one the other
+/// two could not say. A torch and a Flame Tongue are lit by an action;
+/// an azer's glow is its own body and dies with it. This is neither:
+/// no command word, no switch, and an object rather than a bearer.
+///
+/// Four claims, and the last two are why the clause was written off as
+/// unmodelable in the first place:
+///   - picking the mace up lights the room;
+///   - the light walks with whoever is holding it;
+///   - a second mace is not a second glow;
+///   - killing the wielder leaves the mace glowing **on the floor**,
+///     rather than snuffing it or dragging it off the board with the
+///     body. The item's old docstring named exactly that as the reason
+///     the lane could not exist — and the routine that answers it,
+///     `drop_light_sources_carried_by`, had been doing it for torches
+///     the whole time.
+#[test]
+fn a_mace_that_glows_lights_the_room_and_keeps_glowing_after_its_wielder_falls() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::lighting::AmbientLight;
+    use crate::items::item_template::MACE_OF_DISRUPTION;
+
+    let start = Coordinate::new(3, 3);
+    let mut e = ei_with_terrain(24, 24, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, start, 0, 0)
+        .unwrap();
+    assert_eq!(
+        e.light_at(start),
+        LightLevel::Dark,
+        "the fixture is supposed to start dark"
+    );
+
+    // Walking over it is how loot is taken in this engine.
+    e.drop_item(start, &MACE_OF_DISRUPTION);
+    e.pickup_items_at(fighter, start);
+    assert!(e.actors[&fighter].has_item_named(MACE_OF_DISRUPTION.name));
+    assert_eq!(
+        e.light_at(start),
+        LightLevel::Bright,
+        "the mace is in hand and the room is still dark"
+    );
+    // Eight tiles of bright, eight more of dim, and nothing past that.
+    assert_eq!(e.light_at(Coordinate::new(3 + 8, 3)), LightLevel::Bright);
+    assert_eq!(e.light_at(Coordinate::new(3 + 12, 3)), LightLevel::Dim);
+    assert_eq!(e.light_at(Coordinate::new(3 + 20, 3)), LightLevel::Dark);
+
+    // A second mace is one glow, not two sources stacked on one bearer.
+    let sources_before = e.light_sources().len();
+    e.drop_item(start, &MACE_OF_DISRUPTION);
+    e.pickup_items_at(fighter, start);
+    assert_eq!(e.light_sources().len(), sources_before);
+
+    // It walks. `LightAnchor::Carried` recomputes the origin from the
+    // actor table rather than caching a coordinate, so this is the
+    // claim that the mace is on that lane and not pinned to a tile.
+    // Walk as far as a turn's movement allows and read where that
+    // actually was — the claim is about the light following the body,
+    // not about how far a fighter can walk.
+    e.walk_actor_to(fighter, Coordinate::new(20, 3)).unwrap();
+    let moved = e.actors[&fighter].location();
+    assert!(moved != start, "the fixture needs the wielder to have moved");
+    assert_eq!(e.light_at(moved), LightLevel::Bright);
+    assert!(
+        e.light_at(start) < LightLevel::Bright,
+        "the light stayed behind where the wielder picked it up"
+    );
+
+    // And it falls with the body rather than going out with it.
+    let hp = e.actors[&fighter].hitpoints();
+    e.actors.get_mut(&fighter).unwrap().take_damage(hp + 100);
+    e.drop_light_sources_carried_by(fighter);
+    assert_eq!(
+        e.light_at(moved),
+        LightLevel::Bright,
+        "the mace went out with its wielder"
+    );
+    assert!(
+        e.light_sources()
+            .iter()
+            .any(|s| s.name == "mace of disruption"
+                && s.anchor == crate::engine::lighting::LightAnchor::Fixed(moved)),
+        "the glow should be lying on the floor where the body fell"
+    );
+}
+
 /// SRD 5.2 **Heavy Precipitation**: *"Everything within an area of heavy
 /// rain or heavy snowfall is Lightly Obscured."*
 ///

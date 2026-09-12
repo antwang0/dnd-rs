@@ -6628,21 +6628,9 @@ pub struct KindleWeapon {
     /// and the deliberate absence of `consume_caster_item`, which is
     /// four of the five things this type is. So the light became a
     /// field that can be absent.
-    pub light: Option<KindledLight>,
+    pub light: Option<crate::engine::lighting::LightProfile>,
     /// Full log line, `{actor}` substituted with the wielder's name.
     pub log_text: &'static str,
-}
-
-/// The lamp half of a `KindleWeapon` — what the weapon sheds while it
-/// is lit, for the ones that shed anything.
-#[derive(Clone, Copy)]
-pub struct KindledLight {
-    /// Name the light source carries in the log and on the panel.
-    pub name: &'static str,
-    /// Bright / dim radii in tiles, RAW's feet divided by the 2.5-ft
-    /// grid.
-    pub bright_tiles: isize,
-    pub dim_tiles: isize,
 }
 
 impl Action for KindleWeapon {
@@ -6887,7 +6875,7 @@ pub static LIGHT_FLAME_TONGUE: KindleWeapon = KindleWeapon {
     action_aliases: &["flame tongue", "ignite", "kindle blade"],
     item_name: crate::items::item_template::FLAME_TONGUE.name,
     condition: Condition::FlameTongued,
-    light: Some(KindledLight {
+    light: Some(crate::engine::lighting::LightProfile {
         name: "flame tongue",
         bright_tiles: 16,
         dim_tiles: 16,
@@ -6912,7 +6900,7 @@ pub static DRAW_SUN_BLADE: KindleWeapon = KindleWeapon {
     action_aliases: &["sun blade", "sunblade", "draw blade"],
     item_name: crate::items::item_template::SUN_BLADE.name,
     condition: Condition::SunBladed,
-    light: Some(KindledLight {
+    light: Some(crate::engine::lighting::LightProfile {
         name: "sun blade",
         bright_tiles: 6,
         dim_tiles: 6,

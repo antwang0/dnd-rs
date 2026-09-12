@@ -314,6 +314,39 @@ pub struct Item {
     /// they already had — which is why the items already collapsed to
     /// `condition_immunities` stay there rather than moving here.
     pub save_advantages_against: &'static [crate::conditions::Condition],
+    /// The light this item sheds **just for being carried**, or `None`
+    /// for the rest of the table — SRD 5.2's Mace of Disruption,
+    /// *"Light. While you hold this weapon, it sheds Bright Light in a
+    /// 20-foot radius and Dim Light for an additional 20 feet."*
+    ///
+    /// The third way something lights a room in this engine, and the
+    /// one the other two could not say:
+    ///
+    ///   - A **torch** is lit by an action, and so is a Flame Tongue
+    ///     and a Sun Blade. `item_actions::KindleWeapon` is that lane,
+    ///     and it is the right one for a light with an off switch.
+    ///   - A **creature made of fire** carries `innate_light` on its
+    ///     template, installed at instantiation and extinguished with
+    ///     the body.
+    ///   - This is the third: no command word, no switch, and not the
+    ///     bearer's own body. It comes on when the thing is picked up
+    ///     and it goes where the thing goes.
+    ///
+    /// The mace's docstring used to say the clause was not modeled, on
+    /// the grounds that *"inventing [a lane] for a single item would
+    /// have meant the light survived the wielder dropping it or
+    /// dying."* That objection was true when it was written and is not
+    /// now: `drop_light_sources_carried_by` already re-anchors a fallen
+    /// bearer's carried light to the tile they fell on, which is
+    /// exactly what a glowing mace lying on the floor should do — and
+    /// it is the same routine that has been doing it for torches all
+    /// along.
+    ///
+    /// Installed by `EncounterInstance::light_carried_items`, which
+    /// runs wherever an actor gains an item: at instantiation for a
+    /// stat block that ships one, and at `pickup_items_at` for one
+    /// taken off the floor.
+    pub sheds_light: Option<crate::engine::lighting::LightProfile>,
     /// True when carrying this item makes its holder roll the
     /// **initiative** d20 with Advantage — the first half of the
     /// Sentinel Shield's sentence.
@@ -584,6 +617,7 @@ impl Item {
         ability_score_bonuses: &[],
         skill_check_advantages: &[],
         save_advantages_against: &[],
+        sheds_light: None,
         sharpens_initiative: false,
         condition_immunities: &[],
         damage_resistances: &[],
@@ -4079,16 +4113,41 @@ pub static SUN_BLADE: Item = Item {
 /// is neither a fiend nor undead it is a mundane weapon that happens to
 /// count as magical.
 ///
-/// RAW's "sheds Bright Light in a 20-foot radius" is not modeled. The
+/// RAW's third clause ships now: *"**Light.** While you hold this
+/// weapon, it sheds Bright Light in a 20-foot radius and Dim Light for
+/// an additional 20 feet."* Eight tiles of each on the 2.5-ft grid,
+/// through `Item::sheds_light`.
+///
+/// This docstring used to say the clause was not modeled, because *"the
 /// engine's light sources are registered on the board by an action, and
-/// the mace's glow is passive — there is no lane for "this item lights
-/// the room while carried", and inventing one for a single item would
-/// have meant the light survived the wielder dropping it or dying.
+/// the mace's glow is passive — there is no lane for 'this item lights
+/// the room while carried', and inventing one for a single item would
+/// have meant the light survived the wielder dropping it or dying."*
+/// The lane exists now, and the objection it was built around turned
+/// out to be answered by a routine that was already there:
+/// `drop_light_sources_carried_by` re-anchors a fallen bearer's carried
+/// light to the tile they fell on. A dead wielder's mace lies on the
+/// floor and goes on glowing, which is what a magic mace does.
+///
+/// It is the only *passive* lamp on the SRD's loot table — the Flame
+/// Tongue and the Sun Blade have command words, the Gem of Brightness
+/// and the Rod of Alertness have actions — so what it changes about a
+/// party is one thing and a real one: the mace is the light source
+/// nobody has to spend a turn on, carried by the one character whose
+/// job is to walk in front.
 pub static MACE_OF_DISRUPTION: Item = Item {
     name: "Mace of Disruption",
     glyph: '+',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Disrupting],
+    // RAW's 20 ft of bright and 20 more of dim, halved twice onto the
+    // 2.5-ft grid. Named for the log line a player reads when the room
+    // lights up.
+    sheds_light: Some(crate::engine::lighting::LightProfile {
+        name: "mace of disruption",
+        bright_tiles: 8,
+        dim_tiles: 8,
+    }),
     ..Item::DEFAULTS
 };
 

@@ -7397,6 +7397,18 @@ impl ActorInstance {
         self.items.iter().any(|i| i.name == name)
     }
 
+    /// Every carried item that glows on its own, as light profiles.
+    ///
+    /// The inventory half of `Item::sheds_light`; the board half is
+    /// `EncounterInstance::light_carried_items`, which is the only
+    /// caller. Split that way because an `ActorInstance` owns its pack
+    /// and knows nothing about the light-source table, and the
+    /// encounter owns that table and cannot see inside an inventory
+    /// without one of these accessors.
+    pub fn carried_light_profiles(&self) -> Vec<crate::engine::lighting::LightProfile> {
+        self.items.iter().filter_map(|i| i.sheds_light).collect()
+    }
+
     /// True while the actor carries any item whose
     /// `grants_magical_attacks` flag is set — the `+1` / `+2` / `+3`
     /// weapon tier. Read by the `MAGICAL_ATTACK_SOURCES` cohort in
