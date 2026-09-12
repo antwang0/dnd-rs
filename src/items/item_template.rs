@@ -3864,6 +3864,55 @@ pub static RING_OF_THE_RAM: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Evasion** (Ring, Rare) — *"This ring has 3 charges, and it
+/// regains 1d3 expended charges daily at dawn. When you fail a
+/// Dexterity saving throw while wearing the ring, you can take a
+/// Reaction to expend 1 charge to succeed on that saving throw
+/// instead."*
+///
+/// The first item on the loot table that answers a **saving throw**,
+/// and the reason it is worth saying so: every other defensive item in
+/// the file moves a number the save is compared against, or moves the
+/// damage the failure costs. The resistance rings halve the payload,
+/// the Cloak of Protection buys a `+1` that turns one save in twenty,
+/// and the Stone of Good Luck the same. This one does not touch the
+/// roll at all — it throws the result away.
+///
+/// That makes it the loot-table sibling of Legendary Resistance, which
+/// is the engine's only other "a fail becomes a pass" surface, and the
+/// two are deliberately the same shape at different prices. A dragon
+/// spends nothing but the charge and covers every ability; the ring
+/// costs a Reaction on top, and covers Dexterity alone. The first of
+/// those is what keeps it from being strictly better than the rings it
+/// sits next to on the shelf — a wearer who spends the charge on a
+/// Fireball does not also get to Shield the sword swing that follows.
+///
+/// No `on_use`, which is the third shape on this file's action axis. A
+/// passive trinket has no action and no charges; a wand and a staff
+/// have both; this has charges and no action, because RAW's trigger is
+/// something that happens *to* the wearer and there is no turn on
+/// which a player would choose to press it. It fires from
+/// `EncounterInstance::try_ring_of_evasion`, at the save chokepoint,
+/// on the same lane `try_feather_fall` and `try_flash_of_genius`
+/// already occupy.
+///
+/// Billed in `Resource::ItemCharges` rather than through
+/// `spend_item_use`, for the reason the staves are: a ring is not a
+/// wand, and running the pool dry leaves a ring on the finger rather
+/// than an empty hand. It comes back 1d3 at the next long rest.
+pub static RING_OF_EVASION: Item = Item {
+    name: "Ring of Evasion",
+    glyph: '=',
+    charges: 3,
+    // RAW's "1d3 expended charges daily at dawn" — the same refill the
+    // Ring of the Ram above carries, for a pool the same size.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// **Arrow-Catching Shield** (Armor, Shield; Rare) — *"You gain a +2
 /// bonus to Armor Class against ranged attack rolls while you wield
 /// this Shield. This bonus is in addition to the Shield's normal bonus
@@ -5230,6 +5279,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // Three shots of artillery on a finger, and the only ranged shove in
     // the pool. Single entry.
     &RING_OF_THE_RAM,
+    // The other charged ring, and the only item in the pool that turns
+    // a failed save into a passed one. Single entry at the premium
+    // trinkets' weight: a pool of three that refills every long rest
+    // is worth more over a dungeon run than any flat `+1` on the shelf,
+    // and it should be found about as often as the Robe of the
+    // Archmagi rather than as often as a torch.
+    &RING_OF_EVASION,
     // The caster's `+N` ladder, weighted like the other two: the `+1`
     // common, the dearer rungs single. The pool has never had an item
     // that made a cantrip land more often, so the bottom rung is the

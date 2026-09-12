@@ -95841,6 +95841,144 @@ fn the_ring_of_the_ram_rolls_to_hit_shoves_and_survives_its_pool() {
     );
 }
 
+/// The Ring of Evasion turns a failed Dexterity save into a passed one,
+/// and charges the wearer a Reaction for it.
+///
+/// Four claims, one per clause of RAW:
+///
+///   - **It rescues a Dexterity save.** A DC nothing on the sheet could
+///     clear comes back a pass while the ring has a charge, and a fail
+///     the moment it does not.
+///   - **It is scoped to Dexterity.** The same hopeless DC on a Wisdom
+///     save stays a fail and costs no charge — the ring is not a
+///     general-purpose save rewrite.
+///   - **It costs a Reaction.** A wearer who has already spent theirs
+///     gets nothing, and the pool is still full afterwards.
+///   - **The pool outlives itself.** Three charges, then a ring that is
+///     still on the finger — the `Resource::ItemCharges` lane, not
+///     `spend_item_use`.
+///
+/// Worn by a goblin rather than by a PC chassis, for two reasons: the
+/// PC classes carry reroll and add-die cohorts (Indomitable, Dark One's
+/// Own Luck) that would muddy which surface produced the pass, and an
+/// item's clauses are not supposed to care who picked it up.
+#[test]
+fn the_ring_of_evasion_buys_a_dexterity_save_with_a_reaction() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::saves::SaveOutcome;
+    use crate::engine::types::AbilityScoreType;
+    use crate::items::item_template::RING_OF_EVASION;
+
+    // A DC no goblin clears on any die, so every `Pass` below is the
+    // ring's and nothing else's.
+    const HOPELESS: i32 = 40;
+
+    let board = |wearing: bool| {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        if wearing {
+            actor.pickup_item(&RING_OF_EVASION);
+        }
+        actor.reset_for_new_round();
+        (e, id)
+    };
+
+    // Bare goblin: the DC is what it looks like.
+    let (mut bare, bare_id) = board(false);
+    assert_eq!(
+        bare.roll_save(bare_id, AbilityScoreType::Dexterity, HOPELESS),
+        SaveOutcome::Fail
+    );
+
+    // Ringed goblin: pass, one charge gone, Reaction gone with it.
+    let (mut e, id) = board(true);
+    assert_eq!(
+        e.roll_save(id, AbilityScoreType::Dexterity, HOPELESS),
+        SaveOutcome::Pass,
+        "the ring did not catch a failed Dexterity save:\n{}",
+        e.messages().join("\n")
+    );
+    assert_eq!(
+        e.actors[&id].item_charges_remaining(RING_OF_EVASION.name),
+        RING_OF_EVASION.charges - 1
+    );
+    assert!(
+        !e.actors[&id].has_reaction(),
+        "the rescue was free — RAW charges a Reaction for it"
+    );
+
+    // Same round, same ring, no Reaction left: the next save is a fail
+    // and the pool is untouched.
+    assert_eq!(
+        e.roll_save(id, AbilityScoreType::Dexterity, HOPELESS),
+        SaveOutcome::Fail
+    );
+    assert_eq!(
+        e.actors[&id].item_charges_remaining(RING_OF_EVASION.name),
+        RING_OF_EVASION.charges - 1,
+        "a charge was spent with no Reaction to pay the rest of the bill"
+    );
+
+    // Wrong ability: still a fail, still no charge spent.
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    assert_eq!(
+        e.roll_save(id, AbilityScoreType::Wisdom, HOPELESS),
+        SaveOutcome::Fail
+    );
+    assert_eq!(
+        e.actors[&id].item_charges_remaining(RING_OF_EVASION.name),
+        RING_OF_EVASION.charges - 1,
+        "the ring paid out on a Wisdom save"
+    );
+    assert!(
+        e.actors[&id].has_reaction(),
+        "a save the ring cannot rescue must not cost a Reaction"
+    );
+
+    // Drain the rest of the pool, a round at a time, and check the ring
+    // is still there once it is empty.
+    let (mut drain, drain_id) = board(true);
+    for charge in 0..RING_OF_EVASION.charges {
+        drain.actors.get_mut(&drain_id).unwrap().reset_for_new_round();
+        assert_eq!(
+            drain.roll_save(drain_id, AbilityScoreType::Dexterity, HOPELESS),
+            SaveOutcome::Pass,
+            "charge {charge} should still have been there"
+        );
+    }
+    drain.actors.get_mut(&drain_id).unwrap().reset_for_new_round();
+    assert_eq!(
+        drain.roll_save(drain_id, AbilityScoreType::Dexterity, HOPELESS),
+        SaveOutcome::Fail,
+        "a fourth rescue came out of a three-charge ring"
+    );
+    assert!(
+        drain.actors[&drain_id].has_item_named(RING_OF_EVASION.name),
+        "the pool ran dry and took the ring with it"
+    );
+    assert!(
+        drain.actors[&drain_id].has_reaction(),
+        "an empty ring must not still be charging a Reaction"
+    );
+
+    // A long rest brings the pool back — RAW's "1d3 daily at dawn",
+    // which is the only reason a three-charge ring is a permanent item
+    // rather than a three-shot one.
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(7);
+    let regained = drain
+        .actors
+        .get_mut(&drain_id)
+        .unwrap()
+        .regain_item_charges(&mut roller);
+    assert!(
+        regained.iter().any(|(n, back)| *n == RING_OF_EVASION.name && *back > 0),
+        "the ring did not refill at dawn: {regained:?}"
+    );
+}
+
 /// The Arrow-Catching Shield raises AC against arrows only, and steps
 /// in front of the one aimed at the ally beside it.
 ///

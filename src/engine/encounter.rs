@@ -5870,6 +5870,72 @@ impl EncounterInstance {
         Some(SaveOutcome::Pass)
     }
 
+    /// SRD 5.2 **Ring of Evasion**: *"when you fail a Dexterity saving
+    /// throw while wearing the ring, you can take a Reaction to expend
+    /// 1 charge to succeed on that saving throw instead."*
+    ///
+    /// Called from `roll_save_with_extra_mode_and_bonus` once the d20
+    /// has landed on a fail and every cheaper cohort has declined.
+    /// Returns true when the wearer paid, in which case the caller
+    /// turns the save into a pass.
+    ///
+    /// Three gates, and each is a whole clause of RAW. **Dexterity**,
+    /// because the ring is scoped to the one ability, and the wearer's
+    /// Wisdom save against a Hold Person is exactly as doomed as it was
+    /// without it. **A charge**, billed through
+    /// `Resource::ItemCharges` so the ring survives its own pool — see
+    /// the item docstring for why a ring is not a wand. **A Reaction**,
+    /// which is what keeps this from being a free rewrite of a quarter
+    /// of the save lane: a wearer who spends it here has no Shield, no
+    /// Uncanny Dodge and no opportunity attack until their next turn.
+    ///
+    /// **Spent on any failed Dexterity save, however cheap.** Legendary
+    /// Resistance immediately below makes the same "always burn" call,
+    /// and the argument for it is the same one and slightly stronger
+    /// here: the save chokepoint cannot see what failing would have
+    /// cost — a Fireball's other half and a cantrip's four points of
+    /// damage arrive as the same `Fail` — and a pool of three that
+    /// refills every long rest is not a resource worth modelling
+    /// hesitation over. The Reaction is the real price, and it is paid
+    /// honestly.
+    ///
+    /// Nothing here is PC-specific. A monster wearing the ring off the
+    /// loot table gets the same clause, which is the standing rule for
+    /// every item in this engine.
+    fn try_ring_of_evasion(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+    ) -> bool {
+        use crate::engine::side_effects::Resource;
+        use crate::engine::types::AbilityScoreType;
+        if ability != AbilityScoreType::Dexterity {
+            return false;
+        }
+        let item = crate::items::item_template::RING_OF_EVASION.name;
+        let charge = Resource::ItemCharges { item, count: 1 };
+        let Some(wearer) = self.actors.get_mut(&actor_id) else {
+            return false;
+        };
+        // Both resources checked before either is spent, so a wearer
+        // with charges and no Reaction keeps the charges.
+        if !wearer.can_consume_resource(charge) || !wearer.can_consume_resource(Resource::Reaction)
+        {
+            return false;
+        }
+        wearer.consume_resource(charge);
+        wearer.consume_resource(Resource::Reaction);
+        let remaining = wearer.item_charges_remaining(item);
+        let name = wearer.name().to_string();
+        self.log(format!(
+            "  {} twists the ring of evasion ({} charge{} left) \u{2014} pass",
+            name,
+            remaining,
+            if remaining == 1 { "" } else { "s" }
+        ));
+        true
+    }
+
     /// Find an allied artificer who can close `shortfall` with their
     /// Intelligence modifier, spend their charge and their reaction, and
     /// report who paid and how much.
@@ -6415,6 +6481,20 @@ impl EncounterInstance {
                 // Legendary Resistance gate below.
                 break;
             }
+        }
+        // SRD 5.2 **Ring of Evasion**: the loot table's own answer to a
+        // failed Dexterity save. Sits immediately above Legendary
+        // Resistance because it is the same kind of thing — a fail
+        // becomes a pass, with no die involved — and below every
+        // cohort above it because those are cheaper: a reroll or an
+        // added die costs a charge the holder was carrying anyway, and
+        // this costs a Reaction the holder may want back.
+        //
+        // The two neighbours never co-occur in practice (a dragon is
+        // not wearing a ring), so the order between them is
+        // documentation rather than arbitration.
+        if !outcome.passed() && self.try_ring_of_evasion(actor_id, ability) {
+            return SaveOutcome::Pass;
         }
         // 5e Legendary Resistance: on a fail, boss-tier creatures may
         // choose to succeed instead. We spend a charge whenever a fail
