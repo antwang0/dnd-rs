@@ -4325,12 +4325,15 @@ pub static SWORD_OF_LIFE_STEALING: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Nine Lives Stealer** (Weapon, any sword; Very Rare) — "You gain a
-/// +2 bonus to attack rolls and damage rolls made with this magic
-/// weapon. When you roll a 20 on the d20 for an attack roll with this
-/// weapon, the target must succeed on a DC 15 Constitution saving throw
-/// or die. The sword can't be used on a creature that has more than 100
-/// Hit Points."
+/// **Nine Lives Stealer** (Weapon, any simple or martial; Very Rare) —
+/// *"You gain a +2 bonus to attack rolls and damage rolls made with
+/// this magic weapon. **Life Stealing.** The weapon has 1d8 + 1
+/// charges. When you attack a creature that has fewer than 100 Hit
+/// Points with this weapon and roll a 20 on the d20 for the attack
+/// roll, the creature must succeed on a DC 15 Constitution saving throw
+/// or be slain instantly… Constructs and Undead succeed on the save
+/// automatically. The weapon loses 1 charge if the creature is slain.
+/// When the weapon has no charges remaining, it loses this property."*
 ///
 /// The sword that kills, and the item the `SlayActor` lane was built
 /// for. Everything below a hundred hit points on this roster — which is
@@ -4339,10 +4342,34 @@ pub static SWORD_OF_LIFE_STEALING: Item = Item {
 /// fight, whatever its resistances say, because the clause is not
 /// damage.
 ///
-/// RAW's charge counter is not modeled: the blade has nine kills in it
-/// and then reverts to a plain `+2` sword, which is a ledger no weapon
-/// in this engine keeps and a limit no encounter on this board would
-/// reach. What ships is the sword before the ninth.
+/// **The pool is real now**, and it is what makes the sentence above
+/// survivable. The blade used to ship with the charge counter written
+/// off — *"a ledger no weapon in this engine keeps and a limit no
+/// encounter on this board would reach"* — which made it an unlimited
+/// save-or-die on every natural 20 against anything at all, strictly
+/// stronger than the two legendary weapons a rarity above it. Three
+/// clauses answer that, and all three are RAW:
+///
+///   - **Five charges**, spent through `OnHitRider::spends_item_charge`
+///     and never refilled (`recharge: None`, which is RAW — the weapon
+///     does not come back at dawn, it is simply finished).
+///   - **The charge is paid for the kill**, not for the crit. A target
+///     that makes its Constitution save costs the wielder nothing,
+///     which is most of what makes five of them worth carrying.
+///   - **Constructs and Undead are off the table**, on the rider's
+///     `target_gate` — so the golem and the lich the party most wants
+///     to shortcut are exactly the two it cannot.
+///
+/// Five rather than RAW's `1d8 + 1`, which averages five and a half.
+/// `Item::charges` is a constant because an `Item` is a `&'static`
+/// value shared by every copy in the world, and a die rolled at
+/// definition time would be one number for all of them anyway. The Horn
+/// of Valhalla made the same trade with RAW's `2d4 + 2` bodies.
+///
+/// It keeps its `+2` at zero, which is why the spend goes through
+/// `Resource::ItemCharges` rather than `spend_item_use`: that lane
+/// drops the object when the pool empties, and RAW is explicit that
+/// this one loses only the property.
 pub static NINE_LIVES_STEALER: Item = Item {
     name: "Nine Lives Stealer",
     glyph: '9',
@@ -4353,6 +4380,9 @@ pub static NINE_LIVES_STEALER: Item = Item {
     },
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::NineLivesStealing],
+    // RAW's `1d8 + 1`, at its average. No `recharge`: the sword is the
+    // one charge-bearing item in the file that does not come back.
+    charges: 5,
     ..Item::DEFAULTS
 };
 

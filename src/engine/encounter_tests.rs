@@ -96066,36 +96066,44 @@ fn the_sword_of_sharpness_asks_about_the_die_and_not_about_the_crit() {
     );
 }
 
-/// The Nine Lives Stealer ends a creature that damage of the same size
-/// would not have.
+/// The Nine Lives Stealer, and the three clauses that make it finite.
 ///
-/// This is the whole argument for `SlayActor` in one fixture. The victim
-/// is a specter — necrotic **immune** on this roster — so a "deal damage
-/// equal to its hit points" implementation of *"or die"* would deal it
-/// nothing at all and leave it standing at full health. RAW's sentence
-/// is not about damage, and neither is the effect.
+/// It used to be an unlimited save-or-die on every natural 20 against
+/// anything on the board — strictly stronger than the two legendary
+/// weapons a rarity above it, and stronger than RAW by a wide margin.
+/// SRD 5.2 bounds it three ways and all three are pinned here:
+///
+///   - **It still kills.** A living creature under a hundred hit points
+///     that fails a DC 15 Constitution save is gone, and gone through
+///     `FollowUpEffect::Slay` rather than through damage.
+///   - **Constructs and Undead are off the table.** RAW says they
+///     "succeed on the save automatically", which on a follow-up with
+///     no success clause is the row declining to fire — so no save is
+///     rolled, and no charge is spent finding that out.
+///   - **The pool is real and the spend is for the kill.** A target
+///     that makes its save costs nothing; a target that dies costs one;
+///     and a sword at zero is a `+2` sword that has stopped asking.
 #[test]
-fn the_nine_lives_stealer_kills_what_damage_could_not_touch() {
+fn the_nine_lives_stealer_is_finite_and_declines_the_bodiless() {
+    use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::engine::types::CreatureType;
     use crate::items::item_template::NINE_LIVES_STEALER;
 
-    // Confirm the premise before relying on it: the whole point of the
-    // fixture is that the victim shrugs off necrotic damage.
-    let mut e = ei_with_terrain(15, 15, &[]);
-    let specter = e
-        .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
-        .unwrap();
-    let full = e.actors[&specter].hitpoints();
-    assert_eq!(
-        e.actors[&specter].effective_damage(full, DamageType::Necrotic),
-        0,
-        "the fixture wants a creature necrotic damage cannot reach"
-    );
+    let crit = || RiderSwing {
+        is_melee: true,
+        is_spell: false,
+        is_crit: true,
+        natural_twenty: true,
+        damage_so_far: 0,
+        damage_type: DamageType::Slashing,
+    };
 
-    // Sixty seeds, because the sword is asking for a failed DC-15
-    // Constitution save and the specter is allowed to make some.
+    // Clause one: it kills something alive. Swept because the ogre is
+    // allowed to make a DC-15 Constitution save.
     let mut ended_one = false;
     for seed in 0..60u64 {
         let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
@@ -96103,33 +96111,20 @@ fn the_nine_lives_stealer_kills_what_damage_could_not_touch() {
         let fighter = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let specter = e
-            .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
             .unwrap();
         e.actors
             .get_mut(&fighter)
             .unwrap()
             .pickup_item(&NINE_LIVES_STEALER);
         let mut effects = Vec::new();
-        let dice = push_on_hit_riders(
-            &mut e,
-            &mut effects,
-            fighter,
-            specter,
-            RiderSwing {
-                is_melee: true,
-                is_spell: false,
-                is_crit: true,
-                natural_twenty: true,
-                damage_so_far: 0,
-                damage_type: DamageType::Slashing,
-            },
-        );
+        let dice = push_on_hit_riders(&mut e, &mut effects, fighter, ogre, crit());
         assert_eq!(dice, 0, "the sword's whole effect is the save");
         for ef in effects {
             ef.apply(&mut e);
         }
-        if e.actors[&specter].hitpoints() == 0 {
+        if e.actors[&ogre].hitpoints() == 0 {
             ended_one = true;
             assert!(
                 e.messages()
@@ -96138,12 +96133,108 @@ fn the_nine_lives_stealer_kills_what_damage_could_not_touch() {
                 "seed {seed}: the kill went unnamed:\n{}",
                 e.messages().join("\n")
             );
+            assert_eq!(
+                e.actors[&fighter].item_charges_remaining(NINE_LIVES_STEALER.name),
+                NINE_LIVES_STEALER.charges - 1,
+                "a kill costs exactly one charge"
+            );
             break;
         }
+        assert_eq!(
+            e.actors[&fighter].item_charges_remaining(NINE_LIVES_STEALER.name),
+            NINE_LIVES_STEALER.charges,
+            "seed {seed}: a made save is supposed to be free"
+        );
     }
     assert!(
         ended_one,
-        "sixty natural 20s should beat one specter's Constitution save at least once"
+        "sixty natural 20s should beat one ogre's Constitution save at least once"
+    );
+
+    // Clause two: the two creature types RAW exempts. No save, no
+    // slaying, no charge — across every seed, because "it never
+    // happened" is the claim.
+    for template in [&*ZOMBIE_TEMPLATE, &*ANIMATED_ARMOR_TEMPLATE] {
+        for seed in 0..20u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(template, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            assert!(
+                matches!(
+                    e.actors[&victim].creature_type(),
+                    CreatureType::Undead | CreatureType::Construct
+                ),
+                "the fixture wants one of the two exempt types"
+            );
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .pickup_item(&NINE_LIVES_STEALER);
+            let full = e.actors[&victim].hitpoints();
+            let mut effects = Vec::new();
+            push_on_hit_riders(&mut e, &mut effects, fighter, victim, crit());
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            assert_eq!(
+                e.actors[&victim].hitpoints(),
+                full,
+                "seed {seed}: the sword tore the life force out of something that has none"
+            );
+            assert_eq!(
+                e.actors[&fighter].item_charges_remaining(NINE_LIVES_STEALER.name),
+                NINE_LIVES_STEALER.charges,
+                "seed {seed}: declining cost a charge"
+            );
+        }
+    }
+
+    // Clause three: empty the pool by hand and the sword stops asking.
+    // A construct is the wrong control here — it never asked — so the
+    // target is the ogre that was dying a moment ago.
+    let mut e = ei_with_terrain_seeded(15, 15, &[], 1);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&NINE_LIVES_STEALER);
+    assert!(
+        e.actors.get_mut(&fighter).unwrap().consume_resource(
+            crate::engine::side_effects::Resource::ItemCharges {
+                item: NINE_LIVES_STEALER.name,
+                count: NINE_LIVES_STEALER.charges,
+            }
+        )
+    );
+    let before = e.messages().len();
+    let mut effects = Vec::new();
+    push_on_hit_riders(&mut e, &mut effects, fighter, ogre, crit());
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert!(
+        !e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("nine lives stealer")),
+        "an empty sword rolled a save it had nothing to cash:\n{}",
+        e.messages()[before..].join("\n")
+    );
+    // …and it is still a sword.
+    assert!(e.actors[&fighter].has_item_named(NINE_LIVES_STEALER.name));
+    assert_eq!(
+        e.actors[&fighter].total_item_bonuses().attack_bonus,
+        NINE_LIVES_STEALER.bonuses.attack_bonus,
+        "the pool ran dry and took the +2 with it"
     );
 }
 
@@ -99974,6 +100065,15 @@ fn a_second_copy_deepens_the_pool_a_rest_fills() {
 fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     use crate::items::item_template::LOOT_POOL;
 
+    // The one item RAW says does *not* come back. "When the weapon has
+    // no charges remaining, it loses this property" is the end of the
+    // sentence — the sword keeps its `+2` and stops stealing lives, for
+    // good. Named rather than exempted by a rule, because "has charges
+    // and no refill" is otherwise exactly the silent failure this sweep
+    // exists to catch.
+    const SPENT_FOR_GOOD: &[&str] =
+        &[crate::items::item_template::NINE_LIVES_STEALER.name];
+
     let mut wrong: Vec<String> = Vec::new();
     for item in LOOT_POOL {
         match (item.charges, item.recharge) {
@@ -99981,7 +100081,7 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
                 "{} recharges {} and has no charges to put them in",
                 item.name, expr
             )),
-            (n, None) if n > 0 => wrong.push(format!(
+            (n, None) if n > 0 && !SPENT_FOR_GOOD.contains(&item.name) => wrong.push(format!(
                 "{} carries {} charges and nothing gives them back — a night \
                  in the dungeon should",
                 item.name, n
@@ -99990,6 +100090,17 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n  "));
+    // And the exception list is not a place to hide a typo.
+    for name in SPENT_FOR_GOOD {
+        let item = LOOT_POOL
+            .iter()
+            .find(|i| i.name == *name)
+            .unwrap_or_else(|| panic!("{name} is not on the loot table"));
+        assert!(
+            item.charges > 0 && item.recharge.is_none(),
+            "{name} is listed as spent for good and is not"
+        );
+    }
 }
 
 /// The Staff of Striking: a Bonus Action and three charges prime it, and

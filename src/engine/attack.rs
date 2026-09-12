@@ -3443,6 +3443,19 @@ pub fn push_on_hit_riders(
         {
             continue;
         }
+        // …and the third thing a row can run out of, beside a
+        // once-per-turn ledger and a consumed prime: an item's charge
+        // pool. Asked here, with the other gates, so an empty Nine
+        // Lives Stealer declines the row rather than rolling a save it
+        // has nothing to cash. See `OnHitRider::spends_item_charge`.
+        if let Some(item) = rider.spends_item_charge
+            && encounter
+                .actors
+                .get(&caster_id)
+                .is_none_or(|a| a.item_charges_remaining(item) == 0)
+        {
+            continue;
+        }
         if !encounter.actors.get(&caster_id).is_some_and(|a| {
             a.has_condition(rider.condition)
                 && rider
@@ -3494,7 +3507,7 @@ pub fn push_on_hit_riders(
             caster.remove_condition(rider.condition);
         }
         if let Some(follow) = rider.follow_up {
-            apply_smite_follow_up(
+            let landed = apply_smite_follow_up(
                 encounter,
                 effects,
                 caster_id,
@@ -3503,6 +3516,23 @@ pub fn push_on_hit_riders(
                 rider_total + swing.damage_so_far,
                 rider_total,
             );
+            // RAW pays the charge for the *outcome*, not for the
+            // trigger — "the weapon loses 1 charge if the creature is
+            // slain" — so a target that makes its save costs the
+            // wielder nothing. That is what this return value is now
+            // for; it was computed and discarded before there was a
+            // row that cared. See `OnHitRider::spends_item_charge`.
+            if landed
+                && let Some(item) = rider.spends_item_charge
+                && let Some(caster) = encounter.actors.get_mut(&caster_id)
+            {
+                caster.consume_resource(crate::engine::side_effects::Resource::ItemCharges {
+                    item,
+                    count: 1,
+                });
+                let left = caster.item_charges_remaining(item);
+                encounter.log(format!("  {}: {} charges left", rider.label, left));
+            }
         }
     }
     added
@@ -4825,6 +4855,38 @@ pub struct OnHitRider {
     /// is marked, for the same reason: a row that cannot fire should not
     /// spend a charge finding that out.
     pub attacker_link: Option<Condition>,
+    /// The item whose charge pool this rider draws on, or `None` for
+    /// the rows that fire as often as they trigger.
+    ///
+    /// SRD 5.2's **Nine Lives Stealer** is what it is for, and the
+    /// column exists because that weapon's clause is finite where every
+    /// other row on this table is not: *"The weapon has 1d8 + 1
+    /// charges… The weapon loses 1 charge if the creature is slain.
+    /// When the weapon has no charges remaining, it loses this
+    /// property."* A Flame Tongue burns for the whole fight and a
+    /// Dragon Slayer bites every dragon it meets; this sword can end
+    /// nine things and then it is a `+2` sword.
+    ///
+    /// Two clauses, and the split is the point:
+    ///
+    ///   - **The gate** is asked with the other gates, before the
+    ///     once-per-turn ledger is marked, so an empty sword declines
+    ///     the row rather than rolling a save it cannot cash.
+    ///   - **The spend** happens only when the follow-up actually
+    ///     *lands*, which is `apply_smite_follow_up`'s return value and
+    ///     the reason that value stopped being discarded. RAW pays the
+    ///     charge "if the creature is slain", not when the swing crits:
+    ///     a target that makes its Constitution save costs the wielder
+    ///     nothing, which is most of what makes nine of them worth
+    ///     having.
+    ///
+    /// Billed through `Resource::ItemCharges` rather than through
+    /// `ActorInstance::spend_item_use`, and that is the difference
+    /// between a sword and a wand: the wand lane drops the object when
+    /// the pool empties, and RAW is explicit that this one keeps its
+    /// `+2` and simply stops stealing lives. The staves already use the
+    /// same lane for the same reason.
+    pub spends_item_charge: Option<&'static str>,
 }
 
 /// Secondary save + effect rider tagged onto a Smite-spell hit. When
@@ -5665,6 +5727,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         OnHitRider {
             condition: Condition::CrownOfStars,
@@ -5678,6 +5741,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Bigby's Hand (level-5 concentration). Persistent +1d10 force
         // rider on every attack the caster lands — not melee-only since
@@ -5695,6 +5759,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Path of the Giant Barbarian **Elemental Cleaver** (subclass
         // level 3): the weapon the barbarian kindled deals an extra 1d6
@@ -5726,6 +5791,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Spirit Shroud (level-3 concentration). Persistent +1d8 cold
         // rider on every melee swing the holder lands. Mirrors Crown of
@@ -5742,6 +5808,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Undead Warlock **Form of Dread** (subclass level 1),
         // offensive clause: "once on each of your turns when you hit a
@@ -5785,6 +5852,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Way of the Kensei Monk **Kensei's Shot** (subclass level
         // 3): "you can make your ranged attacks with a kensei weapon
@@ -5814,6 +5882,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Circle of Spores Druid **Symbiotic Entity** (subclass
         // level 2). Persistent +1d6 necrotic rider on every melee swing
@@ -5835,6 +5904,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Flame Arrows (XGE level-3 transmutation, concentration).
         // Persistent +1d6 fire rider on every ranged swing the holder
@@ -5855,6 +5925,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Tasha's Otherworldly Guise (TCE level-6 concentration). The
         // celestial-form flavor adds +2d6 radiant per melee weapon hit
@@ -5876,6 +5947,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Elemental Weapon (level-3 transmutation, concentration). The
         // weapon is sheathed in elemental energy: +1d4 fire per melee
@@ -5899,6 +5971,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         OnHitRider {
             condition: Condition::Smiting,
@@ -5912,6 +5985,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 Warlock Eldritch Invocation **Eldritch Smite** — the
         // warlock's entry on a lane that had been the paladin's alone:
@@ -5961,6 +6035,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Searing Smite — 1st-level paladin evocation, bonus action.
         // +1d6 fire on the primed hit, and the target catches fire
@@ -5995,6 +6070,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Wrathful Smite — 1st-level. +1d6 psychic on the primed hit;
         // target makes WIS save or is Frightened of the paladin for
@@ -6023,6 +6099,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Branding Smite — 2nd-level. +2d6 radiant; target glows
         // (Outlined for 10 rounds), giving advantage to attackers and
@@ -6053,6 +6130,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Blinding Smite — 3rd-level. +3d8 radiant; target makes CON
         // save or is Blinded for 10 rounds.
@@ -6080,6 +6158,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Monk Stunning Strike — bonus action prime; on the next
         // melee hit, the target makes a CON save vs the monk's
@@ -6110,6 +6189,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Cleric Divine Strike (level 8 class feature, here exposed as
         // a Channel-Divinity-flavored bonus-action prime). +1d8 radiant
@@ -6128,6 +6208,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Trickery Domain Cleric Divine Strike (subclass level 8).
         // The poison-typed arm of the row above — RAW varies only the
@@ -6151,6 +6232,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Death Domain Cleric Divine Strike (subclass level 8) — the
         // necrotic arm of the same row. Third typing of one feature, and
@@ -6168,6 +6250,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Order Domain Cleric Divine Strike (subclass level 8) — the
         // psychic arm. Fourth typing of one feature, and the one that
@@ -6186,6 +6269,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Death Domain Cleric **Reaper's Touch** (subclass level 2,
         // RAW "Touch of Death"), the Channel Divinity. RAW pays a flat
@@ -6210,6 +6294,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Way of the Four Elements Monk **Fangs of the Fire Snake**
         // elemental discipline. The biggest single die on this table
@@ -6233,6 +6318,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Trip Attack maneuver. RAW: "you add the
         // superiority die to the attack's damage roll, and the target
@@ -6266,6 +6352,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Staggering Smite — 4th-level paladin enchantment, bonus
         // action prime. +4d6 psychic on the primed hit; target makes a
@@ -6295,6 +6382,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Banishing Smite — 5th-level paladin abjuration, bonus
         // action prime. +5d10 force on the primed hit; if the target
@@ -6334,6 +6422,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Shillelagh — druid cantrip prime. The caster's club /
         // staff is wreathed in sylvan magic: the next melee weapon hit
@@ -6354,6 +6443,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Thunderous Smite — 1st-level paladin evocation, bonus
         // action prime. +2d6 thunder on the primed hit; target makes a
@@ -6387,6 +6477,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Enlarge / Reduce (Enlarge half) — 2nd-level transmutation,
         // concentration. The holder rolls +1d4 bonus damage on every
@@ -6409,6 +6500,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Rune Knight Fighter **Giant's Might** (subclass level 3):
         // "once on each of your turns when you hit a creature with an
@@ -6435,6 +6527,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Rune Knight Fighter **Fire Rune** (subclass level 3): "the
         // target takes an extra 2d6 fire damage, and it must succeed on
@@ -6472,6 +6565,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Lightning Arrow — 3rd-level ranger evocation, bonus action,
         // concentration. Primes the ranger's next ranged weapon attack
@@ -6494,6 +6588,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Ensnaring Strike — 1st-level ranger conjuration, bonus
         // action, concentration. Primes the ranger's next weapon
@@ -6534,6 +6629,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Zephyr Strike — 1st-level ranger transmutation (XGtE),
         // bonus action, concentration. Primes the ranger's next weapon
@@ -6562,6 +6658,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Holy Weapon — 5th-level paladin evocation, concentration.
         // The caster's weapon glows with radiant light: every weapon
@@ -6581,6 +6678,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Absorb Elements — 1st-level abjuration, reaction. The
         // caster stores the energy that was thrown at it and releases
@@ -6608,6 +6706,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Menacing Attack maneuver. +1 superiority die
         // on the consuming melee hit; the target makes a WIS save vs the
@@ -6638,6 +6737,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Disarming Attack maneuver. +1 superiority die
         // on the consuming melee hit, same as its siblings. The
@@ -6669,6 +6769,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Pushing Attack maneuver. +1 superiority die
         // on the consuming melee hit. On that same melee
@@ -6699,6 +6800,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Goading Attack maneuver. +1 superiority die
         // on the consuming melee hit, and on that same hit the
@@ -6733,6 +6835,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Sweeping Attack maneuver. Zero rider damage on
         // the primary target (RAW: damage goes to the secondary creature,
@@ -6767,6 +6870,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Distracting Strike maneuver. +1 superiority
         // die on the consuming melee hit (RAW: add the superiority die to
@@ -6803,6 +6907,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Battle Master Maneuvering Attack maneuver. +1 superiority
         // die on the consuming melee hit (RAW: "you add the superiority
@@ -6836,6 +6941,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e Arcane Archer Fighter **Arcane Shot** (subclass level 3,
         // XGE) — six rows, one per option, all six on
@@ -6886,6 +6992,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // Beguiling Arrow: 2d6 psychic, then a CHA save or Charmed. The
         // charm links back to the archer rather than to the ally RAW
@@ -6914,6 +7021,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // Bursting Arrow: no damage to the creature struck — RAW's force
         // burst spares the target and catches everything around it. The
@@ -6946,6 +7054,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // Enfeebling Arrow: 2d6 necrotic, then a CON save or the
         // target's own weapon damage is halved. See `Condition::Enfeebled`.
@@ -6973,6 +7082,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // Grasping Arrow: 2d6 poison, then a STR save or Restrained.
         // RAW's ongoing 2d6 slashing per turn of struggle is dropped —
@@ -7001,6 +7111,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // Shadow Arrow: 2d6 psychic, then a WIS save or Blinded.
         OnHitRider {
@@ -7027,6 +7138,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // ---------------------------------------------------------------
         // The magic armoury. Seven rows whose condition is not a spell
@@ -7064,6 +7176,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: Some(|t| t.creature_type() == CreatureType::Dragon),
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Giant Slayer** (Weapon, any simple or martial; Rare):
         // "When you hit a Giant with this weapon, the Giant takes an
@@ -7097,6 +7210,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Oathbow** (Weapon, longbow; Very Rare): "You gain a +3d6
         // bonus to damage rolls against your sworn enemy."
@@ -7127,6 +7241,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: Some(Condition::Oathbound),
+            spends_item_charge: None,
         },
         // 5e **Sun Blade** (Weapon, longsword; Rare): "When you hit an
         // Undead with it, that target takes an extra 1d8 Radiant
@@ -7149,6 +7264,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: Some(|t| t.creature_type().is_undead()),
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Mace of Disruption** (Weapon, mace; Rare): "When you hit
         // a Fiend or an Undead with this magic weapon, that creature
@@ -7196,6 +7312,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Flame Tongue** (Weapon, any melee weapon; Rare): "While
         // the weapon is ablaze, it deals an extra 2d6 Fire damage on a
@@ -7217,6 +7334,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Frost Brand** (Weapon, one of six blades; Very Rare):
         // "When you hit with an attack roll using this magic weapon, the
@@ -7237,6 +7355,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Vicious Weapon** (Weapon, any simple or martial; Rare):
         // "This magic weapon deals an extra 2d6 damage to any creature
@@ -7254,6 +7373,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Thunderous Greatclub** (Weapon, greatclub; Very
         // Rare): "The weapon deals an extra 1d8 Thunder damage to any
@@ -7280,6 +7400,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // 5e **Sword of Wounding** (Weapon, one of six blades; Rare):
         // "the target takes an extra 2d6 Necrotic damage and must
@@ -7323,6 +7444,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Holy Avenger** (Weapon, any sword; Legendary):
         // "When you hit a Fiend or an Undead with this weapon, that
@@ -7352,6 +7474,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Dwarven Thrower** (Weapon, warhammer; Very Rare):
         // "It deals an extra 1d8 Bludgeoning damage when you hit with
@@ -7379,6 +7502,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         OnHitRider {
             condition: Condition::DwarvenThrowing,
@@ -7392,6 +7516,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Dagger of Venom** (Weapon, dagger; Rare): "As a
         // Bonus Action, you can cause thick, black poison to coat the
@@ -7435,6 +7560,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // ---------------------------------------------------------------
         // The crit-gated blades. Three weapons whose RAW trigger is not
@@ -7466,6 +7592,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: true,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Sword of Life Stealing** (Weapon, any sword; Rare):
         // "When you roll a 20 on the d20 for an attack roll with this
@@ -7498,6 +7625,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: true,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Vorpal Sword** (Weapon, any Slashing sword;
         // Legendary): "When you roll a 20 on the d20 for an attack roll
@@ -7547,6 +7675,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             }),
             requires_natural_twenty: true,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Mace of Smiting** (Weapon, mace; Rare): "When you
         // roll a 20 on the d20 for an attack roll with this weapon, the
@@ -7570,6 +7699,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: true,
             attacker_link: None,
+            spends_item_charge: None,
         },
         OnHitRider {
             condition: Condition::MaceSmiting,
@@ -7598,12 +7728,16 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: Some(|t| t.creature_type() == CreatureType::Construct),
             requires_natural_twenty: true,
             attacker_link: None,
+            spends_item_charge: None,
         },
-        // SRD 5.2 **Nine Lives Stealer** (Weapon, any sword; Very Rare):
-        // "When you roll a 20 on the d20 for an attack roll with this
-        // weapon, the target must succeed on a DC 15 Constitution saving
-        // throw or die. The sword can't be used on a creature that has
-        // more than 100 Hit Points."
+        // SRD 5.2 **Nine Lives Stealer** (Weapon, any simple or
+        // martial; Very Rare): *"Life Stealing. The weapon has 1d8 + 1
+        // charges. When you attack a creature that has fewer than 100
+        // Hit Points with this weapon and roll a 20 on the d20 for the
+        // attack roll, the creature must succeed on a DC 15
+        // Constitution saving throw or be slain instantly… Constructs
+        // and Undead succeed on the save automatically. The weapon
+        // loses 1 charge if the creature is slain."*
         //
         // No damage die: the whole row is the follow-up, and the
         // follow-up is `FollowUpEffect::Slay` — the variant the armoury
@@ -7617,6 +7751,16 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
         // prediction Banishing Smite's 50 and the mace's 25 already run
         // on — a threshold column that meant two different things
         // depending on the row would be worse than either reading.
+        //
+        // The other two clauses shipped late, and both of them are the
+        // sword being *finite*. It used to be an unlimited save-or-die
+        // on every natural 20 against anything at all, which is
+        // strictly stronger than the legendary weapons above it: the
+        // charges are now a real pool (`spends_item_charge`), spent
+        // only on a kill, and a construct or an undead is off the
+        // table entirely. RAW's "succeed on the save automatically" and
+        // "the rider does not fire" are the same outcome here, because
+        // the follow-up writes no `on_success` clause.
         OnHitRider {
             condition: Condition::NineLivesStealing,
             dice: Dice::new(0, 0),
@@ -7635,9 +7779,23 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 on_success: None,
             }),
             once_per_turn_tag: None,
-            target_gate: None,
+            // "Constructs and Undead succeed on the save
+            // automatically" — which on a follow-up with no success
+            // clause is exactly "this row does not fire", and belongs
+            // on the gate rather than inside the save so the log does
+            // not report a roll that was never in doubt.
+            target_gate: Some(|t| {
+                !matches!(
+                    t.creature_type(),
+                    crate::engine::types::CreatureType::Construct
+                        | crate::engine::types::CreatureType::Undead
+                )
+            }),
             requires_natural_twenty: true,
             attacker_link: None,
+            spends_item_charge: Some(
+                crate::items::item_template::NINE_LIVES_STEALER.name,
+            ),
         },
         // SRD 5.2 **Staff of Striking** (Staff; Very Rare): "When you hit
         // with a melee attack using the staff, you can expend up to 3 of
@@ -7667,6 +7825,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
         // SRD 5.2 **Staff of Withering** (Staff; Rare): "On a hit, you
         // can expend 1 charge to deal an extra 2d10 Necrotic damage to
@@ -7704,6 +7863,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             target_gate: None,
             requires_natural_twenty: false,
             attacker_link: None,
+            spends_item_charge: None,
         },
 ];
 

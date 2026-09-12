@@ -3179,14 +3179,23 @@ pub enum Condition {
     ///
     /// No damage die at all: the row's whole effect is the follow-up,
     /// which is the shape Stunning Strike and Form of Dread already
-    /// established. RAW's charge counter — nine lives and then a plain
-    /// +2 sword — is not modeled; the engine has no per-item charge
-    /// ledger for a weapon, and nine is more executions than any
-    /// encounter on this board will see.
+    /// established. RAW's charge counter ships too: the marker's row
+    /// carries `OnHitRider::spends_item_charge`, so the blade has five
+    /// kills in it — RAW's `1d8 + 1`, at its average — and is a plain
+    /// `+2` sword afterwards. The charge is paid for the *outcome*
+    /// rather than the trigger, which is RAW's own wording ("the weapon
+    /// loses 1 charge if the creature is slain"): a target that makes
+    /// its save costs the wielder nothing.
+    ///
+    /// Constructs and Undead are exempt, on the row's `target_gate`.
+    /// RAW says they "succeed on the save automatically", and on a
+    /// follow-up that writes no success clause that is the same fact as
+    /// the row not firing — with the advantage that the log does not
+    /// report a roll nobody was ever going to fail.
     ///
     /// Gated at 100 hit points, which RAW writes as its own sentence
-    /// (*"the sword can't be used on a creature that has more than 100
-    /// Hit Points"*) and which `SmiteFollowUp::hp_threshold` already
+    /// (*"when you attack a creature that has fewer than 100 Hit
+    /// Points"*) and which `SmiteFollowUp::hp_threshold` already
     /// spells for Banishing Smite's 50.
     NineLivesStealing,
     /// Holding a SRD 5.2 **Dwarven Thrower** — *"It deals an extra 1d8
