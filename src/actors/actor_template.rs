@@ -7628,7 +7628,11 @@ impl ActorInstance {
         // and same reason as the long rest's — see there — minus the
         // exhaustion rung, which RAW does not grant for a short rest.
         self.refill_breath();
-        let con_mod = modifier_from_score(self.constitution);
+        // Through `ability_score`, not off the field: an Amulet of Health
+        // is a Constitution of 19, and the hit dice an hour of sitting
+        // down buys back are the most visible thing a Constitution of
+        // 19 is for.
+        let con_mod = self.ability_modifier(AbilityScoreType::Constitution);
         let dice_count = (self.level / 2).max(1);
         let roll = roller.roll(&Dice::new(dice_count, 8)) as i32;
         let heal = (roll + con_mod * dice_count as i32).max(0) as u32;
@@ -8530,7 +8534,7 @@ impl ActorInstance {
             return None;
         }
         self.level += 1;
-        let con_mod = modifier_from_score(self.constitution);
+        let con_mod = self.ability_modifier(AbilityScoreType::Constitution);
         let roll = roller.roll(&Dice::new(1, 10)) as i32;
         let gain = (roll + con_mod).max(1) as u32;
         self.base_hitpoints = self.base_hitpoints.saturating_add(gain);
@@ -9345,15 +9349,36 @@ impl ActorInstance {
         self.team_id
     }
 
+    /// This actor's score in `ast`, with any floor a carried item puts
+    /// under it.
+    ///
+    /// The single chokepoint for all six numbers, which is what makes
+    /// SRD 5.2's *"your Strength is 19 while you wear these gauntlets"*
+    /// a one-line rule rather than a sweep: `ability_modifier` reads
+    /// this, and the attack roll, the damage roll, the save, the
+    /// grapple contest and the initiative die all read that. See
+    /// `Item::ability_score_floors` for the shape and for what the four
+    /// items on it used to ship instead.
+    ///
+    /// The floor is a `max`, per RAW's second sentence — the item does
+    /// nothing for a creature already at or above the number — and two
+    /// items granting floors on the same score resolve to the higher,
+    /// which is the only reading of wearing both that is not arbitrary.
     pub fn ability_score(&self, ast: AbilityScoreType) -> u32 {
-        match ast {
+        let base = match ast {
             AbilityScoreType::Strength => self.strength,
             AbilityScoreType::Intelligence => self.intelligence,
             AbilityScoreType::Dexterity => self.dexterity,
             AbilityScoreType::Wisdom => self.wisdom,
             AbilityScoreType::Constitution => self.constitution,
             AbilityScoreType::Charisma => self.charisma,
-        }
+        };
+        self.items
+            .iter()
+            .flat_map(|item| item.ability_score_floors.iter())
+            .filter(|(a, _)| *a == ast)
+            .map(|(_, score)| *score)
+            .fold(base, u32::max)
     }
 
     /// True if any active condition's `blocks_action_economy` clause
@@ -9648,7 +9673,7 @@ impl ActorInstance {
     pub fn ac_floor(&self) -> i32 {
         let mut floor = 0;
         if self.has_condition(Condition::MageArmored) {
-            floor = floor.max(13 + modifier_from_score(self.dexterity));
+            floor = floor.max(13 + self.ability_modifier(AbilityScoreType::Dexterity));
         }
         if self.has_condition(Condition::Barkskinned) {
             floor = floor.max(16);
@@ -10756,7 +10781,7 @@ impl ActorInstance {
     }
 
     pub fn initiative_mod(&self) -> i32 {
-        modifier_from_score(self.dexterity)
+        self.ability_modifier(AbilityScoreType::Dexterity)
     }
 
     /// True if the actor rolls the initiative d20 with advantage. Read by
@@ -10941,7 +10966,7 @@ impl ActorInstance {
             && self.is_bloodied()
             && self.has_passive_feature(crate::actions::class_features::SURVIVOR_TAG)
         {
-            let con_mod = modifier_from_score(self.constitution);
+            let con_mod = self.ability_modifier(AbilityScoreType::Constitution);
             let amount = (5 + con_mod).max(1) as u32;
             self.heal(amount);
         }

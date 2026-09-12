@@ -153,6 +153,37 @@ pub struct Item {
     /// would put three Staves of Fire in the pack and let a player drop
     /// the Fireball half.
     pub on_use: &'static [&'static (dyn crate::actions::action_template::Action + Send + Sync)],
+    /// Ability scores this item **sets a floor under** while it is
+    /// carried — SRD 5.2's *"Your Strength is 19 while you wear these
+    /// gauntlets. They have no effect on you if your Strength is 19 or
+    /// higher without them."*
+    ///
+    /// The sentence four items in this file are written around, and the
+    /// one the file had no way to say. Every one of them shipped as an
+    /// approximation with a docstring explaining the gap — the Belt of
+    /// Giant Strength's said outright that *"the engine doesn't model
+    /// overwriting ability scores, so we collapse the STR-set clause
+    /// onto the load-bearing combat effects of a STR bump"*, and what
+    /// that collapse bought was `+2 damage` and `+10 max HP`: two
+    /// numbers that are a STR bump's *consequences* on one lane each,
+    /// standing in for a score that feeds eight.
+    ///
+    /// A floor rather than an assignment, which is RAW's own second
+    /// sentence and not a softening of it: the item is worth nothing to
+    /// a creature already at or above the number. Read through
+    /// `ActorInstance::ability_score`, which is the single chokepoint
+    /// `ability_modifier` and everything downstream of it goes through
+    /// — so one row here reaches the attack roll, the damage roll, the
+    /// saving throw, the grapple contest, the initiative die and the
+    /// short rest at once, which is exactly the spread the
+    /// approximations could not cover.
+    ///
+    /// A slice rather than one pair, because nothing in RAW rules out a
+    /// second row and the shape costs nothing; no SRD item sets two
+    /// today. Multiple carried items each contribute their own floor and
+    /// the highest wins, which is what "your Strength is 19" and "your
+    /// Strength is 21" say when worn together.
+    pub ability_score_floors: &'static [(crate::engine::types::AbilityScoreType, u32)],
     /// Conditions the wearer is immune to while carrying this item.
     /// Folded into `ActorInstance::effectively_immune_to_condition` so
     /// trinkets like the Necklace of Adaptation (Poisoned-immune) and
@@ -406,6 +437,7 @@ impl Item {
         glyph: ' ',
         bonuses: ItemBonuses::ZERO,
         on_use: &[],
+        ability_score_floors: &[],
         condition_immunities: &[],
         damage_resistances: &[],
         damage_immunities: &[],
@@ -453,10 +485,28 @@ pub static CLOAK_OF_RESISTANCE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Amulet of Health** (Wondrous item, Rare) — *"Your Constitution is
+/// 19 while you wear this amulet. It has no effect on you if your
+/// Constitution is 19 or higher without it."*
+///
+/// The only row on `ability_score_floors` that is not Strength, and the
+/// one that keeps a number beside its floor. The `+10 max HP` was the
+/// whole of the item before the floor lane existed, and it stays,
+/// because this engine rolls a creature's hit points once from a printed
+/// expression at instantiation and has no way to recompute them when a
+/// Constitution changes at round four. RAW's amulet does raise the hit
+/// point maximum; the ten points are that clause, priced at roughly what
+/// two modifier steps are worth across a chassis's hit dice.
+///
+/// Everything else a Constitution of 19 is for arrives through the floor
+/// and did not arrive at all before: the Constitution save, which is the
+/// concentration save and the poison save and half the traps in the
+/// dungeon, and the hit dice a short rest buys back.
 pub static AMULET_OF_HEALTH: Item = Item {
     name: "Amulet of Health",
     glyph: 'a',
     bonuses: ItemBonuses { max_hp: 10, ..ItemBonuses::ZERO },
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Constitution, 19)],
     ..Item::DEFAULTS
 };
 
@@ -595,13 +645,24 @@ pub static PERIAPT_OF_WOUND_CLOSURE: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Gauntlets of Ogre Power — +1 AC from the reinforced plates on the
-/// gauntlets, plus +5 max HP from the magical vigor. A martial
-/// trinket that makes the front-liner stickier.
+/// **Gauntlets of Ogre Power** (Wondrous item, Uncommon) — *"Your
+/// Strength is 19 while you wear these gauntlets. They have no effect on
+/// you if your Strength is 19 or higher without them."*
+///
+/// The cheap end of the `ability_score_floors` lane and the bottom of a
+/// ladder whose top is the Belt of Giant Strength (storm) at 29. It used
+/// to be `+1 AC` and `+5 max HP`, which is a defensive trinket wearing
+/// an offensive item's name — nothing about ogre strength is armour.
+///
+/// Worth noting what it is worth *to whom*, because that changes with
+/// the floor and could not before: a wizard with Strength 8 gains five
+/// modifier points and a fighter with Strength 18 gains half of one.
+/// RAW intends exactly that asymmetry, and it is the reason an Uncommon
+/// item is allowed to name a number this large.
 pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
     name: "Gauntlets of Ogre Power",
     glyph: 'G',
-    bonuses: ItemBonuses { ac: 1, max_hp: 5, ..ItemBonuses::ZERO },
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 19)],
     ..Item::DEFAULTS
 };
 
@@ -1217,24 +1278,83 @@ pub static WEAPON_PLUS_THREE: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Belt of Giant Strength — passive trinket. 5e RAW: sets the wearer's
-/// STR score to a fixed value (19 for Hill Giant, 25 for Storm Giant);
-/// the engine doesn't model overwriting ability scores, so we collapse
-/// the STR-set clause onto the load-bearing combat effects of a STR
-/// bump: +2 damage on every swing (STR mod's typical +3 → +5 shift) and
-/// +10 max HP (the CON-adjacent vitality the belt represents). Distinct
-/// from `GAUNTLETS_OF_OGRE_POWER` (+1 AC / +5 HP) — the belt's damage
-/// rider is the offensive niche; the gauntlets sit on the defensive lane.
+/// **Belt of Giant Strength (hill)** (Wondrous item, Rare) — *"While
+/// wearing this belt, your Strength changes to a score granted by the
+/// belt. … The item has no effect on you if your Strength without the
+/// belt is equal to or greater than the belt's score."* Hill giant: 21.
+///
+/// The bottom rung of [`GIANT_STRENGTH_BELTS`], and the item whose old
+/// docstring named this gap: *"the engine doesn't model overwriting
+/// ability scores, so we collapse the STR-set clause onto the
+/// load-bearing combat effects of a STR bump: +2 damage on every swing
+/// and +10 max HP."*
+///
+/// What that collapse missed is most of what a Strength score does. It
+/// paid the damage roll and skipped the attack roll it comes with; it
+/// skipped Strength saving throws, which is what a belt is *for* against
+/// a shove or a Thunderwave; it skipped the grapple and shove contests,
+/// where a 21 against a 14 is nearly a different creature; and it paid
+/// ten hit points the belt has never granted. It also paid all of that
+/// to a wizard with Strength 8 and to a barbarian with Strength 20
+/// identically, where RAW gives the second one nothing at all.
+///
+/// It rides `ability_score_floors` now, which is one row and reaches all
+/// six of those at once.
 pub static BELT_OF_GIANT_STRENGTH: Item = Item {
-    name: "Belt of Giant Strength",
+    name: "Belt of Giant Strength (hill)",
     glyph: '~',
-    bonuses: ItemBonuses {
-        damage_bonus: 2,
-        max_hp: 10,
-        ..ItemBonuses::ZERO
-    },
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 21)],
     ..Item::DEFAULTS
 };
+
+/// **Belt of Giant Strength (frost or stone)** (Very Rare) — Strength
+/// 23. See [`BELT_OF_GIANT_STRENGTH`] for the family.
+pub static BELT_OF_STONE_GIANT_STRENGTH: Item = Item {
+    name: "Belt of Giant Strength (stone)",
+    glyph: '~',
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 23)],
+    ..Item::DEFAULTS
+};
+
+/// **Belt of Giant Strength (fire)** (Very Rare) — Strength 25.
+pub static BELT_OF_FIRE_GIANT_STRENGTH: Item = Item {
+    name: "Belt of Giant Strength (fire)",
+    glyph: '~',
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 25)],
+    ..Item::DEFAULTS
+};
+
+/// **Belt of Giant Strength (cloud)** (Legendary) — Strength 27.
+pub static BELT_OF_CLOUD_GIANT_STRENGTH: Item = Item {
+    name: "Belt of Giant Strength (cloud)",
+    glyph: '~',
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 27)],
+    ..Item::DEFAULTS
+};
+
+/// **Belt of Giant Strength (storm)** (Legendary) — Strength 29, the
+/// highest number any item in the file puts on a sheet.
+pub static BELT_OF_STORM_GIANT_STRENGTH: Item = Item {
+    name: "Belt of Giant Strength (storm)",
+    glyph: '~',
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 29)],
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's five Belts of Giant Strength, in the order its own table
+/// prints them.
+///
+/// A cohort rather than five loose statics for the reason
+/// `MAGIC_ARMOURY` and `WAR_MAGE_LADDER` are: the family has an
+/// invariant — the scores climb, and every rung is a floor on Strength
+/// and on nothing else — and an invariant needs something to read.
+pub static GIANT_STRENGTH_BELTS: &[&Item] = &[
+    &BELT_OF_GIANT_STRENGTH,
+    &BELT_OF_STONE_GIANT_STRENGTH,
+    &BELT_OF_FIRE_GIANT_STRENGTH,
+    &BELT_OF_CLOUD_GIANT_STRENGTH,
+    &BELT_OF_STORM_GIANT_STRENGTH,
+];
 
 /// Potion of Supreme Healing — Action; 10d4+20 self-heal. Top of the
 /// healing-potion tier: Healing (2d4+2) → Greater (4d4+4) → Superior
@@ -1621,6 +1741,17 @@ pub static POTION_OF_COLD_RESISTANCE: Item = Item {
 /// rounds (+1d4 weapon damage rider, size bump). Sibling to Potion of
 /// Growth — same condition envelope, distinct in-fiction trigger so the
 /// loot pool covers the offensive bruiser consumable lane at two rolls.
+///
+/// **Not on `ability_score_floors`,** and the reason is the one thing
+/// that lane cannot do. RAW's potion sets Strength to 21 for an hour,
+/// which is the Belt of Giant Strength (hill) one shelf over with a
+/// timer on it — but the floor is read off the *inventory*, and a potion
+/// leaves the inventory the moment it is drunk. Putting the clause on a
+/// condition instead would need a per-condition score table beside
+/// `condition_links` and `condition_damage_types`, which is a lane worth
+/// building the day a second timed score-setter arrives and is not worth
+/// building for one potion. `Enlarged` is the honest stand-in in the
+/// meantime: it is the same fiction and it pays on the same swing.
 pub static POTION_OF_HILL_GIANT_STRENGTH: Item = Item {
     name: "Potion of Hill Giant Strength",
     glyph: 'G',
@@ -4868,10 +4999,21 @@ pub static LOOT_POOL: &[&Item] = &[
     &SHIELD_PLUS_ONE,
     &SHIELD_PLUS_TWO,
     &SHIELD_PLUS_THREE,
-    // Belt of Giant Strength — offensive bruiser trinket: +damage and
-    // +max-HP. Single low-weight entry alongside Gauntlets of Ogre
-    // Power.
+    // The Belts of Giant Strength, all five rungs, single entries each.
+    // RAW's own rarity column climbs with the score — Rare, Very Rare,
+    // Very Rare, Legendary, Legendary — and even odds across the ladder
+    // is what makes the draw matter: a hill belt is a good find for a
+    // wizard and nothing at all for a barbarian, and a storm belt is
+    // the best item in this file for either of them. Weighting the
+    // bottom rung up, the way the `+N` ladders are weighted, would be
+    // wrong here for the reason that ladder is right there: those rungs
+    // are the same item at three prices, and these five are the same
+    // *sentence* at five very different ones.
     &BELT_OF_GIANT_STRENGTH,
+    &BELT_OF_STONE_GIANT_STRENGTH,
+    &BELT_OF_FIRE_GIANT_STRENGTH,
+    &BELT_OF_CLOUD_GIANT_STRENGTH,
+    &BELT_OF_STORM_GIANT_STRENGTH,
     // Supreme Healing — rarest tier of the healing-potion ladder.
     // Single low-weight entry above Superior Healing (also single).
     &POTION_OF_SUPREME_HEALING,

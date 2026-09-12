@@ -48300,27 +48300,128 @@ fn weapon_plus_three_folds_into_caster_buffs() {
     assert_eq!(dmg_after - dmg_before, 3, "+3 weapon should add +3 damage");
 }
 
-/// Belt of Giant Strength: passive trinket grants +max_hp and +damage.
-/// Confirms the bonuses flow through the item_bonuses aggregator.
+/// The score-floor lane: an item that says "your Strength is N" puts N
+/// on the sheet, and puts it there once.
+///
+/// Four claims, and each is a thing the old `+2 damage, +10 max HP`
+/// approximation got wrong:
+///
+///   - **The score moves**, so everything downstream of it moves — the
+///     modifier, the save, the attack roll, the grapple contest.
+///   - **It is a floor, not an assignment.** RAW's second sentence:
+///     *"no effect on you if your Strength is equal to or greater than
+///     the belt's score."* The approximation paid a wizard and a
+///     barbarian the same +2, where RAW pays the wizard five modifier
+///     points and the barbarian nothing.
+///   - **It leaves the item off when it comes off.** A floor read
+///     through the inventory has to stop reading when the belt is
+///     dropped.
+///   - **Two floors resolve to the higher**, which is the only reading
+///     of wearing a belt and a pair of gauntlets that is not arbitrary.
 #[test]
-fn belt_of_giant_strength_grants_hp_and_damage_buffs() {
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::items::item_template::BELT_OF_GIANT_STRENGTH;
+fn a_score_floor_moves_the_score_and_only_upward() {
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::AbilityScoreType::Strength;
+    use crate::items::item_template::{
+        BELT_OF_GIANT_STRENGTH, BELT_OF_STORM_GIANT_STRENGTH, GAUNTLETS_OF_OGRE_POWER,
+        GIANT_STRENGTH_BELTS,
+    };
 
     let mut e = ei_with_terrain(15, 15, &[]);
-    let id = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    let hp_before = e.actors[&id].max_hitpoints();
-    let dmg_before = e.caster_damage_buffs(id);
+    // A hill giant, because the no-op half needs somebody already above
+    // the gauntlets' number and no PC chassis in the engine is.
+    let giant = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+        .unwrap();
+    let native_giant_str = e.actors[&giant].ability_score(Strength);
+    assert!(
+        e.actors[&wizard].ability_score(Strength) < 19,
+        "the test needs a wizard the gauntlets can actually help"
+    );
+    assert!(
+        native_giant_str >= 19,
+        "the test needs somebody strong enough for the gauntlets to be a no-op"
+    );
+
+    // The whole point of the lane, on the one who needs it…
     e.actors
-        .get_mut(&id)
+        .get_mut(&wizard)
         .unwrap()
-        .pickup_item(&BELT_OF_GIANT_STRENGTH);
-    let hp_after = e.actors[&id].max_hitpoints();
-    let dmg_after = e.caster_damage_buffs(id);
-    assert_eq!(hp_after - hp_before, 10, "belt should add +10 max HP");
-    assert_eq!(dmg_after - dmg_before, 2, "belt should add +2 damage");
+        .pickup_item(&GAUNTLETS_OF_OGRE_POWER);
+    assert_eq!(e.actors[&wizard].ability_score(Strength), 19);
+    assert_eq!(e.actors[&wizard].ability_modifier(Strength), 4);
+    assert_eq!(
+        e.actors[&wizard].save_modifier(Strength) - 4,
+        e.actors[&wizard].save_modifier(Strength) - e.actors[&wizard].ability_modifier(Strength),
+        "the save reads the floored score like everything else"
+    );
+
+    // …and nothing at all on the one who does not.
+    e.actors
+        .get_mut(&giant)
+        .unwrap()
+        .pickup_item(&GAUNTLETS_OF_OGRE_POWER);
+    assert_eq!(
+        e.actors[&giant].ability_score(Strength),
+        native_giant_str,
+        "the gauntlets are a floor, not an assignment"
+    );
+
+    // Off with the gauntlets, back to the sheet.
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .remove_item_by_name(GAUNTLETS_OF_OGRE_POWER.name);
+    assert!(e.actors[&wizard].ability_score(Strength) < 19);
+
+    // Two floors: the higher wins, whichever order they arrived in.
+    for order in [0, 1] {
+        let mut two = ei_with_terrain(15, 15, &[]);
+        let id = two
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pair: [&'static crate::items::item_template::Item; 2] = if order == 0 {
+            [&GAUNTLETS_OF_OGRE_POWER, &BELT_OF_STORM_GIANT_STRENGTH]
+        } else {
+            [&BELT_OF_STORM_GIANT_STRENGTH, &GAUNTLETS_OF_OGRE_POWER]
+        };
+        for item in pair {
+            two.actors.get_mut(&id).unwrap().pickup_item(item);
+        }
+        assert_eq!(two.actors[&id].ability_score(Strength), 29);
+    }
+
+    // And the ladder is a ladder: five rungs, each a Strength floor and
+    // nothing else, climbing.
+    let mut previous = 0;
+    for belt in GIANT_STRENGTH_BELTS {
+        assert_eq!(
+            belt.ability_score_floors.len(),
+            1,
+            "{} grants more than one floor",
+            belt.name
+        );
+        let (ability, score) = belt.ability_score_floors[0];
+        assert_eq!(ability, Strength, "{} floors the wrong score", belt.name);
+        assert!(
+            score > previous,
+            "{} does not climb above the rung below it",
+            belt.name
+        );
+        previous = score;
+        assert_eq!(
+            belt.bonuses,
+            crate::items::item_template::ItemBonuses::ZERO,
+            "{} carries a flat bonus on top of the score it sets",
+            belt.name
+        );
+    }
+    assert_eq!(BELT_OF_GIANT_STRENGTH.ability_score_floors[0].1, 21);
+    assert_eq!(BELT_OF_STORM_GIANT_STRENGTH.ability_score_floors[0].1, 29);
 }
 
 /// Wand of Web: burst, DEX save vs DC 15, fail = Restrained for 10
