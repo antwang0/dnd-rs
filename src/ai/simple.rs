@@ -7541,7 +7541,7 @@ fn try_shove(
                 && ally.is_combat_active()
                 && ally.footprint_gap_to(t) <= MELEE_REACH
                 && ally
-                    .actions
+                    .attack_repertoire()
                     .iter()
                     .any(|a| a.is_harmful() && a.deals_damage() && a.is_melee_attack())
         });
@@ -7606,7 +7606,7 @@ fn try_grapple(
         // the rung grappled ogres, giants, treants and dragons — all of
         // which want to be exactly where the grapple pins them — and
         // spent the Action to do it.
-        let has_ranged = t.actions.iter().any(|a| {
+        let has_ranged = t.attack_repertoire().iter().any(|a| {
             a.is_harmful()
                 && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
                 && !a.is_melee_attack()
@@ -7660,15 +7660,14 @@ fn try_damage_free_grab(
     }
     let my_team = actor.team();
     let mut grabs: Vec<&'static (dyn Action + Send + Sync)> = actor
-        .actions
-        .iter()
+        .attack_repertoire()
+        .into_iter()
         .filter(|a| {
             a.is_harmful()
                 && a.is_weapon_attack()
                 && !a.deals_damage()
                 && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
         })
-        .copied()
         .collect();
     if grabs.is_empty() {
         return None;
@@ -7856,7 +7855,7 @@ fn has_ranged_attack(encounter: &EncounterInstance, actor_id: usize) -> bool {
     // outranges it two to one, every turn, while the rocks came in and
     // its own regeneration undid them. Its actual offense was a melee
     // multiattack it never once used.
-    actor.actions.iter().any(|a| {
+    actor.attack_repertoire().iter().any(|a| {
         a.is_harmful()
             && a.deals_damage()
             && matches!(a.targeting_schema(), TargetingSchema::SingleActor)
@@ -7897,7 +7896,7 @@ fn best_damage_per_lane(
         return (None, None);
     };
     let (mut melee, mut ranged) = (None::<f32>, None::<f32>);
-    for action in actor.actions.iter() {
+    for action in actor.attack_repertoire() {
         if !action.is_harmful()
             || !action.deals_damage()
             || !matches!(action.targeting_schema(), TargetingSchema::SingleActor)
@@ -7908,7 +7907,7 @@ fn best_damage_per_lane(
             continue;
         };
         if !enemies.iter().any(|&tid| {
-            ActionExecutionInfo::new(*action, actor_id, Some(vec![tid]), None, None)
+            ActionExecutionInfo::new(action, actor_id, Some(vec![tid]), None, None)
                 .validate(encounter)
         }) {
             continue;
@@ -8009,7 +8008,7 @@ fn under_melee_threat(encounter: &EncounterInstance, actor_id: usize) -> bool {
         // widening this gate would fire the kiting rung in exactly the
         // situations where it wastes the turn, and would do it ahead of
         // every rung that could have answered the threat instead.
-        other.actions.iter().any(|a| {
+        other.attack_repertoire().iter().any(|a| {
             matches!(a.targeting_schema(), TargetingSchema::SingleActor)
                 && a.reach_tiles()
                     .is_some_and(|r| r <= MELEE_REACH && dist <= r)
@@ -10731,15 +10730,14 @@ fn best_melee_damage_if_closed(
 ) -> Option<f32> {
     let actor = encounter.actors.get(&actor_id)?;
     let mut best: Option<f32> = None;
-    // `actor.actions`, and deliberately — see
-    // `no_item_in_the_loot_pool_grants_a_weapon_attack`. The pickers that
-    // ask "what could I *do*" read `available_actions`, because a potion,
-    // a scroll and a staff's spell menu are all things a creature can do
-    // and none of them is on a stat block. This one asks "what could I
-    // *swing*", and nothing the loot table hands out is a swing: a magic
-    // weapon in this engine is a bonus on the template's own attack, not
-    // an attack of its own.
-    for action in actor.actions.iter() {
+    // `attack_repertoire`, and deliberately — see
+    // `a_swing_an_item_grants_is_one_the_swing_lanes_can_see`. The
+    // pickers that ask "what could I *do*" read `available_actions`,
+    // because a potion, a scroll and a staff's spell menu are all things
+    // a creature can do and none of them is on a stat block. This one
+    // asks "what could I *swing*", which is the stat block plus the one
+    // thing the loot table hands out that is a swing.
+    for action in actor.attack_repertoire() {
         if !action.is_harmful()
             || !action.deals_damage()
             || !action.is_melee_attack()
@@ -10973,7 +10971,7 @@ fn try_escape_grapple(
     // with no attacks at all, which then has nothing to lose by
     // escaping — treat it as reach 0.
     let best_reach = actor
-        .actions
+        .attack_repertoire()
         .iter()
         .filter(|a| a.is_harmful() && a.deals_damage())
         .filter_map(|a| a.reach_tiles())
@@ -11040,7 +11038,7 @@ fn try_pry_attachment(
     // *could* finish a creature, and an over-estimate errs toward
     // swinging, which is the cheaper mistake.
     let best_swing = actor
-        .actions
+        .attack_repertoire()
         .iter()
         .filter(|a| a.is_harmful() && a.deals_damage())
         .filter_map(|a| a.expected_damage(encounter, actor_id))
@@ -19129,57 +19127,109 @@ mod tests {
         );
     }
 
-    /// Nothing on the loot table is a weapon attack, which is what lets
-    /// half the AI go on reading the stat block's own action list.
+    /// A swing an item grants is a swing the AI can see.
     ///
-    /// The pickers split on a question the two lists answer differently.
-    /// "What could I *do* this turn" is `available_actions` — template
+    /// The pickers split on a question two lists answer differently.
+    /// *"What could I do this turn"* is `available_actions` — stat block
     /// plus pack — because a potion, a scroll and a staff's spell menu
     /// are all things a creature can do and none of them is on a stat
-    /// block. "What could I *swing*" is `actor.actions`, and the reason
-    /// that is not a bug is this invariant: a magic weapon in this engine
-    /// is a bonus on the template's own attack (`ItemBonuses`), a rider
-    /// keyed off a condition (`ON_HIT_RIDERS`), or a prime that arms one
-    /// — never an attack of its own.
+    /// block. *"What could I swing"* used to be `actor.actions` alone,
+    /// under an invariant that held for as long as it did because no
+    /// item shipped an attack: a magic weapon in this engine was a bonus
+    /// on the template's own swing (`ItemBonuses`), a rider keyed off a
+    /// condition (`ON_HIT_RIDERS`), or a prime that armed one.
     ///
-    /// The day an item ships an actual swing, `best_damage_per_lane`,
-    /// `best_melee_damage_if_closed`, `try_step_away_from_threats`' reach
-    /// scan and `try_pry_attachment`'s comparison all start
-    /// under-reporting, silently and only for whoever picked the thing
-    /// up. This is the test that says so first.
+    /// The Scimitar of Speed is the first that is not. Its whole clause
+    /// is *"you can make one attack with it as a Bonus Action"*, so it
+    /// arrives as an `on_use` weapon attack, and every lane still
+    /// reading the stat block alone would have under-reported its
+    /// holder's offense — silently, and only for whoever picked the
+    /// thing up.
+    ///
+    /// `ActorInstance::attack_repertoire` is the list those lanes read
+    /// now, and it is deliberately not `available_actions`: it takes
+    /// only the `is_weapon_attack` rows out of the pack. This test pins
+    /// both directions of that, because both are load-bearing.
+    ///
+    ///   - **A weapon an item grants is in.** `best_melee_damage_if_closed`
+    ///     is asked about a creature with no melee attack of its own; it
+    ///     has no opinion until the scimitar is in the pack, and then it
+    ///     has one.
+    ///   - **A blast an item grants is out.** A Wand of Fireballs is
+    ///     harmful, damaging and reaches across the board, and a fighter
+    ///     holding one is not a ranged attacker — it is a fighter with
+    ///     three rounds of borrowed artillery and a greatsword.
+    ///     `has_ranged_attack` drives the kiting rung, and a `true`
+    ///     there walks that fighter backwards out of the fight it is
+    ///     built for, once, and leaves it there with an empty stick.
     #[test]
-    fn no_item_in_the_loot_pool_grants_a_weapon_attack() {
-        use crate::items::item_template::LOOT_POOL;
+    fn a_swing_an_item_grants_is_one_the_swing_lanes_can_see() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::items::item_template::{SCIMITAR_OF_SPEED, WAND_OF_FIREBALLS};
 
-        let mut swings: Vec<String> = Vec::new();
-        for item in LOOT_POOL {
-            for action in item.on_use {
-                // A weapon attack is a harmful, damaging, single-target
-                // action with a reach — the shape every swing-estimating
-                // lane filters for. A staff's Fireball is harmful and
-                // damaging and is not one; a staff's prime deals no
-                // damage at all.
-                if action.is_harmful()
-                    && action.deals_damage()
-                    && action.is_weapon_attack()
-                {
-                    swings.push(format!("{} offers `{}`", item.name, action.name()));
-                }
-            }
-        }
+        // The premise: the item really does offer a weapon attack, and
+        // the wand really does not.
         assert!(
-            swings.is_empty(),
-            "an item now grants a weapon attack, and four AI lanes read the \
-             stat block's list on the assumption that none does:\n  {}",
-            swings.join("\n  ")
+            SCIMITAR_OF_SPEED
+                .on_use
+                .iter()
+                .any(|a| a.is_weapon_attack() && a.is_harmful() && a.deals_damage()),
+            "the scimitar stopped offering a swing and this test is about nothing"
         );
-        // The control. `is_weapon_attack` defaults to false, so a sweep
-        // that only ever asked it would pass for an empty loot table, a
-        // renamed accessor, or a day the predicate stopped meaning
-        // anything.
         assert!(
-            crate::actions::monster_attacks::GREATSWORD.is_weapon_attack(),
-            "the predicate this sweep is built on no longer identifies a swing"
+            WAND_OF_FIREBALLS.on_use.iter().any(|a| a.is_harmful()),
+            "the wand stopped offering anything and the control is empty"
+        );
+        assert!(
+            !WAND_OF_FIREBALLS.on_use.iter().any(|a| a.is_weapon_attack()),
+            "a wand is not a weapon"
+        );
+
+        let mut e = empty_arena();
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        // Strip the chassis back to no melee at all, so the scimitar is
+        // the only thing that could answer — a fighter's greatsword
+        // would otherwise win the `max` and hide the whole question.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .actions
+            .retain(|a| !a.is_melee_attack());
+        assert!(
+            super::best_melee_damage_if_closed(&e, id, foe).is_none(),
+            "the fixture still has a melee attack of its own"
+        );
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&SCIMITAR_OF_SPEED);
+        assert!(
+            super::best_melee_damage_if_closed(&e, id, foe).is_some(),
+            "the swing lane cannot see the swing the scimitar grants"
+        );
+
+        // The control, on the other side of the same list: the wand is
+        // artillery, not a lane.
+        let mut w = empty_arena();
+        let gunner = w
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        w.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        let bare = super::has_ranged_attack(&w, gunner);
+        w.actors
+            .get_mut(&gunner)
+            .unwrap()
+            .pickup_item(&WAND_OF_FIREBALLS);
+        assert_eq!(
+            super::has_ranged_attack(&w, gunner),
+            bare,
+            "a wand in the pack turned its holder into a ranged attacker"
         );
     }
 

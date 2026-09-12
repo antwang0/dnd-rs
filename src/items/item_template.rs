@@ -4470,6 +4470,53 @@ pub static THUNDEROUS_GREATCLUB: Item = Item {
 /// `Condition::Berserk` for why the engine's translation of every "you
 /// must attack X" clause is Disadvantage against everyone else, and what
 /// the two unmodeled clauses are.
+/// **Scimitar of Speed** (Weapon, Scimitar; Very Rare) — *"You gain a
+/// +2 bonus to attack rolls and damage rolls made with this magic
+/// weapon. In addition, you can make one attack with it as a Bonus
+/// Action on each of your turns."*
+///
+/// The first item in the armoury whose clause is a **swing** rather
+/// than a die on one. Every other magic weapon on the shelf sharpens
+/// the attacks its holder was already going to make — an extra 3d6
+/// against a dragon, a save-or-die on a 20, a flame that sticks. This
+/// one hands them another attack, which is a different kind of
+/// upgrade: it scales with everything else the holder brings, because
+/// every on-hit rider they are carrying rides it too.
+///
+/// The swing is `monster_attacks::SCIMITAR_OF_SPEED_SWING` — the
+/// engine's `SCIMITAR` in every field but one, `cost_resource:
+/// BonusAction`. RAW's *"one … on each of your turns"* needs no ledger
+/// beside it: a creature has one bonus action, and everything else that
+/// wants it — a Rage, a Flurry, a Cunning Action, an off-hand blade, a
+/// Spiritual Weapon — is competing for the same slot. That competition
+/// is the item. A free extra attack would be a strict upgrade and this
+/// is a decision.
+///
+/// The `+2` rides `ItemBonuses` and therefore reaches every attack the
+/// holder makes, not only the scimitar's. That is the file's standing
+/// bargain on this lane — `WEAPON_PLUS_TWO`, `BRACERS_OF_ARCHERY` and
+/// the Thunderous Greatclub all make it — and the alternative is an
+/// item model that binds a bonus to an object, which the engine does
+/// not have; see `Condition::DragonSlaying` for the fuller note.
+///
+/// It carries **no `passive_conditions`** and therefore no row on
+/// `ON_HIT_RIDERS`, which is why it joins the Adamantine Armor, the
+/// Mace of Terror and the Berserker Axe in the armoury sweep's
+/// `no_rider` group: there is nothing to add to a hit, because the
+/// clause *is* the hit.
+pub static SCIMITAR_OF_SPEED: Item = Item {
+    name: "Scimitar of Speed",
+    glyph: '/',
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    on_use: &[&crate::actions::monster_attacks::SCIMITAR_OF_SPEED_SWING],
+    ..Item::DEFAULTS
+};
+
 pub static BERSERKER_AXE: Item = Item {
     name: "Berserker Axe",
     glyph: 'b',
@@ -5378,6 +5425,7 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &THUNDEROUS_GREATCLUB,
     &LUCK_BLADE,
     &BERSERKER_AXE,
+    &SCIMITAR_OF_SPEED,
     &ADAMANTINE_ARMOR,
 ];
 
@@ -6146,6 +6194,12 @@ pub static LOOT_POOL: &[&Item] = &[
     // shield, whether the curse is a curse depends entirely on who
     // picks it up and what they were going to do with their turn.
     &BERSERKER_AXE,
+    // The only weapon on the shelf that hands out a swing rather than a
+    // die. Single entry — it is Very Rare in RAW and it is the one
+    // magic weapon whose value goes *up* with everything else the
+    // holder is carrying, since every on-hit rider they have rides the
+    // extra attack too.
+    &SCIMITAR_OF_SPEED,
     // The wondrous half of the same batch — items whose clause is a
     // defence or a sense rather than a die on a swing. Single entries
     // apiece for the same reason the armoury gets them: each answers one
@@ -6395,7 +6449,15 @@ mod tests {
         //     its curse is a *trigger* (`berserks_its_bearer`) and the
         //     `Berserk` it can produce is what a failed save installs,
         //     not what carrying it grants.
-        let no_rider: &[&Item] = &[&ADAMANTINE_ARMOR, &MACE_OF_TERROR, &BERSERKER_AXE];
+        //   - the **Scimitar of Speed**'s whole clause is an extra
+        //     swing, granted through `on_use`. There is nothing to add
+        //     to a hit because the clause *is* the hit.
+        let no_rider: &[&Item] = &[
+            &ADAMANTINE_ARMOR,
+            &MACE_OF_TERROR,
+            &BERSERKER_AXE,
+            &SCIMITAR_OF_SPEED,
+        ];
         for item in no_rider {
             assert!(
                 item.passive_conditions.is_empty(),

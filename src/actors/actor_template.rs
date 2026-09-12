@@ -7525,6 +7525,50 @@ impl ActorInstance {
         out
     }
 
+    /// Every **swing** this actor could make: the stat block's own
+    /// action list, plus any item in the pack that grants a weapon
+    /// attack.
+    ///
+    /// The narrower sibling of `available_actions` above, and the two
+    /// answer two different questions the AI asks in different places:
+    ///
+    ///   - *"What could I **do** this turn?"* is `available_actions`.
+    ///     A potion, a scroll, a wand and a staff's spell menu are all
+    ///     things a creature can do and none of them is on a stat
+    ///     block, so the pickers that choose a turn read the whole
+    ///     pack.
+    ///   - *"What could I **swing**?"* is this. It is asked by the
+    ///     lanes that compare offense against distance — should I back
+    ///     out of contact and shoot, should I close, is that thing over
+    ///     there a ranged attacker, is my best hit enough to finish the
+    ///     stirge on my arm — and the answer has to be a *repeatable*
+    ///     attack, because every one of those lanes is reasoning about
+    ///     where to stand for the rest of the fight.
+    ///
+    /// That is why the item leg filters on `Action::is_weapon_attack`
+    /// rather than taking `on_use` whole. A Wand of Fireballs is
+    /// harmful, damaging and reaches sixty feet, and a fighter holding
+    /// one is *not* a ranged attacker: it is a fighter with three
+    /// rounds of borrowed artillery and a greatsword. Feeding the
+    /// blast-consumable lane into these comparisons would walk that
+    /// fighter backwards out of the fight it is built for, once, and
+    /// then leave it out there with an empty stick.
+    ///
+    /// Deduped per item name, for the same reason `available_actions`
+    /// is: a second copy of a weapon is more of the same weapon, not a
+    /// second entry on the list.
+    pub fn attack_repertoire(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
+        let mut out = self.actions.clone();
+        let mut seen: HashSet<&'static str> = HashSet::new();
+        for item in &self.items {
+            if item.on_use.is_empty() || !seen.insert(item.name) {
+                continue;
+            }
+            out.extend(item.on_use.iter().copied().filter(|a| a.is_weapon_attack()));
+        }
+        out
+    }
+
     /// Restore full HP, all spell slots, clear non-permanent conditions,
     /// concentration and any temp HP. 5e long rest semantics.
     pub fn long_rest(&mut self) {

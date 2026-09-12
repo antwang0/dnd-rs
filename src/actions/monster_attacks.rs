@@ -3840,6 +3840,55 @@ pub static SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
 ).light()
 .mastery(WeaponMastery::Nick);
 
+/// **Scimitar of Speed** (Weapon, Scimitar; Very Rare) — the swing its
+/// second sentence buys: *"you can make one attack with it as a Bonus
+/// Action on each of your turns."*
+///
+/// The same blade as `SCIMITAR` above it in every respect a swing has —
+/// ability, die, damage type, reach, light, Nick — and different in the
+/// one field that is the whole item: `cost_resource`. Written as a
+/// struct literal rather than through the `melee` constructor for
+/// exactly that reason; the constructor pins `Resource::Action`.
+///
+/// **RAW's "one … on each of your turns" needs no ledger.** The cost
+/// *is* the cap: a creature has one bonus action per turn, and every
+/// other claimant on it — a Rage, a Flurry, a Cunning Action, a
+/// Spiritual Weapon, an off-hand blade — is competing for the same
+/// slot. That is also what makes the item a decision rather than a
+/// strict upgrade, which a free extra attack would not be.
+///
+/// `is_light` and the Nick mastery are carried because the weapon has
+/// them and both are inert here, which is worth knowing rather than
+/// guessing at: `mark_two_weapon_opening` stamps the light-weapon
+/// ledger only for a swing that cost an **Action**, so this one opens
+/// nothing; and Nick is read by `OffHandAttack::cost` to make *that*
+/// swing free, which this is not.
+///
+/// The `+2` half of RAW's entry is not here. It rides the item's
+/// `ItemBonuses`, the same lane every `+N` weapon in the file uses, so
+/// it reaches the holder's own swings too — see the item's docstring
+/// for why that generalisation is the file's existing convention and
+/// not a decision taken for this blade.
+pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
+    display_name: "scimitar of speed",
+    aliases: &["sos", "speed-scimitar"],
+    attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
+    damage_dice: Dice::new(1, 6),
+    damage_type: DamageType::Slashing,
+    reach: MELEE_REACH,
+    is_melee: true,
+    requires_los: false,
+    cost_resource: Resource::BonusAction,
+    normal_range: None,
+    requires_condition: None,
+    min_effective_range: None,
+    is_light: true,
+    mastery: Some(WeaponMastery::Nick),
+    bloodied_dice: None,
+    damage_type_menu: None,
+};
+
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
 /// Pairs with a primary action attack; reach 12 tiles (≈30ft).
 pub static SHORTBOW: SimpleWeapon = SimpleWeapon {

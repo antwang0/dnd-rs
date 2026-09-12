@@ -950,6 +950,97 @@ fn goblin_can_use_action_and_bonus_action_in_one_turn() {
     assert!(e.actors[&goblin].can_consume_resource(Resource::BonusAction));
 }
 
+/// The Scimitar of Speed's second sentence, and the reason it needs no
+/// ledger beside it.
+///
+/// RAW: *"you can make one attack with it as a Bonus Action on each of
+/// your turns."* The **cost is the cap** — a creature has one bonus
+/// action, so "one per turn" falls out of `Resource::BonusAction`
+/// rather than out of a per-turn latch somebody has to remember to
+/// clear. That is the claim worth pinning, because the alternative
+/// implementation (Action cost plus a latch) would look identical in
+/// the item's own docstring and behave completely differently.
+///
+/// Three things, in the order they matter:
+///   - holding the blade puts the swing on the wielder's list at all;
+///   - it prices as a bonus action, so it composes with an Action
+///     attack rather than replacing one;
+///   - a second one in the same turn is refused, and refused by the
+///     empty bonus-action slot rather than by anything bespoke.
+#[test]
+fn the_scimitar_of_speed_buys_a_bonus_action_and_exactly_one() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::SCIMITAR_OF_SPEED_SWING;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::SCIMITAR_OF_SPEED;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+
+    // Nothing until the blade is picked up.
+    assert!(
+        !e.actors[&fighter]
+            .available_actions()
+            .iter()
+            .any(|a| a.name() == SCIMITAR_OF_SPEED_SWING.name())
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&SCIMITAR_OF_SPEED);
+    assert!(
+        e.actors[&fighter]
+            .available_actions()
+            .iter()
+            .any(|a| a.name() == SCIMITAR_OF_SPEED_SWING.name()),
+        "the blade is in the pack and the swing is not on the list"
+    );
+
+    // It is priced as a bonus action and nothing else, so it composes
+    // with whatever the Action slot is spent on.
+    let costs = SCIMITAR_OF_SPEED_SWING.cost(&e, fighter, Some(&vec![foe]), None, None);
+    assert!(costs.iter().any(|c| matches!(c, Resource::BonusAction)));
+    assert!(!costs.iter().any(|c| matches!(c, Resource::Action)));
+
+    let aei = ActionExecutionInfo::new(
+        &SCIMITAR_OF_SPEED_SWING,
+        fighter,
+        Some(vec![foe]),
+        None,
+        None,
+    );
+    assert!(aei.validate(&e), "the swing does not reach an adjacent foe");
+
+    // Spend the Action elsewhere: the swing is still on the table,
+    // which is the whole of what "in addition" buys.
+    assert!(
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .consume_resource(Resource::Action)
+    );
+    assert!(aei.validate(&e), "the Action slot should not gate this swing");
+
+    // Spend the bonus action, and the cap arrives with no help from
+    // anything bespoke.
+    assert!(
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .consume_resource(Resource::BonusAction)
+    );
+    assert!(
+        !aei.validate(&e),
+        "a second swing in one turn: the cost is supposed to be the cap"
+    );
+}
+
 #[test]
 fn wolf_bite_validates_in_melee() {
     use crate::actions::monster_attacks::WOLF_BITE;
