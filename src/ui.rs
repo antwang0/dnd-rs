@@ -1034,19 +1034,36 @@ pub fn render_sideinfo(
         // the charge, and "Scroll of Fireball (1)" would be noise on
         // every line of the list.
         //
-        // An item that wants attunement and has not got it is marked
-        // `*`, because the panel is the only place the player can find
-        // out. It is carried, it is listed, and it is doing nothing —
-        // which without the mark reads as a bug in whichever bonus the
-        // player was expecting. See `Item::requires_attunement`.
+        // An item that wants attunement and has not got it is marked,
+        // because the panel is the only place the player can find out.
+        // It is carried, it is listed, and it is doing nothing — which
+        // without the mark reads as a bug in whichever bonus the player
+        // was expecting.
+        //
+        // Two marks, because there are two reasons and they want
+        // different things from the player. `*` is *no slot free*, and
+        // the fix is a swap. `‡` is *not yours* — RAW's "(requires
+        // attunement by a Paladin)" — and there is no fix: freeing every
+        // slot in the pack will not make a wizard a paladin, so telling
+        // the player to go and swap something would be worse than saying
+        // nothing. See `Item::requires_attunement` and
+        // `Item::attunement_restriction`.
+        let mut blocked_by_ceiling = false;
+        let mut refused: Vec<&'static str> = Vec::new();
         let names: Vec<String> = curr_actor
             .items()
             .iter()
             .map(|i| {
-                let inert = if i.requires_attunement && !curr_actor.is_attuned_to(i.name) {
-                    "*"
-                } else {
+                let inert = if !i.requires_attunement || curr_actor.is_attuned_to(i.name) {
                     ""
+                } else if !curr_actor.may_attune_to_item(i) {
+                    if let Some(r) = i.attunement_restriction {
+                        refused.push(r.describes);
+                    }
+                    "‡"
+                } else {
+                    blocked_by_ceiling = true;
+                    "*"
                 };
                 match curr_actor.item_charges_remaining(i.name) {
                     0 => format!("{}{}", i.name, inert),
@@ -1061,30 +1078,25 @@ pub fn render_sideinfo(
         // The attunement ledger, and only when there is something to
         // say about it. A party three rooms in carrying nothing that
         // attunes should not be told it has three free slots it has no
-        // use for; a party at the ceiling with a fourth ring in the
-        // pack needs the number and the `*` above to mean something
+        // use for; a party at the ceiling with a fourth ring in the pack
+        // needs the number and the marks above to mean something
         // together.
-        let attuned = curr_actor.attunements().len();
-        let wants_attunement = curr_actor
-            .items()
-            .iter()
-            .any(|i| i.requires_attunement);
-        if wants_attunement {
+        if curr_actor.items().iter().any(|i| i.requires_attunement) {
+            refused.sort_unstable();
+            refused.dedup();
+            let mut note = String::new();
+            if blocked_by_ceiling {
+                note.push_str("  (* inert — 'unattune <item>', then 'attune <item>')");
+            }
+            if !refused.is_empty() {
+                note.push_str(&format!("  (‡ answers only to {})", refused.join(" / ")));
+            }
             stats_lines.push(Line::from(Span::styled(
                 format!(
                     "Attuned: {}/{}{}",
-                    attuned,
+                    curr_actor.attunements().len(),
                     curr_actor.attunement_slots(),
-                    if curr_actor.free_attunement_slots() == 0
-                        && curr_actor
-                            .items()
-                            .iter()
-                            .any(|i| i.requires_attunement && !curr_actor.is_attuned_to(i.name))
-                    {
-                        "  (* inert — 'unattune <item>', then 'attune <item>')"
-                    } else {
-                        ""
-                    }
+                    note
                 ),
                 Style::default().fg(Color::Yellow),
             )));

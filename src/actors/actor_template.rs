@@ -7365,6 +7365,36 @@ impl ActorInstance {
             .filter(move |i| !i.requires_attunement || self.is_attuned_to(i.name))
     }
 
+    /// Whether this creature is who `item` is for — SRD's
+    /// *"requires attunement by a Paladin / a Dwarf / a spellcaster"*.
+    ///
+    /// True for the whole of the table that prints no such clause, which
+    /// is most of it. True for *everything* when the holder carries the
+    /// Thief Rogue's **Use Magic Device**, which is that feature's
+    /// entire text — *"you ignore all class, species and level
+    /// requirements on the use of magic items"* — and the reason the
+    /// feature could not exist before this field did.
+    pub fn may_attune_to_item(&self, item: &Item) -> bool {
+        let Some(restriction) = item.attunement_restriction else {
+            return true;
+        };
+        self.ignores_attunement_restrictions() || (restriction.qualifies)(self)
+    }
+
+    /// True while this creature may bond with anything at all, whoever
+    /// the item was made for — the Thief Rogue's Use Magic Device
+    /// (lv13), and nothing else on the roster.
+    ///
+    /// Note what it does *not* lift: the three-item ceiling. RAW's
+    /// sentence names class, species and level requirements, and says
+    /// nothing about how many bonds a creature may hold at once — those
+    /// are two different rules, and a rogue with four rings would be
+    /// reading a clause that is not there. The ceiling's only widening
+    /// lane is `EXTRA_ATTUNEMENT_SLOTS`.
+    pub fn ignores_attunement_restrictions(&self) -> bool {
+        self.has_passive_feature(crate::actions::class_features::USE_MAGIC_DEVICE_TAG)
+    }
+
     /// True when the bond to the item named `name` has been formed.
     pub fn is_attuned_to(&self, name: &str) -> bool {
         self.attunements.contains(&name)
@@ -7424,6 +7454,14 @@ impl ActorInstance {
             return false;
         };
         if !item.requires_attunement {
+            return false;
+        }
+        // …and the fourth: RAW's *"requires attunement by a Paladin"*.
+        // Refused *before* the refusal set is touched, because a
+        // creature that cannot bond with a thing at all has no
+        // preference about it to record — and because leaving it refused
+        // is what keeps the greedy fill from trying it again every rest.
+        if !self.may_attune_to_item(item) {
             return false;
         }
         // Asking for an item back un-refuses it whether or not there is
@@ -12562,6 +12600,25 @@ impl ActorInstance {
             || self.has_passive_feature(crate::actions::class_features::CANNOT_ATTACK_TAG)
     }
 
+    /// True when this creature has spellcasting of its own — SRD's
+    /// *"requires attunement by a spellcaster"*, and the question
+    /// `AttunementRestriction::SPELLCASTER` asks.
+    ///
+    /// Read off the **maximum** pool rather than the remaining one, and
+    /// that is the whole of the care this needs: a wizard who has spent
+    /// every slot is still a wizard, and a bond that lapsed at the
+    /// bottom of a fight and came back at the rest would be unplayable.
+    ///
+    /// Slots rather than any looser test — a spell on the action list, a
+    /// spellcasting ability — because a stat block's actions include
+    /// plenty of things that only look like magic (a dragon's breath, a
+    /// beholder's rays) and because every real caster in the bestiary
+    /// has a slot table. A warlock's Pact Magic lives in the same
+    /// `SpellSlotManager`, so this answers for them too.
+    pub fn is_spellcaster(&self) -> bool {
+        (1..=9).any(|lvl| self.spell_slot_manager.spell_slots(lvl).max_spell_slots > 0)
+    }
+
     pub fn lowest_available_spell_slot(&self) -> Option<u32> {
         (1..=9).find(|lvl| self.spell_slot_manager.spell_slots(*lvl).spell_slots > 0)
     }
@@ -13735,5 +13792,97 @@ mod tests {
             "one pair is still on the wearer's feet"
         );
         assert!(f.has_condition(Condition::Flying));
+    }
+    /// "Requires attunement by a spellcaster", and the two other
+    /// clauses the table prints.
+    ///
+    /// A fighter can carry a Wand of Fireballs all day and never fire
+    /// it; the wizard beside them picks up the same wand and it works.
+    /// That is the half of the magic-item table that makes a loot drop
+    /// belong to somebody, and the refusal has to be *quiet and total*:
+    /// no bond, no slot spent, and none of the item's clauses live.
+    #[test]
+    fn an_item_that_names_who_it_is_for_refuses_everybody_else() {
+        use crate::items::item_template::{
+            AttunementRestriction, DWARVEN_THROWER, HOLY_AVENGER, WAND_OF_FIREBALLS,
+        };
+        assert!(WAND_OF_FIREBALLS.requires_attunement);
+        assert_eq!(
+            WAND_OF_FIREBALLS
+                .attunement_restriction
+                .map(|r| r.describes),
+            Some(AttunementRestriction::SPELLCASTER.describes)
+        );
+
+        let mut fighter = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert!(!fighter.is_spellcaster());
+        fighter.pickup_item(&WAND_OF_FIREBALLS);
+        assert!(fighter.has_item_named(WAND_OF_FIREBALLS.name));
+        assert!(!fighter.is_attuned_to(WAND_OF_FIREBALLS.name));
+        assert_eq!(
+            fighter.free_attunement_slots(),
+            ActorInstance::BASE_ATTUNEMENT_SLOTS,
+            "a refused item does not burn a slot on its way past"
+        );
+        assert!(!fighter.wields_live_item(WAND_OF_FIREBALLS.name));
+
+        let mut wizard = make(&crate::actors::creatures::wizards::WIZARD_TEMPLATE);
+        assert!(wizard.is_spellcaster());
+        wizard.pickup_item(&WAND_OF_FIREBALLS);
+        assert!(wizard.is_attuned_to(WAND_OF_FIREBALLS.name));
+
+        // The two narrower clauses, on the two items that print them.
+        let mut paladin = make(&crate::actors::creatures::paladins::PALADIN_TEMPLATE);
+        paladin.pickup_item(&HOLY_AVENGER);
+        assert!(paladin.is_attuned_to(HOLY_AVENGER.name));
+        let mut wizard2 = make(&crate::actors::creatures::wizards::WIZARD_TEMPLATE);
+        wizard2.pickup_item(&HOLY_AVENGER);
+        assert!(!wizard2.is_attuned_to(HOLY_AVENGER.name));
+
+        let mut dwarf = make(&crate::actors::creatures::dwarves::DWARF_TEMPLATE);
+        dwarf.pickup_item(&DWARVEN_THROWER);
+        assert!(dwarf.is_attuned_to(DWARVEN_THROWER.name));
+        let mut human = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        human.pickup_item(&DWARVEN_THROWER);
+        assert!(!human.is_attuned_to(DWARVEN_THROWER.name));
+    }
+
+    /// The Thief Rogue's Use Magic Device ignores who an item was made
+    /// for, and only that.
+    ///
+    /// Both halves are the test. RAW's sentence names class, species and
+    /// level requirements — so a rogue attunes to a Holy Avenger — and
+    /// says nothing about how many bonds a creature may hold, so a rogue
+    /// still stops at three.
+    #[test]
+    fn use_magic_device_lifts_the_restriction_and_not_the_ceiling() {
+        use crate::items::item_template::{
+            DWARVEN_THROWER, HOLY_AVENGER, RING_OF_PROTECTION, WAND_OF_FIREBALLS,
+        };
+        let mut thief = make(&crate::actors::creatures::rogues::THIEF_ROGUE_TEMPLATE);
+        assert!(thief.ignores_attunement_restrictions());
+        assert!(!thief.is_spellcaster(), "the thief is not a caster chassis");
+
+        for item in [&HOLY_AVENGER, &WAND_OF_FIREBALLS, &DWARVEN_THROWER] {
+            thief.pickup_item(item);
+            assert!(
+                thief.is_attuned_to(item.name),
+                "{} should answer to a Thief",
+                item.name
+            );
+        }
+        assert_eq!(thief.attunements().len(), 3);
+
+        thief.pickup_item(&RING_OF_PROTECTION);
+        assert!(
+            !thief.is_attuned_to(RING_OF_PROTECTION.name),
+            "Use Magic Device is not a fourth slot"
+        );
+
+        // And the same three items on a chassis without the feature.
+        let mut rogue = make(&crate::actors::creatures::rogues::ROGUE_TEMPLATE);
+        assert!(!rogue.ignores_attunement_restrictions());
+        rogue.pickup_item(&HOLY_AVENGER);
+        assert!(!rogue.is_attuned_to(HOLY_AVENGER.name));
     }
 }

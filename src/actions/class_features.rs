@@ -18659,6 +18659,30 @@ pub const FAST_HANDS_TAG: &str = "rogue.fast_hands";
 /// worth of action economy, against a table that has had one turn each.
 pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
 
+/// Passive tag for the Thief Rogue's **Use Magic Device** (subclass level
+/// 13): *"You ignore all class, species, and level requirements on the
+/// use of magic items."*
+///
+/// Read through `ActorInstance::ignores_attunement_restrictions`, which
+/// is the only consumer and the only thing RAW's sentence can mean in
+/// this engine: the requirements it names are exactly the
+/// *"(requires attunement by a Paladin / a Dwarf / a spellcaster)"*
+/// clauses on `Item::attunement_restriction`.
+///
+/// This feature spent a long time in the rogue file's "left out" list
+/// under a note that said it *"lifts class and attunement restrictions
+/// on magic items, and the engine has never had any: every item on the
+/// loot table is usable by every actor already."* That was a true
+/// statement about the engine rather than about the feature, and the
+/// order the two arrive in is the whole story — a restriction had to
+/// exist before ignoring one could be worth anything.
+///
+/// What it does **not** lift is the three-item ceiling, which is a
+/// different rule that RAW's sentence does not mention. A Thief can
+/// attune to a Holy Avenger and a Robe of the Archmagi at once; it still
+/// cannot attune to four things.
+pub const USE_MAGIC_DEVICE_TAG: &str = "rogue.use_magic_device";
+
 
 // ─── Artificer ──────────────────────────────────────────────────────
 //

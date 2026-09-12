@@ -602,15 +602,24 @@ pub static SOULKNIFE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// advantage on a Stealth check after moving at half speed) both key off
 /// systems the engine doesn't have — vertical movement and contested
 /// Stealth checks; Hide here installs a condition rather than rolling.
-/// **Use Magic Device** (lv13) lifts class and attunement restrictions
-/// on magic items, and the engine has never had any: every item on the
-/// loot table is usable by every actor already.
+/// **Use Magic Device** (lv13) — *"you ignore all class, species, and
+/// level requirements on the use of magic items"* — is live, and is the
+/// second reason to pick this subclass over the other five. This
+/// docstring used to say the feature was left out because *"the engine
+/// has never had any [restrictions]: every item on the loot table is
+/// usable by every actor already."* It has some now — see
+/// `Item::attunement_restriction` — so a Thief is the one PC in the game
+/// who can pick a Holy Avenger off a dead paladin and mean it. It does
+/// not lift the three-item ceiling, which RAW's sentence does not
+/// mention.
 ///
 /// Glyph 'F' — for the fast hands. 'T' is the Arcane Trickster's, 'S'
 /// the Scout's, 'A' the Assassin's, 'K' the Swashbuckler's and 'M' the
 /// Soulknife's.
 pub static THIEF_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    use crate::actions::class_features::{FAST_HANDS_TAG, THIEFS_REFLEXES_TAG};
+    use crate::actions::class_features::{
+        FAST_HANDS_TAG, THIEFS_REFLEXES_TAG, USE_MAGIC_DEVICE_TAG,
+    };
     use crate::actions::item_actions::{
         DRINK_HEALING_POTION, DRINK_POTION_OF_BLUR, DRINK_POTION_OF_INVISIBILITY,
     };
@@ -631,6 +640,7 @@ pub static THIEF_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut features = ROGUE_TEMPLATE.features.clone();
     features.insert(FAST_HANDS_TAG);
     features.insert(THIEFS_REFLEXES_TAG);
+    features.insert(USE_MAGIC_DEVICE_TAG);
     CreatureTemplate {
         name: "Thief Rogue",
         glyph: 'F',

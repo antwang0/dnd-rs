@@ -1011,11 +1011,32 @@ impl App {
             return Tick::Continue;
         }
 
-        // Forming. Both halves are checked before either is spent, so a
-        // holder with an Action and no slot keeps the Action.
+        // Forming. Every refusal is checked before anything is spent,
+        // so a holder with an Action and no slot keeps the Action.
         let Some(actor) = self.encounter.actors.get_mut(&actor_id) else {
             return Tick::Continue;
         };
+        // RAW's *"requires attunement by a Paladin"* first, because it is
+        // the one refusal that no amount of rearranging fixes. Reported
+        // in the book's own words, and *without* clearing the refusal
+        // set: an item this creature can never bond with has no place in
+        // the queue for the next freed slot.
+        let barred = actor
+            .items()
+            .iter()
+            .find(|i| i.name == name)
+            .and_then(|i| {
+                i.attunement_restriction
+                    .filter(|_| !actor.may_attune_to_item(i))
+            });
+        if let Some(restriction) = barred {
+            let _ = write!(
+                self.tmp_message,
+                "{} answers only to {}",
+                name, restriction.describes
+            );
+            return Tick::Continue;
+        }
         if actor.free_attunement_slots() == 0 {
             // Still worth the keystroke: the refusal is cleared, so the
             // next freed slot goes here. `attune_to` does that much and
@@ -1242,7 +1263,18 @@ mod tests {
         use crate::items::item_template::STAFF_OF_FIRE;
 
         let mut app = app_with_empty_board();
-        let pc = spawn(&mut app, 0, Coordinate::new(5, 5));
+        // A wizard rather than the goblin `spawn` hands out: RAW's staff
+        // answers only to a spellcaster, and an unattuned one has no
+        // charges anybody can spend.
+        let pc = app
+            .encounter
+            .instantiate_creature(
+                &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+                Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .expect("the wizard fits");
         let (level_before, charges_before) = {
             let a = app.encounter.actors.get_mut(&pc).unwrap();
             a.pickup_item(&STAFF_OF_FIRE);
@@ -1867,5 +1899,58 @@ mod tests {
         app.handle_enter();
         assert!(app.tmp_message.contains("nothing to unattune"));
         assert_eq!(app.encounter.actors[&pc].attunements().len(), 2);
+    }
+    /// `attune` on something that was made for somebody else says so in
+    /// the book's own words, and costs nothing.
+    ///
+    /// The refusal a player most needs explained: a free slot and a full
+    /// Action are both there, and the bond still will not form. Told
+    /// "answers only to a spellcaster" they know to stop trying; told
+    /// "not valid right now" they would rearrange the whole pack.
+    #[test]
+    fn attuning_to_somebody_elses_item_is_refused_in_raws_own_words() {
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::WAND_OF_FIREBALLS;
+        let mut app = app_with_empty_board();
+        let pc = app
+            .encounter
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .expect("the fighter fits");
+        spawn(&mut app, 1, Coordinate::new(9, 5));
+        app.encounter
+            .actors
+            .get_mut(&pc)
+            .unwrap()
+            .pickup_item(&WAND_OF_FIREBALLS);
+        app.encounter.process_stack();
+        while app
+            .encounter
+            .peek_prompt()
+            .is_some_and(|p| p.actor_id() != pc)
+        {
+            app.encounter.pop_prompt();
+            app.encounter.process_stack();
+        }
+        assert!(app.encounter.actors[&pc].free_attunement_slots() > 0);
+        assert!(app.encounter.actors[&pc].can_consume_resource(Resource::Action));
+
+        app.input_str.clear();
+        app.input_str.push_str("attune fireballs");
+        app.handle_enter();
+        assert!(
+            app.tmp_message.contains("answers only to a spellcaster"),
+            "expected RAW's clause, got {:?}",
+            app.tmp_message
+        );
+        assert!(!app.encounter.actors[&pc].is_attuned_to(WAND_OF_FIREBALLS.name));
+        assert!(
+            app.encounter.actors[&pc].can_consume_resource(Resource::Action),
+            "a refusal that cost the fighter their turn would be worse than no rule"
+        );
     }
 }

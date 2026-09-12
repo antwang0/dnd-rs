@@ -632,6 +632,91 @@ pub struct Item {
     /// resistance, no condition, no action and no light. That is
     /// exactly RAW's *"you gain [its] benefits only if attuned"*.
     pub requires_attunement: bool,
+    /// **Who** may form that bond — the rest of the clause, when the
+    /// book prints one: *"(requires attunement by a Paladin)"*,
+    /// *"(requires attunement by a Dwarf)"*, *"(requires attunement by
+    /// a spellcaster)"*.
+    ///
+    /// `None` — the common case, and the default — is an item anybody
+    /// who can hold it can bond with. Meaningless without
+    /// `requires_attunement`, and the invariant test at the bottom of
+    /// this file says so: a restriction on an item that needs no
+    /// attunement is a sentence with nothing to restrict.
+    ///
+    /// This is the half of the magic-item table that makes a loot drop
+    /// *belong* to somebody. A Holy Avenger in a party with no paladin
+    /// is a very good longsword and none of the rest of it, which is
+    /// the whole texture RAW is after — and it is the reason the Thief
+    /// Rogue's **Use Magic Device** exists, a feature whose docstring in
+    /// `creatures::rogues` said it lifted *"class and attunement
+    /// restrictions on magic items, and the engine has never had any."*
+    /// It has some now, and that feature is what ignores them.
+    pub attunement_restriction: Option<AttunementRestriction>,
+}
+
+/// One *"requires attunement by …"* clause: the words RAW prints, and
+/// the question the engine asks instead.
+///
+/// A predicate over the holder rather than a class enum, because this
+/// engine has no class axis and inventing one for eleven items would be
+/// a bestiary-wide change that bought nothing else. Every restriction on
+/// the table reduces to something an `ActorInstance` can already be
+/// asked — *is this creature a spellcaster*, *does it have Dwarven
+/// Resilience*, *does it project an Aura of Protection* — and the
+/// predicate is where that reduction is written down and named.
+///
+/// `describes` carries RAW's own phrasing so a refusal can say *"the
+/// Holy Avenger answers only to a Paladin"* rather than *"you may not
+/// attune to that"*. It is the only thing the player ever sees of this
+/// struct, and it should read as the book reads.
+#[derive(Clone, Copy)]
+pub struct AttunementRestriction {
+    /// RAW's words for who the item is for — "a Paladin", "a Dwarf", "a
+    /// spellcaster". Printed after "answers only to".
+    pub describes: &'static str,
+    /// Whether this holder is that.
+    pub qualifies: fn(&crate::actors::actor_template::ActorInstance) -> bool,
+}
+
+impl AttunementRestriction {
+    /// *"(requires attunement by a spellcaster)"* — every attack wand in
+    /// the book, and the Wand of the War Mage.
+    ///
+    /// Read as "has spell slots of its own", off the *maximum* rather
+    /// than the remaining pool: a wizard who has spent the lot is still
+    /// a wizard, and a bond that lapsed at the bottom of a fight and
+    /// came back at the rest would be a rule nobody could play with.
+    pub const SPELLCASTER: AttunementRestriction = AttunementRestriction {
+        describes: "a spellcaster",
+        qualifies: |a| a.is_spellcaster(),
+    };
+
+    /// *"(requires attunement by a Dwarf)"* — the Dwarven Thrower, and
+    /// the only species-gated item on the table.
+    ///
+    /// Dwarven Resilience is the engine's dwarf: it is on the Dwarf
+    /// template and on the duergar that inherit from it, and on nothing
+    /// else in the bestiary. Asking for the trait rather than for a
+    /// species tag is not a proxy standing in for the real question —
+    /// in this engine it *is* the real question, because a species here
+    /// is the set of traits it grants.
+    pub const DWARF: AttunementRestriction = AttunementRestriction {
+        describes: "a Dwarf",
+        qualifies: |a| a.has_dwarven_resilience(),
+    };
+
+    /// *"(requires attunement by a Paladin)"* — the Holy Avenger, and
+    /// the only class-gated item the engine can answer exactly.
+    ///
+    /// Aura of Protection is a paladin feature at level 6 and every
+    /// paladin template on the roster is past it; nothing else in the
+    /// bestiary carries the flag. The sword is a level-17-ish reward in
+    /// RAW, so the gate being "a paladin far enough along to have the
+    /// aura" is narrower than the book by a margin that never comes up.
+    pub const PALADIN: AttunementRestriction = AttunementRestriction {
+        describes: "a Paladin",
+        qualifies: |a| a.has_aura_of_protection(),
+    };
 }
 
 impl Item {
@@ -670,6 +755,7 @@ impl Item {
         charges: 0,
         recharge: None,
         requires_attunement: false,
+        attunement_restriction: None,
     };
 }
 
@@ -1203,6 +1289,7 @@ pub static ROBE_OF_THE_ARCHMAGI: Item = Item {
     },
     grants_spell_save_advantage: true,
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -1372,6 +1459,7 @@ pub static WAND_OF_FIREBALLS: Item = Item {
     charges: 7,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -1387,6 +1475,7 @@ pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
     charges: 7,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -1465,6 +1554,7 @@ pub static WAND_OF_CONE_OF_COLD: Item = Item {
     glyph: 'Q',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -2092,6 +2182,7 @@ pub static WAND_OF_WEB: Item = Item {
     glyph: '$',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_WEB],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -2137,6 +2228,7 @@ pub static WAND_OF_PARALYSIS: Item = Item {
     glyph: ')',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_PARALYSIS],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -2151,6 +2243,7 @@ pub static WAND_OF_FEAR: Item = Item {
     glyph: '[',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_FEAR],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -2359,6 +2452,7 @@ pub static WAND_OF_POLYMORPH: Item = Item {
     glyph: 'p',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_POLYMORPH],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -2634,6 +2728,7 @@ pub static WAND_OF_BINDING: Item = Item {
     glyph: 'B',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_BINDING],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -2931,6 +3026,7 @@ pub static RING_OF_SPELL_STORING: Item = Item {
     glyph: 'S',
     on_use: &[&crate::actions::item_actions::USE_RING_OF_SPELL_STORING],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -4379,6 +4475,7 @@ pub static HOLY_AVENGER: Item = Item {
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::HolyAvenging],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::PALADIN),
     ..Item::DEFAULTS
 };
 
@@ -4409,6 +4506,7 @@ pub static DWARVEN_THROWER: Item = Item {
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::DwarvenThrowing],
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::DWARF),
     ..Item::DEFAULTS
 };
 
@@ -4655,6 +4753,7 @@ pub static ROBE_OF_STARS: Item = Item {
         constant: 0,
     }),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -4985,6 +5084,7 @@ pub static WAND_OF_THE_WAR_MAGE_PLUS_ONE: Item = Item {
     },
     ignores_half_cover_on_spells: true,
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5001,6 +5101,7 @@ pub static WAND_OF_THE_WAR_MAGE_PLUS_TWO: Item = Item {
     },
     ignores_half_cover_on_spells: true,
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5015,6 +5116,7 @@ pub static WAND_OF_THE_WAR_MAGE_PLUS_THREE: Item = Item {
     },
     ignores_half_cover_on_spells: true,
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5461,6 +5563,7 @@ pub static STAFF_OF_FIRE: Item = Item {
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5484,6 +5587,7 @@ pub static STAFF_OF_FROST: Item = Item {
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5506,6 +5610,7 @@ pub static STAFF_OF_HEALING: Item = Item {
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5528,6 +5633,7 @@ pub static STAFF_OF_SWARMING_INSECTS: Item = Item {
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5552,6 +5658,7 @@ pub static STAFF_OF_CHARMING: Item = Item {
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5583,6 +5690,7 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5636,6 +5744,7 @@ pub static STAFF_OF_POWER: Item = Item {
         constant: 4,
     }),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -5699,6 +5808,7 @@ pub static STAFF_OF_WITHERING: Item = Item {
     charges: 3,
     recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS
 };
 
@@ -7348,6 +7458,17 @@ mod tests {
                 staff.requires_attunement,
                 "{} is a staff, and every staff in the book wants attunement",
                 staff.name
+            );
+        }
+        // A "requires attunement by a Paladin" on something that
+        // requires no attunement is a sentence with nothing to
+        // restrict — and, worse, one that would silently never be read,
+        // because `attune_to` is the only thing that asks.
+        for item in LOOT_POOL.iter().chain(STAVES).chain(MAGIC_ARMOURY) {
+            assert!(
+                item.requires_attunement || item.attunement_restriction.is_none(),
+                "{} names who may attune to it and then asks nobody to",
+                item.name
             );
         }
         // And the sweep bites: the flag is not simply set everywhere or

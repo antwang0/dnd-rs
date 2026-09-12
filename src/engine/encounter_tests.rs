@@ -48206,13 +48206,13 @@ fn scroll_of_lightning_bolt_excludes_caster() {
 fn wand_of_fireballs_damages_burst_and_consumes() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_FIREBALLS;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::items::item_template::WAND_OF_FIREBALLS;
 
     let mut e = ei_with_terrain(20, 20, &[]);
     let caster = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let z1 = e
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
@@ -48262,13 +48262,13 @@ fn wand_of_fireballs_damages_burst_and_consumes() {
 fn wand_of_lightning_bolts_damages_burst_and_consumes() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::items::item_template::WAND_OF_LIGHTNING_BOLTS;
 
     let mut e = ei_with_terrain(20, 20, &[]);
     let caster = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let z1 = e
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
@@ -48421,13 +48421,13 @@ fn potion_of_stoneskin_installs_damage_resistant_and_consumes() {
 fn wand_of_cone_of_cold_damages_burst_and_consumes() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::items::item_template::WAND_OF_CONE_OF_COLD;
 
     let mut e = ei_with_terrain(20, 20, &[]);
     let caster = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let z1 = e
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
@@ -49105,7 +49105,7 @@ fn a_score_bonus_moves_every_score_and_stops_at_its_ceiling() {
 fn wand_of_web_installs_restrained_on_failed_save() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_WEB;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::conditions::Condition;
     use crate::items::item_template::WAND_OF_WEB;
@@ -49115,7 +49115,7 @@ fn wand_of_web_installs_restrained_on_failed_save() {
     for seed in 0..trials {
         let mut e = ei_seeded(20, 20, &[], seed);
         let caster = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let z1 = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 8), 1, 0)
@@ -49228,7 +49228,7 @@ fn wand_of_web_rejects_without_wand() {
 fn wand_of_paralysis_installs_paralyzed_on_failed_save() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_PARALYSIS;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::conditions::Condition;
     use crate::items::item_template::WAND_OF_PARALYSIS;
@@ -49238,7 +49238,7 @@ fn wand_of_paralysis_installs_paralyzed_on_failed_save() {
     for seed in 0..trials {
         let mut e = ei_seeded(20, 20, &[], seed);
         let caster = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let zombie = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
@@ -52152,12 +52152,16 @@ fn wand_of_paralysis_skips_save_on_immune_target() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_PARALYSIS;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::conditions::Condition;
     use crate::items::item_template::{RING_OF_FREE_ACTION, WAND_OF_PARALYSIS};
 
     let mut e = ei_with_terrain(15, 15, &[]);
+    // A wand answers only to a spellcaster; the target it is pointed
+    // at can be anybody, and a fighter in a Ring of Free Action is the
+    // cheapest Paralyzed-immune body on the roster.
     let caster = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let immune_target = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
@@ -52356,7 +52360,7 @@ fn scroll_of_bane_installs_baned_on_failed_save() {
 fn wand_of_polymorph_installs_polymorphed_on_failed_save() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::USE_WAND_OF_POLYMORPH;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::conditions::Condition;
     use crate::items::item_template::WAND_OF_POLYMORPH;
@@ -52366,7 +52370,7 @@ fn wand_of_polymorph_installs_polymorphed_on_failed_save() {
     for seed in 0..trials {
         let mut e = ei_seeded(20, 20, &[], seed);
         let caster = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let zombie = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
@@ -97018,24 +97022,27 @@ fn the_war_mage_wand_sharpens_the_cast_and_only_ignores_half_cover() {
         "the board never produced both degrees of cover, so the sweep proved nothing: {degrees:?}"
     );
 
-    // And the bonus lands on the cast and not on the swing.
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    // And the bonus lands on the cast and not on the swing. On a
+    // wizard rather than a fighter, because RAW's wand *"requires
+    // attunement by a spellcaster"* — a fighter holding one is holding
+    // a stick, which is a different test and one
+    // `an_item_that_names_who_it_is_for_refuses_everybody_else` owns.
     let mut e = ei_with_terrain(20, 20, &[]);
-    let fighter = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+    let caster = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
-    let before = e.actors[&fighter].item_attack_bonus();
+    let before = e.actors[&caster].item_attack_bonus();
     e.actors
-        .get_mut(&fighter)
+        .get_mut(&caster)
         .unwrap()
         .pickup_item(&WAND_OF_THE_WAR_MAGE_PLUS_THREE);
     assert_eq!(
-        e.actors[&fighter].item_attack_bonus(),
+        e.actors[&caster].item_attack_bonus(),
         before,
-        "the wand sharpened the fighter's longsword"
+        "the wand sharpened the wizard's dagger"
     );
     assert_eq!(
-        e.actors[&fighter].item_spell_attack_bonus(),
+        e.actors[&caster].item_spell_attack_bonus(),
         3,
         "the wand's own lane came up empty"
     );
@@ -98374,7 +98381,10 @@ fn the_sword_of_life_stealing_pays_the_rider_and_not_the_swing() {
 /// both are dice: 1d8 cannot reach 9 and 2d8 cannot come up 1.
 #[test]
 fn the_dwarven_thrower_pays_twice_against_a_giant() {
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    // A dwarf rather than the fighter this sweep used to run on: RAW's
+    // hammer *"requires attunement by a Dwarf"*, and an unattuned one
+    // pays no dice at all.
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
     use crate::engine::attack::{RiderSwing, push_on_hit_riders};
@@ -98387,7 +98397,7 @@ fn the_dwarven_thrower_pays_twice_against_a_giant() {
             let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
             e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
             let fighter = e
-                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
                 .unwrap();
             let victim = if is_giant {
                 e.instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(5, 2), 1, 0)
@@ -100415,9 +100425,13 @@ fn a_withered_creature_is_slow_in_the_arms_and_not_in_the_reflexes() {
 /// hit, and the target rots.
 #[test]
 fn the_staff_of_withering_withers_what_it_hits() {
+    // A druid rather than a fighter: RAW's staff answers only to a
+    // spellcaster — and to a Cleric, Druid or Warlock at that — and
+    // this is the one of the three that carries a scimitar, which the
+    // prime needs on the list before it will go up.
     use crate::actions::monster_attacks::GREATSWORD;
     use crate::actions::staves::CHARGE_STAFF_OF_WITHERING;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::items::item_template::STAFF_OF_WITHERING;
 
@@ -100425,7 +100439,7 @@ fn the_staff_of_withering_withers_what_it_hits() {
     for seed in 0..60u64 {
         let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
         let fighter = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
         let goblin = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)

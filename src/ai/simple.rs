@@ -12677,13 +12677,19 @@ mod tests {
         // adds is that they fire in a real fight, together, without
         // anything falling over.
         //
-        // Frost Brand and the Dwarven Thrower both want attunement, so
-        // each is live on only the seeds the sliding window reaches it
-        // on — which over twenty-four fights is several, and the requirement
-        // is unchanged: if either goes missing entirely the wiring has
-        // come apart, because on the seeds where the bond *is* formed
-        // there is nothing else that could stop them.
-        for required in ["vicious weapon", "frost brand", "dwarven thrower"] {
+        // Frost Brand wants attunement, so it is live on only the seeds
+        // the sliding window reaches it on — which over twenty-four
+        // fights is several, and the requirement is unchanged: on the
+        // seeds where the bond *is* formed there is nothing else that
+        // could stop it.
+        //
+        // The Dwarven Thrower used to be the third name here and is now
+        // floor material, for a reason that is itself a rule: RAW's
+        // hammer "requires attunement by a Dwarf", and the generator
+        // draws its PC from every family. Its own test
+        // (`the_dwarven_thrower_pays_twice_against_a_giant`) is where a
+        // dwarf's hand goes on it.
+        for required in ["vicious weapon", "frost brand"] {
             assert!(
                 seen.contains(required),
                 "the {required} rider never fired across twenty-four full fights, \
@@ -19537,12 +19543,16 @@ mod tests {
     /// by looking in the pack.
     #[test]
     fn the_ai_throws_the_fireball_from_the_staff_it_is_carrying() {
-        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        // A paladin: the only chassis on the roster that is a
+        // spellcaster — which RAW's staff requires of whoever attunes
+        // to it — and still has no burst of its own, so the one the
+        // picker finds can only have come off the stick.
+        use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
         use crate::items::item_template::STAFF_OF_FIRE;
 
         let mut e = empty_arena();
         let fighter = e
-            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(3, 5), 0, 0)
             .unwrap();
         // Three of them, clustered, well out of melee reach — a burst
         // is worth taking and closing is not the obvious answer.
@@ -19558,7 +19568,7 @@ mod tests {
 
         assert!(
             super::try_attack_aoe(&e, fighter).is_none(),
-            "a fighter with nothing in their hands has no burst to place"
+            "a paladin with nothing in their hands has no burst to place"
         );
 
         e.actors.get_mut(&fighter).unwrap().pickup_item(&STAFF_OF_FIRE);
