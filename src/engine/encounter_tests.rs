@@ -100243,14 +100243,26 @@ fn a_second_copy_deepens_the_pool_a_rest_fills() {
 fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     use crate::items::item_template::LOOT_POOL;
 
-    // The one item RAW says does *not* come back. "When the weapon has
-    // no charges remaining, it loses this property" is the end of the
-    // sentence — the sword keeps its `+2` and stops stealing lives, for
-    // good. Named rather than exempted by a rule, because "has charges
-    // and no refill" is otherwise exactly the silent failure this sweep
-    // exists to catch.
-    const SPENT_FOR_GOOD: &[&str] =
-        &[crate::items::item_template::NINE_LIVES_STEALER.name];
+    // The two items RAW says do *not* come back, for two different
+    // reasons. Named one by one rather than exempted by a rule, because
+    // "has charges and no refill" is otherwise exactly the silent
+    // failure this sweep exists to catch.
+    //
+    //   - The **Nine Lives Stealer** keeps existing and stops working:
+    //     "when the weapon has no charges remaining, it loses this
+    //     property" is the end of the sentence, so the sword keeps its
+    //     `+2` and stops stealing lives, for good.
+    //   - The **Potion of Fire Breath** stops existing. Its three
+    //     charges are three breaths out of one bottle — "the potion's
+    //     magic is expended after three uses" — so `spend_item_use`
+    //     drops it at zero and there is nothing left for a night to
+    //     refill. It is the first consumable on the table whose pool is
+    //     larger than one, which is the only reason it reaches this
+    //     sweep at all.
+    const NO_REFILL: &[&str] = &[
+        crate::items::item_template::NINE_LIVES_STEALER.name,
+        crate::items::item_template::POTION_OF_FIRE_BREATH.name,
+    ];
 
     let mut wrong: Vec<String> = Vec::new();
     for item in LOOT_POOL {
@@ -100259,7 +100271,7 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
                 "{} recharges {} and has no charges to put them in",
                 item.name, expr
             )),
-            (n, None) if n > 0 && !SPENT_FOR_GOOD.contains(&item.name) => wrong.push(format!(
+            (n, None) if n > 0 && !NO_REFILL.contains(&item.name) => wrong.push(format!(
                 "{} carries {} charges and nothing gives them back — a night \
                  in the dungeon should",
                 item.name, n
@@ -100269,14 +100281,14 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n  "));
     // And the exception list is not a place to hide a typo.
-    for name in SPENT_FOR_GOOD {
+    for name in NO_REFILL {
         let item = LOOT_POOL
             .iter()
             .find(|i| i.name == *name)
             .unwrap_or_else(|| panic!("{name} is not on the loot table"));
         assert!(
             item.charges > 0 && item.recharge.is_none(),
-            "{name} is listed as spent for good and is not"
+            "{name} is listed as never refilling and is not"
         );
     }
 }
@@ -102009,4 +102021,297 @@ fn an_unattuned_mace_sheds_no_light_and_a_broken_bond_puts_it_out() {
         e.light_sources().iter().any(|s| s.name == TORCH_SOURCE),
         "the torch is still burning"
     );
+}
+
+/// The Rod of Alertness moves four numbers with one struct literal, and
+/// the point of the test is that the four are four different lanes.
+///
+/// Every clause on the rod is a lane that already existed — the `+1/+1`
+/// on `ItemBonuses`, the Perception half on `skill_check_advantages`,
+/// the initiative half on `sharpens_initiative` — and an item assembled
+/// out of existing lanes is exactly the kind that ships with one of them
+/// silently unwired, because nothing about a struct literal fails when a
+/// field is left at its default.
+#[test]
+fn the_rod_of_alertness_sharpens_four_different_lanes() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::{AbilityScoreType, Skill};
+    use crate::items::item_template::ROD_OF_ALERTNESS;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let caster = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let bare_ac = e.actors[&caster].armor_class();
+    let bare_save = e.actors[&caster].save_modifier(AbilityScoreType::Wisdom);
+    assert!(!e.actors[&caster].has_skill_check_advantage(Skill::Perception));
+    assert!(!e.actors[&caster].rolls_initiative_with_advantage());
+
+    e.actors
+        .get_mut(&caster)
+        .unwrap()
+        .pickup_item(&ROD_OF_ALERTNESS);
+    assert!(e.actors[&caster].is_attuned_to(ROD_OF_ALERTNESS.name));
+    assert_eq!(e.actors[&caster].armor_class(), bare_ac + 1);
+    assert_eq!(
+        e.actors[&caster].save_modifier(AbilityScoreType::Wisdom),
+        bare_save + 1
+    );
+    assert!(e.actors[&caster].has_skill_check_advantage(Skill::Perception));
+    assert!(e.actors[&caster].rolls_initiative_with_advantage());
+
+    // And all four go out together when the bond does — which is the
+    // claim that they are all reading `active_items` rather than the
+    // pack.
+    e.actors
+        .get_mut(&caster)
+        .unwrap()
+        .end_attunement(ROD_OF_ALERTNESS.name);
+    assert_eq!(e.actors[&caster].armor_class(), bare_ac);
+    assert_eq!(
+        e.actors[&caster].save_modifier(AbilityScoreType::Wisdom),
+        bare_save
+    );
+    assert!(!e.actors[&caster].has_skill_check_advantage(Skill::Perception));
+    assert!(!e.actors[&caster].rolls_initiative_with_advantage());
+}
+
+/// The Robe of Eyes answers the one condition the loot table had no
+/// answer to, and the Dragon Scale Mail stacks its `+1` on a
+/// resistance.
+///
+/// Two items, one test, because the claim is the same for both: a
+/// struct literal assembled out of lanes that already existed has to be
+/// checked at the lanes rather than at the literal.
+#[test]
+fn the_robe_of_eyes_cannot_be_blinded_and_the_scales_do_both_halves() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::DamageType;
+    use crate::items::item_template::{RED_DRAGON_SCALE_MAIL, ROBE_OF_EYES};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors
+            .get_mut(&pc)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(10)),
+        "the fixture needs a creature that can be blinded to start with"
+    );
+    e.actors.get_mut(&pc).unwrap().remove_condition(Condition::Blinded);
+
+    e.actors.get_mut(&pc).unwrap().pickup_item(&ROBE_OF_EYES);
+    assert!(e.actors[&pc].is_attuned_to(ROBE_OF_EYES.name));
+    assert!(
+        !e.actors
+            .get_mut(&pc)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(10)),
+        "the robe's whole combat clause is that this cannot land"
+    );
+
+    // The mail: a point of AC *and* the resistance, both at once.
+    let bare_ac = e.actors[&pc].armor_class();
+    let bare_fire = e.actors[&pc].effective_damage(20, DamageType::Fire);
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&RED_DRAGON_SCALE_MAIL);
+    assert!(e.actors[&pc].is_attuned_to(RED_DRAGON_SCALE_MAIL.name));
+    assert_eq!(e.actors[&pc].armor_class(), bare_ac + 1);
+    assert_eq!(
+        e.actors[&pc].effective_damage(20, DamageType::Fire),
+        bare_fire / 2,
+        "a red dragon's scales halve what a red dragon breathes"
+    );
+}
+
+/// The robe stuns what can see it, spends a charge rather than itself,
+/// and stops after three.
+///
+/// The Mace of Terror's test one shelf over, and for the same two
+/// reasons: a `charge_cost` row must leave its object in the pack when
+/// the pool empties, and a very rare item that can be used a fourth time
+/// is not a very rare item.
+#[test]
+fn the_robe_of_scintillating_colors_stuns_and_keeps_being_a_robe() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::ROBE_OF_SCINTILLATING_COLORS;
+
+    let mut stunned_somebody = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let caster = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&caster)
+            .unwrap()
+            .pickup_item(&ROBE_OF_SCINTILLATING_COLORS);
+        assert!(e.actors[&caster].is_attuned_to(ROBE_OF_SCINTILLATING_COLORS.name));
+        let swirl = *e.actors[&caster]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "swirl robe of scintillating colors")
+            .expect("wearing the robe offers the swirl");
+        let at = vec![e.actors[&caster].location()];
+
+        for round in 0..ROBE_OF_SCINTILLATING_COLORS.charges {
+            assert!(
+                swirl.validate_input(&e, caster, None, Some(&at), None),
+                "seed {seed} round {round}: the robe should still have a charge"
+            );
+            for ef in swirl.execute(&mut e, caster, None, Some(&at), None) {
+                ef.apply(&mut e);
+            }
+            e.actors.get_mut(&caster).unwrap().reset_for_new_round();
+        }
+        assert!(
+            !swirl.validate_input(&e, caster, None, Some(&at), None),
+            "seed {seed}: a fourth swirl came out of a three-charge robe"
+        );
+        assert!(
+            e.actors[&caster].has_item_named(ROBE_OF_SCINTILLATING_COLORS.name),
+            "seed {seed}: the pool ran dry and took the robe with it"
+        );
+        if e.actors
+            .get(&goblin)
+            .is_some_and(|g| g.has_condition(Condition::Stunned))
+        {
+            stunned_somebody = true;
+        }
+    }
+    assert!(
+        stunned_somebody,
+        "forty seeds of a DC 15 Wisdom save and no goblin ever failed one"
+    );
+}
+
+/// Three breaths out of one bottle, and then the bottle is gone.
+///
+/// The first consumable on the loot table whose pool is larger than
+/// one, which is the whole of what this pins: `spend_item_use` has two
+/// behaviours — decrement a pool, or drop the object — and a potion
+/// with charges is the case where it has to do the first twice and then
+/// the second.
+#[test]
+fn the_potion_of_fire_breath_is_three_breaths_and_then_an_empty_hand() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::items::item_template::POTION_OF_FIRE_BREATH;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&POTION_OF_FIRE_BREATH);
+    assert!(
+        !POTION_OF_FIRE_BREATH.requires_attunement,
+        "the point of the bottle is that a martial can use it"
+    );
+    let breath = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "breathe fire")
+        .expect("carrying the potion offers the breath");
+    let tv = vec![zombie];
+    let start_hp = e.actors[&zombie].hitpoints();
+
+    for round in 0..POTION_OF_FIRE_BREATH.charges {
+        assert!(
+            breath.validate_input(&e, fighter, Some(&tv), None, None),
+            "round {round}: the bottle should still have a breath in it"
+        );
+        assert_eq!(
+            e.actors[&fighter].item_charges_remaining(POTION_OF_FIRE_BREATH.name),
+            POTION_OF_FIRE_BREATH.charges - round
+        );
+        for ef in breath.execute(&mut e, fighter, Some(&tv), None, None) {
+            ef.apply(&mut e);
+        }
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+        // The zombie has to survive all three for the sweep to finish;
+        // top it back up rather than making the test about its HP.
+        let hp = e.actors[&zombie].hitpoints();
+        e.actors.get_mut(&zombie).unwrap().heal(start_hp - hp);
+    }
+    assert!(
+        !e.actors[&fighter].has_item_named(POTION_OF_FIRE_BREATH.name),
+        "an emptied potion is an empty bottle, not a permanent flamethrower"
+    );
+    assert!(!breath.validate_input(&e, fighter, Some(&tv), None, None));
+}
+
+/// The cape casts Dimension Door for a charge, and the charge comes
+/// back at the rest.
+///
+/// The first non-staff on the `StaffSpell` chassis. What the test is
+/// really about is that the chassis is item-generic despite its name:
+/// the cape's row pays in `Resource::ItemCharges`, opens a level-4 cast
+/// frame, and teleports the wearer, with no spell slot anywhere in it.
+#[test]
+fn the_cape_of_the_mountebank_steps_for_a_charge_and_gets_it_back() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::CAPE_OF_THE_MOUNTEBANK;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&CAPE_OF_THE_MOUNTEBANK);
+    assert!(
+        !CAPE_OF_THE_MOUNTEBANK.requires_attunement,
+        "no bond in the book, and the fighter has no slot to spare for one"
+    );
+    let step = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "cape of the mountebank: dimension door")
+        .expect("wearing the cape offers the step");
+    assert!(
+        e.actors[&fighter].lowest_available_spell_slot().is_none(),
+        "a fighter has no slots, which is the point of the cape"
+    );
+
+    let dest = vec![Coordinate::new(14, 14)];
+    assert!(step.validate_input(&e, fighter, None, Some(&dest), None));
+    for ef in step.execute(&mut e, fighter, None, Some(&dest), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&fighter].location(), Coordinate::new(14, 14));
+    assert_eq!(
+        e.actors[&fighter].item_charges_remaining(CAPE_OF_THE_MOUNTEBANK.name),
+        0
+    );
+    e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    assert!(
+        !step.validate_input(&e, fighter, None, Some(&dest), None),
+        "one a day means one, not one a round"
+    );
+
+    // …and a night in the dungeon puts it back. Flat, because a pool of
+    // one has nothing to roll for.
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(5);
+    let regained = e
+        .actors
+        .get_mut(&fighter)
+        .unwrap()
+        .regain_item_charges(&mut roller);
+    assert_eq!(regained, vec![(CAPE_OF_THE_MOUNTEBANK.name, 1)]);
+    assert!(step.validate_input(&e, fighter, None, Some(&dest), None));
 }

@@ -5524,6 +5524,235 @@ pub static GEM_OF_SEEING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Rod of Alertness** (Rod, Very Rare, requires attunement) — *"While
+/// holding this rod, you have Advantage on Initiative rolls and Wisdom
+/// (Perception) checks. … you gain a +1 bonus to Armor Class and saving
+/// throws."*
+///
+/// Every clause on this item is a lane that already exists, which is the
+/// only reason it can be one struct literal: the `+1/+1` is
+/// `ItemBonuses`, the Perception half is `skill_check_advantages`, and
+/// the initiative half is `sharpens_initiative`. It is the Sentinel
+/// Shield's four sentences again on something that is not a shield —
+/// and that is the point of the pair. A shield is a thing a fighter
+/// holds instead of a second weapon; a rod is a thing a caster holds
+/// instead of nothing.
+///
+/// RAW's second half — planting the rod to give every ally within 10
+/// feet the same `+1`, and to light the room, for ten minutes — is not
+/// modeled. It is an emanation anchored to an *object on the floor*
+/// rather than to a creature, and `engine::emanations` anchors every
+/// aura in the game to a body. The passive half is the half a player
+/// carries it for.
+pub static ROD_OF_ALERTNESS: Item = Item {
+    name: "Rod of Alertness",
+    glyph: 'j',
+    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    sharpens_initiative: true,
+    skill_check_advantages: &[crate::engine::types::Skill::Perception],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Dwarven Plate** (Armor: Plate, Very Rare) — *"While wearing this
+/// armor, you gain a +2 bonus to Armor Class."*
+///
+/// The armour rung the `+N` ladder could not express, and the reason it
+/// is a separate item rather than a third `ARMOR_PLUS_TWO`: this one
+/// needs no attunement, which at `+2` makes it the best defensive slot
+/// on the table for a creature already wearing three rings it cares
+/// about. That is the whole of RAW's pricing argument for it, and it is
+/// invisible until attunement exists to be spent.
+///
+/// RAW's second clause — *"if an effect moves you against your will
+/// along the ground, you can use your Reaction to reduce the distance
+/// you are moved by up to 10 feet"* — is not modeled: forced movement
+/// in this engine resolves inside `forced_move`, which walks the whole
+/// distance before anything gets a reaction window, and opening one
+/// mid-slide would need the loop turned inside out for one item.
+pub static DWARVEN_PLATE: Item = Item {
+    name: "Dwarven Plate",
+    glyph: 'k',
+    bonuses: ItemBonuses { ac: 2, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Robe of Eyes** (Wondrous item, Rare, requires attunement) — *"you
+/// have Advantage on Wisdom (Perception) checks that rely on sight, and
+/// you can't be Blinded."*
+///
+/// Two clauses, two existing lanes, and the second is the one worth the
+/// slot: nothing else on the loot table answers a Blinding Smite, a
+/// Darkness sphere, or a mephit's death burst, and the Blinded condition
+/// is one of the harshest in the game here — it takes the wearer's
+/// attacks to Disadvantage and hands every attacker Advantage at once.
+///
+/// RAW's other three sentences — 120 feet of darkvision, seeing
+/// invisible creatures, and the counter-clause where a Light or Daylight
+/// spell blinds the wearer for a minute — are not modeled. The first two
+/// want an item-granted *sense*, and senses in this engine are a
+/// template field filled at instantiation with no inventory lane into
+/// it; the third is a curse that would need the light layer to know
+/// which creature it just illuminated. Each is a real gap rather than a
+/// rounding, and each is a lane rather than a row.
+pub static ROBE_OF_EYES: Item = Item {
+    name: "Robe of Eyes",
+    glyph: 'y',
+    skill_check_advantages: &[crate::engine::types::Skill::Perception],
+    condition_immunities: &[crate::conditions::Condition::Blinded],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Robe of Scintillating Colors** (Wondrous item, Very Rare, requires
+/// attunement) — three charges of a dazzling pattern that stuns
+/// everything in thirty feet that fails a Wisdom save.
+///
+/// The Mace of Terror's shape on a caster's shelf: a burst centred on
+/// the wearer, priced in charges so an empty robe is still a robe. See
+/// `item_actions::SWIRL_ROBE_OF_SCINTILLATING_COLORS` for which of
+/// RAW's three clauses this carries and why the other two would need a
+/// chassis that pairs a self-buff with an area.
+pub static ROBE_OF_SCINTILLATING_COLORS: Item = Item {
+    name: "Robe of Scintillating Colors",
+    glyph: 'z',
+    on_use: &[&crate::actions::item_actions::SWIRL_ROBE_OF_SCINTILLATING_COLORS],
+    charges: 3,
+    // RAW: "regains 1d3 expended charges daily at dawn" — a smaller
+    // refill than the wands' `1d6+1`, on a smaller pool.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Cape of the Mountebank** (Wondrous item, Rare) — one Dimension
+/// Door a day, out of a cloud of smoke.
+///
+/// The first non-staff on the `StaffSpell` chassis, and the cheapest
+/// escape in the game a martial can reach: no attunement, no slot, one
+/// charge back at every rest. See
+/// `item_actions::CAPE_OF_THE_MOUNTEBANK_STEP`.
+pub static CAPE_OF_THE_MOUNTEBANK: Item = Item {
+    name: "Cape of the Mountebank",
+    glyph: 'Q',
+    on_use: &[&crate::actions::item_actions::CAPE_OF_THE_MOUNTEBANK_STEP],
+    charges: 1,
+    // RAW's "can't be used again until the next dawn" is one charge back
+    // at the rest, flat — the only entry on this lane with no die in it,
+    // because a pool of one has nothing to roll for.
+    recharge: Some(DiceExpr { dice: None, constant: 1 }),
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Fire Breath** (Potion, Uncommon) — three breaths of 4d6
+/// fire at anything within thirty feet.
+///
+/// The first potion on the table with a pool rather than a swallow, and
+/// the only offensive consumable a creature with no spellcasting and no
+/// wand attunement can point at something. See
+/// `item_actions::BREATHE_POTION_OF_FIRE_BREATH`.
+pub static POTION_OF_FIRE_BREATH: Item = Item {
+    name: "Potion of Fire Breath",
+    glyph: 'W',
+    on_use: &[&crate::actions::item_actions::BREATHE_POTION_OF_FIRE_BREATH],
+    charges: 3,
+    ..Item::DEFAULTS
+};
+
+// ---------------------------------------------------------------------
+// Dragon Scale Mail — SRD 5.2's five-colour armour ladder.
+//
+// > *"Armor (any Medium or Heavy armor), Very Rare (requires
+// > attunement). Dragon scale mail is made of the scales of one kind of
+// > dragon. … While wearing this armor, you gain a +1 bonus to Armor
+// > Class, and you have Resistance to one damage type that is
+// > determined by the kind of dragon that provided the scales."*
+//
+// One sentence, five items, and the same shape as the resistance rings
+// two hundred lines up: a typed `damage_resistances` row and nothing
+// else new. What the mail adds that the rings do not is the `+1` on top
+// — which is exactly why it is Very Rare and they are Rare, and why a
+// party that finds one has a real decision about which of its three
+// slots it goes in.
+//
+// The five colours the SRD prints, and the type each answers:
+// black/copper → acid, blue/bronze → lightning, brass/gold/red → fire,
+// green → poison, silver/white → cold. One item per *type* rather than
+// per colour, named for the commonest colour of each, because the
+// engine has no dragon-colour axis for the name to key off and five
+// items is the whole of the mechanical spread.
+// ---------------------------------------------------------------------
+
+/// Red dragon scale mail — `+1` AC and fire resistance. See the section
+/// comment above.
+pub static RED_DRAGON_SCALE_MAIL: Item = Item {
+    name: "Red Dragon Scale Mail",
+    glyph: 'R',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    damage_resistances: &[crate::engine::types::DamageType::Fire],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// Blue dragon scale mail — `+1` AC and lightning resistance.
+pub static BLUE_DRAGON_SCALE_MAIL: Item = Item {
+    name: "Blue Dragon Scale Mail",
+    glyph: 'U',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    damage_resistances: &[crate::engine::types::DamageType::Lightning],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// Green dragon scale mail — `+1` AC and poison resistance.
+pub static GREEN_DRAGON_SCALE_MAIL: Item = Item {
+    name: "Green Dragon Scale Mail",
+    glyph: 'X',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    damage_resistances: &[crate::engine::types::DamageType::Poison],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// White dragon scale mail — `+1` AC and cold resistance.
+pub static WHITE_DRAGON_SCALE_MAIL: Item = Item {
+    name: "White Dragon Scale Mail",
+    glyph: 'Z',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    damage_resistances: &[crate::engine::types::DamageType::Cold],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// Black dragon scale mail — `+1` AC and acid resistance.
+pub static BLACK_DRAGON_SCALE_MAIL: Item = Item {
+    name: "Black Dragon Scale Mail",
+    glyph: 'q',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    damage_resistances: &[crate::engine::types::DamageType::Acid],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// The dragon scale mail ladder, in the order the SRD prints the
+/// colours.
+///
+/// Exists for the same reason `IOUN_STONES` and `GIANT_STRENGTH_BELTS`
+/// do: an invariant that wants to ask about the family rather than list
+/// it. `every_dragon_scale_mail_is_one_plus_one_and_one_resistance`
+/// walks it, and a sixth colour added without its resistance row is a
+/// build error there rather than a very rare armour that is only a `+1`.
+pub static DRAGON_SCALE_MAILS: &[&Item] = &[
+    &RED_DRAGON_SCALE_MAIL,
+    &BLUE_DRAGON_SCALE_MAIL,
+    &GREEN_DRAGON_SCALE_MAIL,
+    &WHITE_DRAGON_SCALE_MAIL,
+    &BLACK_DRAGON_SCALE_MAIL,
+];
+
 // =====================================================================
 // Staves — SRD 5.2's charge-priced spell menus.
 //
@@ -5537,8 +5766,10 @@ pub static GEM_OF_SEEING: Item = Item {
 // and it is spent through `Resource::ItemCharges` rather than through
 // `spend_item_use`, which is why running a staff dry leaves it in the
 // pack: a spent wand is ash and a spent staff is still a staff with
-// whatever passive it prints. And none of them is attuned, because
-// nothing in the engine is.
+// whatever passive it prints. And every one of them wants attunement,
+// by a spellcaster — this comment used to end "none of them is attuned,
+// because nothing in the engine is", which was true of the engine and
+// never of the book. See `Item::requires_attunement`.
 // =====================================================================
 
 /// **Staff of Fire** (Staff, Rare, requires attunement by a druid,
@@ -6736,6 +6967,32 @@ pub static LOOT_POOL: &[&Item] = &[
     &STAFF_OF_STRIKING,
     &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
+    // The rest of the SRD's armour shelf, which had exactly two entries
+    // on it (the `+N` ladder and the Adamantine Armor) until now. Every
+    // one of these is a defensive slot that competes with a ring rather
+    // than replacing one, which is a decision the loot table could not
+    // offer before there was a ceiling on how many rings count.
+    &DWARVEN_PLATE,
+    &RED_DRAGON_SCALE_MAIL,
+    &BLUE_DRAGON_SCALE_MAIL,
+    &GREEN_DRAGON_SCALE_MAIL,
+    &WHITE_DRAGON_SCALE_MAIL,
+    &BLACK_DRAGON_SCALE_MAIL,
+    // Two robes and a rod — the caster's shelf, which had the Robe of
+    // the Archmagi and the Robe of Stars on it and nothing between them
+    // and a scroll.
+    &ROD_OF_ALERTNESS,
+    &ROBE_OF_EYES,
+    &ROBE_OF_SCINTILLATING_COLORS,
+    // And the two things a creature with no spellcasting can still
+    // point at something: a cape that teleports and a bottle that
+    // breathes fire. Both on the commoner half of the table — the
+    // potion doubled, like the other consumables — because the
+    // attunement ceiling made the caster half of this file much harder
+    // for a martial party to spend.
+    &CAPE_OF_THE_MOUNTEBANK,
+    &POTION_OF_FIRE_BREATH,
+    &POTION_OF_FIRE_BREATH,
 ];
 
 #[cfg(test)]
@@ -7490,6 +7747,68 @@ mod tests {
             bound >= 50 && bound < seen.len(),
             "{bound} of {} items want attunement, which is not a shelf",
             seen.len()
+        );
+    }
+    /// Every dragon scale mail is a `+1` and exactly one resistance, and
+    /// the five between them cover five different damage types.
+    ///
+    /// The failure this catches is the one a five-row ladder always has:
+    /// a colour copy-pasted from the row above with the name changed and
+    /// the damage type not. Nothing would notice — a Blue Dragon Scale
+    /// Mail that resists fire is a legal item, it just is not the one on
+    /// the label, and the only symptom is a player who takes full
+    /// lightning damage in a suit named for it.
+    ///
+    /// Sibling in shape and motive to
+    /// `the_defensive_ladders_climb_and_are_findable` and to the Ioun
+    /// stones' sweep.
+    #[test]
+    fn every_dragon_scale_mail_is_one_plus_one_and_one_resistance() {
+        let mut types: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for mail in DRAGON_SCALE_MAILS {
+            assert_eq!(
+                mail.bonuses.ac, 1,
+                "{} is a Very Rare armour and should carry RAW's +1",
+                mail.name
+            );
+            assert_eq!(
+                mail.damage_resistances.len(),
+                1,
+                "{} resists one type, the one the dragon was",
+                mail.name
+            );
+            assert!(
+                mail.requires_attunement,
+                "{} is attunement armour in the book",
+                mail.name
+            );
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == mail.name),
+                "{} cannot be found by anybody",
+                mail.name
+            );
+            // The label and the clause agree: "Red" resists fire, and
+            // the colour is the first word of the name.
+            let colour = mail.name.split(' ').next().expect("a colour");
+            let expected = match colour {
+                "Red" => crate::engine::types::DamageType::Fire,
+                "Blue" => crate::engine::types::DamageType::Lightning,
+                "Green" => crate::engine::types::DamageType::Poison,
+                "White" => crate::engine::types::DamageType::Cold,
+                "Black" => crate::engine::types::DamageType::Acid,
+                other => panic!("{other} is not a colour this sweep knows"),
+            };
+            assert_eq!(
+                mail.damage_resistances[0], expected,
+                "{} is named for a {colour} dragon and does not resist what one breathes",
+                mail.name
+            );
+            types.insert(mail.damage_resistances[0].to_string());
+        }
+        assert_eq!(
+            types.len(),
+            DRAGON_SCALE_MAILS.len(),
+            "two colours resist the same thing, so one of them is a copy-paste: {types:?}"
         );
     }
 }

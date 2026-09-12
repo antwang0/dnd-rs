@@ -35,9 +35,18 @@
 //!
 //! ## What a staff is not
 //!
-//! **Attunement is not modeled**, here or anywhere: the engine has no
-//! between-fights phase for it to happen in, and every item in the file
-//! is already live the moment it is picked up.
+//! **Attunement is modeled**, and every staff in the book wants it —
+//! by a spellcaster, which is as close as this engine gets to RAW's
+//! "by a Druid, Sorcerer, Warlock, or Wizard". This paragraph used to
+//! read *"attunement is not modeled, here or anywhere: the engine has
+//! no between-fights phase for it to happen in, and every item in the
+//! file is already live the moment it is picked up"* — the first half
+//! was a statement about the engine and the second was wrong about its
+//! own clock, because `App::start_next_encounter` rests the party
+//! between rooms and that rest is exactly the window RAW asks for. A
+//! staff a fighter is carrying is a stick; a wizard holding one with a
+//! slot free has a menu. See `Item::requires_attunement` and
+//! `Item::attunement_restriction`.
 //!
 //! **Recharging is not at dawn.** RAW's *"regains 1d6+1 expended charges
 //! daily at dawn"* is a long rest here, which is the engine's only

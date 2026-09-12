@@ -7271,3 +7271,122 @@ pub static USE_GEM_OF_SEEING: SelfConditionItem = SelfConditionItem {
 };
 
 const GEM_OF_SEEING_NAME: &str = "Gem of Seeing";
+
+/// **Robe of Scintillating Colors** — *"you can expend 1 charge and take
+/// a Magic action to cause the garment to display a shifting pattern of
+/// dazzling hues until the end of your next turn. … any creature in the
+/// Bright Light that can see you when you take the action must succeed
+/// on a DC 15 Wisdom saving throw or have the Stunned condition."*
+///
+/// The Mace of Terror's shape at a different DC and a different
+/// condition: a burst centred on the wearer, a Wisdom save, and a
+/// charge rather than the object itself. Three charges, `1d3` back at
+/// dawn, and a robe at zero charges is still a robe — which is the
+/// whole reason `charge_cost` exists on this chassis. See
+/// `SOUND_MACE_OF_TERROR`.
+///
+/// **Two of RAW's three clauses are not modeled**, and they are the two
+/// that are about the wearer rather than about the room: the bright
+/// light the robe sheds, and the Disadvantage it hands attackers while
+/// the pattern is up. Either would be a second, self-aimed effect on a
+/// chassis whose entire shape is "one area, one save, one condition",
+/// and this is the clause the item is *used* for — the light and the
+/// blur are what make the turn survivable, the stun is what makes it
+/// worth taking. A future row that wants both wants a chassis that can
+/// pair a self-buff with an area, which nothing in the file has yet.
+pub static SWIRL_ROBE_OF_SCINTILLATING_COLORS: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "swirl robe of scintillating colors",
+    action_aliases: &["robe", "scintillating", "dazzle"],
+    item_name: ROBE_OF_SCINTILLATING_COLORS_NAME,
+    log_text: "{actor}'s robe erupts into a shifting blaze of colour.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // RAW's 30-foot radius of bright light, on the 2.5-ft grid; the
+    // reach is the same number for the same reason the mace's is — the
+    // pattern starts on the wearer, so no point inside it is further
+    // away than the radius.
+    shape: AreaShape::Burst { radius: 12 },
+    reach: 12,
+    condition: Condition::Stunned,
+    // RAW's "until the end of your next turn" is one round, and one
+    // round of Stunned is the strongest single-round effect in the
+    // engine — it takes the action economy *and* the movement. Short,
+    // because the robe is a three-charge rare rather than a Wand of
+    // Paralysis, and because RAW's own window is that short.
+    timer: ConditionTimer::Rounds(1),
+    charge_cost: Some(1),
+};
+
+const ROBE_OF_SCINTILLATING_COLORS_NAME: &str = "Robe of Scintillating Colors";
+
+/// **Potion of Fire Breath** — *"After drinking this potion, you can use
+/// a Bonus Action to exhale fire at a target within 30 feet. Make a DC
+/// 13 Dexterity saving throw. On a failed save, the target takes 4d6
+/// Fire damage. … The potion's magic is expended after three uses."*
+///
+/// The first potion on the loot table with a *pool* rather than a
+/// swallow. RAW's "three uses" is `Item::charges`, which
+/// `spend_item_use` already spends the way this needs it spent — three
+/// breaths and then the bottle goes, so the item does not need the
+/// `charge_cost` lane the mace and the robe use to survive their own
+/// emptying.
+///
+/// RAW's two-step — drink, then breathe, three times — collapses to one
+/// action per breath. The cork coming out is not a decision the engine
+/// can offer separately from the first breath: there is nothing to do
+/// with an uncorked potion except breathe, and a turn spent drinking
+/// would be a turn the player would never choose. The Action rather
+/// than RAW's Bonus Action is the price of that collapse, and it is the
+/// direction that cannot make the item stronger than the book.
+pub static BREATHE_POTION_OF_FIRE_BREATH: SingleSaveDamageItem = SingleSaveDamageItem {
+    action_name: "breathe fire",
+    action_aliases: &["fire breath", "potion of fire breath", "exhale"],
+    item_name: POTION_OF_FIRE_BREATH_NAME,
+    log_label: "potion of fire breath",
+    dice: Dice::new(4, 6),
+    flat_bonus: 0,
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 13,
+    // 30 ft on the 2.5-ft grid.
+    reach: 12,
+    // RAW zeroes the damage on a pass — there is no "half on a save"
+    // clause on this one, which is what makes 4d6 a fair number for an
+    // uncommon potion.
+    save_for_half: false,
+};
+
+const POTION_OF_FIRE_BREATH_NAME: &str = "Potion of Fire Breath";
+
+/// **Cape of the Mountebank** — *"While wearing this cape, you can take
+/// a Magic action to cast Dimension Door from it. This property can't be
+/// used again until the next dawn."*
+///
+/// A `StaffSpell` on something that is not a staff, and the first one:
+/// the chassis is named for the shelf it was built for and is really
+/// "this object casts that spell, for charges rather than for a slot",
+/// which is a sentence the SRD prints on a dozen items outside the staff
+/// list. The cape is the cheapest of them — one spell, one charge, one a
+/// day — and it is worth having because Dimension Door is the only
+/// escape in the game a martial can reach.
+///
+/// One charge and `1` back at dawn, which is RAW's "not again until the
+/// next dawn" said in the engine's own vocabulary: a long rest is the
+/// dawn (see `Item::recharge`), so the cape comes back for the next
+/// room and not for the next round.
+///
+/// RAW's smoke — *"you leave behind a cloud of smoke, and you appear in
+/// a cloud of smoke"* — is flavour with no mechanical clause attached,
+/// and no obscurement the engine could hang on it without inventing a
+/// rule the book does not print.
+pub static CAPE_OF_THE_MOUNTEBANK_STEP: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "cape of the mountebank: dimension door",
+        action_aliases: &["cape", "mountebank", "cape-step"],
+        item_name: CAPE_OF_THE_MOUNTEBANK_NAME,
+        charges: 1,
+        spell_level: 4,
+        spell: || &*crate::actions::spells::DIMENSION_DOOR,
+    };
+
+const CAPE_OF_THE_MOUNTEBANK_NAME: &str = "Cape of the Mountebank";
