@@ -97537,6 +97537,90 @@ fn the_mace_of_terror_runs_dry_without_leaving_the_wielder_empty_handed() {
     );
 }
 
+/// The Ring of Shooting Stars is the same lesson on the other chassis.
+///
+/// `AreaSaveDamageItem` had no `charge_cost` until this ring, because
+/// every row on it was a scroll — and a scroll *is* its own single use,
+/// so "consume the object" and "spend the charge" were the same rule.
+/// A ring is not: running its motes dry has to leave a ring on the
+/// wearer's finger, and the consumable lane would have deleted it
+/// mid-fight.
+///
+/// Four claims: the mote lands damage on a creature standing in it, the
+/// ring survives six of them, a seventh is refused, and a dawn puts
+/// some back.
+#[test]
+fn the_ring_of_shooting_stars_empties_and_stays_a_ring() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::items::item_template::RING_OF_SHOOTING_STARS;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&RING_OF_SHOOTING_STARS);
+    let mote = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "fire shooting star")
+        .expect("wearing the ring offers the mote");
+    let at = vec![e.actors[&zombie].location()];
+
+    let mut ever_burned = false;
+    for shot in 0..RING_OF_SHOOTING_STARS.charges {
+        assert!(
+            mote.validate_input(&e, fighter, None, Some(&at), None),
+            "shot {shot}: the ring should still have a charge"
+        );
+        let before = e.actors[&zombie].hitpoints();
+        for ef in mote.execute(&mut e, fighter, None, Some(&at), None) {
+            ef.apply(&mut e);
+        }
+        ever_burned |= e.actors[&zombie].hitpoints() < before;
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+        // Keep the target standing so the sixth shot still has
+        // somewhere to land; the claim here is about the ring.
+        e.actors.get_mut(&zombie).unwrap().heal(200);
+    }
+    assert!(
+        ever_burned,
+        "six motes and none of them reached the creature standing in them"
+    );
+    assert!(
+        !mote.validate_input(&e, fighter, None, Some(&at), None),
+        "a seventh mote came out of a six-charge ring"
+    );
+    assert!(
+        e.actors[&fighter].has_item_named(RING_OF_SHOOTING_STARS.name),
+        "the pool ran dry and took the ring with it"
+    );
+
+    // And dawn puts some back — RAW's flat 1d6, so at least one.
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(7);
+    let regained = e
+        .actors
+        .get_mut(&fighter)
+        .unwrap()
+        .regain_item_charges(&mut roller);
+    assert!(
+        regained
+            .iter()
+            .any(|(n, back)| *n == RING_OF_SHOOTING_STARS.name && *back > 0),
+        "the ring did not refill overnight: {regained:?}"
+    );
+    assert!(
+        mote.validate_input(&e, fighter, None, Some(&at), None),
+        "the refilled ring still refuses to fire"
+    );
+}
+
 /// Destroy Undead destroys, rather than dealing enough damage to look
 /// like it destroyed.
 ///

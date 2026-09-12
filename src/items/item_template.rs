@@ -4395,6 +4395,35 @@ pub static MACE_OF_TERROR: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Shooting Stars** (Ring, Very Rare) — six charges of
+/// artillery on a finger, refilled `1d6` at dawn.
+///
+/// The only ring in the file that does damage, and the first item on
+/// the `AreaSaveDamageItem` chassis that is not a scroll — see
+/// `item_actions::FIRE_SHOOTING_STAR` for the mote, for RAW's cube as a
+/// three-tile burst, and for which of the ring's four modes are here.
+///
+/// Worth having beside the Necklace of Fireballs it most resembles.
+/// The necklace is a bigger single bang and then it is a string of
+/// beads; the ring is smaller per shot, refills overnight, and is
+/// therefore the first *sustainable* area in the pool — a party running
+/// a dungeon has it in the last room as well as the first. Six motes at
+/// 5d4 is twelve and a half average each, which is a wand's worth of
+/// damage spread over six turns rather than spent in one.
+pub static RING_OF_SHOOTING_STARS: Item = Item {
+    name: "Ring of Shooting Stars",
+    glyph: '=',
+    on_use: &[&crate::actions::item_actions::FIRE_SHOOTING_STAR],
+    charges: 6,
+    // RAW's "regains 1d6 expended charges daily at dawn" — a flat die
+    // with no `+1`, unlike the nine items that share `DAILY_1D6_PLUS_1`.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 6)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// **Thunderous Greatclub** (Weapon, greatclub; Very Rare) — *"While
 /// you are attuned to this magic weapon, your Strength is 20 unless
 /// your Strength is already equal to or greater than that score. The
@@ -5608,6 +5637,9 @@ pub static LOOT_POOL: &[&Item] = &[
     &EYES_OF_THE_EAGLE,
     // The sixth belt, and the only one that is not a Strength score.
     &BELT_OF_DWARVENKIND,
+    // The first area in the pool that is not spent by using it. Single
+    // entry — six refilling motes is a lot of dungeon.
+    &RING_OF_SHOOTING_STARS,
     // +3 Weapon — top tier of the magical-weapon ladder. Single-entry
     // rare drop, paired with the existing +1 (common, weight 2) and
     // +2 (single entry) tiers.

@@ -126,6 +126,20 @@ pub struct AreaSaveDamageItem {
     /// may leave this at `0`. Same contract as
     /// `AreaSaveConditionItem::reach`.
     pub reach: isize,
+    /// Charges one use costs, for an item that is **not** consumed by
+    /// using it, or `None` for the consumables that are. Identical in
+    /// meaning and mechanism to `AreaSaveConditionItem::charge_cost` —
+    /// see that field for why the charge goes in `cost()` rather than
+    /// being spent inside `side_effects`.
+    ///
+    /// Every row on this chassis was a scroll until the Ring of
+    /// Shooting Stars, and a scroll is entirely its own one use, so
+    /// "consume the object" was the same rule as "spend the charge".
+    /// A ring is not: running its motes dry has to leave a ring on the
+    /// wearer's finger, and the consumable lane would have deleted the
+    /// item mid-fight. The condition chassis one screen down learned
+    /// the same thing from the Mace of Terror.
+    pub charge_cost: Option<u32>,
 }
 
 impl Action for AreaSaveDamageItem {
@@ -153,6 +167,30 @@ impl Action for AreaSaveDamageItem {
         vec![self.damage_type]
     }
 
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // An Action either way, plus the charges for a row that
+        // declares a price in them — the same shape
+        // `AreaSaveConditionItem::cost` uses, and for the same reason:
+        // a price in `cost()` is one the picker can grey out and
+        // explain, where a spend buried in `side_effects` is a use that
+        // silently does nothing.
+        let mut costs = action_only();
+        if let Some(count) = self.charge_cost {
+            costs.push(Resource::ItemCharges {
+                item: self.item_name,
+                count,
+            });
+        }
+        costs
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -177,7 +215,12 @@ impl Action for AreaSaveDamageItem {
         let Some(aim) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        if !consume_caster_item(encounter, caster_id, self.item_name) {
+        // A row priced in charges is billed by `Action::execute`'s tail
+        // off the `cost()` above; only the consumables bill here. See
+        // `charge_cost`.
+        if self.charge_cost.is_none()
+            && !consume_caster_item(encounter, caster_id, self.item_name)
+        {
             return Vec::new();
         }
 
@@ -638,6 +681,7 @@ pub static READ_FIREBALL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 150 ft range — well past any current map.
     reach: 60,
+    charge_cost: None,
 };
 
 /// Config struct for "Magic Missile auto-hit dart volley" consumables —
@@ -1378,6 +1422,7 @@ pub static READ_LIGHTNING_BOLT_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // A line is aimed by naming a tile inside it, so `reach` is unread.
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
+    charge_cost: None,
 };
 
 /// Config struct for "single-target heal" consumable items — the shared
@@ -1728,6 +1773,7 @@ pub static READ_CONE_OF_COLD_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft RAW; 24 tiles, and its own reach.
     shape: AreaShape::Cone { length: 24 },
     reach: 0,
+    charge_cost: None,
 };
 
 /// Wand of Magic Missiles — 5 darts of 1d4+1 force each, auto-hit, no
@@ -1794,6 +1840,7 @@ pub static USE_WAND_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     dc: 15,
     shape: AreaShape::Burst { radius: 4 },
     reach: 60,
+    charge_cost: None,
 };
 
 const WAND_OF_LIGHTNING_BOLTS_NAME: &str = "Wand of Lightning Bolts";
@@ -1814,6 +1861,7 @@ pub static USE_WAND_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageItem 
     dc: 15,
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
+    charge_cost: None,
 };
 
 const SCROLL_OF_SHATTER_NAME: &str = "Scroll of Shatter";
@@ -1836,6 +1884,7 @@ pub static READ_SHATTER_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 2 },
     // 60 ft range = 24 tiles, matching the spell's reach.
     reach: 24,
+    charge_cost: None,
 };
 
 const WAND_OF_CONE_OF_COLD_NAME: &str = "Wand of Cone of Cold";
@@ -1856,6 +1905,7 @@ pub static USE_WAND_OF_CONE_OF_COLD: AreaSaveDamageItem = AreaSaveDamageItem {
     dc: 15,
     shape: AreaShape::Cone { length: 24 },
     reach: 0,
+    charge_cost: None,
 };
 
 const SCROLL_OF_MASS_HEALING_WORD_NAME: &str = "Scroll of Mass Healing Word";
@@ -2123,6 +2173,7 @@ pub static READ_BURNING_HANDS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 15 ft RAW; 6 tiles, and its own reach.
     shape: AreaShape::Cone { length: 6 },
     reach: 0,
+    charge_cost: None,
 };
 
 /// Scroll of Thunderwave — 2d8 thunder CON-save burst, 2-tile radius.
@@ -2146,6 +2197,7 @@ pub static READ_THUNDERWAVE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 15 ft cube self-centered in RAW; we cap at the picker reach for
     // safety (caster picks the cube's center). 6 tiles ≈ 15 ft.
     reach: 6,
+    charge_cost: None,
 };
 
 /// Config struct for "area save-or-condition" consumable items — the
@@ -2569,6 +2621,61 @@ pub static SOUND_MACE_OF_TERROR: AreaSaveConditionItem = AreaSaveConditionItem {
 
 const MACE_OF_TERROR_NAME: &str = "Mace of Terror";
 
+pub const RING_OF_SHOOTING_STARS_NAME: &str = "Ring of Shooting Stars";
+
+/// **Shooting Stars** — the Ring of Shooting Stars' Magic action:
+/// *"For every charge you expend, you launch a glowing mote of light
+/// from the ring at a point you can see within 60 feet of yourself.
+/// Each creature within a 15-foot Cube originating from that point is
+/// showered in sparks and must make a DC 15 Dexterity saving throw,
+/// taking 5d4 Fire damage on a failed save or half as much damage on a
+/// successful one."*
+///
+/// The first row on `AreaSaveDamageItem` that is not a scroll, and the
+/// reason that chassis grew a `charge_cost`. A scroll is entirely its
+/// own single use, so "consume the object" and "spend the charge" were
+/// the same rule for every row before this one; a ring is not, and
+/// running its motes dry has to leave a ring on the wearer's finger.
+///
+/// **One mote per Action**, where RAW offers one to three. The engine's
+/// area chassis aims one shape per action — `TargetingSchema` has no
+/// form for *"name up to three separate points, one per charge"* — so
+/// the row prices the smallest legal use and a wielder who wants three
+/// spends three turns. That is a real narrowing rather than a rounding,
+/// and it is the one that leaves the item honest in both directions:
+/// the alternative readings were to fire three motes for one charge
+/// (three times the item) or to fold three cubes into one bigger area
+/// (a different spell, centred somewhere RAW never puts it).
+///
+/// RAW's 15-foot **Cube** is a burst of radius 3 — seven and a half
+/// feet from the centre in each direction, which is three tiles on the
+/// 2.5-ft grid. The engine's areas are spheres, so the corners of the
+/// cube are the difference; nothing in the bestiary is shaped to notice.
+///
+/// The ring's other three modes are absent, each for a reason the file
+/// already has somewhere: **Dancing Lights** and **Light** are the
+/// lighting layer's business and the wearer's torch already does the
+/// load-bearing half; **Faerie Fire** is a concentration spell the ring
+/// casts, and the engine has no lane for an *item* holding a caster's
+/// concentration; **Lightning Spheres** are four independently steered
+/// zones that discharge on contact, which is `engine::zones` work and a
+/// larger item than this one.
+pub static FIRE_SHOOTING_STAR: AreaSaveDamageItem = AreaSaveDamageItem {
+    action_name: "fire shooting star",
+    action_aliases: &["shooting star", "star", "mote"],
+    item_name: RING_OF_SHOOTING_STARS_NAME,
+    log_label: "ring of shooting stars",
+    dice: Dice::new(5, 4),
+    damage_type: DamageType::Fire,
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    // RAW's 15-foot Cube: three tiles from the centre on the 2.5-ft grid.
+    shape: AreaShape::Burst { radius: 3 },
+    // 60 ft = 24 tiles.
+    reach: 24,
+    charge_cost: Some(1),
+};
+
 /// **Clap of Thunder** — the Thunderous Greatclub's Magic action:
 /// *"strike the weapon against a hard surface to create a loud clap of
 /// thunder… You also create a 30-foot Cone of thunderous energy. Each
@@ -2781,6 +2888,7 @@ pub static READ_VITRIOLIC_SPHERE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem
     // 150 ft range RAW; well past any current map. Capped at 60 to
     // match the Fireball scroll's picker envelope.
     reach: 60,
+    charge_cost: None,
 };
 
 /// Archmage Pearl of Power — bonus action; restore one expended level-4
@@ -3738,6 +3846,7 @@ pub static READ_ICE_STORM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
     reach: 48,
+    charge_cost: None,
 };
 
 /// Scroll of Web — Action; 4-tile burst, DEX save vs DC 13, fail =
@@ -3826,6 +3935,7 @@ pub static USE_NECKLACE_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
+    charge_cost: None,
 };
 
 /// Dust of Disappearance — Bonus Action; installs `Invisible` on the
@@ -3966,6 +4076,7 @@ pub static READ_CLOUDKILL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles. Capped to map-realistic 48.
     reach: 48,
+    charge_cost: None,
 };
 
 /// Scroll of Prayer of Healing — 2d8+3 per-ally heal, up to 6 closest
@@ -4057,6 +4168,7 @@ pub static READ_SYNAPTIC_STATIC_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles.
     reach: 48,
+    charge_cost: None,
 };
 
 /// Scroll of Circle of Death — Action; 6-tile burst, CON save vs DC 15,
@@ -4079,6 +4191,7 @@ pub static READ_CIRCLE_OF_DEATH_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Burst { radius: 6 },
     // 150 ft RAW; 48 tiles (engine cap).
     reach: 48,
+    charge_cost: None,
 };
 
 /// Potion of Mind Blank — Action; installs `MindBlanked` on the drinker
@@ -4697,6 +4810,7 @@ pub static READ_MOONBEAM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 3 },
     // 120 ft RAW; 48 tiles.
     reach: 48,
+    charge_cost: None,
 };
 
 /// Scroll of Guiding Bolt — Action; single-target, 4d6 radiant damage on
@@ -4961,6 +5075,7 @@ pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageI
     // 100 ft RAW (Lightning Bolt's line); 40 tiles, and its own reach.
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
+    charge_cost: None,
 };
 
 /// Scroll of Mind Blank — Action; self-install `MindBlanked` for 10
@@ -5384,6 +5499,7 @@ pub static READ_PYROTECHNICS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 2 },
     // 60 ft RAW range; 24 tiles.
     reach: 24,
+    charge_cost: None,
 };
 
 /// Scroll of Flame Arrows — Action; install `FlamingArrowed` for 10
@@ -5597,6 +5713,7 @@ pub static THROW_JAVELIN_OF_LIGHTNING: AreaSaveDamageItem = AreaSaveDamageItem {
     // 120 ft RAW; 48 tiles, and its own reach.
     shape: AreaShape::Line { length: 48, half_width: 1 },
     reach: 0,
+    charge_cost: None,
 };
 
 /// Bead of Force — Action; a single bead torn from a Necklace of Beads
@@ -5622,6 +5739,7 @@ pub static THROW_BEAD_OF_FORCE: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 2 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
+    charge_cost: None,
 };
 
 /// Scroll of Fly — Action; install `Flying` for 10 rounds on a single
@@ -6177,6 +6295,7 @@ pub static READ_MAGNIFY_GRAVITY_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Burst { radius: 1 },
     // 60 ft RAW = 24 tiles.
     reach: 24,
+    charge_cost: None,
 };
 
 /// Scroll of Elemental Weapon — Action; install `ElementallyWeaponed` for
