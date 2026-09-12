@@ -9396,6 +9396,15 @@ impl ActorInstance {
     /// nothing for a creature already at or above the number — and two
     /// items granting floors on the same score resolve to the higher,
     /// which is the only reading of wearing both that is not arbitrary.
+    ///
+    /// The two lanes compose in the order RAW's two sentences do: every
+    /// floor first, then every bonus, which is what the Gauntlets of
+    /// Ogre Power (*"your Strength is 19"*) and an Ioun Stone of
+    /// Strength (*"+2, to a maximum of 20"*) say when worn together —
+    /// 20. Running the bonus first would answer 21, by letting the
+    /// floor overwrite a score the stone had already raised past it.
+    /// See `Item::ability_score_bonuses` for why the second lane is not
+    /// the first one with a different number in it.
     pub fn ability_score(&self, ast: AbilityScoreType) -> u32 {
         let base = match ast {
             AbilityScoreType::Strength => self.strength,
@@ -9405,12 +9414,25 @@ impl ActorInstance {
             AbilityScoreType::Constitution => self.constitution,
             AbilityScoreType::Charisma => self.charisma,
         };
-        self.items
+        let floored = self
+            .items
             .iter()
             .flat_map(|item| item.ability_score_floors.iter())
             .filter(|(a, _)| *a == ast)
             .map(|(_, score)| *score)
-            .fold(base, u32::max)
+            .fold(base, u32::max);
+        // Bonuses on one ability sum, then meet the tightest ceiling any
+        // of them named; a score already above that ceiling is left
+        // alone rather than pulled down to it.
+        let (bonus, ceiling) = self
+            .items
+            .iter()
+            .flat_map(|item| item.ability_score_bonuses.iter())
+            .filter(|(a, _, _)| *a == ast)
+            .fold((0, u32::MAX), |(sum, cap), (_, bonus, ceiling)| {
+                (sum + bonus, cap.min(*ceiling))
+            });
+        floored.max((floored + bonus).min(ceiling))
     }
 
     /// True if any active condition's `blocks_action_economy` clause

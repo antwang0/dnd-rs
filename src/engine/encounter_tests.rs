@@ -48520,6 +48520,162 @@ fn a_score_floor_moves_the_score_and_only_upward() {
     assert_eq!(BELT_OF_STORM_GIANT_STRENGTH.ability_score_floors[0].1, 29);
 }
 
+/// The other sentence an item can write about an ability score: *"Your
+/// Strength increases by 2, to a maximum of 20."*
+///
+/// `Item::ability_score_bonuses` is the lane, and the claims are the
+/// ways it differs from the floor lane directly above it:
+///
+///   - **It moves everybody**, not just whoever was under a number. The
+///     belt is worth five modifier points to a wizard and nothing to a
+///     barbarian; the stone is worth one step to both.
+///   - **The ceiling holds.** A creature already at the cap gains
+///     nothing, which is what makes the stone a sidegrade for a party's
+///     best and an upgrade for everybody else.
+///   - **It never subtracts.** A storm giant at Strength 29 is not
+///     pulled down to the stone's 20 — RAW's clause is an increase, not
+///     an assignment, and the fold has to read it that way.
+///   - **Floors compose before bonuses.** Gauntlets (*"your Strength is
+///     19"*) plus the stone (*"+2, max 20"*) is 20. Running the two in
+///     the other order answers 21, by letting the floor overwrite a
+///     score the stone had already raised.
+///   - **Two rows on one ability sum under the tighter ceiling**, which
+///     is the only reading of orbiting two of the same stone that
+///     cannot be gamed by finding a third.
+#[test]
+fn a_score_bonus_moves_every_score_and_stops_at_its_ceiling() {
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::actors::creatures::storm_giants::STORM_GIANT_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::AbilityScoreType::Strength;
+    use crate::items::item_template::{
+        GAUNTLETS_OF_OGRE_POWER, IOUN_STONE_OF_STRENGTH, IOUN_STONES,
+    };
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hill = e
+        .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+        .unwrap();
+    let storm = e
+        .instantiate_creature(&STORM_GIANT_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+        .unwrap();
+
+    // It moves the score, and the modifier moves with it.
+    let bare = e.actors[&wizard].ability_score(Strength);
+    let bare_mod = e.actors[&wizard].ability_modifier(Strength);
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .pickup_item(&IOUN_STONE_OF_STRENGTH);
+    assert_eq!(e.actors[&wizard].ability_score(Strength), bare + 2);
+    assert_eq!(e.actors[&wizard].ability_modifier(Strength), bare_mod + 1);
+
+    // The ceiling holds for somebody already at it, and the stone does
+    // not subtract from somebody above it.
+    let hill_str = e.actors[&hill].ability_score(Strength);
+    let storm_str = e.actors[&storm].ability_score(Strength);
+    assert!(
+        hill_str >= 20 && storm_str > 20,
+        "the test needs one giant at the cap and one past it (hill {hill_str}, storm {storm_str})"
+    );
+    for id in [hill, storm] {
+        let before = e.actors[&id].ability_score(Strength);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&IOUN_STONE_OF_STRENGTH);
+        assert_eq!(
+            e.actors[&id].ability_score(Strength),
+            before,
+            "the stone moved a score already at or past its ceiling"
+        );
+    }
+
+    // Off with the stone, back to the sheet.
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .remove_item_by_name(IOUN_STONE_OF_STRENGTH.name);
+    assert_eq!(e.actors[&wizard].ability_score(Strength), bare);
+
+    // Floor first, then bonus — 19 and then +2 under a cap of 20.
+    for order in [0, 1] {
+        let mut two = ei_with_terrain(15, 15, &[]);
+        let id = two
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let pair: [&'static crate::items::item_template::Item; 2] = if order == 0 {
+            [&GAUNTLETS_OF_OGRE_POWER, &IOUN_STONE_OF_STRENGTH]
+        } else {
+            [&IOUN_STONE_OF_STRENGTH, &GAUNTLETS_OF_OGRE_POWER]
+        };
+        for item in pair {
+            two.actors.get_mut(&id).unwrap().pickup_item(item);
+        }
+        assert_eq!(
+            two.actors[&id].ability_score(Strength),
+            20,
+            "the gauntlets' 19 and the stone's +2 meet the stone's ceiling"
+        );
+    }
+
+    // Two of the same stone sum, and still stop at the cap.
+    {
+        let mut two = ei_with_terrain(15, 15, &[]);
+        let id = two
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let sheet = two.actors[&id].ability_score(Strength);
+        for _ in 0..2 {
+            two.actors
+                .get_mut(&id)
+                .unwrap()
+                .pickup_item(&IOUN_STONE_OF_STRENGTH);
+        }
+        assert_eq!(
+            two.actors[&id].ability_score(Strength),
+            (sheet + 4).min(20),
+            "two rows on one ability sum before the ceiling"
+        );
+    }
+
+    // And the shelf is a shelf: every stone findable, one glyph, and
+    // the six ability stones each +2 under a ceiling of 20 on one score.
+    let mut bumping = 0;
+    for stone in IOUN_STONES {
+        assert_eq!(
+            stone.glyph, 'J',
+            "{} is not drawn as an Ioun Stone",
+            stone.name
+        );
+        assert!(
+            crate::items::item_template::LOOT_POOL
+                .iter()
+                .any(|l| l.name == stone.name),
+            "{} cannot be found by anybody",
+            stone.name
+        );
+        assert!(
+            stone.ability_score_floors.is_empty(),
+            "{} sets a score rather than raising one",
+            stone.name
+        );
+        for (_, bonus, ceiling) in stone.ability_score_bonuses {
+            assert_eq!(
+                (*bonus, *ceiling),
+                (2, 20),
+                "{} is off the shelf's number",
+                stone.name
+            );
+            bumping += 1;
+        }
+    }
+    assert_eq!(bumping, 6, "SRD 5.2 prints six ability-raising Ioun Stones");
+}
+
 /// Wand of Web: burst, DEX save vs DC 15, fail = Restrained for 10
 /// rounds. We seed-sweep so probabilistic save outcomes don't make
 /// the assertion flaky — across enough seeds at least one zombie

@@ -243,6 +243,34 @@ pub struct Item {
     /// the highest wins, which is what "your Strength is 19" and "your
     /// Strength is 21" say when worn together.
     pub ability_score_floors: &'static [(crate::engine::types::AbilityScoreType, u32)],
+    /// Ability scores this item **raises, up to a ceiling**, while it is
+    /// carried — SRD 5.2's Ioun Stone of Agility, *"Your Dexterity
+    /// increases by 2, to a maximum of 20."* Each row is
+    /// `(ability, bonus, ceiling)`.
+    ///
+    /// The other sentence the game writes about an ability score, and
+    /// the one `ability_score_floors` one field up cannot say. A floor
+    /// *replaces* the number and is worth nothing to somebody already
+    /// above it; a bonus *moves* the number the holder brought and is
+    /// worth the same two points to everybody under the cap. Those are
+    /// opposite items: the Gauntlets of Ogre Power are for the wizard,
+    /// and the Ioun Stone of Strength is for the barbarian who is
+    /// already at 18.
+    ///
+    /// Folded in `ActorInstance::ability_score` **after** the floors,
+    /// because that is the order the two sentences compose in: a
+    /// creature wearing the Gauntlets (*"your Strength is 19"*) and the
+    /// stone (*"+2, to a maximum of 20"*) has Strength 20, not 19 and
+    /// not 21. Rows on the same ability sum before the ceiling is
+    /// applied — two stones of Agility are +4 — and the ceiling is the
+    /// smallest one any contributing row names, which is the only
+    /// reading of two caps that cannot be gamed by adding an item.
+    ///
+    /// The fold never *lowers* a score. A storm giant at Strength 29
+    /// gains nothing from a stone whose ceiling is 20, which is RAW's
+    /// "increases … to a maximum of" read as the increase it is rather
+    /// than as an assignment.
+    pub ability_score_bonuses: &'static [(crate::engine::types::AbilityScoreType, u32, u32)],
     /// Skills whose checks this item's holder rolls with Advantage —
     /// SRD 5.2's Sentinel Shield, *"you have Advantage on Initiative
     /// rolls and Wisdom (Perception) checks"*, and its second half.
@@ -526,6 +554,7 @@ impl Item {
         bonuses: ItemBonuses::ZERO,
         on_use: &[],
         ability_score_floors: &[],
+        ability_score_bonuses: &[],
         skill_check_advantages: &[],
         sharpens_initiative: false,
         condition_immunities: &[],
@@ -1375,6 +1404,226 @@ pub static IOUN_STONE_OF_MASTERY: Item = Item {
     },
     ..Item::DEFAULTS
 };
+
+// ---------------------------------------------------------------------
+// The rest of the Ioun Stones — SRD 5.2 prints fourteen types under one
+// entry, and the file had one of them.
+//
+// The Mastery stone above arrived alone, for the reason a single rung
+// usually does: it was the one whose clause the engine could already
+// say. The other thirteen were each waiting on a lane. Eight of them
+// are here now, and the five that are not are named at the bottom of
+// this block with what each is waiting on.
+//
+// Six of the eight are the same sentence with a different ability in
+// it — *"Your <score> increases by 2, to a maximum of 20"* — which is
+// what `Item::ability_score_bonuses` was added for. Six statics rather
+// than one parameterised stone, for the reason the +N ladders are
+// three apiece: an `Item` is a `&'static` value the engine identifies
+// by `name`, so a stone that carried its ability in a field would still
+// need six of them to exist.
+//
+// The two that are not that sentence are the two that needed no new
+// lane at all: Protection is a number `ItemBonuses` has had since the
+// Ring of Protection, and Awareness is — exactly, clause for clause —
+// the Sentinel Shield's sentence, which already owns two fields.
+// ---------------------------------------------------------------------
+
+/// **Ioun Stone of Agility** (Very Rare) — *"Your Dexterity increases
+/// by 2, to a maximum of 20."*
+///
+/// The widest of the six ability stones in this engine, because
+/// Dexterity is the widest score: it is the attack roll and the damage
+/// roll of every finesse and ranged weapon, the initiative die, the AC
+/// of anybody in light armour, and the saving throw that every area
+/// spell on the board asks for. Two points is one modifier step, and a
+/// modifier step on Dexterity is felt by more dice per round than a
+/// modifier step on anything else.
+///
+/// A ceiling of 20 rather than none, which is RAW's own clause and is
+/// the thing that makes the stone a *gift to the party's second-best
+/// scout* rather than a flat upgrade for its best: a rogue already at
+/// 20 gets nothing, and the wizard standing behind them gets the whole
+/// two points.
+pub static IOUN_STONE_OF_AGILITY: Item = Item {
+    name: "Ioun Stone of Agility",
+    glyph: 'J',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Dexterity, 2, 20)],
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Strength** (Very Rare) — *"Your Strength increases
+/// by 2, to a maximum of 20."*
+///
+/// The stone that is the opposite item to the shelf of Belts of Giant
+/// Strength two screens up, and worth reading beside them: the belt
+/// *sets* Strength to 21 and up, so it is worth everything to a wizard
+/// and nothing to a barbarian; the stone *adds* two under a ceiling of
+/// 20, so it is worth the same to both until one of them is already
+/// there. A party that finds both gives the belt to whoever has the
+/// worst Strength and the stone to whoever has the second best — which
+/// is a decision, and neither item alone offers one.
+pub static IOUN_STONE_OF_STRENGTH: Item = Item {
+    name: "Ioun Stone of Strength",
+    glyph: 'J',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Strength, 2, 20)],
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Fortitude** (Very Rare) — *"Your Constitution
+/// increases by 2, to a maximum of 20."*
+///
+/// Two points of Constitution is the concentration save, the poison
+/// save, and the hit dice a short rest buys back — the same three
+/// things the Amulet of Health's floor reaches, at a fifth of the
+/// distance.
+///
+/// **No hit-point number beside it**, which is where it parts company
+/// with that amulet. The amulet carries a flat `+10 max HP` because
+/// this engine rolls hit points once at instantiation and cannot
+/// recompute them when a Constitution changes at round four, and
+/// because a jump to 19 is worth up to five modifier steps across a
+/// chassis's hit dice — a number worth inventing. One step is not: it
+/// would be worth one point per hit die, which is one number on a
+/// 20th-level fighter and another on a familiar, and a single constant
+/// standing in for both would be wrong for every chassis rather than
+/// silent about all of them.
+pub static IOUN_STONE_OF_FORTITUDE: Item = Item {
+    name: "Ioun Stone of Fortitude",
+    glyph: 'J',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Constitution, 2, 20)],
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Insight** (Very Rare) — *"Your Wisdom increases by
+/// 2, to a maximum of 20."*
+///
+/// The caster stone for half the classes that have one: a cleric, a
+/// druid or a ranger reads its spell save DC and its spell attack
+/// bonus off Wisdom, so two points here is `+1` on every save its
+/// targets roll *and* `+1` on every spell attack it makes — the same
+/// pair the Robe of the Archmagi grants at twice the size, for whoever
+/// the robe is the wrong class for.
+pub static IOUN_STONE_OF_INSIGHT: Item = Item {
+    name: "Ioun Stone of Insight",
+    glyph: 'J',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Wisdom, 2, 20)],
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Intellect** (Very Rare) — *"Your Intelligence
+/// increases by 2, to a maximum of 20."*
+///
+/// The wizard's and the artificer's half of the same pair — see
+/// [`IOUN_STONE_OF_INSIGHT`]. Also the score the engine's Intelligence
+/// saving throw asks for, which is the one nearly every chassis is bad
+/// at and which the nastier psychic effects on the bestiary aim
+/// squarely at.
+pub static IOUN_STONE_OF_INTELLECT: Item = Item {
+    name: "Ioun Stone of Intellect",
+    glyph: 'J',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Intelligence, 2, 20)],
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Leadership** (Very Rare) — *"Your Charisma increases
+/// by 2, to a maximum of 20."*
+///
+/// The bard's, the sorcerer's, the warlock's and the paladin's
+/// spellcasting ability, and — for the paladin — the size of the aura
+/// every ally standing near them is saving through. The narrowest of
+/// the six on a chassis that casts off something else, and the only one
+/// of them that reaches other people's dice.
+pub static IOUN_STONE_OF_LEADERSHIP: Item = Item {
+    name: "Ioun Stone of Leadership",
+    glyph: 'J',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Charisma, 2, 20)],
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Protection** (Rare) — *"You gain a +1 bonus to Armor
+/// Class while this dusty-rose prism orbits your head."*
+///
+/// One field and no clause, like the `+1 Armor` it sits beside on the
+/// table. It is here rather than being "the Ring of Protection again"
+/// because it is not: the ring carries `+1 save` as well, and RAW gives
+/// the prism the AC alone. Two items that differ by exactly one printed
+/// half-sentence are worth having both of, since the pair is what makes
+/// the ring's second half legible as a thing the ring has.
+pub static IOUN_STONE_OF_PROTECTION: Item = Item {
+    name: "Ioun Stone of Protection",
+    glyph: 'J',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Awareness** (Rare) — *"You have Advantage on
+/// Initiative rolls and Wisdom (Perception) checks."*
+///
+/// The Sentinel Shield's sentence, word for word, on an item that is
+/// not a shield — which is the whole of why it costs nothing to add:
+/// both halves already have a field, `sharpens_initiative` and
+/// `skill_check_advantages`, and both were written for that shield with
+/// a note saying the next item on the lane would name a different
+/// skill. This one names the same one, and the lanes did not have to
+/// move.
+///
+/// What it is *not* is the shield: no `+2 AC`, because a prism orbiting
+/// your head blocks nothing, and no hand to hold. That is the item — a
+/// party's front-liner can have the shield and its scout can have this,
+/// and both of them go early.
+pub static IOUN_STONE_OF_AWARENESS: Item = Item {
+    name: "Ioun Stone of Awareness",
+    glyph: 'J',
+    sharpens_initiative: true,
+    skill_check_advantages: &[crate::engine::types::Skill::Perception],
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's Ioun Stones, in the order its own entry lists the types it
+/// prints.
+///
+/// A cohort rather than nine loose statics, for the reason
+/// [`GIANT_STRENGTH_BELTS`] and `MAGIC_ARMOURY` are: the family has
+/// invariants — every stone is findable, every stone draws with the
+/// same glyph, and the six ability stones grant `+2` under a ceiling of
+/// `20` and nothing else — and an invariant needs something to read
+/// that is not a hand-copied list.
+///
+/// **Five of RAW's fourteen types are absent**, each waiting on
+/// something the engine does not have rather than on somebody's time:
+///
+///   - **Absorption** and **Greater Absorption** — a Reaction that
+///     cancels a spell of level 4 (or 8) or lower, until the stone has
+///     eaten 20 levels and burns out. The reaction is
+///     `spells::COUNTERSPELL`'s lane and the burn-out is `Item::charges`,
+///     but "20 levels, cumulative, across encounters and never
+///     recharging" is the one ledger in the file that a long rest must
+///     *not* refill — and `regain_item_charges` tops every charge pool
+///     back up at dawn, which is the opposite rule.
+///   - **Regeneration** — *"You regain 15 Hit Points at the end of each
+///     hour."* An hour is longer than any fight the engine runs and
+///     shorter than its long rest, so the clause would fire either
+///     never or once, and neither is the item.
+///   - **Reserve** — stores 4 levels of spells cast into it by anybody.
+///     The Ring of Spell Storing is the same shape and is in the pool;
+///     what this needs on top is a *donor* — a second creature spending
+///     its own slot to fill somebody else's item — and no action in the
+///     engine spends a slot for an effect that lands on a third party's
+///     inventory.
+///   - **Sustenance** — *"You don't need to eat or drink."* There is no
+///     hunger clock to answer.
+pub static IOUN_STONES: &[&Item] = &[
+    &IOUN_STONE_OF_AGILITY,
+    &IOUN_STONE_OF_AWARENESS,
+    &IOUN_STONE_OF_FORTITUDE,
+    &IOUN_STONE_OF_INSIGHT,
+    &IOUN_STONE_OF_INTELLECT,
+    &IOUN_STONE_OF_LEADERSHIP,
+    &IOUN_STONE_OF_MASTERY,
+    &IOUN_STONE_OF_PROTECTION,
+    &IOUN_STONE_OF_STRENGTH,
+];
 
 /// **Sentinel Shield** (Armor, Shield; Uncommon) — *"You have Advantage
 /// on Initiative rolls and Wisdom (Perception) checks while you hold this
@@ -5121,10 +5370,23 @@ pub static LOOT_POOL: &[&Item] = &[
     // single-element resistance rings; sits as an offensive-niche
     // trinket alongside the defensive AC / save bumps.
     &BRACERS_OF_ARCHERY,
-    // Ioun Stone of Mastery — caster-flavored +1/+1 (attack/save) trinket.
-    // Sits alongside Stone of Good Luck (+1/+1 AC/save) and the Cloak of
-    // Protection (+1/+1 AC/save) as a third "+1 to two stats" passive.
+    // The Ioun Stones. One entry each: RAW rates them Rare to
+    // Legendary, and nine single-weight rows in a pool this size is
+    // already a generous shelf — a party that finds two has found two
+    // different ones, which is the interesting outcome.
+    //
+    // The comment this stanza replaces described the Mastery stone as a
+    // "+1/+1 (attack/save) trinket", which is what it carried before
+    // `ItemBonuses::proficiency` existed and has not been true since.
     &IOUN_STONE_OF_MASTERY,
+    &IOUN_STONE_OF_AGILITY,
+    &IOUN_STONE_OF_STRENGTH,
+    &IOUN_STONE_OF_FORTITUDE,
+    &IOUN_STONE_OF_INSIGHT,
+    &IOUN_STONE_OF_INTELLECT,
+    &IOUN_STONE_OF_LEADERSHIP,
+    &IOUN_STONE_OF_PROTECTION,
+    &IOUN_STONE_OF_AWARENESS,
     // Sentinel Shield — low-tier defensive trinket. Same weight as the
     // generic Ring of Protection / Cloak of Protection siblings.
     &SENTINEL_SHIELD,
