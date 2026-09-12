@@ -5180,6 +5180,17 @@ pub static POTION_OF_VITALITY: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Elixir of Health** (Potion, Rare) — the Blinded / Deafened /
+/// Paralyzed / Poisoned cure, and the only answer on the loot table to
+/// the condition that takes a character out of a fight without killing
+/// them. See `item_actions::DRINK_ELIXIR_OF_HEALTH`.
+pub static ELIXIR_OF_HEALTH: Item = Item {
+    name: "Elixir of Health",
+    glyph: 'v',
+    on_use: &[&crate::actions::item_actions::DRINK_ELIXIR_OF_HEALTH],
+    ..Item::DEFAULTS
+};
+
 /// **Potion of Water Breathing** (Potion, Uncommon) — see
 /// `item_actions::DRINK_POTION_OF_WATER_BREATHING`. Sits beside the
 /// Necklace of Adaptation on the drowning lane, and undercuts it by two
@@ -5780,6 +5791,12 @@ pub static LOOT_POOL: &[&Item] = &[
     &EYES_OF_THE_EAGLE,
     // The sixth belt, and the only one that is not a Strength score.
     &BELT_OF_DWARVENKIND,
+    // The one thing on the table that answers Paralyzed without a
+    // spell slot behind it. Two entries: a condition that can take a
+    // character out of the whole fight deserves an answer a party finds
+    // more than once a dungeon.
+    &ELIXIR_OF_HEALTH,
+    &ELIXIR_OF_HEALTH,
     // The first area in the pool that is not spent by using it, and the
     // first repeatable single-target volley. Single entries — six
     // refilling shots apiece is a lot of dungeon.

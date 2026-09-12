@@ -6964,6 +6964,32 @@ pub struct SelfCureItem {
     /// `true` ⇒ Bonus Action cost; `false` ⇒ Action cost, routed through
     /// `item_use_cost` so a Thief's Fast Hands still applies.
     pub bonus_action: bool,
+    /// How far this draught can be **administered**, in tiles, or
+    /// `None` for one that only the holder can drink.
+    ///
+    /// SRD 5.2's potion rules print the clause on every potion in the
+    /// book — *"Drinking a potion or administering it to another
+    /// creature"* — and for most of them it is a convenience. For one
+    /// it is the whole item: the Elixir of Health's headline clause
+    /// ends the **Paralyzed** condition, and a Paralyzed creature is
+    /// Incapacitated and cannot drink anything. A self-only elixir
+    /// would ship that sentence dead, which is the failure this file
+    /// spends most of its docstrings avoiding.
+    ///
+    /// `Some(n)` therefore switches the whole shape: `SingleActor`
+    /// rather than `NoArgs`, gated on `first_ally_target_id` — which
+    /// admits the holder, because a creature is allied with itself —
+    /// so one row covers both "drink it" and "pour it into the
+    /// fighter's mouth". `None` keeps the original shape for the rows
+    /// where the reach would be noise.
+    ///
+    /// A field rather than a second struct, for the reason
+    /// `KindleWeapon::light` is one: everything else about the two
+    /// shapes — the cure list, the nothing-to-cure refusal, the
+    /// `RemoveCondition` queue, the AI's `cures_conditions` hook — is
+    /// identical, and a second struct would duplicate four of the five
+    /// things this type is.
+    pub reach: Option<isize>,
 }
 
 impl Action for SelfCureItem {
@@ -6982,7 +7008,22 @@ impl Action for SelfCureItem {
     }
 
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
+        match self.reach {
+            Some(_) => TargetingSchema::SingleActor,
+            None => TargetingSchema::NoArgs,
+        }
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        self.reach
+    }
+
+    fn requires_los(&self) -> bool {
+        // Only meaningful for the administering shape, and true there:
+        // you cannot pour a potion into somebody on the far side of a
+        // wall. Harmless on the self-only rows, which have no target to
+        // trace to.
+        true
     }
 
     fn is_harmful(&self) -> bool {
@@ -7008,17 +7049,20 @@ impl Action for SelfCureItem {
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
-        _ti: Option<&Vec<usize>>,
+        target_ids: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         if !caster_holds(encounter, caster_id, self.item_name) {
             return false;
         }
+        let Some(drinker) = self.drinker(encounter, caster_id, target_ids) else {
+            return false;
+        };
         // Something to cure, or the potion stays corked.
         encounter
             .actors
-            .get(&caster_id)
+            .get(&drinker)
             .is_some_and(|a| self.cures.iter().any(|&c| a.has_condition(c)))
     }
 
@@ -7026,25 +7070,56 @@ impl Action for SelfCureItem {
         &self,
         encounter: &mut EncounterInstance,
         caster_id: usize,
-        _ti: Option<&Vec<usize>>,
+        target_ids: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::RemoveCondition;
+        let Some(drinker) = self.drinker(encounter, caster_id, target_ids) else {
+            return Vec::new();
+        };
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        let name = encounter.actor_name(caster_id);
+        // The log names whoever it went into, which on the
+        // administering shape is not the person who spent the Action.
+        let name = encounter.actor_name(drinker);
         encounter.log(self.log_text.replace("{actor}", &name));
         self.cures
             .iter()
             .map(|&condition| {
                 Box::new(RemoveCondition {
-                    actor_id: caster_id,
+                    actor_id: drinker,
                     condition,
                 }) as Box<dyn ApplicableSideEffect>
             })
             .collect()
+    }
+}
+
+impl SelfCureItem {
+    /// Who actually swallows it: the holder on a self-only row, and
+    /// whoever was named on an administering one.
+    ///
+    /// `None` when a targeted row was handed nobody or somebody
+    /// hostile, which is the same refusal `SingleTargetHealItem` makes
+    /// and for the same reason — a cure poured into an enemy is a rare
+    /// consumable spent on the wrong person, and the validator is where
+    /// the picker can still say so.
+    ///
+    /// `first_ally_target_id` admits the caster themselves, because a
+    /// creature is allied with itself; so the targeted shape covers
+    /// both halves of RAW's sentence with one branch.
+    fn drinker(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+    ) -> Option<usize> {
+        match self.reach {
+            None => Some(caster_id),
+            Some(_) => first_ally_target_id(encounter, caster_id, target_ids),
+        }
     }
 }
 
@@ -7063,9 +7138,67 @@ pub static DRINK_POTION_OF_VITALITY: SelfCureItem = SelfCureItem {
     log_text: "{actor} drinks a potion of vitality; the weariness and the venom drain away.",
     cures: &[Condition::Exhausted, Condition::Poisoned],
     bonus_action: false,
+    // Self-only. RAW lets any potion be administered; this one's two
+    // clauses are both things a creature can still act through —
+    // exhaustion and poison leave you able to lift a vial — so the
+    // reach would add a targeting step and buy nothing. The Elixir of
+    // Health below is the row where it buys the whole item.
+    reach: None,
 };
 
 const POTION_OF_VITALITY_NAME: &str = "Potion of Vitality";
+
+pub const ELIXIR_OF_HEALTH_NAME: &str = "Elixir of Health";
+
+/// **Elixir of Health** (Potion, Rare) — *"the following conditions end
+/// on you: Blinded, Deafened, Paralyzed, and Poisoned."*
+///
+/// The second row on `SelfCureItem`, and between them the two describe
+/// what the chassis is for: the Potion of Vitality answers the debuffs
+/// that wear a creature down over a fight, and this one answers the two
+/// that end it on the spot.
+///
+/// **Paralyzed is the clause.** It auto-fails every Strength and
+/// Dexterity save, hands every attacker within five feet an automatic
+/// critical hit, and the engine's roster hands it out freely — a
+/// ghoul's claws, a carrion crawler's tentacles, a sphinx's second
+/// roar, a silver dragon's breath, Hold Person. Until this potion,
+/// every answer to it in the file was a spell somebody had to have
+/// prepared: Lesser Restoration, Greater Restoration, the Monk's
+/// Stillness of Mind. A fighter had none, and a party whose only caster
+/// was the one who got held had none either. A rare consumable that any
+/// hand can uncork is the difference between losing a character for
+/// three rounds and losing them for the fight.
+///
+/// Blinded is the other half and is nearly as good: it is disadvantage
+/// on everything the holder swings and advantage on everything swung
+/// back.
+///
+/// RAW's first sentence — *"cured of all magical contagions"* — has no
+/// surface here. The engine models no diseases; Contagion's own row
+/// installs an ordinary condition and this potion would not be the
+/// thing that lifts it.
+pub static DRINK_ELIXIR_OF_HEALTH: SelfCureItem = SelfCureItem {
+    action_name: "drink elixir of health",
+    action_aliases: &["elixir", "elixir of health", "health"],
+    item_name: ELIXIR_OF_HEALTH_NAME,
+    log_text: "{actor} takes the elixir of health; sight, hearing and limbs come back.",
+    cures: &[
+        Condition::Blinded,
+        Condition::Deafened,
+        Condition::Paralyzed,
+        Condition::Poisoned,
+    ],
+    // An Action, like every other potion on this chassis — a Thief's
+    // Fast Hands still buys the bonus-action price through
+    // `item_use_cost`, which is the one hand RAW lets drink faster.
+    bonus_action: false,
+    // Two tiles — RAW's "administering it to another creature within 5
+    // feet of yourself". The reach is what makes the Paralyzed clause
+    // a rule rather than a sentence: the creature that needs it most is
+    // the one that cannot lift a vial.
+    reach: Some(2),
+};
 
 /// **Potion of Water Breathing** — "You can breathe underwater for 24
 /// hours after drinking this potion."

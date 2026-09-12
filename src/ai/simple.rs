@@ -8698,6 +8698,21 @@ fn try_self_heal(
 /// enemies, and the action's own validator already refuses when there is
 /// nothing to cure — which is the gate that matters and the one that
 /// keeps the potion corked.
+///
+/// **It administers as well as drinks**, which is the half SRD 5.2's
+/// potion rules require and the half the Elixir of Health is entirely
+/// about: its headline clause ends the Paralyzed condition, and a
+/// Paralyzed creature is Incapacitated and takes no actions at all. A
+/// rung that only ever cured its own holder would leave that sentence
+/// unreachable by anybody — the one creature that needs it is the one
+/// that cannot ask for it.
+///
+/// Self first, then allies, and in that order deliberately: a cure the
+/// actor needs themselves is the one they are certain to be able to use
+/// next turn, and a rung that poured the party's only elixir into
+/// somebody else while poisoned would be spending the wrong vial.
+/// Allies are tried nearest first so the reach gate resolves at the
+/// first candidate that can actually be reached.
 fn try_self_cleanse(
     encounter: &EncounterInstance,
     actor_id: usize,
@@ -8706,14 +8721,54 @@ fn try_self_cleanse(
     if !actor.is_combat_active() {
         return None;
     }
-    for action in actor.available_actions() {
-        let cures = action.cures_conditions();
-        if cures.is_empty() || !cures.iter().any(|&c| actor.has_condition(c)) {
+    // Everybody this actor might pour something into, self first and
+    // then allies by distance. A self-only cure ignores the target list
+    // entirely — its schema is `NoArgs` — so the first candidate is the
+    // only one those rows ever see.
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let mut patients: Vec<(isize, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != actor_id && a.team() == my_team && a.is_combat_active()
+        })
+        .map(|(id, a)| {
+            (
+                footprint_chebyshev(
+                    my_loc,
+                    my_size,
+                    a.location(),
+                    get_tiles_from_size(a.size()),
+                ),
+                *id,
+            )
+        })
+        .collect();
+    patients.sort();
+    let patients = std::iter::once(actor_id).chain(patients.into_iter().map(|(_, id)| id));
+
+    for patient in patients {
+        let Some(sufferer) = encounter.actors.get(&patient) else {
             continue;
-        }
-        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
-        if aei.validate(encounter) {
-            return Some(aei);
+        };
+        for action in actor.available_actions() {
+            let cures = action.cures_conditions();
+            if cures.is_empty() || !cures.iter().any(|&c| sufferer.has_condition(c)) {
+                continue;
+            }
+            // A `NoArgs` cure is handed no target and would refuse one;
+            // a reaching cure needs the name. The schema is the fact
+            // that decides which, and `validate` enforces both.
+            let targets = action
+                .reach_tiles()
+                .is_some()
+                .then(|| vec![patient]);
+            let aei = ActionExecutionInfo::new(action, actor_id, targets, None, None);
+            if aei.validate(encounter) {
+                return Some(aei);
+            }
         }
     }
     None
@@ -19136,6 +19191,61 @@ mod tests {
             super::try_resistance_ward(&e, cleric).is_none(),
             "nobody in reach still needs one"
         );
+    }
+
+    /// The AI pours the elixir into somebody who cannot lift it.
+    ///
+    /// `try_self_cleanse` was, as its name says, a self-only rung: it
+    /// asked whether the *actor* was under something its pack could
+    /// lift. That was the whole rule for as long as every cure in the
+    /// file was a Potion of Vitality, whose two clauses — exhaustion
+    /// and poison — leave a creature perfectly able to lift a vial.
+    ///
+    /// The Elixir of Health is not that. Its headline clause ends the
+    /// Paralyzed condition, and a Paralyzed creature is Incapacitated
+    /// and takes no actions at all, so a self-only rung leaves the one
+    /// creature that needs it unable to ask. RAW answers that in so
+    /// many words — *"Drinking a potion or administering it to another
+    /// creature"* — and the rung walks allies now, nearest first, after
+    /// trying the holder.
+    #[test]
+    fn the_ai_administers_a_cure_to_an_ally_who_cannot_act() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::items::item_template::ELIXIR_OF_HEALTH;
+
+        let mut e = empty_arena();
+        let medic = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let held = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 1)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&medic)
+            .unwrap()
+            .pickup_item(&ELIXIR_OF_HEALTH);
+        e.actors
+            .get_mut(&held)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(10));
+
+        let pick = super::try_self_cleanse(&e, medic)
+            .expect("an ally is held and the medic is holding the answer");
+        assert_eq!(pick.action().name(), "drink elixir of health");
+        assert_eq!(pick.target_ids(), Some(&[held][..]));
+
+        // The control, and the ordering claim with it: a medic who is
+        // *also* held drinks it themselves. One vial, and the one they
+        // can be sure of using next turn is their own.
+        e.actors
+            .get_mut(&medic)
+            .unwrap()
+            .add_condition(Condition::Blinded, ConditionTimer::Rounds(10));
+        let pick = super::try_self_cleanse(&e, medic).expect("the rung still fires");
+        assert_eq!(pick.target_ids(), Some(&[medic][..]));
     }
 
     /// …and a swing the AI can see is one it actually takes.

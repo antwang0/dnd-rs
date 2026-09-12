@@ -97799,6 +97799,94 @@ fn the_mace_of_terror_runs_dry_without_leaving_the_wielder_empty_handed() {
     );
 }
 
+/// The Elixir of Health, and the clause a self-only potion could not
+/// have.
+///
+/// SRD 5.2's headline on it is *"the following conditions end on you:
+/// Blinded, Deafened, Paralyzed, and Poisoned"*, and Paralyzed is the
+/// reason it is a Rare item rather than a curiosity: it auto-fails
+/// every Strength and Dexterity save, hands every attacker within five
+/// feet an automatic critical, and the bestiary hands it out from a
+/// ghoul's claws, a carrion crawler, a sphinx's second roar and Hold
+/// Person.
+///
+/// It is also the reason `SelfCureItem` grew a reach. A Paralyzed
+/// creature is Incapacitated and takes no actions at all, so a
+/// self-only elixir ships its own headline dead — the one creature that
+/// needs it is the one that cannot uncork it. RAW's potion rules answer
+/// that in so many words: *"Drinking a potion or administering it to
+/// another creature."*
+///
+/// Four claims:
+///   - a held ally is freed by somebody else spending the Action;
+///   - the paralysed creature could not have done it themselves;
+///   - an enemy is not a legal recipient, however close they stand;
+///   - and an ally with nothing to cure leaves the vial corked.
+#[test]
+fn an_elixir_of_health_can_be_poured_into_somebody_who_cannot_lift_it() {
+    use crate::actions::item_actions::DRINK_ELIXIR_OF_HEALTH;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::items::item_template::ELIXIR_OF_HEALTH;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let medic = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let held = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 4), 0, 1)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&medic)
+        .unwrap()
+        .pickup_item(&ELIXIR_OF_HEALTH);
+    for id in [held, foe] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(10));
+    }
+
+    // The premise: the held fighter genuinely cannot act.
+    assert!(
+        e.actors[&held].is_incapacitated(),
+        "a Paralyzed creature is supposed to be past helping itself"
+    );
+
+    // An enemy is not a recipient, and an unafflicted ally is not one
+    // either — the vial stays corked for both.
+    let aimed_at = |e: &EncounterInstance, id: usize| {
+        DRINK_ELIXIR_OF_HEALTH.validate_input(e, medic, Some(&vec![id]), None, None)
+    };
+    assert!(
+        !aimed_at(&e, foe),
+        "the elixir was pourable into an enemy standing next to the medic"
+    );
+    assert!(
+        !aimed_at(&e, medic),
+        "a healthy holder should not be able to drink it for nothing"
+    );
+
+    // And the claim: the medic frees the ally.
+    assert!(aimed_at(&e, held));
+    for ef in DRINK_ELIXIR_OF_HEALTH.execute(&mut e, medic, Some(&vec![held]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&held].has_condition(Condition::Paralyzed),
+        "the elixir went in and the paralysis stayed"
+    );
+    assert!(
+        !e.actors[&medic].has_item_named(ELIXIR_OF_HEALTH.name),
+        "a consumable is supposed to be consumed"
+    );
+    // The enemy is still held: one vial, one recipient.
+    assert!(e.actors[&foe].has_condition(Condition::Paralyzed));
+}
+
 /// The Ring of Shooting Stars is the same lesson on the other chassis.
 ///
 /// `AreaSaveDamageItem` had no `charge_cost` until this ring, because
