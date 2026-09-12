@@ -722,10 +722,19 @@ pub struct CasterSaveModeRider {
 ///
 /// What makes this the right table for a target-side ward, rather than
 /// `BLANKET_SAVE_ADVANTAGE_CONDITIONS` one lane over, is that the rows
-/// here know a spell is what is being saved against. RAW's wards are
-/// almost always scoped that way ("against spells and other magical
-/// effects"), and the blanket table would also lift a save against a
-/// dragon's landing.
+/// here *can* ask what is being saved against — the blanket table
+/// cannot, and would also lift a save against a dragon's landing. RAW's
+/// wards are almost always scoped that way ("against spells and other
+/// magical effects").
+///
+/// "Can ask" rather than "know": this lane is walked by
+/// `roll_save_against_caster`, and that helper carries every save with
+/// a creature behind it, not every save against a spell. A dragon's
+/// breath, a bulette's leap and a mind flayer's blast all arrive here
+/// with a `caster_id` attached. A row that is a worn ward has to spend
+/// the `saving_against_a_spell` gate itself; a row keyed off a prime or
+/// a mark some spell put there does not, because the spell already did
+/// the scoping.
 ///
 /// Adding a future "the target has advantage/disadvantage on saves
 /// against *my* spell" feature (a Heightened-Spell-shaped metamagic, a
@@ -799,11 +808,20 @@ pub const CASTER_SAVE_MODE_RIDERS: &[CasterSaveModeRider] = &[
     // effects." The first row on this table that reads the *target*
     // rather than the caster, and the first whose prime is a standing
     // ward rather than a one-shot — see the `consume` note above.
+    //
+    // Also the first row that has to ask what the save is *against*.
+    // The other three key off a caster-side prime or a target-side
+    // mark, both of which are put there by a spell; this one is worn
+    // and answers whatever comes. `saving_against_a_spell` is the gate,
+    // and it is the same one the damage half of this sentence reads in
+    // `save_mitigation_for` — see that method for why a bare "is a cast
+    // frame open" is not it.
     CasterSaveModeRider {
         applies: |e, _caster_id, target_id| {
-            e.actors
-                .get(&target_id)
-                .is_some_and(|t| t.has_condition(Condition::PowerCircled))
+            e.saving_against_a_spell()
+                && e.actors
+                    .get(&target_id)
+                    .is_some_and(|t| t.has_condition(Condition::PowerCircled))
         },
         consume: |_e, _caster_id, _target_id| {},
         mode: RollMode::Advantage,
@@ -12559,6 +12577,36 @@ impl EncounterInstance {
         self.cast_stack.last().copied()
     }
 
+    /// Whether the effect a saving throw is currently being rolled
+    /// against is a **spell** — the gate under every ward RAW words as
+    /// *"against spells and other magical effects"*.
+    ///
+    /// Reads the innermost cast frame for a school tag, which only
+    /// spells carry. That second half is the load-bearing one:
+    /// `Action::execute` opens a frame for every action in the engine,
+    /// a dragon's breath and a bulette's leap included, so "a frame is
+    /// open" answers *"is somebody taking a turn"* and not the
+    /// question. A ward gated on the frame alone protects its holder
+    /// from a wyrm's fire as readily as from a Fireball.
+    ///
+    /// `false` outside any frame, which is the honest answer for the
+    /// two out-of-frame save lanes the engine has:
+    /// `engine::repeat_saves` and `engine::staged_saves` exist
+    /// precisely for the clauses no caster is concentrating on — a
+    /// sphinx's roar, a silver dragon's paralysing breath, a Sword of
+    /// Wounding — and none of those is a spell. (The round-end repeat
+    /// that *is* a spell's, `apply_round_end_saves`, never reaches a
+    /// ward: it rolls through the plain `roll_save`.)
+    ///
+    /// Named rather than repeated at its two call sites because the two
+    /// are the two halves of one printed sentence — Circle of Power's
+    /// save advantage and its no-damage-on-a-success upgrade — and they
+    /// had drifted apart: the damage half gated on the school and the
+    /// advantage half fired on anything with a caster attached.
+    pub fn saving_against_a_spell(&self) -> bool {
+        self.current_cast().is_some_and(|c| c.school.is_some())
+    }
+
     /// Whether the innermost in-flight cast is a spell of `school` at
     /// 1st level or higher. Convenience for the common gate shape;
     /// `false` outside any cast, on a cantrip, and on a different
@@ -15694,9 +15742,7 @@ impl EncounterInstance {
         {
             return Some(SaveMitigation::Evasion);
         }
-        if target.has_condition(Condition::PowerCircled)
-            && self.current_cast().is_some_and(|c| c.school.is_some())
-        {
+        if target.has_condition(Condition::PowerCircled) && self.saving_against_a_spell() {
             return Some(SaveMitigation::NoneOnSuccess);
         }
         None

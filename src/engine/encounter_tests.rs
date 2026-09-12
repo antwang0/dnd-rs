@@ -79372,6 +79372,68 @@ fn a_circle_of_power_turns_a_made_save_into_nothing() {
     e.exit_cast();
 }
 
+/// The *other* half of Circle of Power's one printed sentence —
+/// *"advantage on saving throws against spells and other magical
+/// effects"* — scoped to the same thing the damage half is scoped to.
+///
+/// It was not. The advantage rides `CASTER_SAVE_MODE_RIDERS`, which is
+/// walked by `roll_save_against_caster`; that helper carries every save
+/// with a creature behind it, and `Action::execute` opens a cast frame
+/// for every action in the engine. So the ward fired on a dragon's
+/// breath, a bulette's leap, a mind flayer's blast and a sphinx's roar
+/// — and, with no frame open at all, on the repeat saves in
+/// `engine::repeat_saves`, whose four clauses are a sphinx, two dragons
+/// and a sword.
+///
+/// Three claims, and the middle one is the bug:
+///   - a save against a **spell** is lifted;
+///   - a save against a **monster's ability** is not, though it arrives
+///     down the identical helper with a cast frame open;
+///   - a save with **nothing in flight** is not either.
+#[test]
+fn the_circle_answers_a_spell_and_not_a_dragon() {
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // `roll_save_against_caster` is the one entry point all three cases
+    // share; the frame around it is the only thing that differs.
+    let ward = |frame: Option<(Option<crate::engine::types::SpellSchool>, u32)>| {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .add_condition(Condition::PowerCircled, ConditionTimer::Rounds(10));
+        if let Some((school, level)) = frame {
+            e.enter_cast(school, level, crate::engine::types::DamageTypeSet::EMPTY);
+        }
+        let _ = e.roll_save_against_caster(fighter, AbilityScoreType::Dexterity, 10, wiz);
+        e.messages().join("\n").contains("circle of power")
+    };
+
+    assert!(
+        ward(Some((FIREBALL.school(), 3))),
+        "a save against a spell is what the ward is for"
+    );
+    // A breath weapon is an `Action` like any other: `execute` opens a
+    // frame for it, and the frame carries no school because a dragon is
+    // not casting anything.
+    assert!(
+        !ward(Some((None, 0))),
+        "the ward lifted a save against a creature's own ability"
+    );
+    assert!(
+        !ward(None),
+        "the ward lifted a save with nothing in flight at all"
+    );
+}
+
 /// The AI's self-centred burst picker admits a `NoArgs` harmful action
 /// only if it either declares a damage type or explicitly says it deals
 /// none — the filter that keeps Dodge and Disengage out of the lane.
@@ -100808,3 +100870,4 @@ fn an_actions_side_effects_resolve_in_reverse() {
          other way round:\n{log}"
     );
 }
+
