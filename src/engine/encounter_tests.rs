@@ -94684,8 +94684,16 @@ fn the_oathbow_pays_one_quarry_and_taxes_every_other_shot() {
     );
     assert_eq!(
         e.compute_attack_mode(archer, quarry, false),
-        RollMode::Normal,
-        "the quarry is the exception the tax exists to carve out"
+        RollMode::Advantage,
+        "RAW gives the archer Advantage on a ranged shot at their sworn enemy"
+    );
+    // The Advantage is scoped to the shot; the tax is not. A sworn
+    // archer who draws a sword on their quarry is neither helped nor
+    // hindered, and one who draws it on anybody else still pays.
+    assert_eq!(e.compute_attack_mode(archer, quarry, true), RollMode::Normal);
+    assert_eq!(
+        e.compute_attack_mode(archer, bystander, true),
+        RollMode::Disadvantage
     );
     // Swearing at the same creature twice changes nothing and is
     // refused rather than sold for a bonus action.
@@ -99957,6 +99965,127 @@ fn hitting_a_laughing_creature_lets_it_try_to_stop() {
         return;
     }
     panic!("sixty seeds and the ogre never failed the opening save");
+}
+
+/// The Oathbow's other two clauses, measured the way Sharpshooter's are
+/// one test down: against the exact tax each exists to remove.
+///
+/// RAW gives the sworn enemy no benefit from cover and takes the
+/// long-range Disadvantage off the shot, and both land on lanes the
+/// Sharpshooter feat already opened. What separates them is scope — the
+/// feat pays for every shot the holder ever takes, and the bow pays for
+/// shots at one creature — so each assertion is made twice, once at the
+/// quarry and once at somebody standing in exactly the same trouble.
+#[test]
+fn the_oathbow_clears_cover_and_long_range_for_its_quarry_only() {
+    use crate::actions::item_actions::SWEAR_OATHBOW;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::items::item_template::OATHBOW;
+
+    // One geometry, three states of the oath. Comparing the same shot
+    // against itself rather than two shots against each other is the
+    // only way to be sure the difference is the oath and not the
+    // sight-line: a second target at a second angle is a second cover
+    // calculation, and a test that quietly loses its own half cover
+    // passes for the wrong reason.
+    let mut e = ei_with_terrain(60, 12, &[]);
+    let archer = e
+        .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 4), 1, 0)
+        .unwrap();
+    // On the line, so it is half cover rather than scenery.
+    e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 4), 1, 1)
+        .unwrap();
+    // Off the line and near, so swearing at it is legal and changes
+    // nothing about the shot at `target`.
+    let decoy = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 9), 1, 2)
+        .unwrap();
+    e.actors.get_mut(&archer).unwrap().pickup_item(&OATHBOW);
+    e.actors.get_mut(&archer).unwrap().reset_for_new_round();
+    let swear_at = |e: &mut EncounterInstance, at: usize| {
+        e.actors.get_mut(&archer).unwrap().reset_for_new_round();
+        let aei = ActionExecutionInfo::new(&SWEAR_OATHBOW, archer, Some(vec![at]), None, None);
+        assert!(aei.validate(e), "the archer should be able to swear");
+        e.push_action(aei);
+        e.process_stack();
+    };
+
+    assert_eq!(
+        e.cover_ac_bonus_for_attack(archer, target, false),
+        2,
+        "the test needs the target behind half cover to say anything"
+    );
+
+    swear_at(&mut e, decoy);
+    assert_eq!(
+        e.cover_ac_bonus_for_attack(archer, target, false),
+        2,
+        "an oath sworn at somebody else must not clear this target's cover"
+    );
+
+    swear_at(&mut e, target);
+    assert_eq!(
+        e.cover_ac_bonus_for_attack(archer, target, false),
+        0,
+        "the sworn enemy gains no benefit from cover"
+    );
+    // Melee keeps its cover either way: RAW scopes the clause to a
+    // ranged attack, and the engine reads that off the swing.
+    assert_eq!(e.cover_ac_bonus_for_attack(archer, target, true), 2);
+
+    // The long-range half. The ranger's longbow carries a 12-tile
+    // normal range and a 20-tile maximum, so 18 tiles is a shot that is
+    // long and still legal — and the tax lives inside `resolve_attack`
+    // rather than on the shared tally, so it is read back off the
+    // roll's own log line the way every other in-swing clause is.
+    //
+    // Same one-geometry discipline as the cover half above: two runs of
+    // the identical board, differing only in whom the oath is on.
+    let shot_at_eighteen_tiles = |sworn: bool| {
+        let mut run = ei_with_terrain(60, 12, &[]);
+        let a = run
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+            .unwrap();
+        let victim = run
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+            .unwrap();
+        let elsewhere = run
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 9), 1, 1)
+            .unwrap();
+        run.actors.get_mut(&a).unwrap().pickup_item(&OATHBOW);
+        run.actors.get_mut(&a).unwrap().reset_for_new_round();
+        let oath_on = if sworn { victim } else { elsewhere };
+        let aei = ActionExecutionInfo::new(&SWEAR_OATHBOW, a, Some(vec![oath_on]), None, None);
+        assert!(aei.validate(&run));
+        run.push_action(aei);
+        run.process_stack();
+        run.actors.get_mut(&a).unwrap().reset_for_new_round();
+        let bow = run.actors[&a]
+            .find_action("longbow")
+            .expect("the ranger chassis carries a longbow");
+        for ef in bow.execute(&mut run, a, Some(&vec![victim]), None, None) {
+            ef.apply(&mut run);
+        }
+        run.messages()
+            .iter()
+            .find(|m| m.contains("longbow"))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let unsworn = shot_at_eighteen_tiles(false);
+    assert!(
+        unsworn.contains("(dis)"),
+        "a shot at 18 tiles with a 12-tile bow is long range: {unsworn}"
+    );
+    let sworn = shot_at_eighteen_tiles(true);
+    assert!(
+        sworn.contains("(adv)"),
+        "the quarry pays no long-range tax, so the shot keeps its Advantage: {sworn}"
+    );
 }
 
 /// **Sharpshooter**, all three clauses, each measured against the exact

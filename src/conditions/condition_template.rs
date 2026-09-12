@@ -3035,15 +3035,33 @@ pub enum Condition {
     /// `item_actions::SWEAR_OATHBOW` rather than at install: picking the
     /// bow up does not tell it who your enemy is.
     ///
-    /// Both of RAW's clauses ride the link and neither reads the item
-    /// again:
+    /// All five of RAW's clauses ride the link and none of them reads
+    /// the item again. Four are the sworn enemy's, and the fifth is
+    /// everyone else's:
     ///   - **The 3d6.** A row on `ON_HIT_RIDERS` with the enum's first
     ///     `attacker_link` gate — see that field for why the table
     ///     needed a third kind of question.
+    ///   - **Advantage on the shot.** `attack_mode_tally`, beside the
+    ///     walk that charges the archer for every other target.
+    ///   - **No benefit from cover.** `cover_ac_bonus_for_attack`,
+    ///     which is where the Sharpshooter feat already takes cover off
+    ///     a shot; the bow buys the same exemption against one creature
+    ///     instead of against every shot.
+    ///   - **No long-range Disadvantage.** The long-range clause in
+    ///     `engine::attack`, which is the Sharpshooter lane again.
     ///   - **The tax.** `FOCUS_LINK_DISADVANTAGES`, which is the
     ///     engine's standing translation of "this creature and no
     ///     other": Disadvantage on the archer's attacks against
     ///     anything that is not their sworn enemy.
+    ///
+    /// The first four are read through `EncounterInstance::oathbow_quarry`
+    /// or, for the rider, through the same `linked_by` under another
+    /// name — so the bow's whole stat block is one field on the archer.
+    ///
+    /// Three of the five are scoped to a *ranged* attack, which is as
+    /// close to RAW's "with this weapon" as an engine that binds no
+    /// swing to an item can get. The tax is the one that is not, and
+    /// that asymmetry is the translation described below.
     ///
     /// The tax is a translation rather than RAW and the direction it
     /// moves in is worth naming. RAW's penalty is on *"attack rolls with

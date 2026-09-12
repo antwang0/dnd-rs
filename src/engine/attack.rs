@@ -2186,11 +2186,18 @@ pub fn resolve_attack_outcome_with_rider(
     // range by `reach_tiles`, and it is still an automatic miss beyond
     // normal range underwater, because that clause is about the water
     // rather than about the aim. See `feats::SHARPSHOOTER_TAG`.
+    //
+    // SRD 5.2's **Oathbow** buys the same exemption against one
+    // creature: *"you suffer no Disadvantage due to long range"* when
+    // shooting your sworn enemy. Third of the bow's four clauses to
+    // land on a lane the Sharpshooter feat already opened — see
+    // `EncounterInstance::oathbow_quarry`.
     if let Some(nr) = p.long_range
         && !p.is_melee
         && !encounter.actors.get(&p.caster_id).is_some_and(|a| {
             a.has_passive_feature(crate::actions::feats::SHARPSHOOTER_TAG)
         })
+        && encounter.oathbow_quarry(p.caster_id) != Some(p.target_id)
         && let Some(dist) = encounter.footprint_distance(p.caster_id, p.target_id)
         && dist > nr
     {

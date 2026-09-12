@@ -3478,6 +3478,30 @@ impl EncounterInstance {
             .and_then(|t| t.linked_by(Condition::HexbladeCursed))
     }
 
+    /// The creature `attacker_id` has sworn their **Oathbow** against,
+    /// if any.
+    ///
+    /// The mirror of `hexblade_curse_holder` directly above, read from
+    /// the other end: a Hexblade's curse sits on the creature it was
+    /// cast at and names the caster, and the Oathbow's oath sits on the
+    /// archer and names the quarry. Both answer `None` unless the flag
+    /// is still held, so a bow that has left the archer's hands stops
+    /// paying out without any of its four consumers checking an
+    /// inventory.
+    ///
+    /// Four is the reason this is a method. RAW's sworn-enemy clause is
+    /// one sentence with four consequences — Advantage on the shot, no
+    /// benefit from cover, no long-range Disadvantage, and 3d6 on a hit
+    /// — and each lands at a different chokepoint. The fourth is the
+    /// only one that does not read this: it is a row on `ON_HIT_RIDERS`
+    /// and reads `attacker_link` instead, which asks the same question
+    /// of the same field from inside the rider table's own vocabulary.
+    pub fn oathbow_quarry(&self, attacker_id: usize) -> Option<usize> {
+        self.actors
+            .get(&attacker_id)
+            .and_then(|a| a.linked_by(Condition::Oathbound))
+    }
+
     /// Flat damage bonus `attacker_id` adds to a damage roll against
     /// `target_id` because they cursed them — their proficiency bonus,
     /// per RAW, or 0 when there is no curse between the two.
@@ -4414,6 +4438,23 @@ impl EncounterInstance {
                     condition,
                     RollMode::Disadvantage,
                 ));
+            }
+            // SRD 5.2 **Oathbow**, and the other side of the same coin:
+            // *"when you make a ranged attack roll with this weapon
+            // against your sworn enemy, you have Advantage on the
+            // roll."* The walk directly above has just charged the
+            // archer for every target that is *not* their quarry; this
+            // pays them for the one that is.
+            //
+            // Written out rather than added to a `FOCUS_LINK_ADVANTAGES`
+            // cohort with one row in it, because the gate is not the
+            // mirror image of that walk: RAW's Advantage is scoped to a
+            // ranged shot and RAW's Disadvantage is not, so a cohort
+            // would need an `is_melee` column that only this row would
+            // ever set. The second row on this shape is where the table
+            // starts paying for itself.
+            if !is_melee && self.oathbow_quarry(attacker_id) == Some(target_id) {
+                tally.add(RollMode::Advantage);
             }
         }
 
@@ -9716,6 +9757,16 @@ impl EncounterInstance {
                 a.has_passive_feature(crate::actions::feats::SHARPSHOOTER_TAG)
             })
         {
+            return 0;
+        }
+        // SRD 5.2 **Oathbow**: *"your target gains no benefit from Half
+        // Cover or Three-Quarters Cover."*
+        //
+        // The same exemption the feat above buys, arriving from an
+        // object and scoped to one creature rather than to every shot
+        // the holder takes. Both degrees, like the feat and unlike the
+        // Wand of the War Mage, because RAW names both.
+        if !is_melee && self.oathbow_quarry(attacker_id) == Some(target_id) {
             return 0;
         }
         self.cover_ac_bonus(attacker_id, target_id)
