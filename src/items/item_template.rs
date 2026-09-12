@@ -597,6 +597,60 @@ pub static BOOTS_OF_STRIDING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Boots of Elvenkind** (Wondrous item, Uncommon) — *"While you wear
+/// these boots, your steps make no sound, regardless of the surface you
+/// are moving across. You also have Advantage on Dexterity (Stealth)
+/// checks."*
+///
+/// The second sentence is the item here, and it is worth more than an
+/// uncommon trinket usually is, because of *what the engine does with a
+/// Stealth roll*: `resolve_hide_attempt` does not merely pass or fail
+/// against `HIDE_DC`, it writes the successful total down as the DC
+/// anybody Searching for the hider has to beat. So advantage does not
+/// buy a better chance of hiding — the DC is low and most rollers clear
+/// it anyway — it buys a *higher number to be found on*, for the rest
+/// of the fight. Rolling twice and keeping the better moves that number
+/// by about three and a half, which is most of a proficiency bonus
+/// added to every enemy's Search check.
+///
+/// The first sentence is not modeled and could not be: the engine has
+/// no noise, so there is no surface for silence to be quiet on. It is
+/// also, in RAW, the flavour half — "regardless of the surface" is
+/// there to stop a GM charging disadvantage for gravel, which is a
+/// ruling this engine never makes.
+pub static BOOTS_OF_ELVENKIND: Item = Item {
+    name: "Boots of Elvenkind",
+    glyph: 'b',
+    skill_check_advantages: &[crate::engine::types::Skill::Stealth],
+    ..Item::DEFAULTS
+};
+
+/// **Eyes of the Eagle** (Wondrous item, Uncommon) — *"While wearing
+/// them, you have Advantage on Wisdom (Perception) checks that rely on
+/// sight."*
+///
+/// The other side of the Hide/Search contest from the boots above, and
+/// the pair is the point: the engine rolls exactly two skill checks
+/// that decide anything on their own, and they are the two ends of that
+/// contest. A party that finds both can put the boots on its scout and
+/// the lenses on whoever walks in front.
+///
+/// RAW's qualifier — *"that rely on sight"* — is carried by the Search
+/// action rather than by this field, and carried in the strongest form
+/// available: a Blinded searcher does not roll at all, it returns
+/// having spotted nothing. Every Perception check the engine rolls is
+/// therefore a sighted one, so scoping the row to the skill is scoping
+/// it to RAW's clause and not a widening of it.
+///
+/// The second sentence — making out a two-foot object at extreme range
+/// — is the overland-travel half, and there is no overland travel.
+pub static EYES_OF_THE_EAGLE: Item = Item {
+    name: "Eyes of the Eagle",
+    glyph: 'o',
+    skill_check_advantages: &[crate::engine::types::Skill::Perception],
+    ..Item::DEFAULTS
+};
+
 pub static CLOAK_OF_RESISTANCE: Item = Item {
     name: "Cloak of Resistance",
     glyph: 'c',
@@ -2606,19 +2660,41 @@ pub static BOOTS_OF_LEVITATION: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Cloak of Elvenkind — passive trinket. Grants the wearer the
-/// `Untracked` condition (Pass Without Trace's +10 stealth-flavored
-/// rider, modeled in the engine as a flat to-hit-vs-the-wearer
-/// disadvantage chokepoint). 5e RAW: "creatures that try to spot you
-/// have disadvantage on Wisdom (Perception) checks" — the engine
-/// collapses Perception to the attack-against-the-wearer disadvantage
-/// since stealth-as-cover-for-the-next-swing is the load-bearing
-/// in-combat consequence. Sits alongside Cloak of Displacement on the
-/// "attacker-disadvantage" trinket lane.
+/// **Cloak of Elvenkind** (Wondrous item, Uncommon) — *"While you wear
+/// this cloak, Wisdom (Perception) checks made to perceive you have
+/// Disadvantage, **and you have Advantage on Dexterity (Stealth)
+/// checks**."*
+///
+/// Two sentences, and the cloak shipped with one of them. Both lanes
+/// exist now:
+///
+///   - The **Stealth** half is `skill_check_advantages`, the same row
+///     the Boots of Elvenkind carry, and it is the half that had
+///     nowhere to go when the cloak was written. See
+///     [`BOOTS_OF_ELVENKIND`] for what advantage on that particular
+///     check is worth in this engine — it raises the number a Searcher
+///     has to beat for the rest of the fight, not just the odds of
+///     hiding at all.
+///   - The **perceive-me** half stays collapsed onto the `Untracked`
+///     condition, which spends it as disadvantage on attacks against
+///     the wearer. That is a rounding and the old docstring said so:
+///     RAW's clause is about other people's Perception checks, and
+///     `Search` rolls one Perception check for the whole room rather
+///     than one per creature it is looking for, so there is no per-
+///     target notch to bend. Spending it on the swing keeps the
+///     load-bearing in-combat consequence — being hard to see is cover
+///     for what happens next — and leaves the cloak on the
+///     attacker-disadvantage lane beside the Cloak of Displacement.
+///
+/// Wearing this and the boots together is one notch of advantage on
+/// Stealth and not two, which is 5e's rule and falls out for free:
+/// `has_skill_check_advantage` is an `any`, and the check lane folds
+/// its result into a `RollModeTally` that never stacks.
 pub static CLOAK_OF_ELVENKIND: Item = Item {
     name: "Cloak of Elvenkind",
     glyph: 'e',
     passive_conditions: &[crate::conditions::Condition::Untracked],
+    skill_check_advantages: &[crate::engine::types::Skill::Stealth],
     ..Item::DEFAULTS
 };
 
@@ -5390,6 +5466,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // Sentinel Shield — low-tier defensive trinket. Same weight as the
     // generic Ring of Protection / Cloak of Protection siblings.
     &SENTINEL_SHIELD,
+    // The two ends of the Hide/Search contest, one item each. Both are
+    // Uncommon in RAW and cheap here for the same reason: they move one
+    // check that only matters on the turns somebody spends an Action on
+    // it. Two copies apiece would crowd out the trinkets that move a
+    // number every round.
+    &BOOTS_OF_ELVENKIND,
+    &EYES_OF_THE_EAGLE,
     // +3 Weapon — top tier of the magical-weapon ladder. Single-entry
     // rare drop, paired with the existing +1 (common, weight 2) and
     // +2 (single entry) tiers.

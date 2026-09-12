@@ -29872,7 +29872,131 @@ fn the_sentinel_shields_perception_clause_reaches_the_right_die() {
     );
     assert!(
         !suffix_of(&mut e, None).contains("(adv)"),
-        "a bare Wisdom check picked the clause up"
+        "a bare Wisdom check picked the clause up (sentinel shield)"
+    );
+}
+
+/// The two ends of the Hide/Search contest, and the three items SRD 5.2
+/// prints for them.
+///
+/// `Item::skill_check_advantages` shipped with one carrier and a note
+/// saying the next item on the lane would name a different skill. Three
+/// arrive at once: the Boots of Elvenkind and the Cloak of Elvenkind on
+/// Stealth, the Eyes of the Eagle on Perception. The cloak is the
+/// interesting one — it was already in the file carrying *half* of its
+/// printed sentence, with the Stealth half dropped for want of this
+/// lane.
+///
+/// What is pinned:
+///   - each item's clause reaches the die of the skill it names, and
+///     no other skill's die;
+///   - advantage on the Hide roll is worth what it is worth in *this*
+///     engine, which is not "hides more often" but "is found on a
+///     higher number" — `resolve_hide_attempt` writes the successful
+///     Stealth total down as the DC a Searcher must beat;
+///   - two Stealth items together are one notch, not two, which is
+///     5e's rule and has to survive `has_skill_check_advantage` being
+///     an `any`.
+#[test]
+fn the_elvenkind_shelf_bends_the_two_checks_the_engine_actually_rolls() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::{AbilityScoreType, Skill};
+    use crate::items::item_template::{
+        BOOTS_OF_ELVENKIND, CLOAK_OF_ELVENKIND, EYES_OF_THE_EAGLE, Item,
+    };
+
+    let rolled_with = |carried: &[&'static Item], ability, skill| {
+        let mut e = ei_with_terrain(12, 12, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for item in carried {
+            e.actors.get_mut(&id).unwrap().pickup_item(item);
+        }
+        let before = e.messages().len();
+        e.roll_ability_check(id, ability, skill);
+        e.messages()[before..]
+            .iter()
+            .find(|m| m.contains("check"))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let adv = |carried: &[&'static Item], ability, skill| {
+        rolled_with(carried, ability, skill).contains("(adv)")
+    };
+
+    // Each clause finds its own die…
+    assert!(adv(
+        &[&BOOTS_OF_ELVENKIND],
+        AbilityScoreType::Dexterity,
+        Some(Skill::Stealth)
+    ));
+    assert!(adv(
+        &[&CLOAK_OF_ELVENKIND],
+        AbilityScoreType::Dexterity,
+        Some(Skill::Stealth)
+    ));
+    assert!(adv(
+        &[&EYES_OF_THE_EAGLE],
+        AbilityScoreType::Wisdom,
+        Some(Skill::Perception)
+    ));
+
+    // …and only its own. The boots are not lenses and the lenses are
+    // not boots, which is the claim `compute_check_mode` could not have
+    // made — it is handed an ability and never sees the skill.
+    assert!(!adv(
+        &[&BOOTS_OF_ELVENKIND],
+        AbilityScoreType::Wisdom,
+        Some(Skill::Perception)
+    ));
+    assert!(!adv(
+        &[&EYES_OF_THE_EAGLE],
+        AbilityScoreType::Dexterity,
+        Some(Skill::Stealth)
+    ));
+    assert!(!adv(
+        &[&EYES_OF_THE_EAGLE],
+        AbilityScoreType::Wisdom,
+        Some(Skill::Insight)
+    ));
+
+    // Two Stealth items are one notch. The log prints the resolved
+    // mode, so "(adv)" appearing once is the whole claim — what would
+    // fail here is an implementation that summed into the total.
+    let both = rolled_with(
+        &[&BOOTS_OF_ELVENKIND, &CLOAK_OF_ELVENKIND],
+        AbilityScoreType::Dexterity,
+        Some(Skill::Stealth),
+    );
+    assert!(both.contains("(adv)"));
+    assert_eq!(both.matches("(adv)").count(), 1, "{both}");
+
+    // And the consequence that makes the boots worth an item slot: the
+    // number a Searcher has to beat goes up. Averaged over a band of
+    // seeds because a d20 is a d20 — advantage is worth about +3.3 on
+    // one roll, so twenty-four of them separate cleanly.
+    let mean_stealth = |carried: &[&'static Item]| {
+        let mut e = ei_with_terrain(12, 12, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        for item in carried {
+            e.actors.get_mut(&id).unwrap().pickup_item(item);
+        }
+        let total: i32 = (0..24)
+            .map(|seed| {
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+                e.roll_ability_check(id, AbilityScoreType::Dexterity, Some(Skill::Stealth))
+            })
+            .sum();
+        f64::from(total) / 24.0
+    };
+    let bare = mean_stealth(&[]);
+    let booted = mean_stealth(&[&BOOTS_OF_ELVENKIND]);
+    assert!(
+        booted > bare + 1.5,
+        "the boots barely moved the DC a Searcher must beat: {bare} -> {booted}"
     );
 }
 
