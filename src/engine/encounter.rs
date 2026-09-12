@@ -4942,24 +4942,59 @@ impl EncounterInstance {
     /// SRD 5.2's Mace of Disruption, and `Item::sheds_light`'s whole
     /// read side.
     ///
-    /// Called wherever an actor *gains* an item, which in this engine
-    /// is two places: `instantiate_creature`, for a stat block that
-    /// ships one, and `pickup_items_at`, for one taken off the floor.
-    /// Nothing calls it on a loop, because nothing needs to — the only
-    /// way a passive lamp leaves a bearer is the bearer leaving the
-    /// board, and `drop_light_sources_carried_by` already handles that
-    /// from the other end.
+    /// Called wherever the set of lamps an actor is carrying can
+    /// change, which in this engine is four places: `instantiate_creature`,
+    /// for a stat block that ships one; `pickup_items_at`, for one taken
+    /// off the floor; and either end of an attunement, because a Mace of
+    /// Disruption nobody is attuned to is a mace and not a lamp.
     ///
-    /// Idempotent, keyed on the profile's name against the same
-    /// bearer's carried sources. Two Maces of Disruption in one pack is
-    /// one glow, which is both the sane reading and the one that keeps
-    /// this safe to call again from a future third site.
+    /// Both directions, which is why it is a reconcile rather than an
+    /// install. This used to be one-way, on the grounds that *"the only
+    /// way a passive lamp leaves a bearer is the bearer leaving the
+    /// board"* — true when every carried item was live the moment it
+    /// was picked up, and untrue since `Item::requires_attunement`: a
+    /// bond broken at the prompt has to put the light out, and one
+    /// formed at a rest has to strike it.
+    ///
+    /// Idempotent in both directions, keyed on the profile's name
+    /// against the same bearer's carried sources. Two Maces of
+    /// Disruption in one pack is one glow, which is both the sane
+    /// reading and what keeps this safe to call on every pump.
+    ///
+    /// Only ever touches `LightAnchor::Carried` sources belonging to
+    /// this actor. A creature that *is* a light (`innate`), a torch
+    /// somebody struck, a spell's lamp — none of those are an item in
+    /// anybody's pack and none are this routine's business.
     pub fn light_carried_items(&mut self, actor_id: usize) {
         let profiles: Vec<crate::engine::lighting::LightProfile> = match self.actors.get(&actor_id)
         {
             Some(actor) => actor.carried_light_profiles(),
             None => return,
         };
+        // The going-out half: a lamp this routine lit, for an item the
+        // bearer is carrying and can no longer use.
+        //
+        // Scoped by *name against this bearer's own pack*, not by
+        // anchor alone, and the scope is the whole safety of it. A
+        // `Carried` source is not necessarily an item's passive glow —
+        // a struck torch, a kindled Sun Blade, a Light cantrip cast on
+        // somebody's shield are all anchored to a bearer too, and none
+        // of them is this routine's to put out. Only a name that
+        // matches a `sheds_light` profile on something in this pack can
+        // have come from here.
+        let owned: Vec<&'static str> = match self.actors.get(&actor_id) {
+            Some(actor) => actor
+                .items()
+                .iter()
+                .filter_map(|i| i.sheds_light.map(|p| p.name))
+                .collect(),
+            None => return,
+        };
+        self.light_sources.retain(|s| {
+            s.anchor != LightAnchor::Carried(actor_id)
+                || !owned.contains(&s.name)
+                || profiles.iter().any(|p| p.name == s.name)
+        });
         for profile in profiles {
             if self.light_sources.iter().any(|s| {
                 s.name == profile.name && s.anchor == LightAnchor::Carried(actor_id)
@@ -12604,6 +12639,15 @@ impl EncounterInstance {
             pc.set_location(location);
             ei.actors.insert(actor_id, pc);
             ei.set_actor_map(actor_id, location)?;
+            // …and if any of it glows, it glows in this room too. The
+            // light table belongs to the encounter and this one was
+            // built empty a dozen lines up, so a survivor carrying a
+            // Mace of Disruption through the door arrived holding an
+            // unlit mace: the two sites that strike a carried lamp are
+            // `instantiate_creature`, which these actors do not go
+            // through, and `pickup_items_at`, which they already did in
+            // the last room.
+            ei.light_carried_items(actor_id);
         }
 
         // Force `start_team = 1` so generate_actors never re-rolls team 0.
@@ -14097,6 +14141,13 @@ impl EncounterInstance {
             for line in announcements {
                 self.log(line);
             }
+            // A rest is one of the two places attunement changes, and a
+            // bond formed over it can switch a lamp on — the Mace of
+            // Disruption that has been sitting inert in the pack since
+            // the last room. `light_carried_items` is a reconcile in
+            // both directions, so this also puts out anything the rest
+            // un-bonded.
+            self.light_carried_items(id);
         }
     }
 
@@ -14152,6 +14203,10 @@ impl EncounterInstance {
                     ));
                 }
             }
+            // Same reason as the long rest's: an hour of sitting down
+            // is an attunement window, and a bond formed over it can
+            // light a lamp that was inert when the party sat.
+            self.light_carried_items(id);
         }
     }
 

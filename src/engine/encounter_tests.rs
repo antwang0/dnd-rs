@@ -101891,3 +101891,108 @@ fn a_captive_that_cannot_follow_is_left_behind_rather_than_dragged_through_stone
     let problems = e.board_inconsistencies();
     assert!(problems.is_empty(), "{problems:?}");
 }
+
+/// The Mace of Disruption's glow is an *attuned* mace's glow, and both
+/// ends of the bond move the light.
+///
+/// The clause the attunement rule made true in two directions at once:
+/// a mace nobody has bonded with is a mace, so picking it up with three
+/// slots already spent lights nothing; and a bond broken at the prompt
+/// has to put the light out again. `light_carried_items` used to be a
+/// one-way install on the stated grounds that *"the only way a passive
+/// lamp leaves a bearer is the bearer leaving the board"* — which was
+/// true right up until an item could be carried and inert.
+///
+/// The torch beside it is the control, and it is the whole reason the
+/// removal is scoped by name against the bearer's own pack rather than
+/// by anchor: a struck torch is `Carried` too, and nothing about
+/// anybody's attunement is allowed to blow it out.
+#[test]
+fn an_unattuned_mace_sheds_no_light_and_a_broken_bond_puts_it_out() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::lighting::AmbientLight;
+    use crate::items::item_template::{
+        CLOAK_OF_PROTECTION, MACE_OF_DISRUPTION, RING_OF_PROTECTION, STONE_OF_GOOD_LUCK, TORCH,
+    };
+
+    let start = Coordinate::new(3, 3);
+    let mut e = ei_with_terrain(24, 24, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, start, 0, 0)
+        .unwrap();
+
+    // Spend all three slots on things that are not the mace.
+    for item in [
+        &RING_OF_PROTECTION,
+        &CLOAK_OF_PROTECTION,
+        &STONE_OF_GOOD_LUCK,
+    ] {
+        e.drop_item(start, item);
+        e.pickup_items_at(fighter, start);
+    }
+    assert_eq!(e.actors[&fighter].free_attunement_slots(), 0);
+
+    e.drop_item(start, &MACE_OF_DISRUPTION);
+    e.pickup_items_at(fighter, start);
+    assert!(e.actors[&fighter].has_item_named(MACE_OF_DISRUPTION.name));
+    assert!(!e.actors[&fighter].is_attuned_to(MACE_OF_DISRUPTION.name));
+    assert_eq!(
+        e.light_at(start),
+        LightLevel::Dark,
+        "a mace nobody is attuned to is a mace"
+    );
+
+    // Strike a torch, so there is a carried light that has nothing to
+    // do with attunement and must survive everything below.
+    e.drop_item(start, &TORCH);
+    e.pickup_items_at(fighter, start);
+    const TORCH_SOURCE: &str = "torch";
+    e.add_light_source(crate::engine::lighting::LightSource {
+        id: 0,
+        name: TORCH_SOURCE,
+        anchor: crate::engine::lighting::LightAnchor::Carried(fighter),
+        bright_tiles: crate::engine::lighting::TORCH_BRIGHT_TILES,
+        dim_tiles: crate::engine::lighting::TORCH_DIM_TILES,
+        rounds_remaining: None,
+        spell_level: 0,
+        innate: false,
+        open_flame: true,
+    });
+    assert_eq!(e.light_at(start), LightLevel::Bright, "the torch is lit");
+
+    // Free a slot and let the rest form the bond. The mace lights up…
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .end_attunement(STONE_OF_GOOD_LUCK.name);
+    e.short_rest();
+    assert!(e.actors[&fighter].is_attuned_to(MACE_OF_DISRUPTION.name));
+    assert!(
+        e.light_sources()
+            .iter()
+            .any(|s| s.name == MACE_OF_DISRUPTION.sheds_light.unwrap().name),
+        "the bond is what strikes the lamp"
+    );
+    assert!(
+        e.light_sources().iter().any(|s| s.name == TORCH_SOURCE),
+        "and the torch is none of attunement's business"
+    );
+
+    // …and goes out again when the bond does.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .end_attunement(MACE_OF_DISRUPTION.name);
+    e.light_carried_items(fighter);
+    assert!(
+        !e.light_sources()
+            .iter()
+            .any(|s| s.name == MACE_OF_DISRUPTION.sheds_light.unwrap().name),
+        "a mace set aside stops lighting the corridor"
+    );
+    assert!(
+        e.light_sources().iter().any(|s| s.name == TORCH_SOURCE),
+        "the torch is still burning"
+    );
+}

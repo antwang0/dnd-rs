@@ -1000,6 +1000,10 @@ impl App {
             if let Some(actor) = self.encounter.actors.get_mut(&actor_id) {
                 actor.end_attunement(name);
             }
+            // A bond broken is a lamp out: the Mace of Disruption a
+            // player sets aside stops lighting the corridor. Both ends
+            // of an attunement reconcile the carried lights.
+            self.encounter.light_carried_items(actor_id);
             let who = self.encounter.actor_name(actor_id);
             self.encounter
                 .log(format!("{} sets aside {}.", who, name));
@@ -1039,6 +1043,7 @@ impl App {
         let formed = actor.attune_to(name);
         let who = self.encounter.actor_name(actor_id);
         if formed {
+            self.encounter.light_carried_items(actor_id);
             self.encounter
                 .log(format!("{} attunes to {}.", who, name));
             self.input_str.clear();
