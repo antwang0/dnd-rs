@@ -827,6 +827,32 @@ pub const CASTER_SAVE_MODE_RIDERS: &[CasterSaveModeRider] = &[
         mode: RollMode::Advantage,
         label: "circle of power",
     },
+    // SRD 5.2 **Holy Avenger**: "While you hold the drawn weapon, it
+    // creates a 10-foot Emanation originating from you. You and all
+    // creatures Friendly to you in the Emanation have Advantage on
+    // saving throws against spells and other magical effects."
+    //
+    // The second standing ward on this table and the first that is an
+    // *item*, which is why the gate is a board query rather than a
+    // condition on the target: the sword is carried by somebody else
+    // and the person saving may have nothing on them at all. The
+    // radius, the team filter, and RAW's conscious-and-not-Incapacitated
+    // clauses all come from `aura_emitters` — see
+    // `in_allied_holy_avenger_aura`.
+    //
+    // Advantage and nothing else, which is where it parts company with
+    // Circle of Power directly above it. That spell's sentence has a
+    // second half upgrading a made save from half damage to none, and
+    // it is spent in `save_mitigation_for`. The sword's sentence stops
+    // at the advantage, so this row is the whole of it.
+    CasterSaveModeRider {
+        applies: |e, _caster_id, target_id| {
+            e.saving_against_a_spell() && e.in_allied_holy_avenger_aura(target_id)
+        },
+        consume: |_e, _caster_id, _target_id| {},
+        mode: RollMode::Advantage,
+        label: "holy avenger",
+    },
 ];
 
 /// Conditions whose presence combines a blanket **disadvantage** into
@@ -5859,6 +5885,46 @@ impl EncounterInstance {
     /// True if `actor_id` is standing inside the 10 ft Aura of Conquest
     /// of any *enemy* Conquest Paladin (Conquest subclass level 7).
     ///
+    /// True while `actor_id` stands inside an allied **Holy Avenger**'s
+    /// Emanation — SRD 5.2's *"While you hold the drawn weapon, it
+    /// creates a 10-foot Emanation originating from you. You and all
+    /// creatures Friendly to you in the Emanation have Advantage on
+    /// saving throws against spells and other magical effects."*
+    ///
+    /// The first *item* to project an aura, on a helper written for
+    /// five paladin features and one subclass's. Nothing in
+    /// `aura_emitters` had to move: the predicate is a condition rather
+    /// than a class flag, which the sword installs on pickup and loses
+    /// on drop, and the two RAW clauses that are easy to forget —
+    /// conscious, and not Incapacitated — are already in the shared
+    /// body and are just as right for a sword as for a paladin. A
+    /// wielder who has been stunned is not holding a drawn weapon.
+    ///
+    /// The wielder is caught by their own aura, which is RAW's "You
+    /// and all creatures Friendly to you": `aura_emitters` walks every
+    /// actor on the same team including the subject, exactly as Aura of
+    /// Protection does.
+    ///
+    /// **RAW's level-17 clause is not modeled.** A paladin of 17th
+    /// level widens the Emanation to 30 feet; this engine builds
+    /// finished stat blocks at fixed levels and
+    /// `PALADIN_AURA_RADIUS` is one constant shared by every aura in
+    /// the file, so a second radius would be a per-emitter lane
+    /// invented for one clause on one item.
+    ///
+    /// Read by the Holy Avenger's row on `CASTER_SAVE_MODE_RIDERS`,
+    /// which is where the advantage is spent and where the scope —
+    /// *against spells* — is enforced.
+    pub fn in_allied_holy_avenger_aura(&self, actor_id: usize) -> bool {
+        self.aura_emitters(
+            actor_id,
+            |a| a.has_condition(Condition::HolyAvenging),
+            AuraSide::Allied,
+        )
+        .next()
+        .is_some()
+    }
+
     /// The mirror image of `is_in_aura_of_courage` and friends — same
     /// emitter model, opposite team filter. Read at
     /// `apply_aura_of_conquest`, which is where both of the aura's

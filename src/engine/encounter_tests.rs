@@ -79854,6 +79854,86 @@ fn the_circle_answers_a_spell_and_not_a_dragon() {
     );
 }
 
+/// The Holy Avenger's second sentence: the only thing on the loot table
+/// that protects somebody other than the person holding it.
+///
+/// *"While you hold the drawn weapon, it creates a 10-foot Emanation
+/// originating from you. You and all creatures Friendly to you in the
+/// Emanation have Advantage on saving throws against spells and other
+/// magical effects."*
+///
+/// Five claims, and the shape of the item is in the gaps between them:
+///   - the **wielder** is covered, which is RAW's "You and";
+///   - an **ally inside the radius** is covered, which is the half no
+///     other item in the file can do;
+///   - an ally **outside** it is not;
+///   - an **enemy** inside it is not, however close they stand;
+///   - and it is still scoped to *spells* — a paladin holding it does
+///     nothing at all about a dragon's breath.
+#[test]
+fn a_holy_avenger_covers_the_people_standing_near_it_and_nobody_else() {
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::HOLY_AVENGER;
+
+    // One board, everybody placed, then each save asked in turn.
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 10), 0, 1)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(30, 10), 0, 2)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&paladin)
+        .unwrap()
+        .pickup_item(&HOLY_AVENGER);
+
+    let covered = |e: &mut EncounterInstance, id: usize| {
+        e.enter_cast(
+            FIREBALL.school(),
+            3,
+            crate::engine::types::DamageTypeSet::EMPTY,
+        );
+        let before = e.messages().len();
+        let _ = e.roll_save_against_caster(id, AbilityScoreType::Dexterity, 10, foe);
+        let lifted = e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("holy avenger"));
+        e.exit_cast();
+        lifted
+    };
+
+    assert!(covered(&mut e, paladin), "the wielder is inside their own aura");
+    assert!(covered(&mut e, near), "an ally two tiles away is inside it");
+    assert!(!covered(&mut e, far), "twenty tiles away is not ten feet");
+    assert!(
+        !covered(&mut e, foe),
+        "the aura covered a creature it is being swung at"
+    );
+
+    // And the scope. Same board, same ally, no spell in flight — a
+    // dragon's breath opens a cast frame with no school on it.
+    e.enter_cast(None, 0, crate::engine::types::DamageTypeSet::EMPTY);
+    let before = e.messages().len();
+    let _ = e.roll_save_against_caster(near, AbilityScoreType::Dexterity, 10, foe);
+    assert!(
+        !e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("holy avenger")),
+        "the sword answered something that was not a spell"
+    );
+    e.exit_cast();
+}
+
 /// The AI's self-centred burst picker admits a `NoArgs` harmful action
 /// only if it either declares a damage type or explicitly says it deals
 /// none — the filter that keeps Dodge and Disengage out of the lane.

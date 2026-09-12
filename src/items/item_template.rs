@@ -4230,14 +4230,31 @@ pub static SWORD_OF_WOUNDING: Item = Item {
 /// Against the two creature types it is written for, 2d10 on top of
 /// that is the largest save-free rider the armoury has.
 ///
-/// RAW's second half — a 10-foot aura granting the wielder's allies
-/// Advantage on saving throws against spells and magical effects — is
-/// not modeled. The engine's auras are emanations installed by an
-/// action or carried by a passive feature, and this would be the only
-/// *item* on the board that wanted one; the shield and the mantle that
-/// grant the same advantage grant it to their wearer, through the flag
-/// lane that already exists. Widening that lane to radiate is a
-/// different change from adding a sword.
+/// RAW's second half ships too: *"While you hold the drawn weapon, it
+/// creates a 10-foot Emanation originating from you. You and all
+/// creatures Friendly to you in the Emanation have Advantage on saving
+/// throws against spells and other magical effects."* It is the first
+/// *item* on the board to project an aura, and it did not need a lane
+/// of its own — `EncounterInstance::aura_emitters` was written for five
+/// paladin features and takes a predicate, and the sword's marker
+/// (`Condition::HolyAvenging`, installed on pickup) is one. The
+/// advantage is spent on the sword's row in `CASTER_SAVE_MODE_RIDERS`,
+/// beside Circle of Power's, and scoped the same way that one now is:
+/// against spells, not against a dragon's breath.
+///
+/// This docstring used to say the clause was not modeled because
+/// *"widening that lane to radiate is a different change from adding a
+/// sword"*. The lane was already wide enough; what it wanted was a
+/// predicate that asked about an item rather than about a class. The
+/// Spellguard Shield and the Mantle of Spell Resistance still grant the
+/// same advantage to their *wearer* through `grants_spell_save_advantage`,
+/// which is the right lane for a clause that names one person — and the
+/// contrast is the point of the sword. It is the only thing on the loot
+/// table that protects somebody else.
+///
+/// RAW's level-17 widening to 30 feet is absent; see
+/// `in_allied_holy_avenger_aura` for why one radius constant is the
+/// right number of radius constants here.
 pub static HOLY_AVENGER: Item = Item {
     name: "Holy Avenger",
     glyph: 'A',
