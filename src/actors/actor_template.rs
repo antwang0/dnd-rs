@@ -11202,8 +11202,19 @@ impl ActorInstance {
             .fold(self.ability_modifier(ability), i32::max)
     }
 
+    /// The DC a target rolls against when this actor casts at them:
+    /// SRD 5.2's `8 + proficiency bonus + spellcasting ability
+    /// modifier`, plus whatever the caster is carrying.
+    ///
+    /// The item term is the Robe of the Archmagi's *"your spell save DC
+    /// and spell attack bonus each increase by 2"* — see
+    /// `ItemBonuses::spell_save_dc`. Summed here rather than at the
+    /// hundred-odd sites that write a DC, because this expression is the
+    /// one all of them read.
     pub fn spell_save_dc(&self, ability: AbilityScoreType) -> i32 {
-        8 + self.proficiency_bonus() + self.ability_modifier(ability)
+        8 + self.proficiency_bonus()
+            + self.ability_modifier(ability)
+            + self.total_item_bonuses().spell_save_dc
     }
 
     /// Everything this actor adds to a saving throw of `ability` from
@@ -12450,14 +12461,20 @@ mod tests {
         );
     }
 
+    /// The Luckstone is the sentence RAW prints: a check and a save, and
+    /// not the Armor Class it used to invent.
     #[test]
-    fn stone_of_good_luck_grants_save_and_ac_bonus() {
+    fn stone_of_good_luck_grants_a_check_and_a_save_and_no_armour() {
         let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
-        let base_save = f.total_item_bonuses().save;
-        let base_ac = f.total_item_bonuses().ac;
+        let base = f.total_item_bonuses();
         f.pickup_item(&crate::items::item_template::STONE_OF_GOOD_LUCK);
-        assert_eq!(f.total_item_bonuses().save, base_save + 1);
-        assert_eq!(f.total_item_bonuses().ac, base_ac + 1);
+        let after = f.total_item_bonuses();
+        assert_eq!(after.save, base.save + 1);
+        assert_eq!(after.check, base.check + 1);
+        assert_eq!(
+            after.ac, base.ac,
+            "the +1 AC was a stand-in for the check half and has a lane now"
+        );
     }
 
     #[test]
@@ -12543,14 +12560,35 @@ mod tests {
         );
     }
 
+    /// All three of the robe's clauses, including the two that used to
+    /// be a flat `+2 save` standing in for them.
     #[test]
-    fn robe_of_the_archmagi_grants_ac_and_save_bonus() {
-        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
-        let base_save = f.total_item_bonuses().save;
-        let base_ac = f.total_item_bonuses().ac;
+    fn robe_of_the_archmagi_carries_all_three_of_its_clauses() {
+        use crate::engine::types::AbilityScoreType;
+        let mut f = make(&crate::actors::creatures::wizards::WIZARD_TEMPLATE);
+        let base = f.total_item_bonuses();
+        let base_dc = f.spell_save_dc(AbilityScoreType::Intelligence);
+        assert!(!f.has_magic_resistance());
+
         f.pickup_item(&crate::items::item_template::ROBE_OF_THE_ARCHMAGI);
-        assert_eq!(f.total_item_bonuses().save, base_save + 2);
-        assert_eq!(f.total_item_bonuses().ac, base_ac + 2);
+        let after = f.total_item_bonuses();
+        // Armor.
+        assert_eq!(after.ac, base.ac + 2);
+        // War Mage, both halves.
+        assert_eq!(after.spell_attack_bonus, base.spell_attack_bonus + 2);
+        assert_eq!(
+            f.spell_save_dc(AbilityScoreType::Intelligence),
+            base_dc + 2,
+            "the DC half has to reach the expression every spell reads"
+        );
+        // Magic Resistance, which is the clause the flat save bonus
+        // was standing in for.
+        assert!(f.has_magic_resistance());
+        assert_eq!(
+            after.save, base.save,
+            "the flat +2 save was the stand-in and both clauses it stood \
+             in for have their own lanes now"
+        );
     }
 
     #[test]

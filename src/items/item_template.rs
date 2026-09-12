@@ -33,6 +33,25 @@ pub struct ItemBonuses {
     pub max_hp_per_level: i32,
     /// Flat bonus added to every saving throw modifier.
     pub save: i32,
+    /// Flat bonus added to every **ability check** the holder rolls —
+    /// SRD 5.2's Stone of Good Luck, *"you gain a +1 bonus to ability
+    /// checks and saving throws"*, and the half of that sentence this
+    /// struct could not say.
+    ///
+    /// A second field rather than a bigger `save`, because the two
+    /// rolls are different rolls: a check is a grapple, a shove, an
+    /// escape, a Search, a Hide, and none of them is a save. The stone
+    /// shipped with the check half folded onto the save lane and a `+1
+    /// AC` invented to stand in for the rest of it, under a docstring
+    /// saying so — *"we collapse the ability-check half onto the save
+    /// lane … and throw in a +1 AC as flavor"*. The AC was never on the
+    /// page.
+    ///
+    /// Summed at `EncounterInstance::roll_ability_check_with_extra_mode`,
+    /// beside the condition-driven one-shot riders (a Guidance die, a
+    /// Bardic Inspiration die) and the exhaustion tax, which is where
+    /// every other flat term on a check already meets.
+    pub check: i32,
     /// Flat bonus added to every attack roll the holder makes (weapon
     /// and spell attacks alike — folded into `caster_attack_buffs` so
     /// the install-side `attack_bonus_buff` lane is shared with item
@@ -84,6 +103,21 @@ pub struct ItemBonuses {
     /// `EncounterInstance::caster_attack_buffs` — that helper is shared
     /// with the weapon chokepoint, which is the whole problem.
     pub spell_attack_bonus: i32,
+    /// Flat bonus added to the holder's **spell save DC** — SRD 5.2's
+    /// Robe of the Archmagi, *"your spell save DC and spell attack bonus
+    /// each increase by 2."*
+    ///
+    /// The mirror of `spell_attack_bonus` one field up, and the other
+    /// half of the same sentence: one moves the number the caster rolls
+    /// and this moves the number their targets roll against. The robe is
+    /// the only item in the file that prints both, which is why the two
+    /// fields arrived a batch apart — the Wand of the War Mage prints
+    /// the attack half alone.
+    ///
+    /// Read at `ActorInstance::spell_save_dc`, which is the single
+    /// expression every save-for-damage and save-or-condition spell in
+    /// the engine derives its DC from.
+    pub spell_save_dc: i32,
 }
 
 impl ItemBonuses {
@@ -98,10 +132,12 @@ impl ItemBonuses {
         speed: 0,
         max_hp_per_level: 0,
         save: 0,
+        check: 0,
         attack_bonus: 0,
         damage_bonus: 0,
         ranged_ac: 0,
         spell_attack_bonus: 0,
+        spell_save_dc: 0,
     };
 }
 
@@ -114,10 +150,12 @@ impl std::ops::Add for ItemBonuses {
             speed: self.speed + other.speed,
             max_hp_per_level: self.max_hp_per_level + other.max_hp_per_level,
             save: self.save + other.save,
+            check: self.check + other.check,
             attack_bonus: self.attack_bonus + other.attack_bonus,
             damage_bonus: self.damage_bonus + other.damage_bonus,
             ranged_ac: self.ranged_ac + other.ranged_ac,
             spell_attack_bonus: self.spell_attack_bonus + other.spell_attack_bonus,
+            spell_save_dc: self.spell_save_dc + other.spell_save_dc,
         }
     }
 }
@@ -717,19 +755,27 @@ pub static SCROLL_OF_CURE_WOUNDS: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Stone of Good Luck (Luckstone) — premium passive trinket. +1 to all
-/// saving throws AND +1 to AC. 5e RAW grants a +1 luck bonus to ability
-/// checks and saving throws while carried; we collapse the ability-check
-/// half onto the save lane (the engine routes the most consequential
-/// rolls — concentration, save-or-suck — through the save path), and
-/// throw in a +1 AC as flavor for the luck shielding the holder from
-/// blows. Distinct loot tier from the Cloak of Protection (also +1 / +1)
-/// — same numeric profile, but priced as a separate roll so the loot
-/// pool doesn't collapse to one premium passive.
+/// **Stone of Good Luck (Luckstone)** (Wondrous item, Uncommon) —
+/// *"While this polished agate is on your person, you gain a +1 bonus to
+/// ability checks and saving throws."*
+///
+/// Two rolls, and for a long time the file could only name one of them.
+/// The stone shipped as `+1 save / +1 AC` under a docstring explaining
+/// the swap — *"we collapse the ability-check half onto the save lane …
+/// and throw in a +1 AC as flavor for the luck shielding the holder from
+/// blows"* — and the AC has never been on the page. `ItemBonuses::check`
+/// is the lane the missing half wanted, so the stone is now exactly the
+/// sentence RAW prints.
+///
+/// It is a smaller item than it was and a more useful one. The `+1` now
+/// reaches the grapple contest, the shove, the escape, the Search roll
+/// and the Hide roll — every d20 the engine rolls that is not an attack
+/// or a save — where the AC it replaced reached one number that RAW
+/// never touched.
 pub static STONE_OF_GOOD_LUCK: Item = Item {
     name: "Stone of Good Luck",
     glyph: 'L',
-    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    bonuses: ItemBonuses { check: 1, save: 1, ..ItemBonuses::ZERO },
     ..Item::DEFAULTS
 };
 
@@ -898,19 +944,42 @@ pub static RING_OF_MIND_SHIELDING: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Robe of the Archmagi — premium passive caster trinket. +2 AC and +2
-/// to all saves, a strict upgrade on the Cloak of Protection (+1/+1).
-/// 5e RAW: also grants advantage on saves vs spells and a spell save DC
-/// bump — we collapse those clauses onto the load-bearing flat +2 save
-/// bonus since the engine routes most save modifiers through the same
-/// `ItemBonuses.save` lane. The +2 AC half is the unarmored-defense
-/// equivalent for casters who don't wear heavy armor. Top-of-pool loot
-/// — strictly stronger than every other passive trinket, so it sits as
-/// a single low-weight entry.
+/// **Robe of the Archmagi** (Wondrous item, Legendary) — three clauses,
+/// and the file could say one of them when the robe was written:
+///
+///   - **Armor.** *"If you aren't wearing armor, your base Armor Class
+///     is 15 plus your Dexterity modifier."* Ships as the flat `+2 AC`
+///     it always did — the engine models no armour slot, so an AC floor
+///     scoped to "not wearing armour" has no gate to read, and two
+///     points is what the floor is worth on the d8-hit-die chassis that
+///     attunes to this.
+///   - **Magic Resistance.** *"You have Advantage on saving throws
+///     against spells and other magical effects."* Rides
+///     `grants_spell_save_advantage`, the lane the Mantle of Spell
+///     Resistance opened, which is the same predicate an archmage's and
+///     a pixie's Magic Resistance trait already read.
+///   - **War Mage.** *"Your spell save DC and spell attack bonus each
+///     increase by 2."* Two lanes: `spell_attack_bonus`, opened by the
+///     Wand of the War Mage, and `spell_save_dc`, which is new and
+///     which this robe is the only item in the file to need.
+///
+/// The flat `+2 to all saves` it used to carry is gone, and it was never
+/// on the page: it was the stand-in the old docstring named — *"we
+/// collapse those clauses onto the load-bearing flat +2 save bonus"* —
+/// for the Magic Resistance clause, which now rides its own lane and is
+/// worth considerably more where it applies and nothing where it does
+/// not. That is the right shape for a robe worn by a wizard: it answers
+/// other casters, and it does not answer a poison.
 pub static ROBE_OF_THE_ARCHMAGI: Item = Item {
     name: "Robe of the Archmagi",
     glyph: 'R',
-    bonuses: ItemBonuses { ac: 2, save: 2, ..ItemBonuses::ZERO },
+    bonuses: ItemBonuses {
+        ac: 2,
+        spell_attack_bonus: 2,
+        spell_save_dc: 2,
+        ..ItemBonuses::ZERO
+    },
+    grants_spell_save_advantage: true,
     ..Item::DEFAULTS
 };
 

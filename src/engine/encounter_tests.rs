@@ -29780,6 +29780,53 @@ fn hiding_collects_the_stealth_proficiency_it_is_named_after() {
     );
 }
 
+/// The Luckstone's check half reaches the check, and the robe's DC half
+/// reaches the DC.
+///
+/// Both are flat terms that arrive at expressions rather than at a
+/// struct, which is the half a `total_item_bonuses()` assertion cannot
+/// see: a field nothing reads sums correctly forever. The check is read
+/// off the log's own breakdown, which is where every other flat term on
+/// a d20 is already visible.
+#[test]
+fn the_flat_item_terms_reach_the_rolls_they_are_written_about() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::{AbilityScoreType, Skill};
+    use crate::items::item_template::{ROBE_OF_THE_ARCHMAGI, STONE_OF_GOOD_LUCK};
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+
+    // The check: same seed, same actor, one stone of difference.
+    let rolled = |e: &mut EncounterInstance, seed: u64| {
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        e.roll_ability_check(id, AbilityScoreType::Dexterity, Some(Skill::Stealth))
+    };
+    let before: Vec<i32> = (0..8).map(|s| rolled(&mut e, s)).collect();
+    e.actors.get_mut(&id).unwrap().pickup_item(&STONE_OF_GOOD_LUCK);
+    let after: Vec<i32> = (0..8).map(|s| rolled(&mut e, s)).collect();
+    for (seed, (b, a)) in before.iter().zip(&after).enumerate() {
+        assert_eq!(
+            a - b,
+            1,
+            "seed {seed}: the luckstone's +1 did not reach the check"
+        );
+    }
+
+    // The DC: the expression every save-for-damage spell derives from.
+    let base_dc = e.actors[&id].spell_save_dc(AbilityScoreType::Intelligence);
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .pickup_item(&ROBE_OF_THE_ARCHMAGI);
+    assert_eq!(
+        e.actors[&id].spell_save_dc(AbilityScoreType::Intelligence),
+        base_dc + 2
+    );
+}
+
 /// The Sentinel Shield's Perception clause reaches the die, and reaches
 /// only that skill's die.
 ///

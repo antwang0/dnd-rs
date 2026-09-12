@@ -7329,6 +7329,11 @@ impl EncounterInstance {
         let modifier = actor.check_and_save_ability_modifier(ability)
             + prof
             + rider_bonus
+            // The carried flat term — SRD 5.2's Stone of Good Luck, and
+            // the check half of a sentence whose save half has been on
+            // `save_modifier` since the file had items at all. See
+            // `ItemBonuses::check`.
+            + actor.total_item_bonuses().check
             + actor.exhaustion_d20_penalty();
         let total = raw + modifier;
         let label = match &skill {
