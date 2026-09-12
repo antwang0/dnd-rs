@@ -465,8 +465,13 @@ struct PassiveTypedResistance {
 ///     Halfling Brave uses on that cohort).
 ///   - **Radiant Soul (Warlock Celestial Patron lv6, XGtE)**: radiant
 ///     resistance. RAW also grants a +CHA-mod damage rider on radiant /
-///     fire spells; that clause is a per-cast damage-boost hook not yet
-///     wired, so this row ships only the load-bearing defensive half.
+///     fire spells; that clause is the offensive half and rides
+///     `FLAT_SPELL_DAMAGE_BONUSES` in `engine::encounter` beside
+///     Elemental Affinity, so this row carries the defensive half only.
+///     Note the two halves are scoped differently on purpose: RAW's
+///     resistance names radiant alone and RAW's rider names radiant and
+///     fire, so a Celestial warlock hits harder with a Fire Bolt than
+///     they survive one.
 ///   - **Elemental Gift (Warlock Genie Marid Patron lv6, TCE)**: cold
 ///     resistance. RAW's Elemental Gift picks a damage type based on
 ///     the warlock's chosen genie kind; the Marid variant covers Cold.

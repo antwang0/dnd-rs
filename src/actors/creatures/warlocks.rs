@@ -829,17 +829,15 @@ pub static ARCHFEY_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// (Entropic Ward — the alien-awareness reactive build), and
 /// `ARCHFEY_WARLOCK_TEMPLATE` (Beguiling Defenses — the Charmed-bounce
 /// build). RAW's Celestial patron picks up other features not shipped
-/// on this template — **Bonus Cantrips** (lv1: Light + Sacred Flame
-/// added; Sacred Flame lands cleanly on the shared spell list, Light
-/// has no combat surface without a per-tile illumination model),
-/// **Healing Light** (lv1: bonus-action pool of d6 healing dice — a
+/// on this template — **Healing Light** (lv1: bonus-action pool of d6 healing dice — a
 /// per-rest healing well that needs a new resource lane), **Celestial
 /// Resilience** (lv10: temp HP to self + party on short rest —
 /// short-rest heal buffer), and **Searing Vengeance** (lv14 capstone:
-/// reactive burst on downed-ally trigger). Only the lv6 Radiant Soul
-/// passive has a mechanical surface on the CR-4 chassis that plugs
-/// cleanly into the shared passive typed-resistance cohort, so we
-/// ship that half and leave the rest as future work.
+/// reactive burst on downed-ally trigger) — both of which want a
+/// per-rest healing pool the chassis has no lane for. What does ship
+/// is **Bonus Cantrips** (lv1: Light + Sacred Flame) and both halves of
+/// **Radiant Soul** (lv6), and the first of those is what makes the
+/// second reachable: see the `actions.push` calls below.
 ///
 /// Ships the CR-4 template above the strict RAW lv6 gate for the
 /// same reason `FIEND_WARLOCK_TEMPLATE` ships Fiendish Resilience
@@ -878,6 +876,27 @@ pub static CELESTIAL_WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     celestial
         .features
         .insert(crate::actions::class_features::GIFT_OF_THE_PROTECTORS_TAG);
+    // RAW **Bonus Cantrips** (Celestial patron, lv1): "you learn the
+    // Light and Sacred Flame cantrips."
+    //
+    // The first non-tag thing this template carries, and the reason it
+    // stopped being tag-only: Radiant Soul's damage half is a rider on
+    // the warlock's radiant and fire casts, and this chassis had
+    // neither. Eldritch Blast is Force, Hex is Necrotic, Witch Bolt is
+    // Lightning — the whole envelope sailed past the one damage axis
+    // the patron pays out on, so the offensive half of the subclass
+    // would have been a row nothing could reach. Sacred Flame is the
+    // cantrip RAW hands this patron for exactly that reason, and with
+    // it the lv6 feature is worth its Charisma modifier on every turn
+    // the warlock spends on it rather than on a beam.
+    //
+    // Light ships too, on the strength of the lighting model the engine
+    // grew after this docstring first said it had none: a bright-light
+    // source is a real answer to the Darkness two rows up the warlock's
+    // own list, and the Celestial is the patron that should be holding
+    // one.
+    celestial.actions.push(&*crate::actions::spells::SACRED_FLAME);
+    celestial.actions.push(&*crate::actions::spells::LIGHT);
     celestial
 });
 

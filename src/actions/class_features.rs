@@ -2725,13 +2725,14 @@ pub const BEGUILING_DEFENSES_TAG: &str = "warlock.beguiling_defenses";
 ///      both fire and radiant.
 ///   2. **+CHA-mod damage rider on radiant / fire spells** — RAW: when
 ///      the warlock casts a spell that deals radiant or fire damage
-///      they add their CHA mod to one damage roll of that spell. This
-///      is a per-cast damage-boost hook that needs a per-spell prime
-///      wire; not yet on the CR-4 chassis. Left as future work — the
-///      resistance clause is the load-bearing defensive half and rides
-///      here alone, matching the way Heart of the Storm ships its
-///      passive resistance without the eruption-on-cast clause on
-///      earlier chassis iterations.
+///      they add their CHA mod to one damage roll of that spell. Rides
+///      `FLAT_SPELL_DAMAGE_BONUSES` in `engine::encounter`, the cohort
+///      the Draconic Sorcerer's Elemental Affinity and the Evocation
+///      Wizard's Empowered Evocation already share. This docstring used
+///      to call the clause a hook "not yet wired"; the hook was the
+///      cast frame's `damage_types` set, which Elemental Affinity had
+///      put there, and the row is that row with a second damage type on
+///      it.
 ///
 /// Sibling to `HEART_OF_THE_STORM_TAG` / `PSYCHIC_DEFENSES_TAG` on the
 /// Otherworldly Patron / Sorcerous Origin subclass passive lane —

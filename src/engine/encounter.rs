@@ -2621,6 +2621,40 @@ static FLAT_SPELL_DAMAGE_BONUSES: &[FlatSpellDamageBonus] = &[
         },
         amount: FlatBonusAmount::Ability(AbilityScoreType::Intelligence),
     },
+    // 5e Celestial Warlock **Radiant Soul** (subclass lv6, XGtE), damage
+    // half: "once per turn when you cast a spell that deals radiant
+    // damage or fire damage, you can add your Charisma modifier to one
+    // radiant or fire damage roll of that spell."
+    //
+    // The other half of the feature has been on `PASSIVE_TYPED_RESISTANCES`
+    // since the Celestial patron landed, under a docstring calling this
+    // clause "a per-cast damage-boost hook not yet wired". It was wired
+    // already: Elemental Affinity two rows up is the same sentence with
+    // a different ability and a narrower type list, and this row is
+    // that row with Radiant added.
+    //
+    // Two damage types rather than Elemental Affinity's one, which is
+    // the only structural difference between them and is RAW's: the
+    // draconic sorcerer's grant is scoped to their single ancestry
+    // element, and the celestial warlock's names both of the patron's.
+    // Alchemical Savant below already carries the four-type shape, so
+    // the slice here is the middle rung of a ladder the cohort has.
+    //
+    // RAW's "once per turn" is the cohort's own latch rather than a
+    // per-row counter — see `CastContext::flat_damage_bonus_paid`,
+    // which stops the whole cohort after its first payout so a spell
+    // rolling two damage pools pays once. A warlock casting twice in
+    // one turn is not a shape Pact Magic produces, so the two readings
+    // never come apart on a legal build.
+    FlatSpellDamageBonus {
+        label: "radiant soul",
+        applies: |_e, cast, caster| {
+            (cast.deals(DamageType::Radiant) || cast.deals(DamageType::Fire))
+                && caster
+                    .has_passive_feature(crate::actions::class_features::RADIANT_SOUL_TAG)
+        },
+        amount: FlatBonusAmount::Ability(AbilityScoreType::Charisma),
+    },
 ];
 
 /// Apply `mode_on_mismatch` to `current` when `holder` carries `condition`

@@ -72715,6 +72715,90 @@ fn enhanced_bond_rides_fire_spells_only_while_the_spirit_is_near() {
     e.exit_cast();
 }
 
+/// Radiant Soul is the cohort's two-type row: a Celestial warlock's
+/// CHA modifier rides a radiant cast *and* a fire one, where the
+/// Draconic sorcerer's single-element grant one row up rides only
+/// theirs. Everything else on the damage axis — necrotic, cold, the
+/// spell that declares nothing — gets nothing.
+#[test]
+fn radiant_soul_rides_both_of_the_patrons_damage_types() {
+    use crate::actors::creatures::warlocks::{CELESTIAL_WARLOCK_TEMPLATE, WARLOCK_TEMPLATE};
+    use crate::engine::types::{AbilityScoreType, DamageTypeSet};
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let celestial = e
+        .instantiate_creature(&CELESTIAL_WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let baseline = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+        .unwrap();
+    let cha = e.actors[&celestial].ability_modifier(AbilityScoreType::Charisma) as u32;
+    assert!(cha > 0, "the warlock chassis should have a positive CHA mod");
+
+    for school in [SpellSchool::Evocation, SpellSchool::Conjuration] {
+        for damage_type in [DamageType::Radiant, DamageType::Fire] {
+            e.enter_cast(
+                Some(school),
+                1,
+                DamageTypeSet::from_types(&[damage_type]),
+            );
+            assert_eq!(
+                e.roll_empowered_sum(celestial, 0, 6),
+                cha,
+                "{damage_type:?} on a {school:?} cast should carry the patron's modifier"
+            );
+            assert_eq!(
+                e.roll_empowered_sum(baseline, 0, 6),
+                0,
+                "a patron-less warlock gets no bonus"
+            );
+            e.exit_cast();
+        }
+    }
+
+    // The types the patron does not cover, including the one its
+    // *resistance* half is scoped to nothing but — the two halves of
+    // Radiant Soul are deliberately different sets.
+    for damage_type in [DamageType::Necrotic, DamageType::Cold, DamageType::Force] {
+        e.enter_cast(
+            Some(SpellSchool::Evocation),
+            1,
+            DamageTypeSet::from_types(&[damage_type]),
+        );
+        assert_eq!(
+            e.roll_empowered_sum(celestial, 0, 6),
+            0,
+            "Radiant Soul fired on {damage_type:?}"
+        );
+        e.exit_cast();
+    }
+
+    // A cast that declares no damage type fails the gate closed, the
+    // same way a weapon swing's level-0 frame does.
+    e.enter_cast(Some(SpellSchool::Evocation), 1, DamageTypeSet::EMPTY);
+    assert_eq!(e.roll_empowered_sum(celestial, 0, 6), 0);
+    e.exit_cast();
+
+    // Outside any cast the row is inert.
+    assert_eq!(e.roll_empowered_sum(celestial, 0, 6), 0);
+
+    // And the half of the feature that matters most: the chassis has
+    // to be able to *reach* one of the two damage types. Radiant Soul
+    // was shipped defensive-half-only for years on a warlock whose
+    // whole offensive list is Force (Eldritch Blast), Necrotic (Hex)
+    // and Lightning (Witch Bolt) — the rider would have been a row
+    // nothing on the sheet could trigger. RAW's Bonus Cantrips is what
+    // fixes that, so it is pinned here rather than beside the template.
+    assert!(
+        e.actors[&celestial].find_action("sacred flame").is_some(),
+        "the Celestial patron's Bonus Cantrips should put a radiant \
+         cantrip on the sheet, or Radiant Soul's damage half is dead code"
+    );
+    assert!(
+        e.actors[&baseline].find_action("sacred flame").is_none(),
+        "Bonus Cantrips belongs to the patron, not to the class"
+    );
+}
+
 /// Every spell the engine tags as Evocation must actually report it
 /// through the `&dyn Action` the engine holds. Drift-prevention for
 /// the evocation half of the `school()` lane, mirroring
