@@ -2767,6 +2767,49 @@ const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
     },
 ];
 
+/// A yes/no question about an actor, as a plain function pointer.
+///
+/// The shape every flag-driven cohort in this file is built out of.
+/// Most of them spell it inline on a named struct field — `flag:
+/// fn(&ActorInstance) -> bool` reads perfectly well next to `ability:
+/// AbilityScoreType` — and those are left alone.
+///
+/// It earns a name where a row is a *tuple*, because there the two
+/// columns have no field names to explain them and the reader is left
+/// parsing `&[(fn(&ActorInstance) -> bool, usize)]` for the shape
+/// before they can ask what it means. `&[(ActorPredicate, usize)]`
+/// reads as *(who, how much)*.
+type ActorPredicate = fn(&ActorInstance) -> bool;
+
+/// Features that widen RAW's three-item attunement ceiling, as
+/// `(predicate, extra slots)` rows read by
+/// `ActorInstance::attunement_slots`.
+///
+/// The **highest** matching row wins rather than the sum, because the
+/// clauses these come from are a ladder and not a stack: an artificer
+/// who has reached Magic Item Savant ("you can attune to up to five
+/// magic items at once") has also long since passed Magic Item Adept
+/// ("four"), and RAW's later sentence replaces the earlier one rather
+/// than adding to it. Summing would give that artificer seven.
+///
+/// One row today — the Artificer, the only class in the game whose
+/// whole identity is carrying more magic than anybody else, and the
+/// only reason the ceiling in `BASE_ATTUNEMENT_SLOTS` needed to be a
+/// function rather than a constant. The roster's artificers cast 4th-
+/// level spells, which on a half-caster is level 13: past Magic Item
+/// Adept (lv10, four items) and short of Magic Item Savant (lv14,
+/// five).
+///
+/// A future row — a feat, a Ring of Spell Storing-style item, a
+/// subclass — lands here as one line rather than as another `+ n` in
+/// the accessor.
+const EXTRA_ATTUNEMENT_SLOTS: &[(ActorPredicate, usize)] = &[(
+    |a: &ActorInstance| {
+        a.has_passive_feature(crate::actions::class_features::MAGIC_ITEM_ADEPT_TAG)
+    },
+    1,
+)];
+
 /// Flag-driven initiative-advantage cohort read by
 /// `ActorInstance::rolls_initiative_with_advantage`. Every row is a
 /// predicate on the actor; any row that fires flips the initiative
@@ -2804,7 +2847,7 @@ const INITIATIVE_ADVANTAGE_SOURCES: &[fn(&ActorInstance) -> bool] = &[
     // under a docstring saying the engine did not model initiative at
     // this granularity. It does — see `initiative_flat_bonus` for the
     // two cohorts that stack numbers on the same roll.
-    |a| a.items.iter().any(|i| i.sharpens_initiative),
+    |a| a.active_items().any(|i| i.sharpens_initiative),
 ];
 
 /// Proficiency-bonus fraction applied to the initiative-roll total by a
@@ -5173,6 +5216,47 @@ pub struct ActorInstance {
     /// the item" are the same event. A wand is the case where they come
     /// apart — see `Item::charges` and `spend_item_use`.
     item_charges: HashMap<&'static str, u32>,
+    /// Names of the carried items this actor is **attuned** to, in the
+    /// order the bond was formed.
+    ///
+    /// The ledger behind `Item::requires_attunement`. Keyed by name
+    /// rather than by pointer or index for the same reason
+    /// `item_charges` is: `items` is a `Vec` that shifts under
+    /// `remove_item_by_name`, and a name is the only handle on an item
+    /// that survives dropping the one next to it. Two copies of the
+    /// same ring are therefore one attunement — which is right, and is
+    /// the same collapse `available_actions` already makes when it
+    /// dedupes the picker by item name.
+    ///
+    /// Ordered, and the order is load-bearing twice over: it is the
+    /// order `attunement_summary` prints for the panel, and it is the
+    /// order `end_oldest_attunement` breaks a bond in when a better
+    /// item arrives with no slot free. A `HashSet` would make both of
+    /// those depend on hash order, which is the bug
+    /// `Condition`'s `Ord` derive exists to have already fixed once.
+    ///
+    /// Never longer than `attunement_slots`. Maintained by
+    /// `attune_to` / `end_attunement` and swept by
+    /// `reconcile_attunements`, which is what keeps a bond from
+    /// outliving the item it is to.
+    attunements: Vec<&'static str>,
+    /// Items the holder has **deliberately set aside** — bonds broken on
+    /// purpose rather than lost with the object.
+    ///
+    /// Without this the greedy fill in `reconcile_attunements` makes
+    /// `end_attunement` a no-op with extra steps: the sweep walks the
+    /// pack in order, finds the ring the holder just took off sitting
+    /// where it always was, and puts it straight back on. The set is
+    /// what separates *"this slot is free"* from *"this slot is free
+    /// and I do not want that ring in it"*, which is the entire content
+    /// of a player's decision about the ceiling.
+    ///
+    /// Cleared for an item three ways, each one a change of mind or of
+    /// circumstance: `attune_to` (the holder asks for it back), the item
+    /// leaving the pack (nothing to refuse), and never otherwise. A
+    /// refusal therefore survives the rests it has to survive and
+    /// nothing else.
+    attunement_refusals: HashSet<&'static str>,
     /// Bless / Resistance flat to-hit and save bonuses. Independent of the
     /// `Blessed` condition flag for stacking flexibility.
     attack_bonus_buff: i32,
@@ -5801,6 +5885,8 @@ impl ActorInstance {
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
             item_charges: HashMap::new(),
+            attunements: Vec::new(),
+            attunement_refusals: HashSet::new(),
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
             damage_bonus_buff: 0,
@@ -5897,6 +5983,12 @@ impl ActorInstance {
             death_burst: ct.death_burst,
             natural_melee_reflect: ct.natural_melee_reflect,
         };
+        // A creature that walks onto the board wearing its own gear is
+        // wearing it *attuned*: a stat block that ships a Belt of Giant
+        // Strength has always had the belt on. Run before the two reads
+        // below, both of which go through `ability_score` and would
+        // otherwise measure the creature without its own items.
+        actor.reconcile_attunements();
         // The breath clock starts full — a creature that walks into an
         // encounter has been breathing up to now. Filled after the
         // literal rather than inside it because the capacity is read
@@ -6306,7 +6398,8 @@ impl ActorInstance {
     /// Resistance grants the save half alone, and reading it off the
     /// attack flag would have handed it nothing at all.
     pub fn has_magic_resistance(&self) -> bool {
-        self.has_magic_resistance || self.items.iter().any(|i| i.grants_spell_save_advantage)
+        self.has_magic_resistance
+            || self.active_items().any(|i| i.grants_spell_save_advantage)
     }
 
     /// True while the actor holds something that gives spell attack
@@ -6317,8 +6410,7 @@ impl ActorInstance {
     /// deliberately nowhere else: RAW's clause names spell attack rolls,
     /// so a longsword swung at the shield-bearer rolls straight.
     pub fn wards_against_spell_attacks(&self) -> bool {
-        self.items
-            .iter()
+        self.active_items()
             .any(|i| i.imposes_spell_attack_disadvantage)
     }
 
@@ -7228,15 +7320,209 @@ impl ActorInstance {
             .copied()
     }
 
-    /// Sum every carried item's `ItemBonuses` into one struct.
+    /// Sum every **live** carried item's `ItemBonuses` into one struct.
     pub fn total_item_bonuses(&self) -> ItemBonuses {
-        self.items
-            .iter()
+        self.active_items()
             .fold(ItemBonuses::ZERO, |acc, it| acc + it.bonuses)
     }
 
+    /// Everything in the pack, attuned or not — the *inventory* view.
+    ///
+    /// Sibling to `active_items` below and deliberately the wider of
+    /// the two. Read by the panel (which must draw the ring you are
+    /// carrying and not wearing), by the drop-on-death sweep (which
+    /// must put it on the floor either way), and by `has_item_named`
+    /// (which is asking about the object, not the bond).
     pub fn items(&self) -> &[&'static Item] {
         &self.items
+    }
+
+    /// Every carried item whose **magic is live** — the chokepoint each
+    /// of the ~15 effect lanes on `Item` reads through.
+    ///
+    /// An item that requires attunement and has not got it is carried
+    /// and inert: it grants no AC, no save bonus, no resistance, no
+    /// condition immunity, no passive condition, no ability-score
+    /// floor, no light, and no action. That single sentence is the
+    /// whole of RAW's *"you gain [the item's] benefits only if
+    /// attuned"*, and having one place to say it is why the lanes go
+    /// through here rather than each re-asking `requires_attunement`.
+    ///
+    /// Fails *closed*, which is the safe direction: a lane that has
+    /// been switched to this accessor and a bond that was never formed
+    /// leave a creature no stronger than it was without the item. The
+    /// opposite default would leak the benefit of every unattuned item
+    /// on the roster through whichever lane somebody forgot.
+    ///
+    /// Cheap enough to call in a hot loop and called in several: the
+    /// common case is an empty `attunements` vector and a pack whose
+    /// items all answer `false`, so the filter short-circuits before it
+    /// ever scans.
+    pub fn active_items(&self) -> impl Iterator<Item = &'static Item> + '_ {
+        self.items
+            .iter()
+            .copied()
+            .filter(move |i| !i.requires_attunement || self.is_attuned_to(i.name))
+    }
+
+    /// True when the bond to the item named `name` has been formed.
+    pub fn is_attuned_to(&self, name: &str) -> bool {
+        self.attunements.contains(&name)
+    }
+
+    /// The items this actor is attuned to, oldest bond first.
+    pub fn attunements(&self) -> &[&'static str] {
+        &self.attunements
+    }
+
+    /// RAW's ceiling: *"a creature can be attuned to no more than three
+    /// magic items at a time"*.
+    ///
+    /// The number the whole feature exists to impose, named once so the
+    /// panel, the sweep and the test all cite the same three.
+    pub const BASE_ATTUNEMENT_SLOTS: usize = 3;
+
+    /// How many items *this* creature may be attuned to at once — three,
+    /// plus whatever the cohort in `EXTRA_ATTUNEMENT_SLOTS` adds.
+    pub fn attunement_slots(&self) -> usize {
+        Self::BASE_ATTUNEMENT_SLOTS
+            + EXTRA_ATTUNEMENT_SLOTS
+                .iter()
+                .filter(|(flag, _)| flag(self))
+                .map(|(_, extra)| *extra)
+                .max()
+                .unwrap_or(0)
+    }
+
+    /// Free attunement slots.
+    pub fn free_attunement_slots(&self) -> usize {
+        self.attunement_slots()
+            .saturating_sub(self.attunements.len())
+    }
+
+    /// Form the bond to the carried item named `name`, and report
+    /// whether one was formed *by this call*.
+    ///
+    /// Refuses three ways, each a sentence of RAW: an item that is not
+    /// in the pack (you attune to what you hold), an item whose stat
+    /// line prints no attunement clause (there is nothing to bond
+    /// with — and letting one in would burn a slot for nothing), and a
+    /// creature already at its ceiling. Re-attuning to something
+    /// already attuned reports `false` and changes nothing, so the
+    /// greedy sweep below can run every rest without doubling a row.
+    ///
+    /// The ceiling is the last of the three checks rather than the
+    /// first, and the order is the point: asking for an item back
+    /// clears it out of `attunement_refusals` even when there is no
+    /// slot free today. A holder who says "I want the belt" and then
+    /// frees a slot next room gets the belt.
+    pub fn attune_to(&mut self, name: &str) -> bool {
+        if self.is_attuned_to(name) {
+            return false;
+        }
+        let Some(item) = self.items.iter().find(|i| i.name == name).copied() else {
+            return false;
+        };
+        if !item.requires_attunement {
+            return false;
+        }
+        // Asking for an item back un-refuses it whether or not there is
+        // a slot to put it in, so a holder who frees one later gets the
+        // item they asked for rather than the one that happens to be
+        // earliest in the pack.
+        self.attunement_refusals.remove(item.name);
+        if self.free_attunement_slots() == 0 {
+            return false;
+        }
+        self.attunements.push(item.name);
+        // The bond is what switches the item on, so everything an
+        // always-on item installs has to be installed now rather than
+        // at pickup. Same call `pickup_item` makes, and idempotent for
+        // the same reason.
+        for &c in item.passive_conditions {
+            self.add_condition(c, ConditionTimer::Permanent);
+        }
+        true
+    }
+
+    /// Break the bond to `name`, and report whether there was one.
+    ///
+    /// Strips whatever the item was holding up — on the same "unless
+    /// something else still grants it" rule `remove_item_by_name` uses,
+    /// because a creature wearing two pairs of Winged Boots and
+    /// un-attuning one of them is still flying.
+    pub fn end_attunement(&mut self, name: &str) -> bool {
+        let Some(pos) = self.attunements.iter().position(|&n| n == name) else {
+            return false;
+        };
+        self.attunements.remove(pos);
+        // Deliberate, so the sweep at the next rest leaves it off
+        // rather than handing the freed slot straight back to it. See
+        // `attunement_refusals`.
+        if let Some(item) = self.items.iter().find(|i| i.name == name) {
+            self.attunement_refusals.insert(item.name);
+        }
+        let dropped: Vec<Condition> = self
+            .items
+            .iter()
+            .filter(|i| i.name == name)
+            .flat_map(|i| i.passive_conditions.iter().copied())
+            .collect();
+        for c in dropped {
+            let still_granted = self.active_items().any(|it| {
+                it.passive_conditions.contains(&c)
+            });
+            if !still_granted {
+                self.remove_condition(c);
+            }
+        }
+        true
+    }
+
+    /// Bring the attunement ledger back in line with the pack: drop
+    /// bonds to items no longer carried, then fill every free slot with
+    /// the earliest-acquired item that wants one.
+    ///
+    /// Run at three moments, which between them are every moment the
+    /// two can disagree — instantiation (a stat block that ships its
+    /// own gear), pickup (the fight's own loot), and the rest between
+    /// two rooms (RAW's own attunement window, and the only place in
+    /// this engine that resembles the short rest the book asks for).
+    ///
+    /// Greedy and in pack order rather than by any ranking of what the
+    /// items are worth. That is deliberate: the engine has no way to
+    /// compare a Ring of Protection against a Belt of Giant Strength
+    /// that is not a heuristic pretending to be a rule, and first-come
+    /// is what a player who picked the ring up first actually did.
+    /// When the fourth item arrives the bond is simply not formed, and
+    /// the panel says so — which is the decision the cap exists to
+    /// force, offered to the player rather than guessed at for them.
+    ///
+    /// The player's lever on that order is `attunement_refusals`: an
+    /// item set aside with `end_attunement` is skipped here, so a slot
+    /// freed on purpose goes to the next thing in the pack rather than
+    /// back to what was just taken off. Without that the greedy fill
+    /// would undo every decision the moment the party sat down.
+    pub fn reconcile_attunements(&mut self) {
+        self.attunements
+            .retain(|name| self.items.iter().any(|i| i.name == *name));
+        // A refusal is about an object in the pack. Once the object is
+        // gone the refusal is not a preference any more, it is a trap
+        // waiting for the next copy somebody picks up.
+        self.attunement_refusals
+            .retain(|name| self.items.iter().any(|i| i.name == *name));
+        let candidates: Vec<&'static str> = self
+            .items
+            .iter()
+            .filter(|i| i.requires_attunement && !self.attunement_refusals.contains(i.name))
+            .map(|i| i.name)
+            .collect();
+        for name in candidates {
+            if self.free_attunement_slots() == 0 {
+                break;
+            }
+            self.attune_to(name);
+        }
     }
 
     pub fn pickup_item(&mut self, item: &'static Item) {
@@ -7259,8 +7545,21 @@ impl ActorInstance {
         // Cloak of Displacement on a creature with template Displacement-
         // immunity silently no-ops). Duplicates are deduped by
         // `add_condition` (it keeps the longer / Permanent timer).
-        for &c in item.passive_conditions {
-            self.add_condition(c, ConditionTimer::Permanent);
+        //
+        // An item that wants attunement installs nothing of its own
+        // here: the bond is what switches it on, so the install rides
+        // `attune_to` instead. Attempted immediately rather than held
+        // for the next rest, because the loot in this engine is picked
+        // up *during* a fight and a ring that does nothing until the
+        // party leaves the room is a ring nobody would stop for. When
+        // there is no slot free the item goes in the pack inert and the
+        // panel says `(unattuned)` beside it.
+        if item.requires_attunement {
+            self.attune_to(item.name);
+        } else {
+            for &c in item.passive_conditions {
+                self.add_condition(c, ConditionTimer::Permanent);
+            }
         }
     }
 
@@ -7397,6 +7696,18 @@ impl ActorInstance {
         self.items.iter().any(|i| i.name == name)
     }
 
+    /// True when the item named `name` is carried **and switched on** —
+    /// either it needs no attunement or the bond has been formed.
+    ///
+    /// The `active_items` twin of `has_item_named` above, and the one
+    /// every "can I use this?" gate should ask. The two differ for
+    /// exactly one kind of object, and it is the kind the whole
+    /// attunement rule is about: the staff in the pack that nobody has
+    /// bonded with.
+    pub fn wields_live_item(&self, name: &str) -> bool {
+        self.active_items().any(|i| i.name == name)
+    }
+
     /// Every carried item that glows on its own, as light profiles.
     ///
     /// The inventory half of `Item::sheds_light`; the board half is
@@ -7406,7 +7717,7 @@ impl ActorInstance {
     /// encounter owns that table and cannot see inside an inventory
     /// without one of these accessors.
     pub fn carried_light_profiles(&self) -> Vec<crate::engine::lighting::LightProfile> {
-        self.items.iter().filter_map(|i| i.sheds_light).collect()
+        self.active_items().filter_map(|i| i.sheds_light).collect()
     }
 
     /// True while the actor carries any item whose
@@ -7415,7 +7726,7 @@ impl ActorInstance {
     /// `crate::engine::magic`; see there for the other six ways a swing
     /// can be magical.
     pub fn wields_enchanted_weapon(&self) -> bool {
-        self.items.iter().any(|i| i.grants_magical_attacks)
+        self.active_items().any(|i| i.grants_magical_attacks)
     }
 
     /// True while the actor wears something that turns a critical hit
@@ -7424,7 +7735,7 @@ impl ActorInstance {
     /// `CRITICAL_NEGATION_SOURCES` cohort in `crate::engine::criticals`;
     /// see there for where in the swing the demotion lands.
     pub fn blunts_critical_hits(&self) -> bool {
-        self.items.iter().any(|i| i.blunts_critical_hits)
+        self.active_items().any(|i| i.blunts_critical_hits)
     }
 
     /// True while the actor carries something that halves the damage of
@@ -7440,7 +7751,7 @@ impl ActorInstance {
     /// chokepoint, which is the last place in the engine that still
     /// knows an arrow was an arrow.
     pub fn halves_ranged_weapon_damage(&self) -> bool {
-        self.items.iter().any(|i| i.halves_ranged_weapon_damage)
+        self.active_items().any(|i| i.halves_ranged_weapon_damage)
     }
 
     /// True while the actor carries something that makes them roll
@@ -7448,14 +7759,14 @@ impl ActorInstance {
     /// Axe, and nothing else on the loot table. Read by
     /// `EncounterInstance::trigger_berserker_axe`.
     pub fn carries_berserking_weapon(&self) -> bool {
-        self.items.iter().any(|i| i.berserks_its_bearer)
+        self.active_items().any(|i| i.berserks_its_bearer)
     }
 
     /// True while the actor carries a silvered weapon. Answers strictly
     /// less than `wields_enchanted_weapon` — silver gets through the
     /// five lycanthrope stat blocks and nothing else.
     pub fn wields_silvered_weapon(&self) -> bool {
-        self.items.iter().any(|i| i.grants_silvered_attacks)
+        self.active_items().any(|i| i.grants_silvered_attacks)
     }
 
     /// Whether a silvered weapon gets through this creature's
@@ -7469,14 +7780,25 @@ impl ActorInstance {
     pub fn remove_item_by_name(&mut self, name: &str) -> bool {
         if let Some(pos) = self.items.iter().position(|i| i.name == name) {
             let removed = self.items.remove(pos);
+            // The bond does not outlive the last copy of its object.
+            // Dropped *before* the condition sweep below, so that sweep's
+            // "does anything still grant this?" question is asked of a
+            // pack the item has already left on both lanes.
+            if !self.has_item_named(name) {
+                self.attunements.retain(|n| *n != name);
+                // …and the refusal with it, for the reason
+                // `reconcile_attunements` sweeps them: a preference
+                // about an object that has left the pack is a trap for
+                // the next copy of it.
+                self.attunement_refusals.retain(|n| *n != name);
+            }
             // Strip passive conditions the dropped item granted, unless
-            // another carried item still grants the same condition (e.g.
-            // two Winged Boots paired) — keeps the install lane idempotent
-            // across multi-item stacks.
+            // another *live* carried item still grants the same condition
+            // (e.g. two Winged Boots paired) — keeps the install lane
+            // idempotent across multi-item stacks.
             for &c in removed.passive_conditions {
                 let still_granted = self
-                    .items
-                    .iter()
+                    .active_items()
                     .any(|it| it.passive_conditions.contains(&c));
                 if !still_granted {
                     self.remove_condition(c);
@@ -7508,8 +7830,7 @@ impl ActorInstance {
         // Snapshot the (item, condition) pairs first so the borrow on
         // `self.items` doesn't fight the `add_condition` mutation.
         let to_install: Vec<Condition> = self
-            .items
-            .iter()
+            .active_items()
             .flat_map(|it| it.passive_conditions.iter().copied())
             .collect();
         for c in to_install {
@@ -7529,7 +7850,7 @@ impl ActorInstance {
     pub fn available_actions(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
         let mut out = self.actions.clone();
         let mut seen: HashSet<&'static str> = HashSet::new();
-        for item in &self.items {
+        for item in self.active_items() {
             if !item.on_use.is_empty() && seen.insert(item.name) {
                 out.extend(item.on_use.iter().copied());
             }
@@ -7572,7 +7893,7 @@ impl ActorInstance {
     pub fn attack_repertoire(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
         let mut out = self.actions.clone();
         let mut seen: HashSet<&'static str> = HashSet::new();
-        for item in &self.items {
+        for item in self.active_items() {
             if item.on_use.is_empty() || !seen.insert(item.name) {
                 continue;
             }
@@ -7675,6 +7996,14 @@ impl ActorInstance {
         }
         self.legendary_action_slots = self.legendary_actions_per_round;
         self.sorcery_points = self.sorcery_points_max;
+        // RAW's own attunement window — *"attuning to an item requires
+        // a creature to spend a short rest focused on only that item"*
+        // — and the only one this engine has. A ring that went into the
+        // pack inert because all three slots were full takes any slot
+        // freed since; a bond to something dropped in the last room is
+        // swept away. Ahead of the re-install below, so that pass sees
+        // the ledger this one settled.
+        self.reconcile_attunements();
         // Restore passive-trinket conditions cleared by `conditions.clear()`
         // above so the wearer wakes up still spider-climbing / flying /
         // whatever the carried trinkets grant.
@@ -7751,6 +8080,13 @@ impl ActorInstance {
         if self.has_passive_feature(SORCEROUS_RESTORATION_TAG) {
             self.give_sorcery_points(4);
         }
+
+        // The short rest is the attunement window RAW actually names —
+        // *"attuning to an item requires a creature to spend a short
+        // rest focused on only that item"* — so it fires here as well as
+        // on the long rest, and for once the engine's coarser clock
+        // costs nothing: one hour is one hour.
+        self.reconcile_attunements();
     }
 
     pub fn temp_hp(&self) -> u32 {
@@ -8520,8 +8856,7 @@ impl ActorInstance {
             .iter()
             .any(|entry| entry.against.contains(&against) && (entry.flag)(self))
             || self
-                .items
-                .iter()
+                .active_items()
                 .any(|i| i.save_advantages_against.contains(&against))
     }
 
@@ -8543,8 +8878,7 @@ impl ActorInstance {
     /// rolled for; see `Item::skill_check_advantages` for why the ability
     /// is not a fine enough scope.
     pub fn has_skill_check_advantage(&self, skill: Skill) -> bool {
-        self.items
-            .iter()
+        self.active_items()
             .any(|i| i.skill_check_advantages.contains(&skill))
     }
 
@@ -8819,8 +9153,7 @@ impl ActorInstance {
     /// names. Read by `add_condition` and `effectively_immune_to_condition`
     /// alongside the template / dynamic immunity lanes.
     pub fn item_immunity_to(&self, c: Condition) -> bool {
-        self.items
-            .iter()
+        self.active_items()
             .any(|i| i.condition_immunities.contains(&c))
     }
 
@@ -8833,8 +9166,7 @@ impl ActorInstance {
     /// stacking rule (item resistance is skipped when another source
     /// has already halved).
     pub fn item_resistance_to(&self, dt: DamageType) -> bool {
-        self.items
-            .iter()
+        self.active_items()
             .any(|i| i.damage_resistances.contains(&dt))
     }
 
@@ -8847,8 +9179,7 @@ impl ActorInstance {
     /// halving" stacking concern), so this fires before resistance
     /// rolls.
     pub fn item_immunity_to_damage(&self, dt: DamageType) -> bool {
-        self.items
-            .iter()
+        self.active_items()
             .any(|i| i.damage_immunities.contains(&dt))
     }
 
@@ -9481,8 +9812,7 @@ impl ActorInstance {
             AbilityScoreType::Charisma => self.charisma,
         };
         let floored = self
-            .items
-            .iter()
+            .active_items()
             .flat_map(|item| item.ability_score_floors.iter())
             .filter(|(a, _)| *a == ast)
             .map(|(_, score)| *score)
@@ -9491,8 +9821,7 @@ impl ActorInstance {
         // of them named; a score already above that ceiling is left
         // alone rather than pulled down to it.
         let (bonus, ceiling) = self
-            .items
-            .iter()
+            .active_items()
             .flat_map(|item| item.ability_score_bonuses.iter())
             .filter(|(a, _, _)| *a == ast)
             .fold((0, u32::MAX), |(sum, cap), (_, bonus, ceiling)| {
@@ -9631,7 +9960,13 @@ impl ActorInstance {
             // `Resource::Action` arm alongside this one already says so
             // on every staff option in the file.
             Resource::ItemCharges { item, count } => {
-                self.has_item_named(item) && self.item_charges_remaining(item) >= count
+                // Through `wields_live_item` rather than
+                // `has_item_named`: a Staff of Fire with three charges
+                // on it and no attunement is a stick. `available_actions`
+                // already declines to offer its menu, so this is the
+                // second lock on the same door — the one that holds if
+                // an action reaches `validate` by another road.
+                self.wields_live_item(item) && self.item_charges_remaining(item) >= count
             }
         }
     }
@@ -10128,7 +10463,7 @@ impl ActorInstance {
     /// wherever they are — the Necklace of Adaptation, and nothing else
     /// on the loot table. Read by `UNDERWATER_BREATH_SOURCES`.
     pub fn wears_unfettered_breathing(&self) -> bool {
-        self.items.iter().any(|i| i.grants_unfettered_breathing)
+        self.active_items().any(|i| i.grants_unfettered_breathing)
     }
 
     /// True if the water will never drown this actor — RAW's
@@ -10330,7 +10665,7 @@ impl ActorInstance {
     /// roll through Half Cover — the Wand of the War Mage, and nothing
     /// else. Read by `EncounterInstance::spell_cover_ac_bonus`.
     pub fn ignores_half_cover_on_spell_attacks(&self) -> bool {
-        self.items.iter().any(|i| i.ignores_half_cover_on_spells)
+        self.active_items().any(|i| i.ignores_half_cover_on_spells)
     }
 
     /// Sum of every carried item's `damage_bonus` field. Folded into the
@@ -13169,5 +13504,236 @@ mod tests {
             10,
             "two resistances are still one halving"
         );
+    }
+    /// Three rings on, the fourth in the pack and doing nothing.
+    ///
+    /// The whole of the attunement rule in one test: the ceiling holds,
+    /// the item over it is *carried* rather than lost, and the AC it
+    /// would have given is not on the sheet. The last clause is the one
+    /// worth pinning — an inert item that still paid out would be the
+    /// feature written down and not implemented.
+    #[test]
+    fn the_fourth_attuned_item_goes_in_the_pack_and_stays_quiet() {
+        use crate::items::item_template::{
+            CLOAK_OF_PROTECTION, RING_OF_PROTECTION, SCARAB_OF_PROTECTION, STONE_OF_GOOD_LUCK,
+        };
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        let base_ac = f.armor_class();
+        assert_eq!(f.attunement_slots(), ActorInstance::BASE_ATTUNEMENT_SLOTS);
+
+        for item in [
+            &RING_OF_PROTECTION,
+            &CLOAK_OF_PROTECTION,
+            &STONE_OF_GOOD_LUCK,
+        ] {
+            f.pickup_item(item);
+        }
+        assert_eq!(f.attunements().len(), 3, "three slots, three bonds");
+        assert_eq!(f.free_attunement_slots(), 0);
+        let three_ac = f.armor_class();
+        assert_eq!(
+            three_ac,
+            base_ac + 2,
+            "the ring and the cloak are each +1 AC and both are attuned"
+        );
+
+        // The fourth. Another +1 AC, and the sheet must not move.
+        f.pickup_item(&SCARAB_OF_PROTECTION);
+        assert!(
+            f.has_item_named(SCARAB_OF_PROTECTION.name),
+            "an item over the ceiling is still carried"
+        );
+        assert!(!f.is_attuned_to(SCARAB_OF_PROTECTION.name));
+        assert!(
+            !f.wields_live_item(SCARAB_OF_PROTECTION.name),
+            "carried is not the same as live"
+        );
+        assert_eq!(
+            f.armor_class(),
+            three_ac,
+            "the scarab is over the attunement ceiling and must pay nothing"
+        );
+    }
+
+    /// Ending one bond hands the slot to the item that was waiting for
+    /// it — at the rest, which is the only place RAW lets a bond form.
+    #[test]
+    fn a_freed_slot_goes_to_the_waiting_item_at_the_next_rest() {
+        use crate::items::item_template::{
+            CLOAK_OF_PROTECTION, RING_OF_PROTECTION, SLIPPERS_OF_SPIDER_CLIMBING,
+            STONE_OF_GOOD_LUCK,
+        };
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        for item in [
+            &RING_OF_PROTECTION,
+            &CLOAK_OF_PROTECTION,
+            &STONE_OF_GOOD_LUCK,
+        ] {
+            f.pickup_item(item);
+        }
+        f.pickup_item(&SLIPPERS_OF_SPIDER_CLIMBING);
+        assert!(
+            !f.has_condition(Condition::SpiderClimbing),
+            "an unattuned trinket installs nothing"
+        );
+
+        // Free a slot. This alone is not enough — forming the bond is
+        // the half RAW charges a short rest for.
+        assert!(f.end_attunement(STONE_OF_GOOD_LUCK.name));
+        assert_eq!(f.free_attunement_slots(), 1);
+        assert!(!f.is_attuned_to(SLIPPERS_OF_SPIDER_CLIMBING.name));
+
+        f.short_rest(&mut FastRandRoller::with_seed(7));
+        assert!(
+            f.is_attuned_to(SLIPPERS_OF_SPIDER_CLIMBING.name),
+            "the rest is where the waiting item takes the freed slot"
+        );
+        assert!(
+            f.has_condition(Condition::SpiderClimbing),
+            "and the bond is what switches its clause on"
+        );
+    }
+
+    /// A bond does not outlive the object, and ending one takes its
+    /// passive clause down with it.
+    #[test]
+    fn dropping_or_unattuning_a_trinket_takes_its_clause_with_it() {
+        use crate::items::item_template::WINGED_BOOTS;
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&WINGED_BOOTS);
+        assert!(f.is_attuned_to(WINGED_BOOTS.name));
+        assert!(f.has_condition(Condition::Flying));
+
+        assert!(f.end_attunement(WINGED_BOOTS.name));
+        assert!(!f.has_condition(Condition::Flying), "the bond was the switch");
+        assert!(
+            f.has_item_named(WINGED_BOOTS.name),
+            "un-attuning is not dropping"
+        );
+
+        // A rest does *not* put them back on: setting something aside
+        // is a decision, and the greedy fill honours it.
+        f.short_rest(&mut FastRandRoller::with_seed(3));
+        assert!(
+            !f.is_attuned_to(WINGED_BOOTS.name),
+            "a deliberate release is not undone by sitting down"
+        );
+
+        // And the other direction: ask for them back, then drop them
+        // outright. The ledger must not keep a row for something that
+        // has left the pack.
+        assert!(f.attune_to(WINGED_BOOTS.name));
+        assert!(f.has_condition(Condition::Flying));
+        assert!(f.remove_item_by_name(WINGED_BOOTS.name));
+        assert!(!f.is_attuned_to(WINGED_BOOTS.name));
+        assert!(f.attunements().is_empty());
+        assert!(!f.has_condition(Condition::Flying));
+    }
+
+    /// A staff with charges on it and no attunement is a stick.
+    #[test]
+    fn an_unattuned_staff_offers_nothing_and_cannot_be_billed() {
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::{
+            RING_OF_PROTECTION, STAFF_OF_FIRE, STONE_OF_GOOD_LUCK, WINGED_BOOTS,
+        };
+        let mut f = make(&crate::actors::creatures::wizards::WIZARD_TEMPLATE);
+        let bare = f.available_actions().len();
+        f.pickup_item(&STAFF_OF_FIRE);
+        assert!(f.is_attuned_to(STAFF_OF_FIRE.name));
+        let armed = f.available_actions().len();
+        assert!(
+            armed > bare,
+            "an attuned staff contributes its spell menu to the picker"
+        );
+        let charge = Resource::ItemCharges {
+            item: STAFF_OF_FIRE.name,
+            count: 1,
+        };
+        assert!(f.can_consume_resource(charge));
+
+        assert!(f.end_attunement(STAFF_OF_FIRE.name));
+        assert_eq!(
+            f.available_actions().len(),
+            bare,
+            "an unattuned staff offers nothing to do with it"
+        );
+        assert!(
+            f.item_charges_remaining(STAFF_OF_FIRE.name) > 0,
+            "the charges are still on the stick — it is the bond that is missing"
+        );
+        assert!(
+            !f.can_consume_resource(charge),
+            "and they cannot be spent through it"
+        );
+
+        // Fill the three slots with other things and the staff stays
+        // quiet across a rest, rather than quietly reclaiming a slot
+        // that is not there.
+        for item in [&RING_OF_PROTECTION, &STONE_OF_GOOD_LUCK, &WINGED_BOOTS] {
+            f.pickup_item(item);
+        }
+        f.short_rest(&mut FastRandRoller::with_seed(11));
+        assert!(!f.is_attuned_to(STAFF_OF_FIRE.name));
+        assert_eq!(f.available_actions().len(), bare);
+    }
+
+    /// The Artificer's Magic Item Adept widens the ceiling by one, and
+    /// nothing else on the roster does.
+    #[test]
+    fn the_artificer_attunes_to_one_more_than_everybody_else() {
+        let fighter = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        assert_eq!(fighter.attunement_slots(), 3);
+
+        let artificer = make(&crate::actors::creatures::artificers::ARTIFICER_TEMPLATE);
+        assert_eq!(
+            artificer.attunement_slots(),
+            4,
+            "Magic Item Adept is the whole reason the ceiling is a function"
+        );
+
+        // Every subclass inherits the rung: the templates re-declare
+        // their feature sets from scratch, so a subclass that forgot the
+        // tag would be a level-13 artificer with a level-9 ceiling.
+        for ct in [
+            &*crate::actors::creatures::artificers::ALCHEMIST_ARTIFICER_TEMPLATE,
+            &*crate::actors::creatures::artificers::ARMORER_ARTIFICER_TEMPLATE,
+            &*crate::actors::creatures::artificers::INFILTRATOR_ARTIFICER_TEMPLATE,
+            &*crate::actors::creatures::artificers::ARTILLERIST_ARTIFICER_TEMPLATE,
+            &*crate::actors::creatures::artificers::BATTLE_SMITH_ARTIFICER_TEMPLATE,
+        ] {
+            let a = ActorInstance::from_creature_template(
+                ct,
+                Coordinate::new(0, 0),
+                0,
+                &mut FastRandRoller::with_seed(1),
+                0,
+            )
+            .unwrap();
+            assert_eq!(a.attunement_slots(), 4, "{} lost Magic Item Adept", a.name());
+        }
+    }
+
+    /// Two copies of one item are one bond, and the second copy keeps
+    /// the clause alive when the first is dropped.
+    #[test]
+    fn a_second_copy_of_a_trinket_is_not_a_second_attunement() {
+        use crate::items::item_template::WINGED_BOOTS;
+        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
+        f.pickup_item(&WINGED_BOOTS);
+        f.pickup_item(&WINGED_BOOTS);
+        assert_eq!(
+            f.attunements().len(),
+            1,
+            "a spare pair of boots is not a second slot spent"
+        );
+        assert_eq!(f.free_attunement_slots(), 2);
+
+        assert!(f.remove_item_by_name(WINGED_BOOTS.name));
+        assert!(
+            f.is_attuned_to(WINGED_BOOTS.name),
+            "one pair is still on the wearer's feet"
+        );
+        assert!(f.has_condition(Condition::Flying));
     }
 }

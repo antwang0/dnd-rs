@@ -802,7 +802,7 @@ impl Action for StaffPrime {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         encounter.actors.get(&caster_id).is_some_and(|a| {
-            a.has_item_named(self.item_name)
+            a.wields_live_item(self.item_name)
                 && !a.has_condition(self.condition)
                 && a.available_actions().iter().any(|act| {
                     act.is_harmful()

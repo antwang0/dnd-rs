@@ -597,6 +597,41 @@ pub struct Item {
     /// rather than a bonus — see `ActorInstance::regain_item_charges`,
     /// the one place it is read.
     pub recharge: Option<crate::engine::dice::DiceExpr>,
+    /// True for the items whose stat line reads *"(requires
+    /// attunement)"* — the one line on the SRD's magic-item table the
+    /// engine had never read.
+    ///
+    /// Attunement is the book's whole answer to the question this loot
+    /// model otherwise never asks: **how many magic items is too
+    /// many?** Without it a party that clears six rooms walks into the
+    /// seventh wearing every ring, cloak, belt and stone the dungeon
+    /// paid out, each one stacking its own flat bonus, and the only
+    /// cost of a second Cloak of Protection is having picked it up.
+    /// RAW's ceiling is three, and it is the single most load-bearing
+    /// number in the magic-item chapter: it is what makes a Belt of
+    /// Giant Strength a *decision* rather than an addition.
+    ///
+    /// The flag is deliberately not derived from anything else on this
+    /// struct, because the book's own split does not follow any field
+    /// here. A Dragon Slayer is a rare sword that needs no attunement
+    /// and a Ring of Swimming is an uncommon ring that needs none
+    /// either, while the Ioun Stone of Agility beside it does; potions
+    /// and scrolls never do, and a Staff of Fire always does. The
+    /// closest available proxy — "anything with a passive effect" —
+    /// gets the `+1 Weapon` tier wrong in one direction and the Mace of
+    /// Smiting wrong in the other. So each item says it for itself, and
+    /// the invariant test at the bottom of this file checks the two
+    /// families that *are* categorical (no consumable attunes; every
+    /// staff does).
+    ///
+    /// Read only through `ActorInstance::active_items`, which is the
+    /// chokepoint every effect lane on this struct goes through. An
+    /// item that requires attunement and has not got it is *carried and
+    /// inert*: it is in the pack, it can be dropped, it still counts as
+    /// a copy for the charge ledger — and it contributes no AC, no
+    /// resistance, no condition, no action and no light. That is
+    /// exactly RAW's *"you gain [its] benefits only if attuned"*.
+    pub requires_attunement: bool,
 }
 
 impl Item {
@@ -634,6 +669,7 @@ impl Item {
         imposes_spell_attack_disadvantage: false,
         charges: 0,
         recharge: None,
+        requires_attunement: false,
     };
 }
 
@@ -649,6 +685,7 @@ pub static RING_OF_PROTECTION: Item = Item {
     name: "Ring of Protection",
     glyph: '=',
     bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -656,6 +693,7 @@ pub static BOOTS_OF_STRIDING: Item = Item {
     name: "Boots of Striding",
     glyph: 'b',
     bonuses: ItemBonuses { speed: 10, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -710,6 +748,7 @@ pub static EYES_OF_THE_EAGLE: Item = Item {
     name: "Eyes of the Eagle",
     glyph: 'o',
     skill_check_advantages: &[crate::engine::types::Skill::Perception],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -717,6 +756,7 @@ pub static CLOAK_OF_RESISTANCE: Item = Item {
     name: "Cloak of Resistance",
     glyph: 'c',
     bonuses: ItemBonuses { save: 2, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -742,6 +782,7 @@ pub static AMULET_OF_HEALTH: Item = Item {
     glyph: 'a',
     bonuses: ItemBonuses { max_hp: 10, ..ItemBonuses::ZERO },
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Constitution, 19)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -752,6 +793,7 @@ pub static HEADBAND_OF_INSIGHT: Item = Item {
     name: "Headband of Insight",
     glyph: 'h',
     bonuses: ItemBonuses { save: 1, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -762,6 +804,7 @@ pub static BRACERS_OF_DEFENSE: Item = Item {
     name: "Bracers of Defense",
     glyph: 'B',
     bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -815,6 +858,7 @@ pub static CLOAK_OF_PROTECTION: Item = Item {
     name: "Cloak of Protection",
     glyph: 'C',
     bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -877,6 +921,7 @@ pub static PERIAPT_OF_WOUND_CLOSURE: Item = Item {
     name: "Periapt of Wound Closure",
     glyph: '+',
     bonuses: ItemBonuses { max_hp: 5, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -898,6 +943,7 @@ pub static GAUNTLETS_OF_OGRE_POWER: Item = Item {
     name: "Gauntlets of Ogre Power",
     glyph: 'G',
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 19)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -942,6 +988,7 @@ pub static STONE_OF_GOOD_LUCK: Item = Item {
     name: "Stone of Good Luck",
     glyph: 'L',
     bonuses: ItemBonuses { check: 1, save: 1, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -973,6 +1020,7 @@ pub static NECKLACE_OF_ADAPTATION: Item = Item {
     glyph: 'n',
     condition_immunities: &[crate::conditions::Condition::Poisoned],
     grants_unfettered_breathing: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -993,6 +1041,7 @@ pub static RING_OF_FREE_ACTION: Item = Item {
         crate::conditions::Condition::Restrained,
         crate::conditions::Condition::Grappled,
     ],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1008,6 +1057,7 @@ pub static PEARL_OF_POWER: Item = Item {
     name: "Pearl of Power",
     glyph: 'q',
     on_use: &[&crate::actions::item_actions::USE_PEARL_OF_POWER],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1018,6 +1068,7 @@ pub static GREATER_PEARL_OF_POWER: Item = Item {
     name: "Greater Pearl of Power",
     glyph: 'E',
     on_use: &[&crate::actions::item_actions::USE_GREATER_PEARL_OF_POWER],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1028,6 +1079,7 @@ pub static SUPREME_PEARL_OF_POWER: Item = Item {
     name: "Supreme Pearl of Power",
     glyph: 'I',
     on_use: &[&crate::actions::item_actions::USE_SUPREME_PEARL_OF_POWER],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1043,6 +1095,7 @@ pub static BROOCH_OF_SHIELDING: Item = Item {
     name: "Brooch of Shielding",
     glyph: 'k',
     damage_resistances: &[crate::engine::types::DamageType::Force],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1056,6 +1109,7 @@ pub static BOOTS_OF_THE_WINTERLANDS: Item = Item {
     name: "Boots of the Winterlands",
     glyph: 'W',
     damage_resistances: &[crate::engine::types::DamageType::Cold],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1071,6 +1125,7 @@ pub static BOOTS_OF_SPEED: Item = Item {
     name: "Boots of Speed",
     glyph: 'V',
     on_use: &[&crate::actions::item_actions::WEAR_BOOTS_OF_SPEED],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1107,6 +1162,7 @@ pub static RING_OF_MIND_SHIELDING: Item = Item {
     glyph: 'M',
     condition_immunities: &[crate::conditions::Condition::Charmed],
     damage_immunities: &[crate::engine::types::DamageType::Psychic],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1146,6 +1202,7 @@ pub static ROBE_OF_THE_ARCHMAGI: Item = Item {
         ..ItemBonuses::ZERO
     },
     grants_spell_save_advantage: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1160,6 +1217,7 @@ pub static RING_OF_FIRE_RESISTANCE: Item = Item {
     name: "Ring of Fire Resistance",
     glyph: 'f',
     damage_resistances: &[crate::engine::types::DamageType::Fire],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1172,6 +1230,7 @@ pub static RING_OF_COLD_RESISTANCE: Item = Item {
     name: "Ring of Cold Resistance",
     glyph: 'o',
     damage_resistances: &[crate::engine::types::DamageType::Cold],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1183,6 +1242,7 @@ pub static RING_OF_ACID_RESISTANCE: Item = Item {
     name: "Ring of Acid Resistance",
     glyph: 'd',
     damage_resistances: &[crate::engine::types::DamageType::Acid],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1193,6 +1253,7 @@ pub static RING_OF_LIGHTNING_RESISTANCE: Item = Item {
     name: "Ring of Lightning Resistance",
     glyph: 'g',
     damage_resistances: &[crate::engine::types::DamageType::Lightning],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1206,6 +1267,7 @@ pub static RING_OF_POISON_RESISTANCE: Item = Item {
     name: "Ring of Poison Resistance",
     glyph: 'j',
     damage_resistances: &[crate::engine::types::DamageType::Poison],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1217,6 +1279,7 @@ pub static RING_OF_RADIANT_RESISTANCE: Item = Item {
     name: "Ring of Radiant Resistance",
     glyph: 'u',
     damage_resistances: &[crate::engine::types::DamageType::Radiant],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1228,6 +1291,7 @@ pub static RING_OF_NECROTIC_RESISTANCE: Item = Item {
     name: "Ring of Necrotic Resistance",
     glyph: 'e',
     damage_resistances: &[crate::engine::types::DamageType::Necrotic],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1239,6 +1303,7 @@ pub static RING_OF_THUNDER_RESISTANCE: Item = Item {
     name: "Ring of Thunder Resistance",
     glyph: 'v',
     damage_resistances: &[crate::engine::types::DamageType::Thunder],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1252,6 +1317,7 @@ pub static RING_OF_PSYCHIC_RESISTANCE: Item = Item {
     name: "Ring of Psychic Resistance",
     glyph: 'x',
     damage_resistances: &[crate::engine::types::DamageType::Psychic],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1305,6 +1371,7 @@ pub static WAND_OF_FIREBALLS: Item = Item {
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_FIREBALLS],
     charges: 7,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1319,6 +1386,7 @@ pub static WAND_OF_LIGHTNING_BOLTS: Item = Item {
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_LIGHTNING_BOLTS],
     charges: 7,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1396,6 +1464,7 @@ pub static WAND_OF_CONE_OF_COLD: Item = Item {
     name: "Wand of Cone of Cold",
     glyph: 'Q',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_CONE_OF_COLD],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1492,6 +1561,7 @@ pub static BRACERS_OF_ARCHERY: Item = Item {
         damage_bonus: 2,
         ..ItemBonuses::ZERO
     },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1518,6 +1588,7 @@ pub static IOUN_STONE_OF_MASTERY: Item = Item {
         proficiency: 1,
         ..ItemBonuses::ZERO
     },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1565,6 +1636,7 @@ pub static IOUN_STONE_OF_AGILITY: Item = Item {
     name: "Ioun Stone of Agility",
     glyph: 'J',
     ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Dexterity, 2, 20)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1583,6 +1655,7 @@ pub static IOUN_STONE_OF_STRENGTH: Item = Item {
     name: "Ioun Stone of Strength",
     glyph: 'J',
     ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Strength, 2, 20)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1608,6 +1681,7 @@ pub static IOUN_STONE_OF_FORTITUDE: Item = Item {
     name: "Ioun Stone of Fortitude",
     glyph: 'J',
     ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Constitution, 2, 20)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1624,6 +1698,7 @@ pub static IOUN_STONE_OF_INSIGHT: Item = Item {
     name: "Ioun Stone of Insight",
     glyph: 'J',
     ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Wisdom, 2, 20)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1639,6 +1714,7 @@ pub static IOUN_STONE_OF_INTELLECT: Item = Item {
     name: "Ioun Stone of Intellect",
     glyph: 'J',
     ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Intelligence, 2, 20)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1654,6 +1730,7 @@ pub static IOUN_STONE_OF_LEADERSHIP: Item = Item {
     name: "Ioun Stone of Leadership",
     glyph: 'J',
     ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Charisma, 2, 20)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1670,6 +1747,7 @@ pub static IOUN_STONE_OF_PROTECTION: Item = Item {
     name: "Ioun Stone of Protection",
     glyph: 'J',
     bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1693,6 +1771,7 @@ pub static IOUN_STONE_OF_AWARENESS: Item = Item {
     glyph: 'J',
     sharpens_initiative: true,
     skill_check_advantages: &[crate::engine::types::Skill::Perception],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1816,6 +1895,7 @@ pub static BELT_OF_GIANT_STRENGTH: Item = Item {
     name: "Belt of Giant Strength (hill)",
     glyph: '~',
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 21)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1825,6 +1905,7 @@ pub static BELT_OF_STONE_GIANT_STRENGTH: Item = Item {
     name: "Belt of Giant Strength (stone)",
     glyph: '~',
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 23)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1833,6 +1914,7 @@ pub static BELT_OF_FIRE_GIANT_STRENGTH: Item = Item {
     name: "Belt of Giant Strength (fire)",
     glyph: '~',
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 25)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1841,6 +1923,7 @@ pub static BELT_OF_CLOUD_GIANT_STRENGTH: Item = Item {
     name: "Belt of Giant Strength (cloud)",
     glyph: '~',
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 27)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1850,6 +1933,7 @@ pub static BELT_OF_STORM_GIANT_STRENGTH: Item = Item {
     name: "Belt of Giant Strength (storm)",
     glyph: '~',
     ability_score_floors: &[(crate::engine::types::AbilityScoreType::Strength, 29)],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1922,6 +2006,7 @@ pub static BELT_OF_DWARVENKIND: Item = Item {
     damage_resistances: &[crate::engine::types::DamageType::Poison],
     save_advantages_against: &[crate::conditions::Condition::Poisoned],
     passive_conditions: &[crate::conditions::Condition::Darkvisioned],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2006,6 +2091,7 @@ pub static WAND_OF_WEB: Item = Item {
     name: "Wand of Web",
     glyph: '$',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_WEB],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2050,6 +2136,7 @@ pub static WAND_OF_PARALYSIS: Item = Item {
     name: "Wand of Paralysis",
     glyph: ')',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_PARALYSIS],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2063,6 +2150,7 @@ pub static WAND_OF_FEAR: Item = Item {
     name: "Wand of Fear",
     glyph: '[',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_FEAR],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2136,6 +2224,7 @@ pub static ARCHMAGE_PEARL_OF_POWER: Item = Item {
     name: "Archmage Pearl of Power",
     glyph: ';',
     on_use: &[&crate::actions::item_actions::USE_ARCHMAGE_PEARL_OF_POWER],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2269,6 +2358,7 @@ pub static WAND_OF_POLYMORPH: Item = Item {
     name: "Wand of Polymorph",
     glyph: 'p',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_POLYMORPH],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2343,6 +2433,7 @@ pub static SLIPPERS_OF_SPIDER_CLIMBING: Item = Item {
     name: "Slippers of Spider Climbing",
     glyph: '_',
     passive_conditions: &[crate::conditions::Condition::SpiderClimbing],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2360,6 +2451,7 @@ pub static WINGED_BOOTS: Item = Item {
     name: "Winged Boots",
     glyph: 'w',
     passive_conditions: &[crate::conditions::Condition::Flying],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2373,6 +2465,7 @@ pub static BOOTS_OF_THE_FOREST: Item = Item {
     name: "Boots of the Forest",
     glyph: '~',
     passive_conditions: &[crate::conditions::Condition::Longstriding],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2387,6 +2480,7 @@ pub static CLOAK_OF_ETHEREALNESS: Item = Item {
     name: "Cloak of Etherealness",
     glyph: '$',
     passive_conditions: &[crate::conditions::Condition::DamageResistant],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2402,6 +2496,7 @@ pub static AMULET_OF_THE_VIGILANT: Item = Item {
     name: "Amulet of the Vigilant",
     glyph: 'V',
     passive_conditions: &[crate::conditions::Condition::DangerSense],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2418,6 +2513,7 @@ pub static CLOAK_OF_DISPLACEMENT: Item = Item {
     name: "Cloak of Displacement",
     glyph: 'd',
     passive_conditions: &[crate::conditions::Condition::Displaced],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2437,6 +2533,7 @@ pub static SCARAB_OF_PROTECTION: Item = Item {
         crate::conditions::Condition::Charmed,
         crate::conditions::Condition::Frightened,
     ],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2452,6 +2549,7 @@ pub static RING_OF_HEROISM: Item = Item {
     name: "Ring of Heroism",
     glyph: 'H',
     passive_conditions: &[crate::conditions::Condition::Heroic],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2535,6 +2633,7 @@ pub static WAND_OF_BINDING: Item = Item {
     name: "Wand of Binding",
     glyph: 'B',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_BINDING],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2777,6 +2876,7 @@ pub static BOOTS_OF_LEVITATION: Item = Item {
     name: "Boots of Levitation",
     glyph: 'L',
     passive_conditions: &[crate::conditions::Condition::Flying],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2815,6 +2915,7 @@ pub static CLOAK_OF_ELVENKIND: Item = Item {
     glyph: 'e',
     passive_conditions: &[crate::conditions::Condition::Untracked],
     skill_check_advantages: &[crate::engine::types::Skill::Stealth],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -2829,6 +2930,7 @@ pub static RING_OF_SPELL_STORING: Item = Item {
     name: "Ring of Spell Storing",
     glyph: 'S',
     on_use: &[&crate::actions::item_actions::USE_RING_OF_SPELL_STORING],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -3000,6 +3102,7 @@ pub static NECKLACE_OF_PRAYER_BEADS: Item = Item {
     name: "Necklace of Prayer Beads",
     glyph: 'p',
     on_use: &[&crate::actions::item_actions::USE_NECKLACE_OF_PRAYER_BEADS],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -3072,6 +3175,7 @@ pub static WINGS_OF_FLYING: Item = Item {
     name: "Wings of Flying",
     glyph: 'W',
     passive_conditions: &[crate::conditions::Condition::Flying],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -3101,6 +3205,7 @@ pub static TALISMAN_OF_PURE_GOOD: Item = Item {
     name: "Talisman of Pure Good",
     glyph: 'T',
     bonuses: ItemBonuses { ac: 1, save: 2, ..ItemBonuses::ZERO },
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -3119,6 +3224,7 @@ pub static PERIAPT_OF_MIND_BLOCKING: Item = Item {
     glyph: 'M',
     damage_immunities: &[crate::engine::types::DamageType::Psychic],
     condition_immunities: &[crate::conditions::Condition::Charmed],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -3158,6 +3264,7 @@ pub static EYES_OF_CHARMING: Item = Item {
     name: "Eyes of Charming",
     glyph: 'e',
     on_use: &[&crate::actions::item_actions::USE_EYES_OF_CHARMING],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4051,6 +4158,7 @@ pub static OATHBOW: Item = Item {
     grants_magical_attacks: true,
     on_use: &[&crate::actions::item_actions::SWEAR_OATHBOW],
     passive_conditions: &[crate::conditions::Condition::Oathbound],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4099,6 +4207,7 @@ pub static SUN_BLADE: Item = Item {
     },
     grants_magical_attacks: true,
     on_use: &[&crate::actions::item_actions::DRAW_SUN_BLADE],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4148,6 +4257,7 @@ pub static MACE_OF_DISRUPTION: Item = Item {
         bright_tiles: 8,
         dim_tiles: 8,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4164,6 +4274,7 @@ pub static FLAME_TONGUE: Item = Item {
     glyph: 'f',
     grants_magical_attacks: true,
     on_use: &[&crate::actions::item_actions::LIGHT_FLAME_TONGUE],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4183,6 +4294,7 @@ pub static FROST_BRAND: Item = Item {
     grants_magical_attacks: true,
     damage_resistances: &[crate::engine::types::DamageType::Fire],
     passive_conditions: &[crate::conditions::Condition::FrostBranded],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4217,6 +4329,7 @@ pub static SWORD_OF_WOUNDING: Item = Item {
     glyph: '!',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Wounding],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4265,6 +4378,7 @@ pub static HOLY_AVENGER: Item = Item {
     },
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::HolyAvenging],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4294,6 +4408,7 @@ pub static DWARVEN_THROWER: Item = Item {
     },
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::DwarvenThrowing],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4321,6 +4436,7 @@ pub static SWORD_OF_SHARPNESS: Item = Item {
     glyph: '/',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Sharpening],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4400,6 +4516,7 @@ pub static NINE_LIVES_STEALER: Item = Item {
     // RAW's `1d8 + 1`, at its average. No `recharge`: the sword is the
     // one charge-bearing item in the file that does not come back.
     charges: 5,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4430,6 +4547,7 @@ pub static VORPAL_SWORD: Item = Item {
     },
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::Vorpal],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4499,6 +4617,7 @@ pub static MACE_OF_TERROR: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(1, 3)),
         constant: 0,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4535,6 +4654,7 @@ pub static ROBE_OF_STARS: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(1, 6)),
         constant: 0,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4564,6 +4684,7 @@ pub static RING_OF_SHOOTING_STARS: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(1, 6)),
         constant: 0,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4614,6 +4735,7 @@ pub static THUNDEROUS_GREATCLUB: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(1, 3)),
         constant: 0,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4686,6 +4808,7 @@ pub static SCIMITAR_OF_SPEED: Item = Item {
     },
     grants_magical_attacks: true,
     on_use: &[&crate::actions::monster_attacks::SCIMITAR_OF_SPEED_SWING],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4701,6 +4824,7 @@ pub static BERSERKER_AXE: Item = Item {
     },
     grants_magical_attacks: true,
     berserks_its_bearer: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4747,6 +4871,7 @@ pub static LUCK_BLADE: Item = Item {
     },
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::BladeLuck],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4822,6 +4947,7 @@ pub static SPELLGUARD_SHIELD: Item = Item {
     },
     grants_spell_save_advantage: true,
     imposes_spell_attack_disadvantage: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4858,6 +4984,7 @@ pub static WAND_OF_THE_WAR_MAGE_PLUS_ONE: Item = Item {
         ..ItemBonuses::ZERO
     },
     ignores_half_cover_on_spells: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4873,6 +5000,7 @@ pub static WAND_OF_THE_WAR_MAGE_PLUS_TWO: Item = Item {
         ..ItemBonuses::ZERO
     },
     ignores_half_cover_on_spells: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4886,6 +5014,7 @@ pub static WAND_OF_THE_WAR_MAGE_PLUS_THREE: Item = Item {
         ..ItemBonuses::ZERO
     },
     ignores_half_cover_on_spells: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4930,6 +5059,7 @@ pub static RING_OF_THE_RAM: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(1, 3)),
         constant: 0,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4979,6 +5109,7 @@ pub static RING_OF_EVASION: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(1, 3)),
         constant: 0,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5018,6 +5149,7 @@ pub static ARROW_CATCHING_SHIELD: Item = Item {
         ..ItemBonuses::ZERO
     },
     passive_conditions: &[crate::conditions::Condition::ArrowCatching],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5056,6 +5188,7 @@ pub static SHIELD_OF_MISSILE_ATTRACTION: Item = Item {
     },
     halves_ranged_weapon_damage: true,
     passive_conditions: &[crate::conditions::Condition::MissileAttracting],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5079,6 +5212,7 @@ pub static MANTLE_OF_SPELL_RESISTANCE: Item = Item {
     name: "Mantle of Spell Resistance",
     glyph: 'c',
     grants_spell_save_advantage: true,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5113,6 +5247,7 @@ pub static GOGGLES_OF_NIGHT: Item = Item {
 pub static GLOVES_OF_MISSILE_SNARING: Item = Item {
     name: "Gloves of Missile Snaring",
     glyph: 'g',
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5132,6 +5267,7 @@ pub static CLOAK_OF_ARACHNIDA: Item = Item {
     glyph: 'k',
     damage_resistances: &[crate::engine::types::DamageType::Poison],
     passive_conditions: &[crate::conditions::Condition::SpiderClimbing],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5149,6 +5285,7 @@ pub static RING_OF_FEATHER_FALLING: Item = Item {
     name: "Ring of Feather Falling",
     glyph: 'r',
     passive_conditions: &[crate::conditions::Condition::Feathered],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5168,6 +5305,7 @@ pub static WEAPON_OF_WARNING: Item = Item {
     name: "Weapon of Warning",
     glyph: '?',
     condition_immunities: &[crate::conditions::Condition::Surprised],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5280,6 +5418,7 @@ pub static GEM_OF_SEEING: Item = Item {
     name: "Gem of Seeing",
     glyph: '*',
     on_use: &[&crate::actions::item_actions::USE_GEM_OF_SEEING],
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5321,6 +5460,7 @@ pub static STAFF_OF_FIRE: Item = Item {
     damage_resistances: &[crate::engine::types::DamageType::Fire],
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5343,6 +5483,7 @@ pub static STAFF_OF_FROST: Item = Item {
     damage_resistances: &[crate::engine::types::DamageType::Cold],
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5364,6 +5505,7 @@ pub static STAFF_OF_HEALING: Item = Item {
     ],
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5385,6 +5527,7 @@ pub static STAFF_OF_SWARMING_INSECTS: Item = Item {
     ],
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5408,6 +5551,7 @@ pub static STAFF_OF_CHARMING: Item = Item {
     ],
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5438,6 +5582,7 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
     grants_magical_attacks: true,
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5490,6 +5635,7 @@ pub static STAFF_OF_POWER: Item = Item {
         dice: Some(crate::engine::dice::Dice::new(2, 8)),
         constant: 4,
     }),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5519,6 +5665,7 @@ pub static STAFF_OF_STRIKING: Item = Item {
     grants_magical_attacks: true,
     charges: 10,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -5551,6 +5698,7 @@ pub static STAFF_OF_WITHERING: Item = Item {
     grants_magical_attacks: true,
     charges: 3,
     recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -7090,5 +7238,137 @@ mod tests {
                 item.name
             );
         }
+    }
+
+    /// The two families whose attunement answer is *categorical*, and
+    /// the only two.
+    ///
+    /// `Item::requires_attunement` is per-item data read off the book,
+    /// because the book's own split follows nothing else on the struct
+    /// — a Dragon Slayer needs no bond and the Ioun Stone beside it
+    /// does. So most of the table cannot be swept. Two slices of it
+    /// can, and both are the kind of row somebody adds without thinking
+    /// about this field at all:
+    ///
+    ///   - **No consumable attunes.** Not one potion, scroll, elixir,
+    ///     antitoxin, dust or bead in the SRD prints the clause, and the
+    ///     reason is structural rather than incidental: a bond formed
+    ///     over an hour to an object you are about to drink is not a
+    ///     rule, it is a joke. A `true` here would be worse than wrong —
+    ///     it would burn one of three slots on a single swallow, and the
+    ///     greedy fill in `reconcile_attunements` would spend the
+    ///     party's whole ceiling on the potion shelf.
+    ///   - **Every staff attunes.** All nine in the book print the
+    ///     clause, and a tenth added without it would be the one stick
+    ///     on the shelf that is free.
+    ///
+    /// Plus the claim that makes the flag mean something at all: an item
+    /// that asks for a slot has to be *worth* one. An attunement item
+    /// with no bonuses, no floors, no resistances, no immunities, no
+    /// passive conditions, no flags and nothing to use is a slot spent
+    /// on nothing, which is not a rule either — it is a typo that costs
+    /// the holder a Belt of Giant Strength.
+    #[test]
+    fn attunement_follows_the_shape_of_the_shelf() {
+        const CONSUMABLE_PREFIXES: &[&str] = &[
+            "Potion of",
+            "Scroll of",
+            "Elixir of",
+            "Antitoxin",
+            "Dust of",
+            "Bead of",
+            "Oil of",
+        ];
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for item in LOOT_POOL.iter().chain(STAVES).chain(MAGIC_ARMOURY) {
+            if !seen.insert(item.name) {
+                continue;
+            }
+            if CONSUMABLE_PREFIXES
+                .iter()
+                .any(|p| item.name.starts_with(p))
+            {
+                assert!(
+                    !item.requires_attunement,
+                    "{} is a consumable and cannot want an attunement slot",
+                    item.name
+                );
+            }
+            if !item.requires_attunement {
+                continue;
+            }
+            // The items whose clause is not a field on this struct at
+            // all: a row in a cohort somewhere else in the engine,
+            // keyed by the item's name. They are `Item::DEFAULTS` plus
+            // a name on purpose — the clause lives where the rule fires
+            // — so the "does it do anything?" sweep below cannot see
+            // them and has to be told. A future one lands here as one
+            // line; an item that is genuinely empty does not.
+            const CLAUSE_LIVES_ELSEWHERE: &[&str] = &[
+                // `engine::attack::REACTIVE_DAMAGE_CLAMPS` — the
+                // reaction that catches an arrow.
+                "Gloves of Missile Snaring",
+            ];
+            if CLAUSE_LIVES_ELSEWHERE.contains(&item.name) {
+                continue;
+            }
+            let earns_it = item.bonuses != ItemBonuses::ZERO
+                || !item.on_use.is_empty()
+                // The Ring of Evasion's shape: a charge pool and no
+                // action, because its trigger is somebody else's attack
+                // roll. A pool the engine can spend is a clause.
+                || item.charges > 0
+                || !item.ability_score_floors.is_empty()
+                || !item.ability_score_bonuses.is_empty()
+                || !item.skill_check_advantages.is_empty()
+                || !item.save_advantages_against.is_empty()
+                || !item.condition_immunities.is_empty()
+                || !item.damage_resistances.is_empty()
+                || !item.damage_immunities.is_empty()
+                || !item.passive_conditions.is_empty()
+                || item.sheds_light.is_some()
+                || item.sharpens_initiative
+                || item.grants_magical_attacks
+                || item.grants_silvered_attacks
+                || item.grants_unfettered_breathing
+                || item.blunts_critical_hits
+                || item.halves_ranged_weapon_damage
+                || item.ignores_half_cover_on_spells
+                || item.berserks_its_bearer
+                || item.grants_spell_save_advantage
+                || item.imposes_spell_attack_disadvantage;
+            assert!(
+                earns_it,
+                "{} asks for one of three attunement slots and does nothing with it",
+                item.name
+            );
+        }
+        for staff in STAVES {
+            assert!(
+                staff.requires_attunement,
+                "{} is a staff, and every staff in the book wants attunement",
+                staff.name
+            );
+        }
+        // And the sweep bites: the flag is not simply set everywhere or
+        // nowhere. The number is a floor rather than a count, because
+        // the shelf grows — but a table where fewer than fifty items
+        // want a bond, or where every single one does, is a table where
+        // somebody has stopped reading the clause.
+        let bound = seen
+            .iter()
+            .filter(|n| {
+                LOOT_POOL
+                    .iter()
+                    .chain(STAVES)
+                    .chain(MAGIC_ARMOURY)
+                    .any(|i| i.name == **n && i.requires_attunement)
+            })
+            .count();
+        assert!(
+            bound >= 50 && bound < seen.len(),
+            "{bound} of {} items want attunement, which is not a shelf",
+            seen.len()
+        );
     }
 }

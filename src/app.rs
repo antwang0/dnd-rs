@@ -897,10 +897,171 @@ impl App {
         }
     }
 
+    /// `attune <item>` / `unattune <item>` — the player's two levers on
+    /// the three-item attunement ceiling.
+    ///
+    /// **Commands** rather than `Action`s, sitting beside `quit`,
+    /// because neither is a thing that belongs on the action picker:
+    /// the picker is a list of ways to affect the board, and these
+    /// affect the holder's own pack. They still cost what RAW charges,
+    /// and the two halves are charged differently because RAW charges
+    /// them differently:
+    ///
+    ///   - **Ending** a bond is free and immediate — *"you can end your
+    ///     attunement … by removing the item"*, which is the work of a
+    ///     moment. The slot is available the same tick.
+    ///   - **Forming** one *"requires a creature to spend a short rest
+    ///     focused on only that item"*. This engine's rest is the walk
+    ///     between two rooms, where there is no prompt to type at, so
+    ///     the compression is the actor's **Action** for the turn:
+    ///     the strongest price the engine can charge inside an
+    ///     initiative order, and enough that a mid-fight re-equip costs
+    ///     a round rather than nothing.
+    ///
+    /// An `attune` that cannot be paid for still does half its job: it
+    /// clears the item out of `attunement_refusals`, so the bond forms
+    /// on its own at the next rest. That is the case the message names,
+    /// and it is why the command is worth typing when the party is out
+    /// of slots and out of Actions both.
+    ///
+    /// Matching is a case-insensitive substring over the actor's own
+    /// pack, so `attune belt` finds the Belt of Giant Strength. An
+    /// ambiguous fragment is refused by name rather than resolved, for
+    /// the same reason `prompt.rs` refuses an ambiguous action alias:
+    /// the wrong ring is a worse outcome than a retyped line.
+    fn attunement_command(&mut self, arg: &str, forming: bool) -> Tick {
+        use crate::engine::side_effects::Resource;
+        self.tmp_message.clear();
+        let Some(prompt) = self.encounter.peek_prompt() else {
+            self.tmp_message.push_str("there is nobody whose pack to change");
+            return Tick::Continue;
+        };
+        let actor_id = prompt.actor_id();
+        let Some(actor) = self.encounter.actors.get(&actor_id) else {
+            return Tick::Continue;
+        };
+        // The candidate set is the half of the pack the verb is about:
+        // `unattune` can only reach a bond that exists, `attune` only an
+        // item that wants one and has not got it.
+        let candidates: Vec<&'static str> = if forming {
+            actor
+                .items()
+                .iter()
+                .filter(|i| i.requires_attunement && !actor.is_attuned_to(i.name))
+                .map(|i| i.name)
+                .collect()
+        } else {
+            actor.attunements().to_vec()
+        };
+        let verb = if forming { "attune" } else { "unattune" };
+        if arg.is_empty() {
+            let _ = write!(
+                self.tmp_message,
+                "{} what? {}: {}",
+                verb,
+                if forming { "waiting" } else { "attuned" },
+                if candidates.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    candidates.join(", ")
+                }
+            );
+            return Tick::Continue;
+        }
+        let needle = arg.to_lowercase();
+        let mut hits: Vec<&'static str> = candidates
+            .iter()
+            .copied()
+            .filter(|n| n.to_lowercase().contains(&needle))
+            .collect();
+        hits.dedup();
+        let name = match hits.as_slice() {
+            [] => {
+                let _ = write!(
+                    self.tmp_message,
+                    "nothing to {} matching '{}'",
+                    verb, arg
+                );
+                return Tick::Continue;
+            }
+            [one] => *one,
+            many => {
+                let _ = write!(
+                    self.tmp_message,
+                    "'{}' is ambiguous: {}",
+                    arg,
+                    many.join(", ")
+                );
+                return Tick::Continue;
+            }
+        };
+
+        if !forming {
+            if let Some(actor) = self.encounter.actors.get_mut(&actor_id) {
+                actor.end_attunement(name);
+            }
+            let who = self.encounter.actor_name(actor_id);
+            self.encounter
+                .log(format!("{} sets aside {}.", who, name));
+            self.input_str.clear();
+            return Tick::Continue;
+        }
+
+        // Forming. Both halves are checked before either is spent, so a
+        // holder with an Action and no slot keeps the Action.
+        let Some(actor) = self.encounter.actors.get_mut(&actor_id) else {
+            return Tick::Continue;
+        };
+        if actor.free_attunement_slots() == 0 {
+            // Still worth the keystroke: the refusal is cleared, so the
+            // next freed slot goes here. `attune_to` does that much and
+            // then declines the bond itself.
+            actor.attune_to(name);
+            let _ = write!(
+                self.tmp_message,
+                "no free attunement slot for {} — unattune something first \
+                 (it is first in line once one frees)",
+                name
+            );
+            return Tick::Continue;
+        }
+        if !actor.can_consume_resource(Resource::Action) {
+            actor.attune_to(name);
+            let _ = write!(
+                self.tmp_message,
+                "attuning to {} takes an Action — none left this turn, so it \
+                 will form at the next rest",
+                name
+            );
+            return Tick::Continue;
+        }
+        actor.consume_resource(Resource::Action);
+        let formed = actor.attune_to(name);
+        let who = self.encounter.actor_name(actor_id);
+        if formed {
+            self.encounter
+                .log(format!("{} attunes to {}.", who, name));
+            self.input_str.clear();
+        }
+        Tick::Continue
+    }
+
     fn handle_enter(&mut self) -> Tick {
         let trimmed = self.input_str.trim();
         if trimmed == "quit" {
             return Tick::Quit;
+        }
+        // Checked before `attune`, because `strip_prefix("attune")`
+        // would never see "unattune" but the reverse is not true of a
+        // reader: keeping the longer word first means the pair cannot
+        // be reordered into a bug.
+        if let Some(arg) = trimmed.strip_prefix("unattune") {
+            let arg = arg.trim().to_string();
+            return self.attunement_command(&arg, false);
+        }
+        if let Some(arg) = trimmed.strip_prefix("attune") {
+            let arg = arg.trim().to_string();
+            return self.attunement_command(&arg, true);
         }
         if !trimmed.is_empty() {
             let Some(prompt) = self.encounter.peek_prompt() else {
@@ -1570,5 +1731,136 @@ mod tests {
         let line = app.target_line().expect("an unaffordable spell says why");
         assert!(line.contains("no level-3 spell slot"), "got: {line}");
         assert!(!line.contains("lvl:"), "nothing to suggest: {line}");
+    }
+    /// The two attunement commands, from the panel's `*` to the bond.
+    ///
+    /// The path a player actually walks when the fourth ring drops:
+    /// something inert in the pack, a slot freed on purpose, and the
+    /// ring taken up in its place for the price of an Action. All three
+    /// steps are typed at the same prompt the rest of the game is typed
+    /// at, which is the reason they are commands.
+    #[test]
+    fn a_player_can_trade_one_attunement_for_another_at_the_prompt() {
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::{
+            CLOAK_OF_PROTECTION, RING_OF_PROTECTION, SCARAB_OF_PROTECTION, STONE_OF_GOOD_LUCK,
+        };
+        let mut app = app_with_empty_board();
+        let pc = app
+            .encounter
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .expect("the fighter fits");
+        spawn(&mut app, 1, Coordinate::new(9, 5));
+        for item in [
+            &RING_OF_PROTECTION,
+            &CLOAK_OF_PROTECTION,
+            &STONE_OF_GOOD_LUCK,
+            &SCARAB_OF_PROTECTION,
+        ] {
+            app.encounter.actors.get_mut(&pc).unwrap().pickup_item(item);
+        }
+        app.encounter.process_stack();
+        while app
+            .encounter
+            .peek_prompt()
+            .is_some_and(|p| p.actor_id() != pc)
+        {
+            app.encounter.pop_prompt();
+            app.encounter.process_stack();
+        }
+        assert!(
+            app.encounter.peek_prompt().is_some_and(|p| p.actor_id() == pc),
+            "the fighter needs to be the one at the prompt"
+        );
+        let scarab = SCARAB_OF_PROTECTION.name;
+        assert!(!app.encounter.actors[&pc].is_attuned_to(scarab));
+
+        // Attuning with every slot full is refused, but the ask is
+        // remembered — that is the whole of the "first in line" clause.
+        app.input_str.clear();
+        app.input_str.push_str("attune scarab");
+        app.handle_enter();
+        assert!(
+            app.tmp_message.contains("no free attunement slot"),
+            "expected the ceiling to be reported, got {:?}",
+            app.tmp_message
+        );
+        assert!(!app.encounter.actors[&pc].is_attuned_to(scarab));
+
+        // Free one. Immediate and free, as RAW has it.
+        app.input_str.clear();
+        app.input_str.push_str("unattune stone");
+        app.handle_enter();
+        assert!(!app.encounter.actors[&pc].is_attuned_to(STONE_OF_GOOD_LUCK.name));
+        assert_eq!(app.encounter.actors[&pc].free_attunement_slots(), 1);
+
+        // And take the scarab up, for an Action.
+        assert!(app.encounter.actors[&pc].can_consume_resource(Resource::Action));
+        app.input_str.clear();
+        app.input_str.push_str("attune scarab");
+        app.handle_enter();
+        assert!(
+            app.encounter.actors[&pc].is_attuned_to(scarab),
+            "the bond forms once there is a slot and an Action to pay with"
+        );
+        assert!(
+            !app.encounter.actors[&pc].can_consume_resource(Resource::Action),
+            "and the Action is what it cost"
+        );
+    }
+
+    /// An attunement command that names nothing, or names too much,
+    /// changes nothing and says why.
+    #[test]
+    fn an_ambiguous_attunement_command_is_refused_rather_than_guessed() {
+        use crate::items::item_template::{RING_OF_FIRE_RESISTANCE, RING_OF_PROTECTION};
+        let mut app = app_with_empty_board();
+        let pc = app
+            .encounter
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(4, 4),
+                0,
+                0,
+            )
+            .expect("the fighter fits");
+        spawn(&mut app, 1, Coordinate::new(9, 5));
+        for item in [&RING_OF_PROTECTION, &RING_OF_FIRE_RESISTANCE] {
+            app.encounter.actors.get_mut(&pc).unwrap().pickup_item(item);
+        }
+        app.encounter.process_stack();
+        while app
+            .encounter
+            .peek_prompt()
+            .is_some_and(|p| p.actor_id() != pc)
+        {
+            app.encounter.pop_prompt();
+            app.encounter.process_stack();
+        }
+
+        app.input_str.clear();
+        app.input_str.push_str("unattune ring");
+        app.handle_enter();
+        assert!(
+            app.tmp_message.contains("ambiguous"),
+            "two rings match 'ring'; got {:?}",
+            app.tmp_message
+        );
+        assert_eq!(
+            app.encounter.actors[&pc].attunements().len(),
+            2,
+            "an ambiguous command must not break a bond"
+        );
+
+        app.input_str.clear();
+        app.input_str.push_str("unattune greatsword");
+        app.handle_enter();
+        assert!(app.tmp_message.contains("nothing to unattune"));
+        assert_eq!(app.encounter.actors[&pc].attunements().len(), 2);
     }
 }

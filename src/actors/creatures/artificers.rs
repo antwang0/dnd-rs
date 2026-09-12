@@ -1,7 +1,8 @@
 use crate::actions::class_features::{
     ALCHEMICAL_SAVANT_TAG, ARCANE_FIREARM_TAG, ARCANE_JOLT_TAG, DEFENSIVE_FIELD,
     DEFENSIVE_FIELD_TAG, ELDRITCH_CANNON_TAG, EXPERIMENTAL_ELIXIR, EXPERIMENTAL_ELIXIR_TAG,
-    FLASH_OF_GENIUS_TAG, LIGHTNING_LAUNCHER_TAG, STEEL_DEFENDER_TAG, SUMMON_FLAMETHROWER_CANNON,
+    FLASH_OF_GENIUS_TAG, LIGHTNING_LAUNCHER_TAG, MAGIC_ITEM_ADEPT_TAG, STEEL_DEFENDER_TAG,
+    SUMMON_FLAMETHROWER_CANNON,
     SUMMON_FORCE_BALLISTA_CANNON, SUMMON_PROTECTOR_CANNON, SUMMON_STEEL_DEFENDER,
     THUNDER_GAUNTLETS_TAG,
 };
@@ -181,6 +182,7 @@ pub static ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         spell_slots_by_level: vec![4, 3, 3, 1],
         features: HashSet::from([
             FLASH_OF_GENIUS_TAG,
+            MAGIC_ITEM_ADEPT_TAG,
             // 5e **Feather Fall** — on the artificer list RAW, and the
             // second reaction on this chassis whose window belongs to
             // somebody else's misfortune. See
@@ -228,6 +230,7 @@ pub static ALCHEMIST_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         actions,
         features: HashSet::from([
             FLASH_OF_GENIUS_TAG,
+            MAGIC_ITEM_ADEPT_TAG,
             EXPERIMENTAL_ELIXIR_TAG,
             ALCHEMICAL_SAVANT_TAG,
         ]),
@@ -277,6 +280,7 @@ pub static ARMORER_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         actions,
         features: HashSet::from([
             FLASH_OF_GENIUS_TAG,
+            MAGIC_ITEM_ADEPT_TAG,
             THUNDER_GAUNTLETS_TAG,
             DEFENSIVE_FIELD_TAG,
         ]),
@@ -310,7 +314,11 @@ pub static INFILTRATOR_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
         name: "Infiltrator Artificer",
         glyph: 'I',
         actions,
-        features: HashSet::from([FLASH_OF_GENIUS_TAG, LIGHTNING_LAUNCHER_TAG]),
+        features: HashSet::from([
+            FLASH_OF_GENIUS_TAG,
+            MAGIC_ITEM_ADEPT_TAG,
+            LIGHTNING_LAUNCHER_TAG,
+        ]),
         ..ARTIFICER_TEMPLATE.clone()
     }
 });
@@ -351,6 +359,7 @@ pub static ARTILLERIST_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock
         actions,
         features: HashSet::from([
             FLASH_OF_GENIUS_TAG,
+            MAGIC_ITEM_ADEPT_TAG,
             ELDRITCH_CANNON_TAG,
             ARCANE_FIREARM_TAG,
         ]),
@@ -402,6 +411,7 @@ pub static BATTLE_SMITH_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLoc
         // from being wasted. See `crate::actions::feats::WAR_CASTER_TAG`.
         features: HashSet::from([
             FLASH_OF_GENIUS_TAG,
+            MAGIC_ITEM_ADEPT_TAG,
             STEEL_DEFENDER_TAG,
             ARCANE_JOLT_TAG,
             crate::actions::feats::WAR_CASTER_TAG,

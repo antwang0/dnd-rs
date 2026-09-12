@@ -7932,6 +7932,35 @@ impl EncounterInstance {
                 ));
             }
         }
+        // The attunement ledger against the pack it describes. Two ways
+        // it can drift, and both are silent: a bond to something that
+        // has left the inventory would keep paying out a resistance the
+        // holder can no longer point at, and a ledger over the ceiling
+        // would hand somebody a fourth ring by arithmetic nobody
+        // watched. Neither throws, neither logs, and neither shows on
+        // the panel as anything but a number that is slightly too good
+        // — which is exactly the class of bug this sweep exists for.
+        for (id, actor) in self.actors.iter() {
+            for name in actor.attunements() {
+                if !actor.has_item_named(name) {
+                    problems.push(format!(
+                        "{} (#{}) is attuned to {}, which is not in their pack",
+                        actor.name(),
+                        id,
+                        name
+                    ));
+                }
+            }
+            if actor.attunements().len() > actor.attunement_slots() {
+                problems.push(format!(
+                    "{} (#{}) is attuned to {} items with {} slots",
+                    actor.name(),
+                    id,
+                    actor.attunements().len(),
+                    actor.attunement_slots()
+                ));
+            }
+        }
         problems
     }
 

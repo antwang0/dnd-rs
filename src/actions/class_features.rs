@@ -18713,6 +18713,27 @@ pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
 /// written beside and not of the engine.
 pub const FLASH_OF_GENIUS_TAG: &str = "artificer.flash_of_genius";
 
+/// 5e Artificer **Magic Item Adept** (lv10): *"You can attune to up to
+/// four magic items at once."*
+///
+/// A pure passive with no action, no charge and no roll — one row on
+/// `EXTRA_ATTUNEMENT_SLOTS`, which is the whole of it. It is here rather
+/// than as a struct-field flag on the template for the same reason the
+/// rest of the artificer's kit is: the chassis carries its features as
+/// tags, and a bool named `has_magic_item_adept` would be a field on
+/// every goblin in the game for the sake of one class.
+///
+/// RAW's other half — *"you can craft common or uncommon magic items in
+/// a quarter of the time and at half the cost"* — is downtime, and this
+/// engine's clock stops at the end of the dungeon.
+///
+/// The ladder continues past this rung (Magic Item Savant at lv14 for
+/// five, Magic Item Master at lv18 for six) and the roster's artificers
+/// stop at 13, so those are two more rows on the same cohort the day a
+/// level-14 artificer is written. See `EXTRA_ATTUNEMENT_SLOTS` for why
+/// the rows take a max rather than a sum.
+pub const MAGIC_ITEM_ADEPT_TAG: &str = "artificer.magic_item_adept";
+
 /// 5e **Feather Fall** (level-1 transmutation, reaction) — carried as a
 /// tag rather than as an entry on the holder's action list.
 ///

@@ -12541,7 +12541,11 @@ mod tests {
         ];
         let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         let families = pc_template_families();
-        for seed in 0u64..12 {
+        // Twenty-four fights rather than twelve, because the attunement
+        // ceiling made each one narrower: three live bound items per
+        // seed instead of the whole shelf, so the sweep needs twice as
+        // many turns of the window to reach the same lanes.
+        for seed in 0u64..24 {
             let cr_target = 2.0 + (seed % 6) as f32;
             let tp = TerrainGenParams {
                 width: 34,
@@ -12568,9 +12572,35 @@ mod tests {
                 .filter(|(_, a)| a.team() == 0)
                 .map(|(id, _)| *id)
                 .collect();
+            // The bound half of the kit — the items whose stat line
+            // prints *"(requires attunement)"* — cannot all be live at
+            // once: RAW's ceiling is three and this creature is holding
+            // twenty-odd. So the whole pack goes on, which is what
+            // exercises the *inert* path (an unattuned Frost Brand must
+            // do nothing, quietly, for a whole fight), and the three
+            // slots are then re-pointed at a window that slides one
+            // item per seed. Twenty-four fights walk the window several
+            // times round the armoury.
+            let bound: Vec<&'static str> = kit
+                .iter()
+                .filter(|i| i.requires_attunement)
+                .map(|i| i.name)
+                .collect();
             for id in armed {
                 for item in &kit {
                     e.actors.get_mut(&id).unwrap().pickup_item(item);
+                }
+                let actor = e.actors.get_mut(&id).unwrap();
+                // The greedy fill at pickup time bonded the first three
+                // in pack order and would bond the same three on every
+                // seed. Break those and take the window instead.
+                for name in actor.attunements().to_vec() {
+                    actor.end_attunement(name);
+                }
+                let slots = actor.attunement_slots();
+                for k in 0..slots {
+                    let pick = bound[(seed as usize * slots + k) % bound.len()];
+                    actor.attune_to(pick);
                 }
             }
             // Dark, so the kindle rung and the goggles are both live.
@@ -12646,10 +12676,17 @@ mod tests {
         // its own test that arranges its own conditions; what this one
         // adds is that they fire in a real fight, together, without
         // anything falling over.
+        //
+        // Frost Brand and the Dwarven Thrower both want attunement, so
+        // each is live on only the seeds the sliding window reaches it
+        // on — which over twenty-four fights is several, and the requirement
+        // is unchanged: if either goes missing entirely the wiring has
+        // come apart, because on the seeds where the bond *is* formed
+        // there is nothing else that could stop them.
         for required in ["vicious weapon", "frost brand", "dwarven thrower"] {
             assert!(
                 seen.contains(required),
-                "the {required} rider never fired across twelve full fights, \
+                "the {required} rider never fired across twenty-four full fights, \
                  and it has no gate that could have stopped it: {seen:?}"
             );
         }
@@ -12661,7 +12698,7 @@ mod tests {
         // for the armoury.
         assert!(
             seen.len() >= 12,
-            "only {} of the armoury's {} logged lanes fired in twelve fights: {seen:?}",
+            "only {} of the armoury's {} logged lanes fired in twenty-four fights: {seen:?}",
             seen.len(),
             WATCHED.len()
         );

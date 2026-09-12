@@ -614,12 +614,20 @@ const POTION_OF_INVISIBILITY_NAME: &str = "Potion of Invisibility";
 const SCROLL_OF_CURE_WOUNDS_NAME: &str = "Scroll of Cure Wounds";
 
 /// Shared validate-hook body for consumable item actions: true iff the
-/// caster is still carrying at least one copy of `item_name`. Centralizes
-/// the `encounter.actors.get(&caster_id).is_some_and(|a| a.has_item_named(...))`
+/// caster is still carrying at least one **live** copy of `item_name`.
+/// Centralizes the
+/// `encounter.actors.get(&caster_id).is_some_and(|a| a.wields_live_item(...))`
 /// chain so every item action's `custom_validate_input` collapses to a
 /// one-liner. Returns false when the caster vanished between enqueue and
 /// validate (e.g. died to a reaction) — same fail-safe shape as the
 /// previous inline copies.
+///
+/// "Live" rather than merely carried — `wields_live_item` rather than
+/// `has_item_named` — so an item whose stat line wants attunement and
+/// has not got it cannot be fired. Nothing on the consumable shelf
+/// wants attunement today (no potion or scroll in the book does), but
+/// this is the hook `Wand of Fireballs` and every other charge-bearing
+/// wand validates through, and those do.
 fn caster_holds(
     encounter: &EncounterInstance,
     caster_id: usize,
@@ -628,7 +636,7 @@ fn caster_holds(
     encounter
         .actors
         .get(&caster_id)
-        .is_some_and(|a| a.has_item_named(item_name))
+        .is_some_and(|a| a.wields_live_item(item_name))
 }
 
 /// Spend one *use* of `item_name` from the caster's inventory and

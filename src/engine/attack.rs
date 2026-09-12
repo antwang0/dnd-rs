@@ -689,7 +689,9 @@ const REACTIVE_DAMAGE_CLAMPS: &[ReactiveDamageClamp] = &[
     // table. RAW's "if you have a free hand" is not modeled — the engine
     // tracks no hands.
     ReactiveDamageClamp {
-        flag: |a| a.has_item_named(crate::items::item_template::GLOVES_OF_MISSILE_SNARING.name),
+        flag: |a| {
+            a.wields_live_item(crate::items::item_template::GLOVES_OF_MISSILE_SNARING.name)
+        },
         tag: None,
         label: "missile snaring",
         damage_types: None,
