@@ -12390,8 +12390,33 @@ impl EncounterInstance {
         let to_mft = |f: f32| -> u32 { (f * 1000.0) as u32 };
         // 5e: prone creatures crawl at double movement cost per foot.
         let prone_factor: u32 = if body.has_condition(Condition::Prone) { 2 } else { 1 };
-        let cardinal_mft = to_mft(TILE_FEET) * prone_factor;
-        let diagonal_mft = to_mft(TILE_FEET * std::f32::consts::SQRT_2) * prone_factor;
+        // SRD 5.2 Grappled: *"When you move, you can drag or carry the
+        // Grappled creature with you, but your Speed is halved, unless
+        // the creature is Tiny or two or more sizes smaller than you."*
+        //
+        // Charged as a doubled per-step cost rather than as a halved
+        // speed, which is the same arithmetic and the shape the
+        // pathfinder already has a slot for — it is exactly how the
+        // prone crawl above is priced, and the two compose: a prone
+        // grappler hauling a knight pays four times.
+        //
+        // Resolved once here for the same reason the two surcharge
+        // waivers below are: it cannot change while a single path is
+        // being searched. The sizes are read off the captive, so one
+        // ogre holding a halfling walks free and the same ogre holding
+        // a knight walks at half pace.
+        let drag_factor: u32 = if self
+            .grapple_captives_of(body_id)
+            .iter()
+            .any(|&c| self.drag_is_encumbering(body_id, c))
+        {
+            2
+        } else {
+            1
+        };
+        let step_factor = prone_factor * drag_factor;
+        let cardinal_mft = to_mft(TILE_FEET) * step_factor;
+        let diagonal_mft = to_mft(TILE_FEET * std::f32::consts::SQRT_2) * step_factor;
         let budget_mft = to_mft(actor.remaining_movement() + 0.5);
         // Freedom of Movement, magical flight, and Land's Stride all
         // waive the difficult-terrain surcharge — see the shared
@@ -17863,6 +17888,114 @@ impl EncounterInstance {
     /// adhesive, Earthen Grasp's fist), and RAW ends each of those on
     /// its own terms — a concentration drop, a timer, an escape check —
     /// not on anybody's condition.
+    /// Everybody `grappler_id` currently has hold of, lowest id first.
+    ///
+    /// The reverse of the `Grappled` back-link, which is stored on the
+    /// captive and points at the grappler; there is no forward index, so
+    /// this is a scan. Cheap — the actor map is a few dozen entries and
+    /// the only caller runs it once per step of a walk — and worth not
+    /// duplicating, because the link has to be paired with
+    /// `has_condition` to be trustworthy and `linked_by` is what does
+    /// that pairing.
+    ///
+    /// Sorted, because the callers move creatures around the board on
+    /// the strength of it and `HashMap` iteration order is not stable
+    /// between two runs of the same seed.
+    pub fn grapple_captives_of(&self, grappler_id: usize) -> Vec<usize> {
+        let mut out: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(id, a)| {
+                **id != grappler_id
+                    && a.is_combat_active()
+                    && a.linked_by(Condition::Grappled) == Some(grappler_id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// True when hauling `captive_id` around costs `grappler_id`
+    /// anything — SRD 5.2's *"your Speed is halved, unless the creature
+    /// is Tiny or two or more sizes smaller than you."*
+    ///
+    /// The exemption is the clause that keeps the rule from being a
+    /// tax on every monster that grabs: a roc carrying off a halfling
+    /// is not slowed by it, and an ogre dragging a knight is. Both
+    /// halves are one comparison on the size ladder, and `Tiny` is
+    /// named separately by RAW rather than folded into the gap because
+    /// a Tiny creature is weightless to a Small one too.
+    fn drag_is_encumbering(&self, grappler_id: usize, captive_id: usize) -> bool {
+        let (Some(g), Some(c)) = (self.actors.get(&grappler_id), self.actors.get(&captive_id))
+        else {
+            return false;
+        };
+        c.size() != crate::engine::types::Size::Tiny
+            && c.size().ordinal() > g.size().ordinal() - 2
+    }
+
+    /// Drag everybody `grappler_id` is holding along behind them.
+    ///
+    /// SRD 5.2's *"When you move, you can drag or carry the Grappled
+    /// creature with you"* — the third clause of the Grappled
+    /// condition, and the one `Condition::Grappled`'s docstring listed
+    /// as unmodeled since it was written. What happened instead was
+    /// that a grappler simply walked away and the hold lapsed on the
+    /// reach check at the end of the round, which is a coarser rule and
+    /// a much smaller one: it made a grapple a thing that pins *you*
+    /// rather than a thing that takes you somewhere.
+    ///
+    /// `step` is the vector the grappler just travelled, and the
+    /// captive is translated by the same vector. That is the whole
+    /// geometry, and it is the only form that survives this board's
+    /// footprints: a tile is 2½ feet, so a Medium creature is 2×2 tiles
+    /// and an ogre is 4×4, and "put the captive in the tile the
+    /// grappler vacated" is not a move a 2×2 body can make when the
+    /// grappler has stepped one tile and is still standing in three
+    /// quarters of where it was. Translating by the step preserves the
+    /// pair's relative position exactly, which means a hold that was
+    /// legal before the step is legal after it, whatever the two
+    /// creatures' sizes.
+    ///
+    /// A captive whose translated square is blocked — by a wall, by a
+    /// third creature that has moved into it, by the map edge — is
+    /// simply left where it is. That is not a silent failure: it is the
+    /// grapple ending, half a beat later, through
+    /// `release_broken_grapples`'s reach clause, which is exactly the
+    /// rule for a hold stretched past arm's length.
+    ///
+    /// Forced movement, so no opportunity attacks: the captive is not
+    /// moving willingly, and a creature dragged by somebody else
+    /// provokes nothing. It does still land in whatever is on the floor
+    /// where it lands — a web, a wall of fire, a pile of loot — because
+    /// RAW makes no exception for how a creature entered an area.
+    pub fn drag_grapple_captives(&mut self, grappler_id: usize, step: Coordinate) {
+        if step == Coordinate::new(0, 0) {
+            return;
+        }
+        for captive_id in self.grapple_captives_of(grappler_id) {
+            let Some(from) = self.actors.get(&captive_id).map(|c| c.location()) else {
+                continue;
+            };
+            let dest = from + step;
+            if !self.can_move_to(captive_id, dest) {
+                continue;
+            }
+            if self.place_actor_at(captive_id, dest).is_err() {
+                continue;
+            }
+            let captive_name = self.actor_name(captive_id);
+            let grappler_name = self.actor_name(grappler_id);
+            self.log(format!(
+                "  {} drags {} along to {}.",
+                grappler_name, captive_name, dest
+            ));
+            self.pickup_items_at(captive_id, dest);
+            self.touch_zones(captive_id);
+        }
+    }
+
     fn release_broken_grapples(&mut self, actor_id: usize) {
         let Some(grappler_id) = self
             .actors

@@ -620,6 +620,18 @@ impl ApplicableSideEffect for MoveActor {
                 ei.log(format!("MoveActor failed: {}", e));
                 return;
             }
+            // SRD 5.2 Grappled: *"When you move, you can drag or carry
+            // the Grappled creature with you."* Whoever this creature
+            // has hold of comes along, into the tile just vacated.
+            //
+            // Per step rather than once at the end of the path, so a
+            // captive towed across a web saves against it and a captive
+            // towed over a pile of loot picks it up — the same reason
+            // the two lines below and `touch_zones` are per step. It
+            // also keeps the pair adjacent the whole way, which is what
+            // stops the round-end reach sweep from reading a six-tile
+            // walk as the grapple breaking.
+            ei.drag_grapple_captives(self.actor_id, dest - from);
             // Walk-over auto-pickup: any items at the destination tile
             // get added to the actor's inventory. Logged inside.
             ei.pickup_items_at(self.actor_id, dest);

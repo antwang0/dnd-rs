@@ -101,8 +101,7 @@ pub enum Condition {
     /// attacker); you have advantage on DEX saves. Cleared by the
     /// `UntilStartOfNextTurn` timer on your next turn.
     Dodging,
-    /// SRD 5.2 **Grappled**, whose three clauses the engine now carries
-    /// two of:
+    /// SRD 5.2 **Grappled**, and all three of its clauses:
     ///
     ///   - *"Your Speed is 0 and can't increase."* — `zeros_movement`.
     ///   - *"You have Disadvantage on attack rolls against any target
@@ -110,14 +109,28 @@ pub enum Condition {
     ///     `FOCUS_LINK_DISADVANTAGES`, read off the same back-link
     ///     `GrappleEscape` uses to find whose Athletics the captive is
     ///     straining against.
-    ///   - *"The grappler can drag or carry you when it moves, but
-    ///     every foot of movement costs it 1 extra foot"* — not
-    ///     modeled. A grappler walks away and the hold ends on the
-    ///     range check instead, which is a coarser rule and a much
-    ///     smaller one than the two above.
+    ///   - *"When you move, you can drag or carry the Grappled creature
+    ///     with you, but your Speed is halved, unless the creature is
+    ///     Tiny or two or more sizes smaller than you."* — the captive
+    ///     is translated by every step the grappler takes, in
+    ///     `EncounterInstance::drag_grapple_captives`, and the price is
+    ///     a doubled per-step cost in the pathfinder, beside the prone
+    ///     crawl's.
+    ///
+    /// That third clause is what makes a grapple a thing that takes you
+    /// *somewhere* rather than a thing that pins you where you stand.
+    /// It used to be listed here as unmodeled, and what happened
+    /// instead was that a grappler walked off and the hold lapsed on
+    /// the reach check — which meant every monster in the bestiary that
+    /// grabs a creature and hauls it toward the water, the ledge or its
+    /// own friends could do the grabbing and none of the hauling.
     ///
     /// Ends when the grappler is incapacitated or the target is moved
     /// out of range; both live in the grappler logic rather than here.
+    /// The drag is what keeps an ordinary walk from tripping the second
+    /// of those: a towed captive is adjacent at every step, so the
+    /// reach sweep only fires when something *else* has separated the
+    /// pair, which is the case RAW's clause is about.
     Grappled,
     /// +1d4 to attack rolls and saving throws (Bless spell). Tracked as a
     /// condition so it ticks down with the spell timer and clears cleanly

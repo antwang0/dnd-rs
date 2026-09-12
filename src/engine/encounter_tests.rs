@@ -101727,3 +101727,167 @@ fn an_actions_side_effects_resolve_in_reverse() {
     );
 }
 
+/// The grapple's third clause: a grappler that walks takes its
+/// captive with it.
+///
+/// The captive's own Speed is 0 and stays 0 — it is not walking, it is
+/// being towed — so the only thing that can have moved it is the drag.
+/// Four tiles of ogre is four tiles of goblin, and the hold survives
+/// the trip: the pair keeps its exact relative position at every step,
+/// so the reach sweep that used to end a grapple the moment its owner
+/// took a walk now has nothing to say.
+///
+/// Coordinates on this board are 2½-foot tiles, so a Small goblin is a
+/// 2×2 footprint and a Large ogre is 4×4. The goblin starts at (8,4),
+/// which is the first anchor clear of an ogre anchored at (4,4).
+#[test]
+fn a_grappler_that_walks_takes_its_captive_with_it() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::side_effects::MoveActor;
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    for effect in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        goblin,
+        ogre,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    assert_eq!(e.actors[&goblin].remaining_movement(), 0.0);
+    assert_eq!(e.grapple_captives_of(ogre), vec![goblin]);
+
+    let path: Vec<Coordinate> = (1..=4).map(|n| Coordinate::new(4, 4 + n)).collect();
+    MoveActor {
+        actor_id: ogre,
+        path,
+    }
+    .apply(&mut e);
+
+    assert_eq!(e.actors[&ogre].location(), Coordinate::new(4, 8));
+    assert_eq!(
+        e.actors[&goblin].location(),
+        Coordinate::new(8, 8),
+        "the captive is translated by every step the ogre takes"
+    );
+    let problems = e.board_inconsistencies();
+    assert!(problems.is_empty(), "{problems:?}");
+    e.release_broken_grapples(goblin);
+    assert!(
+        e.actors[&goblin].has_condition(Condition::Grappled),
+        "a walk is not a separation — the pair never came apart"
+    );
+}
+
+/// Hauling somebody costs the hauler, and only when RAW says it does.
+///
+/// The exemption is the half that matters: SRD's *"unless the creature
+/// is Tiny or two or more sizes smaller than you"* is what keeps the
+/// clause from being a flat tax on every monster in the bestiary that
+/// grabs. A Large ogre holding a Medium knight walks at half pace; the
+/// same ogre holding a Small goblin — two categories down — walks at
+/// full.
+#[test]
+fn dragging_halves_the_haulers_pace_unless_the_captive_is_small_enough() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.start_turn_for(ogre);
+    let dest = Coordinate::new(2, 6);
+    let unburdened = e.path_cost_to(ogre, dest).expect("the room is empty");
+
+    // A Small goblin is two categories below Large: no surcharge.
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    for effect in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        goblin,
+        ogre,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    assert_eq!(
+        e.path_cost_to(ogre, dest),
+        Some(unburdened),
+        "a Large creature carries a Small one for nothing"
+    );
+
+    // A Medium fighter is one category below Large: the surcharge bites.
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 20), 1, 0)
+        .unwrap();
+    for effect in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        fighter,
+        ogre,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    let burdened = e
+        .path_cost_to(ogre, dest)
+        .expect("the same four tiles, at twice the price");
+    assert!(
+        (burdened - unburdened * 2.0).abs() < 0.01,
+        "expected {unburdened} to double, got {burdened}"
+    );
+}
+
+/// A captive whose square is blocked is left standing rather than
+/// dragged through whatever is in it.
+///
+/// The board is the authority on where a body may be, and the drag asks
+/// it like every other relocation does. What comes of the refusal is
+/// not a stuck creature but a grapple that ends on the reach sweep one
+/// beat later, which is RAW's own answer to a hold stretched past arm's
+/// length.
+#[test]
+fn a_captive_that_cannot_follow_is_left_behind_rather_than_dragged_through_stone() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::engine::side_effects::MoveActor;
+    // A wall of stone exactly where the goblin would be towed to.
+    let walls: Vec<(isize, isize)> = (8..12).flat_map(|x| [(x, 7), (x, 8)]).collect();
+    let mut e = ei_with_terrain(24, 24, &walls);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    for effect in crate::engine::side_effects::install_condition_with_link(
+        Condition::Grappled,
+        goblin,
+        ogre,
+        ConditionTimer::Rounds(10),
+    ) {
+        effect.apply(&mut e);
+    }
+    // Two steps down. The first is fine — (8,5) is clear — and the
+    // second would put the goblin into the stone at (8,6).
+    MoveActor {
+        actor_id: ogre,
+        path: vec![Coordinate::new(4, 5), Coordinate::new(4, 6)],
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&ogre].location(), Coordinate::new(4, 6));
+    assert_eq!(
+        e.actors[&goblin].location(),
+        Coordinate::new(8, 5),
+        "the goblin follows as far as the floor goes and no further"
+    );
+    let problems = e.board_inconsistencies();
+    assert!(problems.is_empty(), "{problems:?}");
+}
