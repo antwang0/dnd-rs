@@ -29716,7 +29716,7 @@ fn a_contest_defender_answers_with_their_better_skill() {
     let actor = &e.actors[&ogre];
     let score = |(ability, skill): &(AbilityScoreType, Skill)| {
         actor.ability_modifier(*ability)
-            + if actor.has_skill(skill.clone()) {
+            + if actor.has_skill(*skill) {
                 actor.proficiency_bonus()
             } else {
                 0
@@ -29777,6 +29777,55 @@ fn hiding_collects_the_stealth_proficiency_it_is_named_after() {
         "stealth check {} outside the proficient band around {}",
         total,
         expected
+    );
+}
+
+/// The Sentinel Shield's Perception clause reaches the die, and reaches
+/// only that skill's die.
+///
+/// The unit test beside the item pins the flag; this pins the wiring,
+/// which is the half that could silently not exist —
+/// `compute_check_mode` is handed an ability and never sees a skill, so
+/// an implementation that put the clause there would pass every
+/// assertion about the shield and hand the holder Advantage on six
+/// skills.
+///
+/// Read off the log's own mode suffix rather than by counting outcomes:
+/// the roll is a die, and what is being asserted is which shape it was
+/// rolled in.
+#[test]
+fn the_sentinel_shields_perception_clause_reaches_the_right_die() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::{AbilityScoreType, Skill};
+    use crate::items::item_template::SENTINEL_SHIELD;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let suffix_of = |e: &mut EncounterInstance, skill: Option<Skill>| {
+        let before = e.messages().len();
+        e.roll_ability_check(id, AbilityScoreType::Wisdom, skill);
+        e.messages()[before..]
+            .iter()
+            .find(|m| m.contains("check"))
+            .cloned()
+            .unwrap_or_default()
+    };
+
+    assert!(!suffix_of(&mut e, Some(Skill::Perception)).contains("(adv)"));
+    e.actors.get_mut(&id).unwrap().pickup_item(&SENTINEL_SHIELD);
+    assert!(
+        suffix_of(&mut e, Some(Skill::Perception)).contains("(adv)"),
+        "the shield's Perception clause never reached the roll"
+    );
+    assert!(
+        !suffix_of(&mut e, Some(Skill::Insight)).contains("(adv)"),
+        "a Wisdom check of another skill picked the clause up"
+    );
+    assert!(
+        !suffix_of(&mut e, None).contains("(adv)"),
+        "a bare Wisdom check picked the clause up"
     );
 }
 

@@ -184,6 +184,35 @@ pub struct Item {
     /// the highest wins, which is what "your Strength is 19" and "your
     /// Strength is 21" say when worn together.
     pub ability_score_floors: &'static [(crate::engine::types::AbilityScoreType, u32)],
+    /// Skills whose checks this item's holder rolls with Advantage —
+    /// SRD 5.2's Sentinel Shield, *"you have Advantage on Initiative
+    /// rolls and Wisdom (Perception) checks"*, and its second half.
+    ///
+    /// Scoped to the **skill** rather than to the ability, which is the
+    /// distinction `compute_check_mode` cannot make: that helper is
+    /// handed an `AbilityScoreType` and answers the same way for every
+    /// check of it, so a row there would hand the shield's holder
+    /// Advantage on Insight, Medicine and Survival as well. Read
+    /// instead at `roll_ability_check_with_extra_mode`, which is the
+    /// one site that knows which skill is being rolled.
+    ///
+    /// A slice because RAW's sentence is a list and because the next
+    /// item on this lane will name a different skill; the shield is the
+    /// only entry today.
+    pub skill_check_advantages: &'static [crate::engine::types::Skill],
+    /// True when carrying this item makes its holder roll the
+    /// **initiative** d20 with Advantage — the first half of the
+    /// Sentinel Shield's sentence.
+    ///
+    /// A `grants_*`-shaped flag rather than a row on
+    /// `skill_check_advantages` above, because RAW does not call
+    /// initiative a check of any skill and the engine does not roll it
+    /// as one: `roll_initiative` has its own d20, its own modifier lane
+    /// (`initiative_flat_bonus`) and its own advantage cohort
+    /// (`INITIATIVE_ADVANTAGE_SOURCES`), which this feeds. The two
+    /// halves of one printed sentence land on two lanes because they
+    /// were always two rules.
+    pub sharpens_initiative: bool,
     /// Conditions the wearer is immune to while carrying this item.
     /// Folded into `ActorInstance::effectively_immune_to_condition` so
     /// trinkets like the Necklace of Adaptation (Poisoned-immune) and
@@ -438,6 +467,8 @@ impl Item {
         bonuses: ItemBonuses::ZERO,
         on_use: &[],
         ability_score_floors: &[],
+        skill_check_advantages: &[],
+        sharpens_initiative: false,
         condition_immunities: &[],
         damage_resistances: &[],
         damage_immunities: &[],
@@ -1246,18 +1277,35 @@ pub static IOUN_STONE_OF_MASTERY: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Sentinel Shield — passive trinket. RAW (XGtE): "you have advantage on
-/// initiative rolls and Wisdom (Perception) checks." We don't model
-/// initiative or perception checks at this granularity, so we collapse
-/// the trait onto a defensive AC bump (+1, matching the shield slot) and
-/// a +1 save bonus (the "alert" half of the trinket). Same numeric profile
-/// as Ring of Protection but a different in-fiction flavor — gives the
-/// loot pool another low-tier defensive trinket without sliding in a
-/// straight Ring of Protection duplicate.
+/// **Sentinel Shield** (Armor, Shield; Uncommon) — *"You have Advantage
+/// on Initiative rolls and Wisdom (Perception) checks while you hold this
+/// Shield."*
+///
+/// Both clauses ship now, and neither is a number. The shield used to be
+/// `+1 AC / +1 save` under a docstring admitting it was standing in for
+/// a trait — *"we don't model initiative or perception checks at this
+/// granularity"* — and apologising for being a Ring of Protection with a
+/// different name on it. The engine grew both surfaces since: initiative
+/// has an advantage cohort and two flat-bonus cohorts stacked on one
+/// roll, and Perception has the Search action and the passive sweep that
+/// hunt for a hider.
+///
+/// It carries the plain Shield's `+2 AC` instead of the invented `+1`,
+/// because RAW's item *is* a shield and the file already prices one at
+/// two. What it no longer carries is the save bonus, which was never on
+/// the page.
+///
+/// Going first is worth more here than the numbers were. The opening
+/// round decides who is standing where when the first area spell lands,
+/// and the shield is the only item in the file that buys it — see
+/// `INITIATIVE_ADVANTAGE_SOURCES`, whose two other rows are a barbarian's
+/// Feral Instinct and a Twilight cleric's blessing.
 pub static SENTINEL_SHIELD: Item = Item {
     name: "Sentinel Shield",
     glyph: '#',
-    bonuses: ItemBonuses { ac: 1, save: 1, ..ItemBonuses::ZERO },
+    bonuses: ItemBonuses { ac: 2, ..ItemBonuses::ZERO },
+    sharpens_initiative: true,
+    skill_check_advantages: &[crate::engine::types::Skill::Perception],
     ..Item::DEFAULTS
 };
 

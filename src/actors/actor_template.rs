@@ -2796,6 +2796,15 @@ const ABILITY_MOD_INITIATIVE_BONUSES: &[AbilityModInitiativeBonus] = &[
 const INITIATIVE_ADVANTAGE_SOURCES: &[fn(&ActorInstance) -> bool] = &[
     |a| a.has_feral_instinct,
     |a| a.has_passive_feature(crate::actions::class_features::VIGILANT_BLESSING_TAG),
+    // …and the third, arriving from an object rather than from a
+    // subclass: SRD 5.2's **Sentinel Shield**. The cohort's docstring
+    // has been naming a hypothetical "Guardian Armor set bonus" as its
+    // example of a future item row since it was written; this is that
+    // row, and the shield was shipping `+1 AC / +1 save` in its place
+    // under a docstring saying the engine did not model initiative at
+    // this granularity. It does — see `initiative_flat_bonus` for the
+    // two cohorts that stack numbers on the same roll.
+    |a| a.items.iter().any(|i| i.sharpens_initiative),
 ];
 
 /// Proficiency-bonus fraction applied to the initiative-roll total by a
@@ -8450,6 +8459,20 @@ impl ActorInstance {
         self.skills.contains(&skill)
     }
 
+    /// True while a carried item hands this actor Advantage on checks
+    /// of `skill` — the Sentinel Shield's Perception clause, and
+    /// nothing else on the loot table.
+    ///
+    /// Read by `EncounterInstance::roll_ability_check_with_extra_mode`,
+    /// which is the one site that knows which skill a d20 is being
+    /// rolled for; see `Item::skill_check_advantages` for why the ability
+    /// is not a fine enough scope.
+    pub fn has_skill_check_advantage(&self, skill: Skill) -> bool {
+        self.items
+            .iter()
+            .any(|i| i.skill_check_advantages.contains(&skill))
+    }
+
     /// Passive Perception (5e PHB p.175): 10 + WIS modifier + proficiency
     /// bonus if proficient in Perception. This is the score other actors
     /// compare against when sneaking (Stealth roll vs passive Perception)
@@ -12647,14 +12670,45 @@ mod tests {
         assert_eq!(f.total_item_bonuses().save, base_save + 1);
     }
 
+    /// The Sentinel Shield is a shield with two clauses, and neither of
+    /// them is the save bonus it used to carry.
+    ///
+    /// What the shield *is* comes first: `+2 AC`, the same number the
+    /// plain Shield one shelf over prints, rather than the invented `+1`
+    /// it shipped with. Then the sentence RAW actually writes — Advantage
+    /// on Initiative, which is the only item in the file that buys it,
+    /// and Advantage on Perception, which is scoped to that one skill and
+    /// must not leak onto the other five Wisdom skills.
     #[test]
-    fn sentinel_shield_grants_ac_and_save_bonus() {
+    fn the_sentinel_shield_is_a_shield_that_goes_first() {
+        use crate::engine::types::Skill;
         let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
         let base_ac = f.total_item_bonuses().ac;
         let base_save = f.total_item_bonuses().save;
+        assert!(!f.rolls_initiative_with_advantage());
+        assert!(!f.has_skill_check_advantage(Skill::Perception));
+
         f.pickup_item(&crate::items::item_template::SENTINEL_SHIELD);
-        assert_eq!(f.total_item_bonuses().ac, base_ac + 1);
-        assert_eq!(f.total_item_bonuses().save, base_save + 1);
+        assert_eq!(f.total_item_bonuses().ac, base_ac + 2, "it is a shield");
+        assert_eq!(
+            f.total_item_bonuses().save,
+            base_save,
+            "the save bonus was never on the page"
+        );
+        assert!(f.rolls_initiative_with_advantage());
+        assert!(f.has_skill_check_advantage(Skill::Perception));
+        for other in [Skill::Insight, Skill::Medicine, Skill::Survival, Skill::Stealth] {
+            assert!(
+                !f.has_skill_check_advantage(other),
+                "the shield leaked onto {other:?} — RAW names one skill"
+            );
+        }
+
+        // And it stops when it is put down, which a condition-based
+        // implementation would not have.
+        f.remove_item_by_name(crate::items::item_template::SENTINEL_SHIELD.name);
+        assert!(!f.rolls_initiative_with_advantage());
+        assert!(!f.has_skill_check_advantage(Skill::Perception));
     }
 
     #[test]

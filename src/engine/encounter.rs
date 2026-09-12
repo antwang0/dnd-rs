@@ -7282,14 +7282,28 @@ impl EncounterInstance {
         skill: Option<crate::engine::types::Skill>,
         extra: RollMode,
     ) -> i32 {
-        let mode = self.compute_check_mode(actor_id, ability).combine(extra);
+        // The skill-scoped item lane, folded in before the die. See
+        // `Item::skill_check_advantages` for why it cannot live in
+        // `compute_check_mode`: that helper is handed an ability and
+        // would hand the Sentinel Shield's holder Advantage on Insight
+        // and Medicine along with the Perception RAW names.
+        let carried = skill.is_some_and(|s| {
+            self.actors
+                .get(&actor_id)
+                .is_some_and(|a| a.has_skill_check_advantage(s))
+        });
+        let mut tally = RollModeTally::NONE;
+        tally.add(self.compute_check_mode(actor_id, ability));
+        tally.add(extra);
+        tally.add_if(carried, RollMode::Advantage);
+        let mode = tally.resolve();
         let raw = self.roll_d20_lucky(actor_id, mode) as i32;
         let Some(actor) = self.actors.get(&actor_id) else {
             return raw;
         };
         let prof = if skill
             .as_ref()
-            .is_some_and(|s| actor.has_skill(s.clone()))
+            .is_some_and(|s| actor.has_skill(*s))
         {
             actor.proficiency_bonus()
         } else {
@@ -7365,7 +7379,7 @@ impl EncounterInstance {
             crate::engine::types::AbilityScoreType,
             crate::engine::types::Skill,
         )| {
-            let prof = if actor.has_skill(skill.clone()) {
+            let prof = if actor.has_skill(*skill) {
                 actor.proficiency_bonus()
             } else {
                 0
