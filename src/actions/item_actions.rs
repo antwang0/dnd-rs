@@ -5346,6 +5346,17 @@ const BEAD_OF_FORCE_NAME: &str = "Bead of Force";
 const SCROLL_OF_FLY_NAME: &str = "Scroll of Fly";
 const SCROLL_OF_BESTOW_CURSE_NAME: &str = "Scroll of Bestow Curse";
 const SCROLL_OF_CONJURE_ANIMALS_NAME: &str = "Scroll of Conjure Animals";
+// The summon-item family. RAW names the four gems after the stones
+// they are cut from, which is a lovely detail and a terrible inventory
+// line, so each one says which elemental it holds.
+const AIR_ELEMENTAL_GEM_NAME: &str = "Air Elemental Gem";
+const EARTH_ELEMENTAL_GEM_NAME: &str = "Earth Elemental Gem";
+const FIRE_ELEMENTAL_GEM_NAME: &str = "Fire Elemental Gem";
+const WATER_ELEMENTAL_GEM_NAME: &str = "Water Elemental Gem";
+const HORN_OF_VALHALLA_NAME: &str = "Horn of Valhalla";
+const BAG_OF_TRICKS_NAME: &str = "Bag of Tricks";
+const BRONZE_GRIFFON_FIGURINE_NAME: &str = "Bronze Griffon Figurine";
+const ONYX_DOG_FIGURINE_NAME: &str = "Onyx Dog Figurine";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
@@ -5660,20 +5671,6 @@ pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     timer: ConditionTimer::Rounds(10),
 };
 
-/// Scroll of Conjure Animals — Action; summons two spectral wolves on
-/// the caster's team adjacent to them, concentration-bound. 5e RAW:
-/// Conjure Animals is a level-3 conjuration; the scroll surfaces the
-/// same envelope without needing a slot. Validates that the caster
-/// still has at least one free adjacent slot for a Medium wolf
-/// footprint (the second wolf is best-effort). On success the scroll
-/// is consumed and the caster takes concentration tracking the
-/// `Conjured` flag on each summon — dropping concentration despawns
-/// the cohort via the shared cleanup path. Distinct from `ANIMATE_DEAD`
-/// (no concentration, skeleton team-permanent minion) in that the
-/// scroll's wolves are concentration-bound and vanish when the spell
-/// ends.
-pub static READ_CONJURE_ANIMALS_SCROLL: ReadConjureAnimalsScrollItem = ReadConjureAnimalsScrollItem {};
-
 /// Scroll of Longstrider — Action; install `Longstriding` (+10 ft
 /// walking speed) for 100 rounds on a single ally within 1 tile (touch
 /// RAW). 5e RAW: Longstrider is a level-1 transmutation; the scroll
@@ -5718,36 +5715,133 @@ pub static READ_BARKSKIN_SCROLL: SingleTargetBuffItem = SingleTargetBuffItem {
     reject_when_active: true,
 };
 
-pub struct ReadConjureAnimalsScrollItem {}
+/// Config struct for **an item that puts a creature on the board** —
+/// the shared shape behind the Scroll of Conjure Animals, the four
+/// Elemental Gems, the Horn of Valhalla, the Bag of Tricks and the
+/// Figurines of Wondrous Power.
+///
+/// The item lane had one summon on it and no chassis. The Scroll of
+/// Conjure Animals was a hand-written `Action` impl that open-coded the
+/// spawn loop, the `Conjured` tagging and the concentration anchor —
+/// a hundred lines of the spell lane's `SummonSpell` body, copied
+/// rather than called, and already drifting: it spawned at instance
+/// ids 90 and 91, which is exactly where `CONJURE_ANIMALS` spawns, so
+/// a druid and a scroll-reader on the same board produced two
+/// creatures called "Wolf 90". That is not an error anywhere in the
+/// engine — it is just a map nobody can read — and it is the failure
+/// `no_two_summoning_spells_share_an_instance_id` exists to catch,
+/// which the scroll sat outside of by not being a `SummonSpell`.
+///
+/// So this is the item-lane mirror of that struct, and it calls the
+/// same two helpers the spell lane does: `spawn_adjacent_summons` for
+/// the bodies and `conjured_summon_concentration_effects` for the
+/// leash. What it deliberately does **not** carry is the half of
+/// `SummonSpell` that is about slots — no `school`, no `slot_level`, no
+/// `SummonScaling` — because an object has no slot to have been cast at
+/// and nothing about a gem changes with the level of whoever breaks it.
+///
+/// Registered in [`ALL_SUMMON_ITEMS`], which is what puts these rows
+/// back inside the id sweep.
+pub struct SummonItem {
+    /// Player-facing action name (e.g. "break air elemental gem").
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    /// Inventory key the use is billed against.
+    pub item_name: &'static str,
+    /// Prefix on the "a wolf appears at …" line.
+    pub log_label: &'static str,
+    /// What appears. A `&'static LazyLock` for the reason
+    /// `SummonSpell::template` is one: every creature template in the
+    /// engine is lazily built.
+    pub template: &'static std::sync::LazyLock<crate::actors::actor_template::CreatureTemplate>,
+    pub size: crate::engine::types::Size,
+    /// How many appear. Best-effort in the same way the spell lane's
+    /// count is: the validator insists only that the *first* body fits,
+    /// and an item that finds room for two of three berserkers is spent
+    /// on two berserkers rather than refunded.
+    pub count: usize,
+    /// How far from the user to look for free tiles. Sized like the
+    /// spell lane's: 3 for a Medium body, 4 for a Large one, which needs
+    /// a wider ring to find room at all.
+    pub search_radius: isize,
+    /// First instance id of this item's band. Items claim 200 and up,
+    /// clear of every summon spell (which top out at Find Familiar's
+    /// 180) — see [`ALL_SUMMON_ITEMS`].
+    pub base_instance_id: usize,
+    /// The concentration anchor's display name, or `None` for a summon
+    /// nobody has to keep thinking about.
+    ///
+    /// `Some` couples two things, exactly as it does on `SummonSpell`:
+    /// the bodies pick up `Condition::Conjured` so dropping
+    /// concentration despawns them, and the user starts concentrating.
+    /// The `None`s here are the items RAW writes no concentration
+    /// duration for, which is most of them — a gem is broken and the
+    /// elemental is simply *there*, and a horn once blown cannot be
+    /// un-blown by a Magic Missile to the ribs.
+    pub concentration: Option<&'static str>,
+    /// `Some(n)` prices the use in `Resource::ItemCharges` — the lane a
+    /// permanent object with a pool uses, where the object outlives the
+    /// pool. `None` bills through `spend_item_use`, where one use is
+    /// the whole object: a scroll, a gem that shatters.
+    pub charges: Option<u32>,
+}
 
-impl Action for ReadConjureAnimalsScrollItem {
-    /// Queues a `StartConcentration`. Declared so the AI's
-    /// summon and area-control rungs can price this cast before
-    /// trading a landed concentration effect for an unlanded one
-    /// — and so the assertion in `Action::execute` stays quiet.
-    fn holds_concentration(&self) -> bool {
-        true
-    }
+impl Action for SummonItem {
     fn name(&self) -> &str {
-        "read conjure animals scroll"
+        self.action_name
     }
-
     fn aliases(&self) -> Vec<&str> {
-        vec!["conjure scroll", "wolf scroll"]
+        self.action_aliases.to_vec()
     }
-
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::NoArgs
     }
-
     fn is_harmful(&self) -> bool {
         false
     }
-
-    fn deals_damage(&self) -> bool {
-        false
+    // `deals_damage` defaults to `is_harmful()`, and the summon hurts
+    // nobody directly — whatever it does, it does on its own turns.
+    fn summons_allies(&self) -> bool {
+        true
     }
-
+    /// Read off the body rather than declared per item, for the reason
+    /// `SummonSpell::summons_combatants` is: the clause that stops a
+    /// familiar swinging is a row on its template, and asking the
+    /// template is what keeps this answer from drifting away from the
+    /// creature it is about.
+    fn summons_combatants(&self) -> bool {
+        !self
+            .template
+            .features
+            .contains(crate::actions::class_features::CANNOT_ATTACK_TAG)
+    }
+    /// Declared so the AI's summon and area-control rungs can price
+    /// this against a concentration effect the user is already holding
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        self.concentration.is_some()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // `action_only()` rather than `item_use_cost`: a body on the
+        // board is the offensive lane's kind of payout, whatever its
+        // `is_harmful` flag says, and Fast Hands has no business
+        // turning a bonus action into a fire elemental.
+        let mut costs = action_only();
+        if let Some(count) = self.charges {
+            costs.push(Resource::ItemCharges {
+                item: self.item_name,
+                count,
+            });
+        }
+        costs
+    }
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -5756,15 +5850,11 @@ impl Action for ReadConjureAnimalsScrollItem {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        if !caster_holds(encounter, caster_id, SCROLL_OF_CONJURE_ANIMALS_NAME) {
-            return false;
-        }
-        // At least one free Medium slot adjacent to the caster.
-        encounter
-            .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
-            .is_some()
+        caster_holds(encounter, caster_id, self.item_name)
+            && encounter
+                .find_adjacent_spawn(caster_id, self.size, self.search_radius)
+                .is_some()
     }
-
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -5773,61 +5863,294 @@ impl Action for ReadConjureAnimalsScrollItem {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actors::actor_template::ConcentrationData;
-        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
-        use crate::engine::side_effects::StartConcentration;
-        if !consume_caster_item(encounter, caster_id, SCROLL_OF_CONJURE_ANIMALS_NAME) {
+        // A charged item is billed by `cost()` through the resource
+        // ledger; an uncharged one is the object itself and is spent
+        // here. Exactly one of the two runs, which is what keeps a gem
+        // from being both shattered and decremented.
+        if self.charges.is_none() && !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        // Reuse the same spawn → tag → concentration path the spell-
-        // side `CONJURE_ANIMALS.side_effects` uses. The scroll fires
-        // the spell envelope without spending a slot.
-        let team = match encounter.actors.get(&caster_id) {
-            Some(c) => c.team(),
-            None => return Vec::new(),
-        };
-        let mut spawned: Vec<usize> = Vec::new();
-        for _ in 0..2 {
-            let Some(anchor) = encounter
-                .find_adjacent_spawn(caster_id, crate::engine::types::Size::Medium, 3)
-            else {
-                break;
-            };
-            match encounter.instantiate_creature(&WOLF_TEMPLATE, anchor, team, 90 + spawned.len())
-            {
-                Ok(new_id) => {
-                    encounter.log(format!(
-                        "  scroll of conjure animals: a spectral wolf appears at {} (actor #{})",
-                        anchor, new_id
-                    ));
-                    spawned.push(new_id);
-                }
-                Err(e) => {
-                    encounter.log(format!("  scroll of conjure animals failed: {}", e));
-                    break;
-                }
-            }
-        }
-        if spawned.is_empty() {
-            return Vec::new();
-        }
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        let mut tags = Vec::new();
-        for id in &spawned {
-            effects.push(Box::new(ApplyCondition {
-                actor_id: *id,
-                condition: Condition::Conjured,
-                timer: ConditionTimer::Rounds(100),
-            }));
-            tags.push((*id, Condition::Conjured));
-        }
-        effects.push(Box::new(StartConcentration {
+        let spawned = crate::actions::spells::spawn_adjacent_summons(
+            encounter,
             caster_id,
-            data: ConcentrationData::with_conditions("Scroll of Conjure Animals", tags),
-        }));
-        effects
+            self.template,
+            self.size,
+            self.count,
+            self.search_radius,
+            self.base_instance_id,
+            self.log_label,
+        );
+        // An item that found no room is spent and must not also burn
+        // the user's concentration: anchoring an empty cohort would
+        // drop whatever they were already holding in exchange for
+        // nothing. The spell lane makes the same call.
+        match self.concentration {
+            Some(anchor) if !spawned.is_empty() => {
+                crate::actions::spells::conjured_summon_concentration_effects(
+                    caster_id, &spawned, anchor,
+                )
+            }
+            _ => Vec::new(),
+        }
     }
 }
+
+impl SummonItem {
+    /// How many consecutive instance ids this item claims, counting
+    /// from `base_instance_id`. Nothing on this lane scales with
+    /// anything, so unlike `SummonSpell::instance_id_span` it is simply
+    /// the count.
+    pub fn instance_id_span(&self) -> usize {
+        self.count
+    }
+}
+
+/// Every `SummonItem` in the engine, for the sweeps that have to read a
+/// complete list.
+///
+/// The spell lane learned this the hard way — see
+/// `all_summon_spells` and the comment on
+/// `no_two_summoning_spells_share_an_instance_id` about the two steeds
+/// that sat outside the id sweep for as long as they did. The item lane
+/// starts with the registry rather than acquiring one after the first
+/// collision, and the first collision had already happened: the Scroll
+/// of Conjure Animals spawned on top of the spell of the same name.
+///
+/// Item bands start at 200. Summon spells run 70–180, so the gap is
+/// wide enough that a new spell and a new item are not competing for
+/// the same numbers.
+pub static ALL_SUMMON_ITEMS: &[&SummonItem] = &[
+    &READ_CONJURE_ANIMALS_SCROLL,
+    &BREAK_AIR_ELEMENTAL_GEM,
+    &BREAK_EARTH_ELEMENTAL_GEM,
+    &BREAK_FIRE_ELEMENTAL_GEM,
+    &BREAK_WATER_ELEMENTAL_GEM,
+    &BLOW_HORN_OF_VALHALLA,
+    &REACH_INTO_BAG_OF_TRICKS,
+    &SET_DOWN_BRONZE_GRIFFON,
+    &SET_DOWN_ONYX_DOG,
+];
+
+/// Scroll of Conjure Animals — Action; two spectral wolves on free
+/// tiles beside the reader, leashed to their concentration.
+///
+/// The scroll fires the spell's envelope without spending a slot, which
+/// is the whole of what a scroll is. It keeps the concentration,
+/// because the spell's duration is the thing the wolves are made of.
+pub static READ_CONJURE_ANIMALS_SCROLL: SummonItem = SummonItem {
+    action_name: "read conjure animals scroll",
+    action_aliases: &["conjure scroll", "wolf scroll"],
+    item_name: SCROLL_OF_CONJURE_ANIMALS_NAME,
+    log_label: "scroll of conjure animals",
+    template: &crate::actors::creatures::wolves::WOLF_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 2,
+    search_radius: 3,
+    // 200, not the 90 this scroll used to share with the spell it is a
+    // copy of. See `ALL_SUMMON_ITEMS`.
+    base_instance_id: 200,
+    concentration: Some("Scroll of Conjure Animals"),
+    charges: None,
+};
+
+/// **Elemental Gem** (Wondrous item, Uncommon) — *"Breaking this gem
+/// releases an elemental. The gem's type determines the elemental. The
+/// elemental is friendly to you and your companions for the duration.
+/// … The gem's magic is lost when it is broken."*
+///
+/// Four gems, four elementals, one shared declaration each, and the
+/// clearest case in the file for a chassis: the whole difference
+/// between a Blue Sapphire and a Yellow Diamond is which of four
+/// templates the row points at.
+///
+/// **No concentration**, which is what makes a gem worth more than the
+/// level-5 spell it resembles. Conjure Elemental is concentration-bound,
+/// so a wizard holding one is holding nothing else and loses the
+/// elemental to a single failed Constitution save; a gem is broken and
+/// the elemental is simply there. That is RAW on both sides, and it is
+/// the trade an Uncommon consumable is allowed to win: the spell can be
+/// cast again tomorrow and the gem cannot be unbroken.
+///
+/// Large bodies, so the spawn ring is 4 rather than the Medium 3 — a
+/// 2×2 footprint needs the wider ring to find room at all.
+pub static BREAK_AIR_ELEMENTAL_GEM: SummonItem = SummonItem {
+    action_name: "break air elemental gem",
+    action_aliases: &["air gem", "blue sapphire"],
+    item_name: AIR_ELEMENTAL_GEM_NAME,
+    log_label: "elemental gem",
+    template: &crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 202,
+    concentration: None,
+    charges: None,
+};
+
+/// Elemental Gem (Yellow Diamond) — an Earth Elemental. See
+/// [`BREAK_AIR_ELEMENTAL_GEM`] for the family.
+pub static BREAK_EARTH_ELEMENTAL_GEM: SummonItem = SummonItem {
+    action_name: "break earth elemental gem",
+    action_aliases: &["earth gem", "yellow diamond"],
+    item_name: EARTH_ELEMENTAL_GEM_NAME,
+    log_label: "elemental gem",
+    template: &crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 203,
+    concentration: None,
+    charges: None,
+};
+
+/// Elemental Gem (Red Corundum) — a Fire Elemental. See
+/// [`BREAK_AIR_ELEMENTAL_GEM`] for the family.
+pub static BREAK_FIRE_ELEMENTAL_GEM: SummonItem = SummonItem {
+    action_name: "break fire elemental gem",
+    action_aliases: &["fire gem", "red corundum"],
+    item_name: FIRE_ELEMENTAL_GEM_NAME,
+    log_label: "elemental gem",
+    template: &crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 204,
+    concentration: None,
+    charges: None,
+};
+
+/// Elemental Gem (Emerald) — a Water Elemental. See
+/// [`BREAK_AIR_ELEMENTAL_GEM`] for the family.
+pub static BREAK_WATER_ELEMENTAL_GEM: SummonItem = SummonItem {
+    action_name: "break water elemental gem",
+    action_aliases: &["water gem", "emerald"],
+    item_name: WATER_ELEMENTAL_GEM_NAME,
+    log_label: "elemental gem",
+    template: &crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 205,
+    concentration: None,
+    charges: None,
+};
+
+/// **Horn of Valhalla, Silver** (Wondrous item, Rare) — *"You can use
+/// an action to blow this horn. In response, warrior spirits from the
+/// Valhalla appear within 60 feet of you. … They fight until they
+/// disappear or until you die."*
+///
+/// RAW's silver horn calls 2d4+2 berserkers; this calls three, which is
+/// the low end of that range and the number the board can usually fit.
+/// The count is deliberately not rolled: the engine's spawn loop is
+/// best-effort about room, so a rolled seven would silently become
+/// three on a crowded board and the difference between the horn's good
+/// day and its bad day would be the furniture rather than the dice.
+///
+/// No concentration, and no leash of any kind. RAW's berserkers stay
+/// until they die, which on this engine's one-encounter clock means
+/// they stay. The horn is a Rare item that is gone after one blow, and
+/// what it buys is the whole rest of the fight.
+pub static BLOW_HORN_OF_VALHALLA: SummonItem = SummonItem {
+    action_name: "blow horn of valhalla",
+    action_aliases: &["valhalla", "horn of valhalla", "silver horn"],
+    item_name: HORN_OF_VALHALLA_NAME,
+    log_label: "horn of valhalla",
+    template: &crate::actors::creatures::berserkers::BERSERKER_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 3,
+    search_radius: 3,
+    base_instance_id: 206,
+    concentration: None,
+    charges: None,
+};
+
+/// **Bag of Tricks, Gray** (Wondrous item, Uncommon) — *"You can take a
+/// Magic action to pull the fuzzy object from the bag and throw it up
+/// to 20 feet away. When the object lands, it transforms into a
+/// creature … The creature is friendly to you and your allies."*
+///
+/// The first item on this lane with a **pool** rather than a single
+/// use: RAW's bag holds three draws and refills at dawn, which is the
+/// `Resource::ItemCharges` shape the Ring of the Ram and the staves
+/// use, and the reason `SummonItem::charges` is an `Option` at all.
+/// The bag survives its own pool — an empty bag is still a bag.
+///
+/// RAW rolls a d8 on the gray bag's table for what comes out (weasel,
+/// giant rat, badger, boar, panther, giant badger, dire wolf, giant
+/// elk). The engine draws the panther every time, and the reason is
+/// the same one that collapses Conjure Animals' four-CR option table to
+/// two wolves: a random stat block is a random amount of help, and an
+/// item whose value is decided before the player can see it is an item
+/// nobody can make a decision about. The panther is the middle of the
+/// table, so the fixed draw is neither the bag's best day nor its
+/// worst.
+pub static REACH_INTO_BAG_OF_TRICKS: SummonItem = SummonItem {
+    action_name: "reach into bag of tricks",
+    action_aliases: &["bag of tricks", "bag", "tricks"],
+    item_name: BAG_OF_TRICKS_NAME,
+    log_label: "bag of tricks",
+    template: &crate::actors::creatures::panthers::PANTHER_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    // 209, the far side of the Horn of Valhalla's three-wide band
+    // above. Each of the bag's three draws reuses this same id, which
+    // is the standing behaviour of every repeatable summon in the
+    // engine — a wizard who casts Summon Beast twice gets two Bestial
+    // Spirit 100s — and is what the cross-source sweep is scoped
+    // around rather than against.
+    base_instance_id: 209,
+    search_radius: 3,
+    concentration: None,
+    charges: Some(1),
+};
+
+/// **Figurine of Wondrous Power, Bronze Griffon** (Wondrous item,
+/// Rare) — *"If you use an action to speak the command word and throw
+/// the figurine to a point on the ground within 60 feet of you, the
+/// figurine becomes a living creature. … The creature is friendly to
+/// you and your companions."*
+///
+/// The griffon is the flier on this lane, which is the whole reason it
+/// is here rather than one of RAW's other six figurines: every other
+/// body an item can put on the board walks.
+///
+/// One use, because the engine's clock is one fight long and RAW's
+/// "once every 5 days" is a restriction on the calendar rather than on
+/// the encounter. What it costs is the figurine, which is the honest
+/// translation of a restriction the engine has no days to count.
+pub static SET_DOWN_BRONZE_GRIFFON: SummonItem = SummonItem {
+    action_name: "set down bronze griffon",
+    action_aliases: &["griffon figurine", "bronze griffon"],
+    item_name: BRONZE_GRIFFON_FIGURINE_NAME,
+    log_label: "bronze griffon",
+    template: &crate::actors::creatures::griffons::GRIFFON_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 210,
+    concentration: None,
+    charges: None,
+};
+
+/// **Figurine of Wondrous Power, Onyx Dog** (Wondrous item, Rare) — a
+/// mastiff. The cheap end of the figurine family and the one a party
+/// that has already found a griffon still has a use for: it is Medium,
+/// so it fits in a corridor the griffon cannot be set down in.
+pub static SET_DOWN_ONYX_DOG: SummonItem = SummonItem {
+    action_name: "set down onyx dog",
+    action_aliases: &["dog figurine", "onyx dog"],
+    item_name: ONYX_DOG_FIGURINE_NAME,
+    log_label: "onyx dog",
+    template: &crate::actors::creatures::mastiffs::MASTIFF_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 211,
+    concentration: None,
+    charges: None,
+};
+
 
 /// Scroll of Magnify Gravity — Action; 1-tile burst (5 ft RAW), STR save
 /// vs DC 13, save-for-half 2d8 force damage. 5e RAW (TCE): the spell also

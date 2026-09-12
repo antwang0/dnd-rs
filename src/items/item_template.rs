@@ -2910,6 +2910,127 @@ pub static SCROLL_OF_CONJURE_ANIMALS: Item = Item {
     ..Item::DEFAULTS
 };
 
+// ---------------------------------------------------------------------
+// The summoning shelf.
+//
+// Eight items that put a creature on the board, all riding
+// `item_actions::SummonItem`, and until they landed the whole of this
+// lane was the Scroll of Conjure Animals above.
+//
+// **Why an object that summons is worth having at all**, when the spell
+// list already has fourteen: because nobody in the party has to be a
+// caster. Every summon in the engine is a spell on a full caster's
+// list, so a party of a fighter, a rogue and a barbarian has no access
+// to the lane at any price. A gem is broken by whoever is holding it.
+//
+// Glyph '*' across the family — a thing that becomes a creature, which
+// is not what any of the existing glyphs mean ('0' a scroll, '!' a
+// potion, '=' a ring, '-' a wand).
+// ---------------------------------------------------------------------
+
+/// **Elemental Gem (Blue Sapphire)** (Wondrous item, Uncommon) — break
+/// it, and an Air Elemental is standing there.
+///
+/// The four gems are the cheapest way onto the summoning lane and the
+/// only one that is not concentration-bound: see
+/// `item_actions::BREAK_AIR_ELEMENTAL_GEM` for why that trade is RAW
+/// and why an Uncommon consumable is allowed to win it against a
+/// level-5 spell.
+pub static AIR_ELEMENTAL_GEM: Item = Item {
+    name: "Air Elemental Gem",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::BREAK_AIR_ELEMENTAL_GEM],
+    ..Item::DEFAULTS
+};
+
+/// **Elemental Gem (Yellow Diamond)** — an Earth Elemental. The slow,
+/// hard one of the four: a wall that hits back, for a party that needs
+/// the doorway held rather than the back rank reached.
+pub static EARTH_ELEMENTAL_GEM: Item = Item {
+    name: "Earth Elemental Gem",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::BREAK_EARTH_ELEMENTAL_GEM],
+    ..Item::DEFAULTS
+};
+
+/// **Elemental Gem (Red Corundum)** — a Fire Elemental. The same body
+/// `CONJURE_ELEMENTAL` calls up, off a consumable a fighter can carry
+/// and without the concentration the spell spends.
+pub static FIRE_ELEMENTAL_GEM: Item = Item {
+    name: "Fire Elemental Gem",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::BREAK_FIRE_ELEMENTAL_GEM],
+    ..Item::DEFAULTS
+};
+
+/// **Elemental Gem (Emerald)** — a Water Elemental, and the one whose
+/// worth depends most on the board: the engine has a flooded map and a
+/// dry one, and this is the only summon on the shelf that does not
+/// care which it is standing in.
+pub static WATER_ELEMENTAL_GEM: Item = Item {
+    name: "Water Elemental Gem",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::BREAK_WATER_ELEMENTAL_GEM],
+    ..Item::DEFAULTS
+};
+
+/// **Horn of Valhalla, Silver** (Wondrous item, Rare) — one blow, three
+/// berserkers, and they stay.
+///
+/// The biggest single payout on the shelf and the reason the shelf is
+/// weighted the way it is. Nothing else in the loot table turns one
+/// Action into three bodies that fight for the rest of the encounter;
+/// see `item_actions::BLOW_HORN_OF_VALHALLA` for why the count is
+/// fixed rather than RAW's 2d4+2.
+pub static HORN_OF_VALHALLA: Item = Item {
+    name: "Horn of Valhalla",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::BLOW_HORN_OF_VALHALLA],
+    ..Item::DEFAULTS
+};
+
+/// **Bag of Tricks, Gray** (Wondrous item, Uncommon) — three draws, a
+/// panther each time, and a bag that is still a bag when the pool runs
+/// out.
+///
+/// The only charge-bearing item on this shelf, which makes it the only
+/// summon in the engine a party keeps: every other row here is gone
+/// after one use, and this one refills at dawn like the wands. See
+/// `item_actions::REACH_INTO_BAG_OF_TRICKS` for why the draw is a
+/// panther every time rather than RAW's d8.
+pub static BAG_OF_TRICKS: Item = Item {
+    name: "Bag of Tricks",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::REACH_INTO_BAG_OF_TRICKS],
+    charges: 3,
+    // RAW's "regains 1d3 expended charges daily at dawn" — the pool the
+    // two charged rings carry, for a pool the same size.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Bronze Griffon** (Wondrous item,
+/// Rare) — the only flier any item in the engine can put on the board.
+pub static BRONZE_GRIFFON_FIGURINE: Item = Item {
+    name: "Bronze Griffon Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_BRONZE_GRIFFON],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Onyx Dog** (Wondrous item, Rare) — a
+/// mastiff, and the Medium body on a shelf whose other Rare entries are
+/// all Large. It is the one that can be set down in a corridor.
+pub static ONYX_DOG_FIGURINE: Item = Item {
+    name: "Onyx Dog Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_ONYX_DOG],
+    ..Item::DEFAULTS
+};
+
 /// Scroll of Longstrider — Action consumable that installs the
 /// `Longstriding` condition (+10 ft walking speed) for 100 rounds on a
 /// touched ally. 5e RAW: Longstrider is a level-1 transmutation; the
@@ -5317,6 +5438,20 @@ pub static LOOT_POOL: &[&Item] = &[
     &CLOAK_OF_THE_MANTA_RAY,
     &RING_OF_SWIMMING,
     &RING_OF_WATER_WALKING,
+    // The summoning shelf. Weighted by what one Action buys: the four
+    // gems and the bag are Uncommon and get one entry apiece, and the
+    // three Rare rows — the horn's three berserkers and the two
+    // figurines — sit at the same single-entry weight as the premium
+    // trinkets. A party that finds any of these has an answer to being
+    // outnumbered that no amount of `+1` ever gave them.
+    &AIR_ELEMENTAL_GEM,
+    &EARTH_ELEMENTAL_GEM,
+    &FIRE_ELEMENTAL_GEM,
+    &WATER_ELEMENTAL_GEM,
+    &BAG_OF_TRICKS,
+    &HORN_OF_VALHALLA,
+    &BRONZE_GRIFFON_FIGURINE,
+    &ONYX_DOG_FIGURINE,
     // The staves. Single entries each — a staff is the deepest item on
     // the table (three to nine spells and a pool big enough to matter)
     // and should be the rarest thing a party walks away with. Ordered

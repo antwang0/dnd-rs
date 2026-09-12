@@ -34486,8 +34486,20 @@ fn the_summon_family_declares_a_consistent_ladder() {
 /// sweep entirely. They happened not to collide. That is the exact
 /// failure mode `all_summon_spells` exists to close, so this reads
 /// the registry and nothing else.
+///
+/// **Items are in the same id space and are swept here too.** The
+/// `SummonItem` lane spawns through the same
+/// `spawn_adjacent_summons`, into the same `actors` map, with the same
+/// display suffix — so "a summoning spell" was never the right scope
+/// for this sweep, only the only scope it had. The Scroll of Conjure
+/// Animals is what proves it: it spawned its wolves at 90 and 91,
+/// which is exactly where `CONJURE_ANIMALS` spawns its, and it sat
+/// outside this test for as long as it did by being a hand-written
+/// `Action` impl rather than a `SummonSpell`. Both registries are read
+/// into one map, so an item that lands on a spell's band fails here.
 #[test]
 fn no_two_summoning_spells_share_an_instance_id() {
+    use crate::actions::item_actions::ALL_SUMMON_ITEMS;
     use crate::actions::spells::all_summon_spells;
     use std::collections::HashMap;
 
@@ -34501,16 +34513,19 @@ fn no_two_summoning_spells_share_an_instance_id() {
     // collision that only appears once somebody upcasts is a collision
     // this sweep would otherwise report green on forever.
     let mut claimed: HashMap<usize, &str> = HashMap::new();
-    for spell in all_summon_spells() {
-        for offset in 0..spell.instance_id_span() {
-            let id = spell.base_instance_id + offset;
-            if let Some(other) = claimed.insert(id, spell.name()) {
-                panic!(
-                    "{} and {} both spawn at instance id {}",
-                    spell.name(),
-                    other,
-                    id
-                );
+    let bands = all_summon_spells()
+        .into_iter()
+        .map(|s| (s.name(), s.base_instance_id, s.instance_id_span()))
+        .chain(
+            ALL_SUMMON_ITEMS
+                .iter()
+                .map(|i| (i.name(), i.base_instance_id, i.instance_id_span())),
+        );
+    for (name, base, span) in bands {
+        for offset in 0..span {
+            let id = base + offset;
+            if let Some(other) = claimed.insert(id, name) {
+                panic!("{} and {} both spawn at instance id {}", name, other, id);
             }
         }
     }
@@ -56127,6 +56142,167 @@ fn scroll_of_conjure_animals_summons_two_wolves_and_consumes_scroll() {
     // Dropping concentration despawns the cohort.
     e.drop_concentration(fighter);
     assert_eq!(e.actors.len(), before);
+}
+
+/// The summoning shelf: an object puts a body on the board for a party
+/// with no caster in it.
+///
+/// Four claims, one per axis the `SummonItem` chassis has:
+///
+///   - **A gem is one Large elemental and no concentration.** That is
+///     the trade RAW gives an Uncommon consumable against the level-5
+///     spell that calls the same body: the spell can be cast again
+///     tomorrow, and it can be broken by one failed Constitution save.
+///   - **A horn is three bodies off one Action.** The biggest payout on
+///     the shelf, and the reason it is Rare.
+///   - **A bag has a pool.** Three draws billed in
+///     `Resource::ItemCharges`, and a bag still in the pack afterwards
+///     — the lane the staves and the two charged rings share, where the
+///     object outlives its own charges.
+///   - **Everything else is the object.** A gem, a horn and a figurine
+///     are gone after one use.
+#[test]
+fn the_summoning_items_put_bodies_on_the_board_and_bill_correctly() {
+    use crate::actions::action_template::Action;
+    use crate::actions::item_actions::{
+        BLOW_HORN_OF_VALHALLA, BREAK_FIRE_ELEMENTAL_GEM, REACH_INTO_BAG_OF_TRICKS,
+        SET_DOWN_ONYX_DOG,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{
+        BAG_OF_TRICKS, FIRE_ELEMENTAL_GEM, HORN_OF_VALHALLA, ONYX_DOG_FIGURINE, Item,
+    };
+
+    // A wide empty board, because the Large bodies need room and the
+    // spawn loop is best-effort about finding it.
+    let board = |item: &'static Item| {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let user = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 12), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&user).unwrap().pickup_item(item);
+        (e, user)
+    };
+    let fire_once = |e: &mut EncounterInstance, user: usize, action: &'static dyn Action| {
+        let aei = ActionExecutionInfo::new(action, user, None, None, None);
+        assert!(
+            aei.validate(e),
+            "{} should have been usable:\n{}",
+            action.name(),
+            e.messages().join("\n")
+        );
+        e.push_action(aei);
+        e.process_stack();
+    };
+
+    // A fighter — no spell list at all — breaks a gem and a Large
+    // elemental is standing there, on their team, holding nobody's
+    // concentration.
+    let (mut e, user) = board(&FIRE_ELEMENTAL_GEM);
+    let team = e.actors[&user].team();
+    fire_once(&mut e, user, &BREAK_FIRE_ELEMENTAL_GEM);
+    let summoned: Vec<usize> = e.actors.keys().copied().filter(|id| *id != user).collect();
+    assert_eq!(summoned.len(), 1, "a gem is one elemental");
+    assert_eq!(e.actors[&summoned[0]].team(), team);
+    assert_eq!(e.actors[&summoned[0]].size(), crate::engine::types::Size::Large);
+    assert!(
+        !e.actors[&summoned[0]].has_condition(Condition::Conjured),
+        "a broken gem leaves nothing to concentrate on"
+    );
+    assert!(!e.actors[&user].is_concentrating());
+    assert!(
+        !e.actors[&user].has_item_named(FIRE_ELEMENTAL_GEM.name),
+        "the gem's magic is lost when it is broken"
+    );
+
+    // One Action, three berserkers.
+    let (mut e, user) = board(&HORN_OF_VALHALLA);
+    fire_once(&mut e, user, &BLOW_HORN_OF_VALHALLA);
+    assert_eq!(
+        e.actors.len() - 1,
+        BLOW_HORN_OF_VALHALLA.count,
+        "the silver horn calls three:\n{}",
+        e.messages().join("\n")
+    );
+    assert!(!e.actors[&user].has_item_named(HORN_OF_VALHALLA.name));
+
+    // A figurine is one Medium body and is spent.
+    let (mut e, user) = board(&ONYX_DOG_FIGURINE);
+    fire_once(&mut e, user, &SET_DOWN_ONYX_DOG);
+    assert_eq!(e.actors.len() - 1, 1);
+    assert!(!e.actors[&user].has_item_named(ONYX_DOG_FIGURINE.name));
+
+    // The bag is the charge lane: three draws, and the bag survives its
+    // own pool. One draw per round, because each costs an Action.
+    let (mut e, user) = board(&BAG_OF_TRICKS);
+    for draw in 0..BAG_OF_TRICKS.charges {
+        e.actors.get_mut(&user).unwrap().reset_for_new_round();
+        fire_once(&mut e, user, &REACH_INTO_BAG_OF_TRICKS);
+        assert_eq!(
+            e.actors.len() - 1,
+            draw as usize + 1,
+            "draw {draw} produced nothing"
+        );
+    }
+    e.actors.get_mut(&user).unwrap().reset_for_new_round();
+    assert!(
+        !ActionExecutionInfo::new(&REACH_INTO_BAG_OF_TRICKS, user, None, None, None).validate(&e),
+        "a fourth draw came out of a three-charge bag"
+    );
+    assert!(
+        e.actors[&user].has_item_named(BAG_OF_TRICKS.name),
+        "the pool ran dry and took the bag with it"
+    );
+}
+
+/// Every `SummonItem` in the engine is in [`ALL_SUMMON_ITEMS`], and
+/// every one of them is reachable from an `Item` that names it.
+///
+/// Two directions, and the spell lane earned both the hard way. The
+/// registry is hand-maintained, so "somebody declared a ninth summon
+/// item and didn't add the line" is the failure it exists to prevent
+/// and also the one it is vulnerable to — the count check is the same
+/// blunt source-reading instrument `every_summon_spell_is_registered`
+/// uses, for the same reason. The reachability half is the other
+/// direction: a `SummonItem` no `Item` lists is an action nothing in
+/// the game can take.
+#[test]
+fn every_summon_item_is_registered_and_reachable() {
+    use crate::actions::item_actions::ALL_SUMMON_ITEMS;
+    use crate::items::item_template::LOOT_POOL;
+
+    let source = include_str!("../actions/item_actions.rs");
+    let declared = source
+        .lines()
+        .filter(|l| l.starts_with("pub static ") && l.contains(": SummonItem"))
+        .count();
+    assert_eq!(
+        declared,
+        ALL_SUMMON_ITEMS.len(),
+        "{} SummonItem statics are declared but {} are registered",
+        declared,
+        ALL_SUMMON_ITEMS.len()
+    );
+
+    // Every registered action is on some item's `on_use`, and — the
+    // Scroll of Conjure Animals aside, which rides the scroll shelf —
+    // every one of those items is findable as loot.
+    let catalog = include_str!("../items/item_template.rs");
+    for item in ALL_SUMMON_ITEMS {
+        assert!(
+            catalog.contains(item.item_name),
+            "{} is billed against an item name no catalog entry carries: {:?}",
+            item.name(),
+            item.item_name
+        );
+        assert!(
+            LOOT_POOL.iter().any(|l| {
+                l.on_use.iter().any(|a| a.name() == item.name())
+            }),
+            "{} is written but no item in the loot pool offers it",
+            item.name()
+        );
+    }
 }
 
 /// Scroll of Longstrider installs the Longstriding speed buff on

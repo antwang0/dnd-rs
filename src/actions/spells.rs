@@ -1707,7 +1707,7 @@ pub(crate) fn spawn_adjacent_summons(
 ///
 /// Caller is expected to skip this when `spawned` is empty — a no-op
 /// summon shouldn't burn the caster's concentration slot.
-fn conjured_summon_concentration_effects(
+pub(crate) fn conjured_summon_concentration_effects(
     caster_id: usize,
     spawned: &[usize],
     spell_name: &'static str,
