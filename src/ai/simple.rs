@@ -19364,6 +19364,124 @@ mod tests {
         );
     }
 
+    /// The three new offensive items are three things the AI actually
+    /// reaches for.
+    ///
+    /// An item correctly on `available_actions` and correctly ranked is
+    /// not the same claim as a turn that ends with it spent — that
+    /// depends on the affordability gate in `validate`, on the picker's
+    /// sort key, and on the driver loop re-entering the ladder. This
+    /// suite has caught three silent no-ops of exactly that shape, and
+    /// each of these items is a fresh chance at a fourth: the robe is
+    /// the first `charge_cost` burst on a caster chassis, the potion is
+    /// the first consumable with a pool larger than one, and the cape is
+    /// the first non-staff on the `StaffSpell` lane.
+    ///
+    /// One fixture per item rather than one with three, because the
+    /// chassis that reaches each is a different lane of the AI: the
+    /// burst goes through `try_attack_aoe`, the breath through the
+    /// single-target damage ladder, and the cape through whatever the
+    /// escape lane is doing — which is the one that legitimately may
+    /// never fire, since a fighter who is winning has no reason to
+    /// teleport. So the cape's claim is the weaker and honest one: the
+    /// option is offered, priced and valid, which is as far as a test
+    /// can go without asserting the AI is scared.
+    #[test]
+    fn the_ai_reaches_the_three_new_offensive_items() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{
+            CAPE_OF_THE_MOUNTEBANK, POTION_OF_FIRE_BREATH, ROBE_OF_SCINTILLATING_COLORS,
+        };
+
+        // (the item, the chassis that can use it, the log fragment)
+        let rows: &[(
+            &'static crate::items::item_template::Item,
+            &'static crate::actors::actor_template::CreatureTemplate,
+            &str,
+        )] = &[
+            // A fighter rather than a wizard, for the reason the Mace
+            // of Terror's own test uses one: the robe has no class
+            // clause in the book, and a wizard holding it has a
+            // Fireball that wins the same rung every time. What the
+            // test wants to know is whether the rung can find the robe
+            // at all, and the chassis with nothing else on that rung is
+            // where that question gets a clean answer.
+            (
+                &ROBE_OF_SCINTILLATING_COLORS,
+                &FIGHTER_TEMPLATE,
+                "shifting blaze of colour",
+            ),
+            (
+                &POTION_OF_FIRE_BREATH,
+                &FIGHTER_TEMPLATE,
+                "potion of fire breath",
+            ),
+        ];
+        for (item, chassis, fragment) in rows {
+            let mut used_in = 0;
+            for seed in 0..8u64 {
+                let mut e = empty_arena_seeded(seed);
+                let pc = e
+                    .instantiate_creature(chassis, Coordinate::new(5, 5), 0, 0)
+                    .unwrap();
+                // Three of them, clustered and out of reach, so a burst
+                // is worth placing and a breath is worth taking.
+                for (i, y) in [4isize, 6, 8].into_iter().enumerate() {
+                    e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, y), 1, i)
+                        .unwrap();
+                }
+                e.actors.get_mut(&pc).unwrap().pickup_item(item);
+
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 8_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages().join("\n").contains(fragment) {
+                    used_in += 1;
+                }
+            }
+            assert!(
+                used_in > 0,
+                "eight fights and the AI never once used the {}",
+                item.name
+            );
+        }
+
+        // The cape, on the weaker claim: offered, affordable and valid.
+        let mut e = empty_arena_seeded(3);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&pc)
+            .unwrap()
+            .pickup_item(&CAPE_OF_THE_MOUNTEBANK);
+        let step = *e.actors[&pc]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "cape of the mountebank: dimension door")
+            .expect("the cape is on the fighter's list");
+        let dest = vec![Coordinate::new(5, 12)];
+        assert!(
+            step.validate_input(&e, pc, None, Some(&dest), None),
+            "the cape's own validator refuses a step a fighter can afford"
+        );
+    }
+
     /// A swing an item grants is a swing the AI can see.
     ///
     /// The pickers split on a question two lists answer differently.
