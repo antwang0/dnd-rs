@@ -974,6 +974,12 @@ impl App {
             .copied()
             .filter(|n| n.to_lowercase().contains(&needle))
             .collect();
+        // Sorted before the dedupe, because `dedup` only collapses
+        // *adjacent* equals and the pack can hold two Rings of
+        // Protection with a cloak between them. Two copies of one item
+        // are one bond (`attunements` is keyed by name), so leaving them
+        // both in would report the ring as ambiguous with itself.
+        hits.sort_unstable();
         hits.dedup();
         let name = match hits.as_slice() {
             [] => {
@@ -1060,15 +1066,19 @@ impl App {
             );
             return Tick::Continue;
         }
-        actor.consume_resource(Resource::Action);
-        let formed = actor.attune_to(name);
-        let who = self.encounter.actor_name(actor_id);
-        if formed {
-            self.encounter.light_carried_items(actor_id);
-            self.encounter
-                .log(format!("{} attunes to {}.", who, name));
-            self.input_str.clear();
+        // The bond first and the bill second, rather than the other way
+        // round. Nothing above should let a refusal through this far —
+        // but "should" is what makes a creature that loses its turn to a
+        // refusal nobody logged, and the order costs nothing.
+        if !actor.attune_to(name) {
+            return Tick::Continue;
         }
+        actor.consume_resource(Resource::Action);
+        self.encounter.light_carried_items(actor_id);
+        let who = self.encounter.actor_name(actor_id);
+        self.encounter
+            .log(format!("{} attunes to {}.", who, name));
+        self.input_str.clear();
         Tick::Continue
     }
 
@@ -1769,6 +1779,7 @@ mod tests {
         assert!(line.contains("no level-3 spell slot"), "got: {line}");
         assert!(!line.contains("lvl:"), "nothing to suggest: {line}");
     }
+
     /// The two attunement commands, from the panel's `*` to the bond.
     ///
     /// The path a player actually walks when the fourth ring drops:

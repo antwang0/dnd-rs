@@ -5228,12 +5228,15 @@ pub struct ActorInstance {
     /// the same collapse `available_actions` already makes when it
     /// dedupes the picker by item name.
     ///
-    /// Ordered, and the order is load-bearing twice over: it is the
-    /// order `attunement_summary` prints for the panel, and it is the
-    /// order `end_oldest_attunement` breaks a bond in when a better
-    /// item arrives with no slot free. A `HashSet` would make both of
-    /// those depend on hash order, which is the bug
-    /// `Condition`'s `Ord` derive exists to have already fixed once.
+    /// A `Vec` rather than a `HashSet`, and the order is the reason:
+    /// the panel prints this list when the player types a bare
+    /// `unattune`, and a set would print it shuffled between two runs
+    /// of the same seed. That is the bug `Condition`'s `Ord` derive
+    /// exists to have already fixed once, on the condition-expiry
+    /// sweeps, and it is not worth meeting twice.
+    ///
+    /// Nothing branches on the order. The greedy fill in
+    /// `reconcile_attunements` walks the *pack*, not this list.
     ///
     /// Never longer than `attunement_slots`. Maintained by
     /// `attune_to` / `end_attunement` and swept by
@@ -5251,11 +5254,12 @@ pub struct ActorInstance {
     /// and I do not want that ring in it"*, which is the entire content
     /// of a player's decision about the ceiling.
     ///
-    /// Cleared for an item three ways, each one a change of mind or of
-    /// circumstance: `attune_to` (the holder asks for it back), the item
-    /// leaving the pack (nothing to refuse), and never otherwise. A
-    /// refusal therefore survives the rests it has to survive and
-    /// nothing else.
+    /// Cleared for an item two ways, each one a change of mind or of
+    /// circumstance: `attune_to` (the holder asks for it back) and the
+    /// item leaving the pack (nothing left to refuse). Nothing else
+    /// clears one — in particular a rest does not, which is the whole
+    /// point: a refusal has to survive the rests, or the greedy fill
+    /// undoes the decision at the first one.
     attunement_refusals: HashSet<&'static str>,
     /// Bless / Resistance flat to-hit and save bonuses. Independent of the
     /// `Blessed` condition flag for stacking flexibility.
