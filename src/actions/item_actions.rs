@@ -707,6 +707,16 @@ pub struct MagicMissileItem {
     pub darts: u32,
     /// Maximum reach in tiles for the targeting picker (30 = 150 ft RAW).
     pub reach: isize,
+    /// Charges one use costs, for an item that is **not** consumed by
+    /// using it, or `None` for the consumables that are. Same meaning
+    /// and same mechanism as `AreaSaveConditionItem::charge_cost` — the
+    /// price goes in `cost()` so the picker can grey the option out
+    /// rather than offering a use that silently does nothing.
+    ///
+    /// Every row here was a scroll or a stick until the Robe of Stars,
+    /// and both of those *are* their one use. A robe is not: pulling
+    /// the last star off it has to leave a robe on the wearer.
+    pub charge_cost: Option<u32>,
 }
 
 impl Action for MagicMissileItem {
@@ -734,6 +744,24 @@ impl Action for MagicMissileItem {
         vec![DamageType::Force]
     }
 
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        if let Some(count) = self.charge_cost {
+            costs.push(Resource::ItemCharges {
+                item: self.item_name,
+                count,
+            });
+        }
+        costs
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -756,7 +784,11 @@ impl Action for MagicMissileItem {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        if !consume_caster_item(encounter, caster_id, self.item_name) {
+        // A row priced in charges is billed by `Action::execute`'s tail
+        // off the `cost()` above; only the consumables bill here.
+        if self.charge_cost.is_none()
+            && !consume_caster_item(encounter, caster_id, self.item_name)
+        {
             return Vec::new();
         }
         let mut total = 0u32;
@@ -790,6 +822,7 @@ pub static READ_MAGIC_MISSILE_SCROLL: MagicMissileItem = MagicMissileItem {
     log_label: "scroll of magic missile",
     darts: 3,
     reach: 30,
+    charge_cost: None,
 };
 
 /// Config struct for "single-target save-or-take-damage" consumables —
@@ -1786,6 +1819,7 @@ pub static USE_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileItem {
     log_label: "wand of magic missiles",
     darts: 5,
     reach: 30,
+    charge_cost: None,
 };
 
 const POTION_OF_FLYING_NAME: &str = "Potion of Flying";
@@ -2140,8 +2174,50 @@ pub static DRINK_POTION_OF_BLUR: SelfConditionItem = SelfConditionItem {
 
 /// Greater Wand of Magic Missiles — 7 darts of 1d4+1 force each, auto-hit,
 /// no save. Top of the Magic Missile loot ladder: Scroll (3 darts) →
-/// Wand (5 darts) → Greater Wand (7 darts). Matches the RAW upcast at
-/// level 4. Fires through the shared `MagicMissileItem` impl.
+/// Wand (5 darts) → Greater Wand (7 darts). Fires through the shared
+/// `MagicMissileItem` impl.
+///
+/// Seven darts is RAW's **level-5** slot, not the level 4 this
+/// docstring used to name: the spell prints three and adds one per slot
+/// level above 1st, so 4th is six darts and 5th is seven. The number
+/// was right and the label was one rung low — worth correcting because
+/// the Robe of Stars below casts *"the level 5 version of Magic
+/// Missile"* by name, and two entries in the file disagreeing about
+/// what seven darts costs is how a third one gets written wrong.
+pub const ROBE_OF_STARS_NAME: &str = "Robe of Stars";
+
+/// **Pull a star** — the Robe of Stars' Magic action: *"Six stars,
+/// located on the robe's upper-front portion, are particularly large.
+/// While wearing this robe, you can take a Magic action to remove one
+/// of the stars and expend it to cast the level 5 version of Magic
+/// Missile. Daily at dusk, 1d6 removed stars reappear on the robe."*
+///
+/// Seven darts, by RAW's own arithmetic — see the Greater Wand above,
+/// which fires the same volley once and is gone. That is the whole
+/// difference between the two items and it is a large one: the robe
+/// does it six times and gets most of them back overnight, which makes
+/// it the first repeatable single-target damage source in the pool that
+/// is not a weapon.
+///
+/// The first row on `MagicMissileItem` to be priced in charges rather
+/// than in the object, for the reason the chassis grew the field: a
+/// scroll and a wand *are* their uses and a robe is a robe with fewer
+/// stars on it.
+///
+/// RAW's dusk is the file's dawn. `regain_item_charges` runs off one
+/// clock for every charge-bearing item in the engine, and a second one
+/// existing so a single robe could refill twelve hours out of step
+/// would be a rule nothing else in the file could see.
+pub static PULL_ROBE_STAR: MagicMissileItem = MagicMissileItem {
+    action_name: "pull a star",
+    action_aliases: &["star", "robe star", "pull star"],
+    item_name: ROBE_OF_STARS_NAME,
+    log_label: "robe of stars",
+    darts: 7,
+    reach: 30,
+    charge_cost: Some(1),
+};
+
 pub static USE_GREATER_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileItem {
     action_name: "use greater wand of magic missiles",
     action_aliases: &["mm wand+", "wand+"],
@@ -2149,6 +2225,7 @@ pub static USE_GREATER_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileIt
     log_label: "greater wand of magic missiles",
     darts: 7,
     reach: 30,
+    charge_cost: None,
 };
 
 /// Scroll of Burning Hands — 3d6 fire DEX-save cone, RAW's fifteen feet
@@ -4029,6 +4106,7 @@ pub static USE_RING_OF_SPELL_STORING: MagicMissileItem = MagicMissileItem {
     darts: 3,
     // 30 tile reach matches the Scroll of Magic Missile (150 ft RAW).
     reach: 30,
+    charge_cost: None,
 };
 
 /// Scroll of Mass Cure Wounds — Action; self-centered 4-tile burst that

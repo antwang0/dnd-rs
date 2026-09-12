@@ -1928,7 +1928,8 @@ pub static POTION_OF_BLUR: Item = Item {
 
 /// Greater Wand of Magic Missiles — 7-dart variant of the Magic Missile
 /// spell. Top of the MM loot ladder: Scroll (3 darts) → Wand (5 darts)
-/// → Greater Wand (7 darts). Matches the RAW level-4 upcast. Single-use
+/// → Greater Wand (7 darts). Seven darts is RAW's level-5 slot — the
+/// spell prints three and adds one per level above 1st. Single-use
 /// consumable. Fires through the shared `MagicMissileItem` impl.
 pub static GREATER_WAND_OF_MAGIC_MISSILES: Item = Item {
     name: "Greater Wand of Magic Missiles",
@@ -4395,6 +4396,42 @@ pub static MACE_OF_TERROR: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Robe of Stars** (Wondrous item, Very Rare) — *"You gain a +1 bonus
+/// to saving throws while you wear it"*, and six stars that each cast
+/// a level-5 Magic Missile.
+///
+/// Two clauses, both here. The `+1` is `ItemBonuses::save`, the plainest
+/// field in the file; the stars are
+/// `item_actions::PULL_ROBE_STAR`, the first row on the Magic Missile
+/// chassis priced in charges rather than in the object.
+///
+/// What it is, in one line: the Greater Wand of Magic Missiles, six
+/// times, with a Cloak of Protection's save bonus stitched into it. The
+/// wand fires seven auto-hit darts once and is gone. The robe fires the
+/// same volley six times and gets `1d6` of them back overnight, which
+/// makes it the first repeatable single-target damage in the pool that
+/// is not a weapon — and auto-hit damage at that, so it is the answer
+/// to the one target the party cannot roll well enough to touch.
+///
+/// RAW's third property — stepping onto the Astral Plane and back — is
+/// absent, and is the same kind of clause as the Cloak of
+/// Etherealness's: a plane the engine's board does not have.
+pub static ROBE_OF_STARS: Item = Item {
+    name: "Robe of Stars",
+    glyph: 'R',
+    bonuses: ItemBonuses { save: 1, ..ItemBonuses::ZERO },
+    on_use: &[&crate::actions::item_actions::PULL_ROBE_STAR],
+    charges: 6,
+    // RAW's "1d6 removed stars reappear", at dusk rather than at dawn —
+    // see `PULL_ROBE_STAR` for why the engine's one clock is the right
+    // number of clocks.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 6)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// **Ring of Shooting Stars** (Ring, Very Rare) — six charges of
 /// artillery on a finger, refilled `1d6` at dawn.
 ///
@@ -5637,9 +5674,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &EYES_OF_THE_EAGLE,
     // The sixth belt, and the only one that is not a Strength score.
     &BELT_OF_DWARVENKIND,
-    // The first area in the pool that is not spent by using it. Single
-    // entry — six refilling motes is a lot of dungeon.
+    // The first area in the pool that is not spent by using it, and the
+    // first repeatable single-target volley. Single entries — six
+    // refilling shots apiece is a lot of dungeon.
     &RING_OF_SHOOTING_STARS,
+    &ROBE_OF_STARS,
     // +3 Weapon — top tier of the magical-weapon ladder. Single-entry
     // rare drop, paired with the existing +1 (common, weight 2) and
     // +2 (single entry) tiers.

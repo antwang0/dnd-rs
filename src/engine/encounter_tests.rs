@@ -97621,6 +97621,79 @@ fn the_ring_of_shooting_stars_empties_and_stays_a_ring() {
     );
 }
 
+/// The Robe of Stars carries both of its printed clauses, and the
+/// second one is the same charge lesson on a third chassis.
+///
+/// `MagicMissileItem` was four scrolls and wands, each of which *is*
+/// its own single use. A robe is not, so the chassis grew the same
+/// `charge_cost` the two area chassis already have. Pinned here rather
+/// than only beside the item because the failure mode is silent in the
+/// same direction every time: a robe billed as a consumable vanishes
+/// off the wearer on the first star, and looks from the inside exactly
+/// like a robe that worked once.
+#[test]
+fn the_robe_of_stars_keeps_its_save_bonus_and_its_own_existence() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::types::AbilityScoreType;
+    use crate::items::item_template::ROBE_OF_STARS;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    // Seven darts average twenty-four and a zombie has twenty-two, so
+    // without this the first volley kills the target and the other five
+    // have nothing to shoot at. The claim is about the robe.
+    e.actors.get_mut(&zombie).unwrap().bump_max_hp(500);
+    e.actors.get_mut(&zombie).unwrap().heal(500);
+
+    // Clause one: the flat save bonus, on the lane every other flat
+    // save term in the file already rides.
+    let bare_save = e.actors[&wizard].save_modifier(AbilityScoreType::Wisdom);
+    e.actors.get_mut(&wizard).unwrap().pickup_item(&ROBE_OF_STARS);
+    assert_eq!(
+        e.actors[&wizard].save_modifier(AbilityScoreType::Wisdom),
+        bare_save + 1
+    );
+
+    // Clause two: six volleys, each of which lands — Magic Missile is
+    // auto-hit, so "some damage" is not a die roll away from certain.
+    let star = *e.actors[&wizard]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "pull a star")
+        .expect("wearing the robe offers a star");
+    let at = vec![zombie];
+    for shot in 0..ROBE_OF_STARS.charges {
+        assert!(
+            star.validate_input(&e, wizard, Some(&at), None, None),
+            "shot {shot}: the robe should still have a star on it"
+        );
+        let before = e.actors[&zombie].hitpoints();
+        for ef in star.execute(&mut e, wizard, Some(&at), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&zombie].hitpoints() < before,
+            "shot {shot}: seven auto-hit darts and nothing landed"
+        );
+        e.actors.get_mut(&wizard).unwrap().reset_for_new_round();
+        e.actors.get_mut(&zombie).unwrap().heal(500);
+    }
+    assert!(
+        !star.validate_input(&e, wizard, Some(&at), None, None),
+        "a seventh star came off a six-star robe"
+    );
+    assert!(
+        e.actors[&wizard].has_item_named(ROBE_OF_STARS.name),
+        "the last star took the robe with it"
+    );
+}
+
 /// Destroy Undead destroys, rather than dealing enough damage to look
 /// like it destroyed.
 ///
