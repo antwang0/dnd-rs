@@ -94597,6 +94597,133 @@ fn a_dragon_slayer_bites_a_dragon_and_not_a_goblin() {
     );
 }
 
+/// The Oathbow pays its 3d6 to one named creature and taxes the archer
+/// for everyone else — and does neither until the oath is sworn.
+///
+/// Four claims, which are the four states the bow has:
+///
+///   - **Unsworn, it is an ordinary bow.** The marker is on the archer
+///     from the moment they pick it up, and a marker with no link is
+///     `focus_link_mode`'s no-op — so picking the bow up must not cost
+///     anything.
+///   - **Sworn, the die fires at the quarry.** The first rider on the
+///     table gated by `attacker_link` rather than by what the target is.
+///   - **…and at nobody else.** The half that makes it the Oathbow
+///     rather than a Very Rare `+3d6`.
+///   - **The tax lands.** Disadvantage on shots at anything but the
+///     quarry, which is the engine's translation of RAW's "with all
+///     other weapons" — see `Condition::Oathbound`.
+#[test]
+fn the_oathbow_pays_one_quarry_and_taxes_every_other_shot() {
+    use crate::actions::item_actions::SWEAR_OATHBOW;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::encounter::RollMode;
+    use crate::items::item_template::OATHBOW;
+
+    // One board shape, reused: an archer and two goblins at range, so
+    // the RangedWeapon lane is the one the swing lands on.
+    let board = |seed: u64| {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let archer = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let quarry = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 1)
+            .unwrap();
+        e.actors.get_mut(&archer).unwrap().pickup_item(&OATHBOW);
+        (e, archer, quarry, bystander)
+    };
+    let shoot = |e: &mut EncounterInstance, archer: usize, at: usize| {
+        let bow = e.actors[&archer]
+            .find_action("longbow")
+            .expect("the ranger chassis carries a longbow");
+        for ef in bow.execute(e, archer, Some(&vec![at]), None, None) {
+            ef.apply(e);
+        }
+    };
+    let swear = |e: &mut EncounterInstance, archer: usize, at: usize| {
+        let aei = ActionExecutionInfo::new(&SWEAR_OATHBOW, archer, Some(vec![at]), None, None);
+        assert!(aei.validate(e), "the archer should be able to swear");
+        e.push_action(aei);
+        e.process_stack();
+    };
+
+    // Unsworn: the flag is on and it costs nothing.
+    let (mut e, archer, quarry, bystander) = board(0);
+    assert!(e.actors[&archer].has_condition(Condition::Oathbound));
+    assert_eq!(
+        e.compute_attack_mode(archer, bystander, false),
+        RollMode::Normal,
+        "an Oathbow with no oath on it must not tax anything"
+    );
+    for seed in 0..30u64 {
+        let (mut e, archer, quarry, _b) = board(seed);
+        shoot(&mut e, archer, quarry);
+        assert!(
+            !e.messages().iter().any(|m| m.contains("oathbow")),
+            "seed {seed}: an unsworn bow paid its die out"
+        );
+    }
+
+    // Sworn: the tax is on every other target, and off the quarry.
+    swear(&mut e, archer, quarry);
+    assert_eq!(
+        e.actors[&archer].linked_by(Condition::Oathbound),
+        Some(quarry)
+    );
+    assert_eq!(
+        e.compute_attack_mode(archer, bystander, false),
+        RollMode::Disadvantage,
+        "the oath's price is meant to be paid on every other shot"
+    );
+    assert_eq!(
+        e.compute_attack_mode(archer, quarry, false),
+        RollMode::Normal,
+        "the quarry is the exception the tax exists to carve out"
+    );
+    // Swearing at the same creature twice changes nothing and is
+    // refused rather than sold for a bonus action.
+    assert!(
+        !ActionExecutionInfo::new(&SWEAR_OATHBOW, archer, Some(vec![quarry]), None, None)
+            .validate(&e),
+        "re-swearing at the standing quarry should be refused"
+    );
+
+    // And the die: it lands on the quarry across seeds and never on the
+    // bystander. Swept the way the Dragon Slayer's gate is, and for the
+    // same reason — a gate that never passes and a gate that always
+    // passes look identical from one side.
+    let mut bit_the_quarry = false;
+    for seed in 0..40u64 {
+        for aim_at_quarry in [true, false] {
+            let (mut e, archer, quarry, bystander) = board(seed);
+            swear(&mut e, archer, quarry);
+            e.actors.get_mut(&archer).unwrap().reset_for_new_round();
+            let at = if aim_at_quarry { quarry } else { bystander };
+            shoot(&mut e, archer, at);
+            let fired = e.messages().iter().any(|m| m.contains("oathbow:"));
+            if aim_at_quarry {
+                bit_the_quarry |= fired;
+            } else {
+                assert!(
+                    !fired,
+                    "seed {seed}: the oathbow paid its die to a creature nobody swore at"
+                );
+            }
+        }
+    }
+    assert!(
+        bit_the_quarry,
+        "forty seeds should land at least one arrow on the sworn goblin"
+    );
+}
+
 /// The Giant Slayer's knockdown rolls against the DC the *sword* prints,
 /// not against the wielder's spellcasting.
 ///

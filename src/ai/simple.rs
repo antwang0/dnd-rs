@@ -128,6 +128,18 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2f. Name a quarry. The rung directly above arms a weapon that
+        //     pays out against a kind of creature; this one arms a
+        //     weapon that pays out against one creature, and the
+        //     difference is that it has to choose. Same free-bonus-
+        //     action lane and immediately below its sibling, because an
+        //     archer who is also holding a Flame Tongue should light it
+        //     first — that rider is unconditional and this one is a bet.
+        //     See `try_swear_oathbow`.
+        if let Some(aei) = try_swear_oathbow(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3. Heal a dying / wounded ally.
         if let Some(aei) = try_support_heal(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -1952,6 +1964,105 @@ fn try_kindle_weapon(
     unlit
         .into_iter()
         .find_map(|name| try_self_action(encounter, actor_id, name))
+}
+
+/// Point the **Oathbow** at something, and pick the right something.
+///
+/// The sibling of `try_kindle_weapon` one rung up, and the rung that
+/// has to make a judgement where that one does not. A Flame Tongue is
+/// worth lighting the moment anything is in range, because its rider
+/// fires against everything; the Oathbow's 3d6 is owed to one creature
+/// for the rest of the fight, and swearing at the wrong one costs the
+/// archer Disadvantage on every other shot they take — see
+/// `Condition::Oathbound` for why the tax is the shape it is.
+///
+/// So the pick is **the most hit points still standing**, among the
+/// hostiles the archer can actually see, rather than the nearest. Three
+/// reasons, and they point the same way:
+///
+///   - The oath is a bet on how many arrows will go into this creature
+///     before the fight ends, and the fattest enemy on the board is the
+///     one that will still be there to shoot at.
+///   - An archer's nearest enemy is the one that closed on them, which
+///     is the target they most want to stop shooting at and start
+///     backing away from.
+///   - The 3d6 is worth least against something a plain arrow would
+///     have killed anyway.
+///
+/// Deliberately fires **once**: the action's own validator refuses a
+/// re-swear at the standing quarry, and this rung does not go looking
+/// for a better one afterwards. A bonus action spent every round
+/// re-aiming is a bonus action not spent on anything else, and an
+/// archer who keeps changing their mind pays the tax all fight and
+/// collects the die never.
+///
+/// A quarry that dies leaves the link pointing at a body, and the rung
+/// re-swears then: `is_combat_active` is false for the dead, so the
+/// standing link stops matching a live enemy and the search runs again.
+fn try_swear_oathbow(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    // Cheapest gate first: almost nobody is carrying the bow.
+    if !actor.has_condition(Condition::Oathbound) {
+        return None;
+    }
+    // `available_actions` and not `find_action`: the command phrase is
+    // an `Item::on_use`, so it is not on the archer's own action list —
+    // the same lookup `try_self_action` makes for the kindled blades one
+    // rung up, and for the same reason.
+    let action = actor
+        .available_actions()
+        .into_iter()
+        .find(|a| a.name() == "swear oathbow")?;
+    // And a bow to shoot with. The rider's lane is `RangedWeapon`, so a
+    // swordsman who picked the Oathbow up off the floor collects the
+    // 3d6 never and pays the Disadvantage tax on every swing — which is
+    // not a trade, it is a mistake with a magic item in it. The gate
+    // reads the actor's own action list rather than the inventory
+    // because what matters is whether they have something to shoot,
+    // not what they are carrying it in.
+    if !actor
+        .available_actions()
+        .iter()
+        .any(|a| a.is_harmful() && a.deals_damage() && !a.is_melee_attack())
+    {
+        return None;
+    }
+    let my_team = actor.team();
+    // A standing oath on a living enemy is left alone — see the
+    // docstring on why this rung does not shop around.
+    if let Some(quarry) = actor.linked_by(Condition::Oathbound)
+        && encounter
+            .actors
+            .get(&quarry)
+            .is_some_and(|q| q.is_combat_active())
+    {
+        return None;
+    }
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for tid in encounter.sorted_actor_ids() {
+        let Some(t) = encounter.actors.get(&tid) else {
+            continue;
+        };
+        if tid == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        if !encounter.viewer_can_see(actor_id, tid) {
+            continue;
+        }
+        let hp = t.hitpoints();
+        let Some(aei) = afford_cast(encounter, actor_id, action, Some(vec![tid]), None) else {
+            continue;
+        };
+        // Strictly greater, so `sorted_actor_ids` breaks ties by id and
+        // the choice stays reproducible from the seed.
+        if best.as_ref().is_none_or(|(best_hp, _)| hp > *best_hp) {
+            best = Some((hp, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Strike a **Continual Flame** on the floor underfoot, when the free
@@ -12300,6 +12411,7 @@ mod tests {
         const ADDED: &[&str] = &[
             "Dragon Slayer",
             "Giant Slayer",
+            "Oathbow",
             "Sun Blade",
             "Mace of Disruption",
             "Flame Tongue",
@@ -12353,6 +12465,16 @@ mod tests {
             // exception and is required below beside the two originals:
             // it has no gate at all on its base die.
             "holy avenger",
+            // The Oathbow is floor material for a sharper reason than
+            // the slayers are. Their gate is the draw — a giant in the
+            // room — and this one's is the *wielder*: the rider's lane
+            // is `RangedWeapon` and `try_swear_oathbow` refuses to swear
+            // at all for a chassis with nothing to shoot, so twelve
+            // seeds of mostly-melee PCs can legitimately never reach it.
+            // `the_ai_swears_the_oathbow_at_the_enemy_worth_swearing_at`
+            // is where the rung is pinned; this line is here so that a
+            // fight that *does* draw an archer counts toward the floor.
+            "oathbow:",
             "dwarven thrower",
             "sword of sharpness",
             "sword of life stealing",
@@ -19434,6 +19556,105 @@ mod tests {
         );
     }
 
+    /// The AI swears the Oathbow at something worth swearing at, and
+    /// does not swear it at all when it has nothing to shoot.
+    ///
+    /// Three claims, and the middle one is the whole rung:
+    ///
+    ///   - **An archer swears.** The command phrase is an
+    ///     `Item::on_use`, so it is not on the ranger's own action list
+    ///     — a rung that looked it up with `find_action` would find
+    ///     nothing and fail silently, which is exactly what the first
+    ///     draft of this one did.
+    ///   - **At the fattest enemy it can see**, not the nearest. The
+    ///     oath lasts the fight and taxes every other shot, so it
+    ///     belongs on the creature that will still be standing to shoot
+    ///     at — see `try_swear_oathbow`.
+    ///   - **A swordsman does not swear at all.** The rider's lane is
+    ///     `RangedWeapon`; for a chassis with no ranged attack the oath
+    ///     is a tax with no rebate, and the rung refuses rather than
+    ///     handing a melee fighter Disadvantage on everything they were
+    ///     about to hit.
+    #[test]
+    fn the_ai_swears_the_oathbow_at_the_enemy_worth_swearing_at() {
+        use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+        use crate::conditions::Condition;
+        use crate::items::item_template::OATHBOW;
+
+        let tp = TerrainGenParams {
+            width: 24,
+            height: 16,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        // A clear room: the ogre is further away than the goblin, so
+        // "fattest" and "nearest" disagree and the test can tell which
+        // one the rung used.
+        let board = |wielder: &'static crate::actors::actor_template::CreatureTemplate| {
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+            let pc = e
+                .instantiate_creature(wielder, Coordinate::new(2, 8), 0, 0)
+                .unwrap();
+            let goblin = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+                .unwrap();
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(16, 8), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&pc).unwrap().pickup_item(&OATHBOW);
+            e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+            assert!(
+                e.actors[&ogre].hitpoints() > e.actors[&goblin].hitpoints(),
+                "the test needs the far enemy to be the fat one"
+            );
+            (e, pc, goblin, ogre)
+        };
+
+        let (e, ranger, goblin, ogre) = board(&RANGER_TEMPLATE);
+        match SimpleAi.decide(&e, ranger) {
+            ControllerDecision::Act(aei) => {
+                assert_eq!(
+                    aei.action().name(),
+                    "swear oathbow",
+                    "an archer holding the bow should name a quarry before anything else"
+                );
+                assert_eq!(
+                    aei.target_ids().and_then(|t| t.first().copied()),
+                    Some(ogre),
+                    "the oath went on the near goblin rather than the enemy \
+                     that will still be there to shoot at"
+                );
+                let _ = goblin;
+            }
+            ControllerDecision::AwaitInput => panic!("the ranger asked for input"),
+        }
+
+        // A Champion fighter is the greatsword build and carries
+        // nothing that leaves their hand — not a bow, not a javelin, not
+        // the barbarian's thrown handaxe, which *would* collect the
+        // rider and so *should* swear. Whatever the Champion decides to
+        // do, swearing is not it; the marker is still on them, so the
+        // refusal is the rung's and not the inventory's.
+        let (e, champion, _g, _o) = board(&CHAMPION_TEMPLATE);
+        assert!(e.actors[&champion].has_condition(Condition::Oathbound));
+        if let ControllerDecision::Act(aei) = SimpleAi.decide(&e, champion) {
+            assert_ne!(
+                aei.action().name(),
+                "swear oathbow",
+                "a chassis with nothing to shoot bought the tax and none of the rebate"
+            );
+        }
+    }
+
     /// Every subclass added in this batch is actually reached for by the
     /// AI in a real fight.
     ///
@@ -19450,6 +19671,7 @@ mod tests {
     /// wiring test would only be re-testing the rider, which the
     /// engine-side sweep already covers.
     
+
 
 
 

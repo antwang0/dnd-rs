@@ -2642,6 +2642,19 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // the clause at all. Same shape as Dueled and Goaded, arriving from
     // an object rather than from a spell or a maneuver.
     crate::conditions::Condition::Berserk,
+    // SRD 5.2 **Oathbow**: "The target of your attack becomes your sworn
+    // enemy." The link is that creature, and both of the bow's clauses
+    // are unwritable without it — the 3d6 is owed to one target and the
+    // Disadvantage is owed to everyone else.
+    //
+    // The one row on this list whose flag and whose link arrive at
+    // different moments. Every other linked condition is installed with
+    // its link in the same breath, by the effect that applies it; the
+    // Oathbound flag comes from `Item::passive_conditions` when the bow
+    // is picked up, and the link comes later, from the command phrase.
+    // A flag with no link is the bow's unsworn state and reads as no
+    // clause at all, which is what makes the two-step legal here.
+    crate::conditions::Condition::Oathbound,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

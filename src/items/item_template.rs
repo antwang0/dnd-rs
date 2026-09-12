@@ -3290,6 +3290,47 @@ pub static DRAGON_SLAYER: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Oathbow** (Weapon, longbow; Very Rare) — *"When you use this weapon
+/// to make a ranged attack, you can, as a command phrase, say, 'Swift
+/// death to you who have wronged me.' The target of your attack becomes
+/// your sworn enemy … You gain a +3d6 bonus to damage rolls against your
+/// sworn enemy … while your sworn enemy lives, you have Disadvantage on
+/// attack rolls with all other weapons."*
+///
+/// The third bane weapon on the shelf and the only one whose bane is a
+/// creature rather than a kind of creature. The Dragon Slayer's 3d6 is
+/// owed to eleven stat blocks and the Giant Slayer's 2d6 to ten; this
+/// one is owed to whichever single creature the archer pointed at, and
+/// that is both why it is a tier dearer and why it is the item that
+/// finally needed `OnHitRider::attacker_link`.
+///
+/// It is also the first weapon on the shelf whose clause the wielder has
+/// to *do* something to get. Every other rider here is a standing
+/// property of holding the thing — pick the Sun Blade up and the undead
+/// start burning — and the Oathbow does nothing at all until somebody
+/// spends a bonus action on `item_actions::SWEAR_OATHBOW`. What that
+/// buys, and what it costs, is one condition link: see
+/// `Condition::Oathbound` for both clauses and for the direction the
+/// Disadvantage tax had to be translated in.
+///
+/// No `+N`. RAW gives the Oathbow no bonus to attack or damage rolls at
+/// all, which is unusual for a Very Rare weapon and is the point — the
+/// bow is worth nothing against a room and a great deal against one
+/// thing in it.
+pub static OATHBOW: Item = Item {
+    name: "Oathbow",
+    glyph: ')',
+    // Magical without being a `+N`: RAW's Oathbow is a magic weapon, so
+    // it overcomes the resistance a wraith or a werewolf has to
+    // nonmagical attacks, and it is the file's only demonstration that
+    // `grants_magical_attacks` is not derived from `attack_bonus` —
+    // which is exactly what that field's docstring says it is for.
+    grants_magical_attacks: true,
+    on_use: &[&crate::actions::item_actions::SWEAR_OATHBOW],
+    passive_conditions: &[crate::conditions::Condition::Oathbound],
+    ..Item::DEFAULTS
+};
+
 /// **Giant Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus to
 /// attack rolls and damage rolls… When you hit a Giant with this weapon,
 /// the Giant takes an extra 2d6 damage of the weapon's type and must
@@ -4629,6 +4670,7 @@ pub static STAVES: &[&Item] = &[
 /// which ones there are.
 pub static MAGIC_ARMOURY: &[&Item] = &[
     &DRAGON_SLAYER,
+    &OATHBOW,
     &GIANT_SLAYER,
     &SUN_BLADE,
     &MACE_OF_DISRUPTION,
@@ -5328,6 +5370,7 @@ pub static LOOT_POOL: &[&Item] = &[
     // worth every other item in this file put together. Even odds
     // across the family is what keeps that swing in the game.
     &DRAGON_SLAYER,
+    &OATHBOW,
     &GIANT_SLAYER,
     &SUN_BLADE,
     &MACE_OF_DISRUPTION,
@@ -5594,6 +5637,14 @@ mod tests {
         let wiring: &[(&Item, Condition, bool)] = &[
             (&DRAGON_SLAYER, Condition::DragonSlaying, false),
             (&GIANT_SLAYER, Condition::GiantSlaying, false),
+            // The Oathbow's `false` is the interesting one on this
+            // column. It is not "kindled" — nothing has to be lit and
+            // the marker arrives on pickup like the slayers' — but the
+            // rider still does nothing until `SWEAR_OATHBOW` sets the
+            // marker's *link*. The column asks how the marker is
+            // installed, not whether the clause is live, and those come
+            // apart here for the first time.
+            (&OATHBOW, Condition::Oathbound, false),
             (&SUN_BLADE, Condition::SunBladed, true),
             (&MACE_OF_DISRUPTION, Condition::Disrupting, false),
             (&FLAME_TONGUE, Condition::FlameTongued, true),

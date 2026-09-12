@@ -2726,6 +2726,22 @@ const FOCUS_LINK_DISADVANTAGES: &[Condition] = &[
     // behaviour and the right direction to fail in: a grapple that
     // cannot name a grappler cannot say which swing is the exception.
     Condition::Grappled,
+    // SRD 5.2 **Oathbow**, the price of the oath: *"while your sworn
+    // enemy lives, you have Disadvantage on attack rolls with all other
+    // weapons."*
+    //
+    // The sixth arrival at this shape and the second from an object,
+    // after the Berserker Axe two rows up — and it lands here for the
+    // same reason that one does. RAW's clause is about the *weapon* in
+    // the archer's hands, the engine binds no swing to an item, and the
+    // nearest sentence it can enforce is the one this cohort exists to
+    // say. See `Condition::Oathbound` for the direction the translation
+    // moves in and why that direction is the safe one.
+    //
+    // An Oathbow that has not been sworn carries the flag with no link,
+    // which `focus_link_mode` reads as no penalty — so the tax starts
+    // when the oath does.
+    Condition::Oathbound,
 ];
 
 fn focus_link_mode(

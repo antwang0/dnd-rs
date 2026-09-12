@@ -3018,6 +3018,47 @@ pub enum Condition {
     /// the save on the swing that landed the die — RAW's two clauses are
     /// one sentence and they resolve together.
     GiantSlaying,
+    /// Holding a 5e **Oathbow** — *"When you nock an arrow on this bow,
+    /// it whispers in Elvish, 'Swift defeat to my enemies.' When you use
+    /// this weapon to make a ranged attack, you can, as a command
+    /// phrase, say, 'Swift death to you who have wronged me.' The target
+    /// of your attack becomes your sworn enemy … You gain a +3d6 bonus
+    /// to damage rolls against your sworn enemy."*
+    ///
+    /// A weapon-borne condition like `DragonSlaying` above, installed by
+    /// `Item::passive_conditions` for as long as the bow is carried, and
+    /// the **first one on this enum that carries a link**. Every other
+    /// weapon condition is a standing clause about a kind of creature —
+    /// a dragon, a giant, an undead — and this one is about one named
+    /// creature that the archer chose, so the flag alone cannot say who
+    /// the bow is angry at. `set_condition_link` is what says it, set by
+    /// `item_actions::SWEAR_OATHBOW` rather than at install: picking the
+    /// bow up does not tell it who your enemy is.
+    ///
+    /// Both of RAW's clauses ride the link and neither reads the item
+    /// again:
+    ///   - **The 3d6.** A row on `ON_HIT_RIDERS` with the enum's first
+    ///     `attacker_link` gate — see that field for why the table
+    ///     needed a third kind of question.
+    ///   - **The tax.** `FOCUS_LINK_DISADVANTAGES`, which is the
+    ///     engine's standing translation of "this creature and no
+    ///     other": Disadvantage on the archer's attacks against
+    ///     anything that is not their sworn enemy.
+    ///
+    /// The tax is a translation rather than RAW and the direction it
+    /// moves in is worth naming. RAW's penalty is on *"attack rolls with
+    /// all other weapons"* — the archer may shoot the bow at anyone
+    /// freely and is clumsy with the sword on their hip. The engine
+    /// binds no swing to an item (see `DragonSlaying` for why), so that
+    /// clause has nowhere to read from, and the nearest thing it can say
+    /// is the one `Berserk` and `Dueled` already say. It makes the
+    /// archer more fixated than RAW rather than less, which is the safer
+    /// direction for a clause whose whole job is to be the bow's price.
+    ///
+    /// An unsworn Oathbow has no link, and `focus_link_mode` returns
+    /// `Normal` for a flag with no link — so a bow that has not named an
+    /// enemy is an ordinary bow rather than a cursed one.
+    Oathbound,
     /// Holding a lit 5e **Sun Blade** — *"deals Radiant damage instead
     /// of Slashing damage. When you hit an Undead with it, that target
     /// takes an extra 1d8 Radiant damage."*
@@ -3694,6 +3735,7 @@ impl Condition {
             Condition::Braced => "braced",
             Condition::DragonSlaying => "wielding a dragon slayer",
             Condition::GiantSlaying => "wielding a giant slayer",
+            Condition::Oathbound => "wielding an oathbow",
             Condition::SunBladed => "wielding a sun blade",
             Condition::Disrupting => "wielding a mace of disruption",
             Condition::FlameTongued => "wielding a lit flame tongue",

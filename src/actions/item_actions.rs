@@ -5355,6 +5355,7 @@ const FIRE_ELEMENTAL_GEM_NAME: &str = "Fire Elemental Gem";
 const WATER_ELEMENTAL_GEM_NAME: &str = "Water Elemental Gem";
 const HORN_OF_VALHALLA_NAME: &str = "Horn of Valhalla";
 const BAG_OF_TRICKS_NAME: &str = "Bag of Tricks";
+const OATHBOW_NAME: &str = "Oathbow";
 const BRONZE_GRIFFON_FIGURINE_NAME: &str = "Bronze Griffon Figurine";
 const ONYX_DOG_FIGURINE_NAME: &str = "Onyx Dog Figurine";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
@@ -6549,6 +6550,135 @@ impl Action for KindleWeapon {
         })]
     }
 }
+
+/// **Oathbow**'s command phrase — *"Swift death to you who have wronged
+/// me"* — and the only action in the file that names an enemy rather
+/// than doing something to one.
+///
+/// It moves no hit points and rolls no dice. All it does is set the link
+/// on the `Oathbound` flag the bow already installed, and both of RAW's
+/// clauses are written against that link: the 3d6 on `ON_HIT_RIDERS`,
+/// through the `attacker_link` column this bow is the first user of, and
+/// the Disadvantage tax on `FOCUS_LINK_DISADVANTAGES`. So the oath is
+/// one field, and everything the oath *does* was already written.
+///
+/// **A Bonus Action**, which RAW does not price at all: the phrase is
+/// spoken as part of making a ranged attack. The engine has no lane for
+/// a rider that arrives mid-attack, and free would have been wrong in
+/// the other direction — an archer who could re-swear every time a new
+/// target walked into range would never pay the tax, which is the whole
+/// of the bow's cost. A bonus action makes switching quarry a real
+/// decision without making it impossible.
+///
+/// **Re-swearing is allowed**, and deliberately: RAW's oath lasts until
+/// the sworn enemy dies or until dawn, and an engine whose clock is one
+/// fight long would otherwise let a single unlucky choice — the first
+/// goblin that walked into range — cost the archer the rest of the
+/// encounter. What it costs to change your mind is the bonus action and
+/// the tax you were paying in the meantime.
+pub struct SwearOathbow {}
+
+impl Action for SwearOathbow {
+    fn name(&self) -> &str {
+        "swear oathbow"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["oathbow", "swear", "sworn enemy"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        // Nothing lands on the target and no save is rolled, but the
+        // AI's target picker has to read this as something aimed at an
+        // enemy rather than at an ally — and it is: RAW's phrase names
+        // the creature *"who have wronged me"*.
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // A bonus action for anyone holding the bow, the same way the
+        // Flame Tongue's command word is — and for the same reason it
+        // does not route through `item_use_cost`: the bow is in the
+        // archer's hands, not in their pack.
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if !caster_holds(encounter, caster_id, OATHBOW_NAME) {
+            return false;
+        }
+        // Swearing at the creature you have already sworn at changes
+        // nothing and would cost a bonus action to do it — the same
+        // refusal the Sun Blade and the Flame Tongue make when they are
+        // already lit.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.linked_by(Condition::Oathbound) != Some(target_id))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::SetConditionLink;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Deliberately no `consume_caster_item`: the bow is not spent by
+        // being aimed. The validator established it is in hand; all that
+        // is left is that the archer is still on the board.
+        if !caster_holds(encounter, caster_id, OATHBOW_NAME) {
+            return Vec::new();
+        }
+        let archer = encounter.actor_name(caster_id);
+        let quarry = encounter.actor_name(target_id);
+        encounter.log(format!(
+            "{} levels the oathbow at {}: \u{201c}swift death to you who have wronged me.\u{201d}",
+            archer, quarry
+        ));
+        vec![Box::new(SetConditionLink {
+            target_id: caster_id,
+            condition: Condition::Oathbound,
+            source: Some(target_id),
+        })]
+    }
+}
+
+pub static SWEAR_OATHBOW: SwearOathbow = SwearOathbow {};
 
 /// The Flame Tongue's command word. RAW's flames are a 40-ft bright
 /// radius with a 40-ft dim collar — 16 tiles each on the 2.5-ft grid,
