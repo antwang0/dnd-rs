@@ -44,9 +44,26 @@ use crate::{
 /// the `action_only()` cohort) is untouched, so Fast Hands can never
 /// turn a bonus action into a Fireball.
 ///
-/// RAW would draw the line one notch differently: reading *any* scroll
-/// is casting a spell, not using an object, so a Scroll of Cure Wounds
-/// should be excluded here and isn't. Following RAW exactly would mean
+/// **SRD 5.2 prices a potion differently, and the engine does not.**
+/// The book's potion rules read *"Drinking a potion or administering it
+/// to another creature requires a Bonus Action"* — for everybody, with
+/// no feat behind it — where this helper charges an Action and lets a
+/// Thief's Fast Hands buy the discount. That is the 2014 rule, and it
+/// is a real divergence rather than an omission: adopting 5.2's would
+/// make every potion in the pool a bonus action, which is a large
+/// balance move (a healing potion stops costing a turn) and would leave
+/// the Fast Hands branch below with nothing to discount. Worth changing
+/// deliberately or not at all, and worth writing down either way —
+/// note that the shared chassis already carry a per-row
+/// `bonus_action` flag, so the change is a sweep over the potion rows
+/// rather than a rewrite of this function. It would *not* extend to
+/// scrolls: reading one is casting a spell, which is a Magic action in
+/// 5.2 as in 2014.
+///
+/// RAW would draw the line one notch differently in the other
+/// direction too: reading *any* scroll is casting a spell, not using an
+/// object, so a Scroll of Cure Wounds should be excluded here and
+/// isn't. Following RAW exactly would mean
 /// teaching the engine which items are objects and which are spells in a
 /// tube — and the item model has no such axis. `SelfConditionItem` is
 /// the literal same struct behind `DRINK_POTION_OF_BLUR` and
