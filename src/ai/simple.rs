@@ -14933,6 +14933,17 @@ mod tests {
     }
 
     fn empty_arena() -> EncounterInstance {
+        empty_arena_seeded(0)
+    }
+
+    /// `empty_arena` with the dice handed to it.
+    ///
+    /// The same board every time — the generator's parameters are
+    /// fixed — but a different stream behind every roll, which is what
+    /// a test sweeping seeds for "does this ever happen" needs. The
+    /// seedless helper is this one at 0, so the two can never describe
+    /// different arenas.
+    fn empty_arena_seeded(seed: u64) -> EncounterInstance {
         let tp = TerrainGenParams {
             width: 30,
             height: 20,
@@ -14945,7 +14956,7 @@ mod tests {
             pc_template: None,
             start_team: 0,
         };
-        let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
         // Dry, and named for it. "Empty arena" means the board itself
         // does nothing to a fight unless the test asks it to, and a
         // generated pool is not nothing: it is a movement surcharge, two
@@ -19124,6 +19135,79 @@ mod tests {
         assert!(
             super::try_resistance_ward(&e, cleric).is_none(),
             "nobody in reach still needs one"
+        );
+    }
+
+    /// …and a swing the AI can see is one it actually takes.
+    ///
+    /// The list half of that claim is the test below; this is the turn
+    /// half, and it is a different question. `best_attack_against`
+    /// walks `available_actions` and ranks by reach and damage, and a
+    /// Scimitar of Speed's bonus-action swing is neither the longest
+    /// nor the biggest thing a veteran is holding. What makes it get
+    /// used is that the ladder runs again once the Action slot is
+    /// spent: the longsword stops validating, and the only attack left
+    /// the wielder can pay for is the scimitar.
+    ///
+    /// Worth an end-to-end fixture rather than a unit assertion,
+    /// because every part of that belongs to somebody else — the
+    /// affordability gate is in `ActionExecutionInfo::validate`, the
+    /// re-entry is in the driver loop, and the ranking is a sort key
+    /// three screens long. An item that is correctly on the list and
+    /// never reached is the failure this exists for.
+    ///
+    /// **A veteran rather than a Battle Master**, and the reason is the
+    /// item working as designed. The fighter chassis opens its turn by
+    /// spending the bonus action on a maneuver prime, so the scimitar
+    /// is refused every round — which is exactly the competition the
+    /// blade is meant to be in. A chassis with nothing else to do with
+    /// the slot is what makes this a test of reachability rather than
+    /// of the AI's priorities.
+    #[test]
+    fn an_ai_veteran_spends_its_bonus_action_on_the_scimitar_of_speed() {
+        use crate::actions::monster_attacks::SCIMITAR_OF_SPEED_SWING;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
+        use crate::items::item_template::SCIMITAR_OF_SPEED;
+
+        let mut swung_in = 0;
+        for seed in 0..8u64 {
+            let mut e = empty_arena_seeded(seed);
+            let veteran = e
+                .instantiate_creature(&VETERAN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&veteran)
+                .unwrap()
+                .pickup_item(&SCIMITAR_OF_SPEED);
+
+            let ai = SimpleAi;
+            let mut steps = 0usize;
+            while steps < 4_000 && !e.is_complete() {
+                steps += 1;
+                e.process_stack();
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => break,
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            if e.messages()
+                .join("\n")
+                .contains(SCIMITAR_OF_SPEED_SWING.display_name)
+            {
+                swung_in += 1;
+            }
+        }
+        assert!(
+            swung_in > 0,
+            "eight fights and the AI never once cashed the scimitar's bonus action"
         );
     }
 

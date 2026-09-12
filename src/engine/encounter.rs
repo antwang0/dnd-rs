@@ -12717,11 +12717,35 @@ impl EncounterInstance {
     /// that *is* a spell's, `apply_round_end_saves`, never reaches a
     /// ward: it rolls through the plain `roll_save`.)
     ///
-    /// Named rather than repeated at its two call sites because the two
-    /// are the two halves of one printed sentence — Circle of Power's
-    /// save advantage and its no-damage-on-a-success upgrade — and they
-    /// had drifted apart: the damage half gated on the school and the
-    /// advantage half fired on anything with a caster attached.
+    /// Named rather than repeated at its call sites because the first
+    /// two were the two halves of one printed sentence — Circle of
+    /// Power's save advantage and its no-damage-on-a-success upgrade —
+    /// and they had drifted apart: the damage half gated on the school
+    /// and the advantage half fired on anything with a caster attached.
+    /// The Holy Avenger's aura is the third reader.
+    ///
+    /// **It answers "a spell", where RAW's wards say "spells and other
+    /// magical effects".** The narrowing is one lane wide and worth
+    /// naming: a Scroll of Fireball, a Wand of Web and a Staff of
+    /// Fire's Fireball are all, in RAW, spells being cast — and none of
+    /// them carries a school, because `Action::school` is documented as
+    /// `None` for item actions and the hundred-odd rows on the item
+    /// chassis never override it. So a party inside a Circle of Power
+    /// is protected from a mage's Fireball and not from the same
+    /// Fireball off a scroll.
+    ///
+    /// Closing it means a fact the cast frame does not carry — the item
+    /// chassis would each have to declare that what they do is magic —
+    /// and the payoff today is nil: nothing in the bestiary forces a
+    /// saving throw with a magic item, so no ward in the engine has yet
+    /// had the question put to it. Written down rather than fixed,
+    /// because the day a monster picks up a wand is the day this
+    /// matters, and a silent narrowing is worse than a documented one.
+    ///
+    /// A *monster's own ability* is correctly outside either reading. A
+    /// dragon's breath, a bulette's leap and a sphinx's roar are stat
+    /// block traits, and SRD 5.2 labels a trait magical when it is one;
+    /// none of these is.
     pub fn saving_against_a_spell(&self) -> bool {
         self.current_cast().is_some_and(|c| c.school.is_some())
     }
