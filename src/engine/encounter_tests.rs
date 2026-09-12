@@ -30000,6 +30000,120 @@ fn the_elvenkind_shelf_bends_the_two_checks_the_engine_actually_rolls() {
     );
 }
 
+/// The Belt of Dwarvenkind, and the first item scoped by *what failing
+/// a save would cost you*.
+///
+/// SRD 5.2's Resilience clause is two sentences — Poison resistance,
+/// and *"Advantage on saving throws you make to avoid or end the
+/// Poisoned condition"* — and the second one is the shape five features
+/// in `actor_template` apologise for not being able to express. It
+/// lands on `Item::save_advantages_against`, read through
+/// `has_save_advantage_against` beside the `CONDITION_SAVE_ADVANTAGES`
+/// cohort.
+///
+/// Pinned here rather than only beside the item, because the claims are
+/// about the wiring:
+///   - a save *against the Poisoned condition* is lifted;
+///   - a Constitution save against anything else is not — which is
+///     precisely what the two available roundings could not do, and
+///     what the dwarf chassis's own Dwarven Resilience row still does
+///     not do (it widens to every Constitution save, under a docstring
+///     saying so);
+///   - two sources are one notch, not two, so a dwarf wearing the belt
+///     rolls the same die a dwarf without it does;
+///   - the Toughness clause reaches the score through the new bonus
+///     lane, capped at RAW's 20.
+#[test]
+fn the_dwarven_belt_answers_a_poisoner_and_not_a_purple_worm() {
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::{AbilityScoreType, DamageType};
+    use crate::items::item_template::BELT_OF_DWARVENKIND;
+
+    let mut e = ei_with_terrain(12, 12, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+
+    // Toughness: +2, and everything downstream of the score moves.
+    let con = e.actors[&id].ability_score(AbilityScoreType::Constitution);
+    let con_mod = e.actors[&id].ability_modifier(AbilityScoreType::Constitution);
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .pickup_item(&BELT_OF_DWARVENKIND);
+    assert_eq!(
+        e.actors[&id].ability_score(AbilityScoreType::Constitution),
+        (con + 2).min(20)
+    );
+    assert!(e.actors[&id].ability_modifier(AbilityScoreType::Constitution) >= con_mod);
+
+    // Resilience, half one: poison is halved. Read through
+    // `effective_damage`, which is the lane that folds the item's
+    // resistance in — `damage_modifier` answers off the template map
+    // and has never heard of an inventory.
+    assert_eq!(e.actors[&id].effective_damage(20, DamageType::Poison), 10);
+    assert_eq!(e.actors[&id].effective_damage(20, DamageType::Acid), 20);
+
+    // Resilience, half two — and its negative. Read off the save log's
+    // own mode suffix, which is where the resolved notch is printed.
+    let suffix = |e: &mut EncounterInstance, against: Option<Condition>| {
+        let before = e.messages().len();
+        match against {
+            Some(c) => {
+                e.roll_save_vs_condition(id, AbilityScoreType::Constitution, 10, c);
+            }
+            None => {
+                e.roll_save(id, AbilityScoreType::Constitution, 10);
+            }
+        }
+        e.messages()[before..]
+            .iter()
+            .find(|m| m.contains("save:"))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(
+        suffix(&mut e, Some(Condition::Poisoned)).contains("(adv)"),
+        "the belt's save clause never reached the die"
+    );
+    assert!(
+        !suffix(&mut e, Some(Condition::Stunned)).contains("(adv)"),
+        "the belt lifted a save against something it has never heard of"
+    );
+    assert!(
+        !suffix(&mut e, None).contains("(adv)"),
+        "the belt lifted a bare Constitution save"
+    );
+
+    // And the notch does not stack with a creature that already has the
+    // clause by nature. The dwarf's own Dwarven Resilience is a
+    // Constitution-wide row, so it lifts the save with or without the
+    // belt — the claim is that wearing one does not produce a second
+    // "(adv)" in the resolved mode.
+    let mut d = ei_with_terrain(12, 12, &[]);
+    let dwarf = d
+        .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    d.actors
+        .get_mut(&dwarf)
+        .unwrap()
+        .pickup_item(&BELT_OF_DWARVENKIND);
+    let before = d.messages().len();
+    d.roll_save_vs_condition(
+        dwarf,
+        AbilityScoreType::Constitution,
+        10,
+        Condition::Poisoned,
+    );
+    let line = d.messages()[before..]
+        .iter()
+        .find(|m| m.contains("save:"))
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(line.matches("(adv)").count(), 1, "{line}");
+}
+
 /// A grapple names its grappler, and the hold ends the moment that
 /// creature can no longer hold on. Stunning them is the cheapest
 /// way to say "incapacitated" — RAW ends the grapple outright.

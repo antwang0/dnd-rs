@@ -287,6 +287,33 @@ pub struct Item {
     /// item on this lane will name a different skill; the shield is the
     /// only entry today.
     pub skill_check_advantages: &'static [crate::engine::types::Skill],
+    /// Conditions this item's holder rolls saving throws against with
+    /// Advantage — SRD 5.2's Belt of Dwarvenkind, *"you have Advantage
+    /// on saving throws you make to avoid or end the Poisoned
+    /// condition."*
+    ///
+    /// The save-lane twin of `skill_check_advantages` one field up, and
+    /// scoped the same way for the same reason: by *what failing costs
+    /// you*, not by which of the six abilities the die happens to roll
+    /// off. The two available roundings are the ones five features in
+    /// `actor_template` already apologise for — collapse it to flat
+    /// immunity (too strong: nothing on the roster is unpoisonable for
+    /// wearing a belt) or widen it to the ability (too broad: it would
+    /// answer a Constitution save against a purple worm's crushing
+    /// weight).
+    ///
+    /// Read through `ActorInstance::has_save_advantage_against`
+    /// alongside the `CONDITION_SAVE_ADVANTAGES` cohort, so an item's
+    /// row and a creature's trait compose at the same tally and two of
+    /// them still roll at one notch.
+    ///
+    /// **Fails open**, exactly as that cohort does: a save site that
+    /// has not been told which condition it defends against rolls
+    /// through the untagged path and no row fires. That can cost a
+    /// holder an advantage they were owed and can never cost them one
+    /// they already had — which is why the items already collapsed to
+    /// `condition_immunities` stay there rather than moving here.
+    pub save_advantages_against: &'static [crate::conditions::Condition],
     /// True when carrying this item makes its holder roll the
     /// **initiative** d20 with Advantage — the first half of the
     /// Sentinel Shield's sentence.
@@ -556,6 +583,7 @@ impl Item {
         ability_score_floors: &[],
         ability_score_bonuses: &[],
         skill_check_advantages: &[],
+        save_advantages_against: &[],
         sharpens_initiative: false,
         condition_immunities: &[],
         damage_resistances: &[],
@@ -1805,6 +1833,63 @@ pub static GIANT_STRENGTH_BELTS: &[&Item] = &[
     &BELT_OF_CLOUD_GIANT_STRENGTH,
     &BELT_OF_STORM_GIANT_STRENGTH,
 ];
+
+/// **Belt of Dwarvenkind** (Wondrous item, Rare) — the other belt, and
+/// the one that reads nothing like the five above it.
+///
+/// Every Belt of Giant Strength is one sentence on one lane. This one
+/// prints six clauses across three, and three of them land:
+///
+///   - **Toughness** — *"Your Constitution increases by 2, to a maximum
+///     of 20."* The `ability_score_bonuses` lane, and the second item
+///     in the file to use it after the Ioun Stone of Fortitude. Worth
+///     reading beside the belts it sits next to: those *set* Strength
+///     and are worth everything to a wizard and nothing to a giant;
+///     this *adds* two and is worth the same to both.
+///   - **Resilience (resistance half)** — *"You have Resistance to
+///     Poison damage."* `damage_resistances`, which honours 5e's
+///     one-halving rule, so a dwarf who already resists poison gains
+///     nothing here.
+///   - **Resilience (save half)** — *"You also have Advantage on saving
+///     throws you make to avoid or end the Poisoned condition."* The
+///     first carrier of `save_advantages_against`, and the reason that
+///     field exists.
+///
+/// That last clause is worth pausing on, because the engine already has
+/// the same sentence one file over and rounded it. **Dwarven
+/// Resilience** on the dwarf chassis is RAW's *"advantage on saving
+/// throws against poison"*, and it ships as a row on
+/// `FLAG_DRIVEN_SAVE_ADVANTAGES` giving blanket advantage on every
+/// Constitution save, under a cohort docstring conceding the widening.
+/// The belt does not need the concession: `CONDITION_SAVE_ADVANTAGES`
+/// and its item lane are scoped by *what failing the save costs you*,
+/// so the belt answers a poisoner and says nothing about a purple
+/// worm's crushing weight. The two compose at one tally and a dwarf
+/// wearing the belt still rolls at a single notch.
+///
+/// **Darkvision** rides `passive_conditions`, the same install the
+/// Goggles of Night use.
+///
+/// Three clauses do not land. *"You know Dwarvish"* and the Persuasion
+/// advantage with dwarves are conversation, and the conversation
+/// happens before initiative; the beard is a joke RAW makes on purpose.
+///
+/// RAW gates Darkvision and Resilience on the wearer *not* being a
+/// dwarf or duergar, and the engine grants both unconditionally —
+/// which is a difference that cannot show up at the table here. Its own
+/// dwarf chassis already has Darkvision 60 and poison resistance, and
+/// neither lane stacks: a second Darkvision is the same yes, and a
+/// second resistance halves nothing twice. The clause RAW is protecting
+/// against is a redundancy the engine already collapses.
+pub static BELT_OF_DWARVENKIND: Item = Item {
+    name: "Belt of Dwarvenkind",
+    glyph: '~',
+    ability_score_bonuses: &[(crate::engine::types::AbilityScoreType::Constitution, 2, 20)],
+    damage_resistances: &[crate::engine::types::DamageType::Poison],
+    save_advantages_against: &[crate::conditions::Condition::Poisoned],
+    passive_conditions: &[crate::conditions::Condition::Darkvisioned],
+    ..Item::DEFAULTS
+};
 
 /// Potion of Supreme Healing — Action; 10d4+20 self-heal. Top of the
 /// healing-potion tier: Healing (2d4+2) → Greater (4d4+4) → Superior
@@ -5473,6 +5558,8 @@ pub static LOOT_POOL: &[&Item] = &[
     // number every round.
     &BOOTS_OF_ELVENKIND,
     &EYES_OF_THE_EAGLE,
+    // The sixth belt, and the only one that is not a Strength score.
+    &BELT_OF_DWARVENKIND,
     // +3 Weapon — top tier of the magical-weapon ladder. Single-entry
     // rare drop, paired with the existing +1 (common, weight 2) and
     // +2 (single entry) tiers.

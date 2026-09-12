@@ -8453,10 +8453,20 @@ impl ActorInstance {
     /// condition) and compose additively at the tally, so a Magic
     /// Resistant ettin saving against a Hold Person contributes two
     /// advantages and rolls, per RAW, at one notch.
+    /// An item's rows join the cohort's here rather than as a row *in*
+    /// the cohort, because the two are shaped differently: a cohort row
+    /// pairs one predicate with one fixed condition list, and an item
+    /// carries its own list — a single row reading the inventory would
+    /// have to name a condition set it cannot know. Same split
+    /// `has_skill_check_advantage` already makes one lane over.
     pub fn has_save_advantage_against(&self, against: Condition) -> bool {
         CONDITION_SAVE_ADVANTAGES
             .iter()
             .any(|entry| entry.against.contains(&against) && (entry.flag)(self))
+            || self
+                .items
+                .iter()
+                .any(|i| i.save_advantages_against.contains(&against))
     }
 
     /// True if this actor is proficient in the given skill (i.e. adds
