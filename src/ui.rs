@@ -1382,7 +1382,23 @@ mod tests {
         height: u16,
         selected_action_idx: usize,
     ) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(60, height)).expect("test backend");
+        rendered_panel_sized(encounter, 60, height, selected_action_idx)
+    }
+
+    /// `rendered_panel_at` with the terminal *width* as a parameter too.
+    ///
+    /// For the tests that read a line the panel is long enough to
+    /// truncate. The `Items:` line is the only one that can outgrow
+    /// sixty columns — a pack of four magic items is comfortably past it
+    /// — so a test asserting on a mark beside the fourth item's name
+    /// would otherwise be asserting about where the fold lands.
+    fn rendered_panel_sized(
+        encounter: &EncounterInstance,
+        width: u16,
+        height: u16,
+        selected_action_idx: usize,
+    ) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test backend");
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -2575,4 +2591,79 @@ mod tests {
         );
     }
 
+    /// The panel says how many bonds the current actor holds, and marks
+    /// the items that are not paying out — differently, depending on
+    /// which of the two reasons it is.
+    ///
+    /// The panel is the only place any of this can be learned. An
+    /// inert ring is a `+1 AC` the player was counting on and did not
+    /// get, and without a mark beside it the missing point reads as a
+    /// bug in the engine rather than as a rule about the pack. `*` is a
+    /// ceiling and means *go and swap something*; `‡` is RAW's
+    /// "(requires attunement by a spellcaster)" and means *stop
+    /// trying*, because no rearranging of the pack will fix it.
+    #[test]
+    fn the_panel_marks_an_item_that_is_carried_and_doing_nothing() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::{
+            CLOAK_OF_PROTECTION, RING_OF_PROTECTION, SCARAB_OF_PROTECTION, STONE_OF_GOOD_LUCK,
+            TORCH, WAND_OF_FIREBALLS,
+        };
+
+        // Wide and tall, because the claim is about what the lines say
+        // and not about where the panel folds them.
+        let panel_of = |e: &EncounterInstance| rendered_panel_sized(e, 160, 48, 0);
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        e.actors.get_mut(&id).unwrap().pickup_item(&TORCH);
+        assert!(
+            !panel_of(&e).contains("Attuned:"),
+            "a pack with nothing that attunes has no ledger worth printing"
+        );
+
+        // Three bonds, and the ledger appears.
+        for item in [
+            &RING_OF_PROTECTION,
+            &CLOAK_OF_PROTECTION,
+            &STONE_OF_GOOD_LUCK,
+        ] {
+            e.actors.get_mut(&id).unwrap().pickup_item(item);
+        }
+        let panel = panel_of(&e);
+        assert!(panel.contains("Attuned: 3/3"), "{}", panel);
+        assert!(!panel.contains('*'), "nothing is inert yet:\n{}", panel);
+
+        // A fourth over the ceiling: `*`, and the swap advice.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&SCARAB_OF_PROTECTION);
+        let panel = panel_of(&e);
+        assert!(
+            panel.contains(&format!("{}*", SCARAB_OF_PROTECTION.name)),
+            "the scarab is inert and unmarked:\n{}",
+            panel
+        );
+        assert!(panel.contains("unattune"), "{}", panel);
+
+        // And a wand a goblin will never be able to use: `‡`, and RAW's
+        // own words instead of advice it cannot act on.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .pickup_item(&WAND_OF_FIREBALLS);
+        let panel = panel_of(&e);
+        assert!(
+            panel.contains(&format!("{}\u{2021}", WAND_OF_FIREBALLS.name)),
+            "the wand is not this creature's and the panel should say so:\n{}",
+            panel
+        );
+        assert!(
+            panel.contains("answers only to a spellcaster"),
+            "{}",
+            panel
+        );
+    }
 }

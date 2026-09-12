@@ -12440,11 +12440,7 @@ impl EncounterInstance {
         // being searched. The sizes are read off the captive, so one
         // ogre holding a halfling walks free and the same ogre holding
         // a knight walks at half pace.
-        let drag_factor: u32 = if self
-            .grapple_captives_of(body_id)
-            .iter()
-            .any(|&c| self.drag_is_encumbering(body_id, c))
-        {
+        let drag_factor: u32 = if self.drags_an_encumbering_captive(body_id) {
             2
         } else {
             1
@@ -17969,6 +17965,25 @@ impl EncounterInstance {
             .collect();
         out.sort_unstable();
         out
+    }
+
+    /// True when `grappler_id` is holding anything heavy enough to slow
+    /// it down.
+    ///
+    /// The form `dijkstra_path` reads, and the reason it is not
+    /// `grapple_captives_of(..).iter().any(..)`: the pathfinder asks
+    /// this once per path query and the AI asks the pathfinder dozens of
+    /// times per turn, so the composed form would allocate a `Vec` per
+    /// question to answer a `bool` that almost always turns out `false`.
+    /// One scan, no allocation, and it stops at the first captive that
+    /// weighs something.
+    fn drags_an_encumbering_captive(&self, grappler_id: usize) -> bool {
+        self.actors.iter().any(|(id, a)| {
+            *id != grappler_id
+                && a.is_combat_active()
+                && a.linked_by(Condition::Grappled) == Some(grappler_id)
+                && self.drag_is_encumbering(grappler_id, *id)
+        })
     }
 
     /// True when hauling `captive_id` around costs `grappler_id`
