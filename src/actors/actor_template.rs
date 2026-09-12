@@ -8372,8 +8372,17 @@ impl ActorInstance {
     /// Both PCs (driven by `level`) and monsters (whose CR is roughly
     /// equivalent to a player level) read from the same scale via
     /// `proficiency_bonus_for_level` so the curve lives in one place.
+    /// …plus whatever the holder is carrying: SRD 5.2's Ioun Stone of
+    /// Mastery, *"your Proficiency Bonus increases by 1"*. Summed here
+    /// rather than at the sites that read a proficiency bonus, because
+    /// the whole reason RAW writes the clause this way is that there are
+    /// a dozen of them — the attack roll, the save, the skill check, the
+    /// spell save DC, the spell attack bonus, the escape contest — and
+    /// they all come through this one expression. See
+    /// `ItemBonuses::proficiency`.
     pub fn proficiency_bonus(&self) -> i32 {
         crate::engine::util::proficiency_bonus_for_level(self.effective_level())
+            + self.total_item_bonuses().proficiency
     }
 
     /// Linear XP value: CR × 200. Linear is good enough for the dungeon
@@ -12698,14 +12707,45 @@ mod tests {
         assert_eq!(f.item_damage_bonus(), 2, "bracers should bump damage by 2");
     }
 
+    /// The Ioun Stone of Mastery moves one number, and that number
+    /// moves six others — which is both narrower and wider than the
+    /// `+1 attack / +1 save` it used to ship.
     #[test]
-    fn ioun_stone_of_mastery_grants_attack_and_save_bonus() {
-        let mut f = make(&crate::actors::creatures::fighters::FIGHTER_TEMPLATE);
-        let base_attack = f.item_attack_bonus();
-        let base_save = f.total_item_bonuses().save;
+    fn ioun_stone_of_mastery_moves_the_proficiency_bonus() {
+        use crate::engine::types::AbilityScoreType;
+        let mut f = make(&crate::actors::creatures::wizards::WIZARD_TEMPLATE);
+        let base_prof = f.proficiency_bonus();
+        let base_dc = f.spell_save_dc(AbilityScoreType::Intelligence);
+        let proficient_save = AbilityScoreType::Intelligence;
+        assert!(
+            f.is_save_proficient(proficient_save),
+            "the test needs a save the wizard is actually proficient in"
+        );
+        let base_save = f.save_modifier(proficient_save);
+        let unproficient_save = AbilityScoreType::Strength;
+        assert!(!f.is_save_proficient(unproficient_save));
+        let base_weak_save = f.save_modifier(unproficient_save);
+
         f.pickup_item(&crate::items::item_template::IOUN_STONE_OF_MASTERY);
-        assert_eq!(f.item_attack_bonus(), base_attack + 1);
-        assert_eq!(f.total_item_bonuses().save, base_save + 1);
+
+        assert_eq!(f.proficiency_bonus(), base_prof + 1);
+        assert_eq!(
+            f.spell_save_dc(AbilityScoreType::Intelligence),
+            base_dc + 1,
+            "the spell save DC is the clause's widest consequence and the \
+             one the old flat bonuses never reached"
+        );
+        assert_eq!(f.save_modifier(proficient_save), base_save + 1);
+        assert_eq!(
+            f.save_modifier(unproficient_save),
+            base_weak_save,
+            "a proficiency bonus does not reach a save the class never granted"
+        );
+        // And the flat lanes it used to ride are empty: the stone does
+        // not also hand out a bare +1.
+        let bonuses = f.total_item_bonuses();
+        assert_eq!(bonuses.save, 0);
+        assert_eq!(bonuses.attack_bonus, 0);
     }
 
     /// The Sentinel Shield is a shield with two clauses, and neither of

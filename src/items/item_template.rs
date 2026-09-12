@@ -118,6 +118,25 @@ pub struct ItemBonuses {
     /// expression every save-for-damage and save-or-condition spell in
     /// the engine derives its DC from.
     pub spell_save_dc: i32,
+    /// Flat bonus added to the holder's **proficiency bonus** — SRD
+    /// 5.2's Ioun Stone of Mastery, *"your Proficiency Bonus increases
+    /// by 1"*, and the widest single number an item in this file can
+    /// move.
+    ///
+    /// It is not the sum of the four fields above it and that is the
+    /// point. A proficiency bonus reaches an attack roll only for a
+    /// weapon you are proficient with, a saving throw only for one your
+    /// class grants, and an ability check only for a skill you have —
+    /// and it also reaches the spell save DC, the spell attack bonus,
+    /// and the escape contest. The stone shipped as `+1 attack / +1
+    /// save` with a docstring naming the collapse (*"we collapse the
+    /// proficiency-bump clause onto the load-bearing attack lane"*),
+    /// which paid a wizard for a weapon they are not proficient with and
+    /// paid nobody for the spell DC.
+    ///
+    /// Read at `ActorInstance::proficiency_bonus`, which every one of
+    /// those sites already goes through.
+    pub proficiency: i32,
 }
 
 impl ItemBonuses {
@@ -138,6 +157,7 @@ impl ItemBonuses {
         ranged_ac: 0,
         spell_attack_bonus: 0,
         spell_save_dc: 0,
+        proficiency: 0,
     };
 }
 
@@ -156,6 +176,7 @@ impl std::ops::Add for ItemBonuses {
             ranged_ac: self.ranged_ac + other.ranged_ac,
             spell_attack_bonus: self.spell_attack_bonus + other.spell_attack_bonus,
             spell_save_dc: self.spell_save_dc + other.spell_save_dc,
+            proficiency: self.proficiency + other.proficiency,
         }
     }
 }
@@ -1329,18 +1350,27 @@ pub static BRACERS_OF_ARCHERY: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Ioun Stone of Mastery — passive trinket. RAW (DMG): "your proficiency
-/// bonus increases by 1 while you have this stone." We collapse the
-/// proficiency-bump clause onto the load-bearing attack lane: +1 attack
-/// AND +1 save (the two rolls that proficiency-bonus most consequentially
-/// drives). Distinct loot tier from `+1 Weapon` since this also stacks
-/// the save bonus rather than the damage bonus — caster-flavored.
+/// **Ioun Stone of Mastery** (Wondrous item, Legendary) — *"Your
+/// Proficiency Bonus increases by 1 while this orbits your head."*
+///
+/// The stone shipped as `+1 attack / +1 save`, which is the clause's two
+/// most visible consequences and not the clause. What that missed is
+/// everything proficiency reaches that a flat bonus does not: the spell
+/// save DC, the spell attack roll, every skill check the holder is
+/// proficient in, and the escape contest. What it added is a `+1` on
+/// attacks with weapons the holder has no proficiency in, and on saves
+/// their class never granted — which is the same error in the other
+/// direction.
+///
+/// `ItemBonuses::proficiency` is one number read at
+/// `ActorInstance::proficiency_bonus`, which every one of those sites
+/// already goes through. So the stone is narrower *and* wider than it
+/// was, in exactly the places RAW puts it.
 pub static IOUN_STONE_OF_MASTERY: Item = Item {
     name: "Ioun Stone of Mastery",
     glyph: 'J',
     bonuses: ItemBonuses {
-        attack_bonus: 1,
-        save: 1,
+        proficiency: 1,
         ..ItemBonuses::ZERO
     },
     ..Item::DEFAULTS
