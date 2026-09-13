@@ -2486,6 +2486,22 @@ impl Action for AreaSaveConditionItem {
         false
     }
 
+    /// The whole of what this row does is install `condition`, which is
+    /// exactly the claim `Action::installs_condition` is for — and the
+    /// claim every row on this chassis could have made since it was
+    /// written, without one of them making it.
+    ///
+    /// The AI is what reads it, in two places, and both were wrong
+    /// without it. `burst_would_change` counts a body towards an area
+    /// only when the area would change something about it, so a Wand of
+    /// Web re-webbed the same restrained enemies for as long as it had
+    /// charges; and the control rungs use it to tier an item-granted
+    /// lock. Declaring it is the difference between "this action
+    /// installs a condition" being knowable and being a comment.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(self.condition)
+    }
+
     fn spares_allies(&self) -> bool {
         // The resolver below walks `enemy_burst_targets`, so this
         // chassis has *never* caught an ally — the wand of web does not
@@ -2637,6 +2653,13 @@ pub struct SingleSaveConditionItem {
 impl Action for SingleSaveConditionItem {
     fn name(&self) -> &str {
         self.action_name
+    }
+
+    /// The whole of what this row does — see
+    /// `AreaSaveConditionItem::installs_condition` for the two AI lanes
+    /// that read it and what each did without it.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(self.condition)
     }
 
     fn aliases(&self) -> Vec<&str> {

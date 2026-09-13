@@ -1539,6 +1539,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5a. The same lane, over the pack. A wand, a scroll or a ring
+        //     that takes a creature out of the fight is the same
+        //     decision the rung above makes and a different list — see
+        //     `ActorInstance::item_actions` for why the cohorts above
+        //     could not see one, and `try_item_lockdown` for why the
+        //     object is offered second.
+        if let Some(aei) = try_item_lockdown(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5a'''. Slotted summons — Conjure Animals, Conjure
         //        Elemental, Animate Dead, Animate Objects, and the whole
         //        Tasha's family. Before this rung existed, no AI-driven
@@ -1629,6 +1639,15 @@ impl Controller for SimpleAi {
         //      fire, because a penalty on one beats one creature's
         //      worth of weapon damage.
         if let Some(aei) = try_attrition(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 5b''. Attrition out of the pack — a Wand of Blindness, a
+        //       Scroll of Bestow Curse, a Rope of Entanglement. Beside
+        //       the spell rung above it for the same reason the lockdown
+        //       pair sit together, and below it for the same reason: the
+        //       slot comes back and the scroll does not.
+        if let Some(aei) = try_item_attrition(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -2452,6 +2471,211 @@ const LOCKDOWNS: &[LockdownPick] = &[
     LockdownPick { name: "cause fear", condition: Some(Condition::Frightened) },
     LockdownPick { name: "ray of enfeeblement", condition: Some(Condition::Poisoned) },
 ];
+
+/// The conditions an **item**-granted single-target control action can
+/// install that take a creature out of the fight, strongest first.
+///
+/// The item lane's answer to `LOCKDOWNS`, and it is keyed on the
+/// *condition* rather than on the action's name for the reason the name
+/// list could not be extended: there are thirty single-target control
+/// items in the engine today, every new one would need a hand-written
+/// row, and the failure mode of a missing row is exactly the silence
+/// this rung exists to end. A table of conditions is a table that
+/// answers for the item nobody has written yet.
+///
+/// The order is the priority, as it is on the two name lists, and it is
+/// the same order for the same reason: by how much of the target's turn
+/// the lock takes away. Paralyzed leads because it is the strongest
+/// condition in the game — the target does not act, auto-fails Strength
+/// and Dexterity saves, and every attack from five feet is a critical
+/// hit.
+///
+/// A condition absent from both this table and [`ITEM_ATTRITION_CONDITIONS`]
+/// is one no item rung will ever reach for. That is a deliberate
+/// default rather than an oversight: an install the AI cannot tier is
+/// one it cannot price against a Fireball, and the honest answer to
+/// "how good is this?" from a rung that does not know is not to spend
+/// the Action.
+const ITEM_LOCKDOWN_CONDITIONS: &[Condition] = &[
+    Condition::Paralyzed,
+    Condition::Petrified,
+    Condition::Stunned,
+    Condition::Unconscious,
+    Condition::Asleep,
+    Condition::Incapacitated,
+    Condition::Sphered,
+    Condition::Caged,
+    Condition::Mazed,
+    Condition::Banished,
+    Condition::Dancing,
+    Condition::Feebled,
+    // Tier 2 — the target acts, but not against us. Below every
+    // turn-removal row and above everything on the attrition table,
+    // which is the seam `LOCKDOWNS` draws in the same place.
+    Condition::Dominated,
+    Condition::Charmed,
+];
+
+/// The conditions an item-granted lock can install that leave the target
+/// fighting and merely make it worse at it.
+///
+/// The item lane's `ATTRITION`, split from the table above on the one
+/// question that decides where a control effect belongs in the ladder:
+/// does the target still get to act? The split is not cosmetic. Its rung
+/// sits **below every burst**, and a table that mixed the two would put
+/// a Wand of Blindness above a Fireball — which is the exact mistake
+/// `LOCKDOWNS` and `ATTRITION` were separated to undo, and it would be
+/// worse here, because an item lock is finite: the AI would empty the
+/// party's scroll case one round at a time and never blast anybody.
+const ITEM_ATTRITION_CONDITIONS: &[Condition] = &[
+    // Movement pins first — zero speed is the closest this table gets
+    // to taking a turn away.
+    Condition::Restrained,
+    Condition::EarthenGrasped,
+    Condition::Lifted,
+    // Then the ones that spoil what the target does with the turn it
+    // keeps.
+    Condition::Confused,
+    Condition::Blinded,
+    Condition::Frightened,
+    Condition::Baned,
+    Condition::HeatMetaled,
+    Condition::Poisoned,
+];
+
+/// The walk both **item** control rungs share: offer every control
+/// action the pack grants to every legal enemy, and keep the best pair.
+///
+/// `pick_from_cohort`'s sibling, deliberately not an extension of it.
+/// The two differ in the only two things that matter here:
+///
+///   - **Where the candidates come from.** That one resolves hand-written
+///     rows through `find_action`, which reads the stat block; this one
+///     walks `ActorInstance::item_actions`, which is the pack. An
+///     action on both lists is a spell the creature knows *and* a scroll
+///     of it in the bag, and the rung above has already had its chance
+///     at the spell.
+///   - **How a candidate is tiered.** There, by its position in a
+///     hand-ordered list of names; here, by the condition it declares
+///     through `Action::installs_condition`, looked up in `tiers`.
+///
+/// Membership is otherwise the narrow claim the control lanes make
+/// everywhere: `SingleActor`, harmful, and **not** a damage action. The
+/// last of those is what keeps a Wand of Fireballs and a Scroll of
+/// Disintegrate off this rung — they are artillery, they belong to the
+/// damage lanes, and a rung above the bursts is the last place a blast
+/// should be chosen from.
+///
+/// Selection matches `pick_from_cohort` exactly — highest-HP legal
+/// target wins, ties break to the better tier — because the two rungs
+/// are the same decision made over two lists, and a second selection
+/// rule would be a second thing to keep in step.
+fn pick_item_control(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    tiers: &[Condition],
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    let concentrating = actor.is_concentrating();
+    let candidates: Vec<(usize, &'static (dyn Action + Send + Sync), Condition)> = actor
+        .item_actions()
+        .into_iter()
+        .filter(|a| {
+            matches!(a.targeting_schema(), TargetingSchema::SingleActor)
+                && a.is_harmful()
+                && !a.deals_damage()
+                && !(concentrating && a.holds_concentration())
+        })
+        .filter_map(|a| {
+            let condition = a.installs_condition()?;
+            let tier = tiers.iter().position(|c| *c == condition)?;
+            Some((tier, a, condition))
+        })
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let my_team = actor.team();
+
+    let mut best: Option<(u32, usize, ActionExecutionInfo)> = None;
+    for target_id in encounter.sorted_actor_ids() {
+        let Some(target) = encounter.actors.get(&target_id) else {
+            continue;
+        };
+        if target_id == actor_id || target.team() == my_team || !target.is_combat_active() {
+            continue;
+        }
+        for (tier, action, condition) in candidates.iter() {
+            // The whole of these actions is the install, so a target who
+            // already has it gains nothing — the same claim
+            // `burst_would_change` makes one lane over, and the reason
+            // `installs_condition` is declared on the chassis at all.
+            if target.has_condition(*condition) {
+                continue;
+            }
+            let aei =
+                ActionExecutionInfo::new(*action, actor_id, Some(vec![target_id]), None, None);
+            if !aei.validate(encounter) {
+                continue;
+            }
+            let hp = target.hitpoints();
+            let pick = match &best {
+                None => true,
+                Some((best_hp, best_tier, _)) => {
+                    hp > *best_hp || (hp == *best_hp && tier < best_tier)
+                }
+            };
+            if pick {
+                best = Some((hp, *tier, aei));
+            }
+        }
+    }
+    best.map(|(_, _, aei)| aei)
+}
+
+/// Spend a wand, a scroll or a ring to take the toughest enemy out of
+/// the fight.
+///
+/// The rung below `try_lockdown`, and that placement is the whole
+/// policy: a lock the caster can *cast* costs a slot that comes back
+/// tomorrow, and a lock the party **found** may be the only one they
+/// will ever have. Offering the spell first and the object second is the
+/// order a player would choose, and it costs the rung nothing — by the
+/// time it is reached, the caster either has no such spell or could not
+/// legally land it.
+///
+/// Before this rung, no item-granted single-target lock had ever been
+/// used by an AI-driven creature. Thirty of them are written, tested,
+/// documented and in the loot pool; the cohorts that would have chosen
+/// one resolve their rows against the stat block, so every one of them
+/// was reachable only by a human typing its name. Probed at zero uses in
+/// eight fights apiece for the Wand of Telekinesis, the Wand of
+/// Paralysis, the Iron Bands of Bilarro and the Scroll of Banishment.
+fn try_item_lockdown(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    pick_item_control(encounter, actor_id, ITEM_LOCKDOWN_CONDITIONS)
+}
+
+/// Spend a wand, a scroll or a ring to make the toughest enemy worse at
+/// fighting, once the bursts have declined.
+///
+/// `try_attrition`'s item-lane twin, at the same rung and for the same
+/// reason: a debuff on one creature is worth more than one creature's
+/// worth of weapon damage and less than a blast that catches three. See
+/// [`ITEM_ATTRITION_CONDITIONS`] for why the item lane needs the same
+/// split the spell lane has, and why mixing the two tables would be
+/// worse here than it was there.
+fn try_item_attrition(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    pick_item_control(encounter, actor_id, ITEM_ATTRITION_CONDITIONS)
+}
 
 /// Take the toughest enemy the caster can legally lock out of the fight.
 ///
@@ -19273,7 +19497,10 @@ mod tests {
         e.actors
             .get_mut(&held)
             .unwrap()
-            .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(10));
+            .add_condition(
+                Condition::Paralyzed,
+                crate::conditions::ConditionTimer::Rounds(10),
+            );
 
         let pick = super::try_self_cleanse(&e, medic)
             .expect("an ally is held and the medic is holding the answer");
@@ -19582,6 +19809,141 @@ mod tests {
         }
     }
 
+    /// A lock in the pack is a lock the AI can find.
+    ///
+    /// The regression pin for the oldest silent hole this file has
+    /// turned up. Both single-target control rungs are **name-keyed
+    /// cohorts** resolved through `ActorInstance::find_action`, which
+    /// reads the stat block; every lock an *item* granted was therefore
+    /// invisible to them, and thirty of them are written, tested,
+    /// documented and in the loot pool. Nothing failed. The wands simply
+    /// were never used, by anybody, in any fight, for as long as they
+    /// have existed.
+    ///
+    /// Four items across both new rungs and both billing arms, each on a
+    /// fighter — a chassis with no spell list at all, so a lock that
+    /// lands can only have come out of the pack:
+    ///
+    ///   - **Wand of Hold Monster** — Paralyzed, the head of
+    ///     `ITEM_LOCKDOWN_CONDITIONS`, and a consumable. The Wand of
+    ///     Paralysis is the same condition and is not the row here,
+    ///     because RAW attunes it to a spellcaster and the fixture's
+    ///     whole point is a chassis with no spell list: an unattunable
+    ///     item is inert in the pack, which is correct and would make
+    ///     this a test of the attunement gate.
+    ///   - **Scroll of Banishment** — the same rung off a different
+    ///     chassis, so the walk is shown not to be keyed on the item's
+    ///     kind.
+    ///   - **Wand of Telekinesis** — `ITEM_ATTRITION_CONDITIONS`, the
+    ///     rung below every burst.
+    ///   - **Iron Bands of Bilarro** — Restrained, at the head of the
+    ///     same table.
+    ///
+    /// Eight fights each, and the log has to show it.
+    #[test]
+    fn the_ai_spends_a_lock_it_found_rather_than_carrying_it_to_the_grave() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{Item, LOOT_POOL};
+
+        for name in [
+            "Wand of Hold Monster",
+            "Scroll of Banishment",
+            "Wand of Telekinesis",
+            "Iron Bands of Bilarro",
+        ] {
+            let item: &'static Item = LOOT_POOL
+                .iter()
+                .copied()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} has left the loot pool"));
+            let mut used_in = 0;
+            for seed in 0..8u64 {
+                let mut e = empty_arena_seeded(seed);
+                let pc = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 8), 0, 0)
+                    .unwrap();
+                for (i, y) in [7isize, 9, 11].into_iter().enumerate() {
+                    e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(11, y), 1, i)
+                        .unwrap();
+                }
+                e.actors.get_mut(&pc).unwrap().pickup_item(item);
+
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 8_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages().join("\n").to_lowercase().contains(&name.to_lowercase()) {
+                    used_in += 1;
+                }
+            }
+            assert!(used_in > 0, "eight fights and the {name} was never used");
+        }
+    }
+
+    /// An item lock is not re-cast at a creature that already has it.
+    ///
+    /// The other half of declaring `installs_condition` on the two
+    /// save-condition item chassis, and the failure the declaration
+    /// exists to stop: a rung that cannot tell "would change something"
+    /// from "would change nothing" spends the wand's whole pool on one
+    /// enemy. The engine has watched four monsters do exactly this with
+    /// their gaze attacks — see `Action::installs_condition` — and the
+    /// item lane was one rung away from repeating it with the party's
+    /// loot.
+    ///
+    /// Asked of the picker rather than of a whole fight, because a fight
+    /// has a second answer available (the target dies) and this is about
+    /// the one the picker gives.
+    #[test]
+    fn an_item_lock_skips_a_target_that_already_has_the_condition() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{Item, LOOT_POOL};
+
+        let wand: &'static Item = LOOT_POOL
+            .iter()
+            .copied()
+            .find(|i| i.name == "Wand of Hold Monster")
+            .expect("the wand is in the pool");
+
+        let mut e = empty_arena_seeded(1);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 8), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 8), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&pc).unwrap().pickup_item(wand);
+
+        assert!(
+            try_item_lockdown(&e, pc).is_some(),
+            "one wand and one unparalysed ogre is a rung that should fire"
+        );
+        e.actors
+            .get_mut(&ogre)
+            .unwrap()
+            .add_condition(
+                Condition::Paralyzed,
+                crate::conditions::ConditionTimer::Rounds(10),
+            );
+        assert!(
+            try_item_lockdown(&e, pc).is_none(),
+            "the rung spent a charge paralysing something already paralysed"
+        );
+    }
+
     /// The at-will shelf is a shelf the AI reaches for.
     ///
     /// A fifth pass at the silent no-op this suite has caught four
@@ -19593,27 +19955,20 @@ mod tests {
     /// never fires and an item that is always affordable look the same
     /// from outside.
     ///
-    /// The two area rows are on the strong claim — the log has to show
-    /// them — and the five single-target ones on the weaker and honest
-    /// claim: offered, priced and valid on a turn the holder has an
-    /// Action for.
+    /// The five offensive rows are on the strong claim — the log has to
+    /// show them. Three of them could not have made it when they were
+    /// written: `pick_from_cohort` resolves its rows through
+    /// `find_action`, which reads the stat block and not the pack, so
+    /// every single-target lock an item granted was invisible to the
+    /// control lanes. `try_item_lockdown` and `try_item_attrition` are
+    /// the rungs that see them now.
     ///
-    /// The split is not a judgement about the items. Writing it turned
-    /// up the thing worth knowing: **no single-target item lockdown in
-    /// the engine is reachable by the AI at all.** `pick_from_cohort`
-    /// looks the cohort's rows up with `ActorInstance::find_action`,
-    /// which reads the template's own list and not the pack, so a Wand
-    /// of Paralysis, a Wand of Hold Monster, the Iron Bands of Bilarro
-    /// and twenty more have never once been used by an AI-driven
-    /// creature. That is a bug in the ladder rather than in these
-    /// items, it is older than they are, and it is fixed one commit
-    /// along — where these five rows move up to the strong claim.
-    ///
-    /// The two self-buffs stay on the weak claim permanently. A fighter
-    /// turns the Ring of Invisibility when the stealth lane wants it and
-    /// rides the broom when the board has something to fly over, and
-    /// asserting either would be asserting a preference this test has no
-    /// business having.
+    /// The two self-buffs stay on the weaker and honest claim: offered,
+    /// priced and valid on a turn the holder has an Action for. A
+    /// fighter turns the Ring of Invisibility when the stealth lane
+    /// wants it and rides the broom when the board has something to fly
+    /// over, and asserting either would be asserting a preference this
+    /// test has no business having.
     #[test]
     fn the_ai_reaches_the_at_will_shelf() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -19625,6 +19980,9 @@ mod tests {
 
         // (the item, a fragment of the line its use prints)
         let rows: &[(&'static Item, &str)] = &[
+            (&RING_OF_TELEKINESIS, "floats helplessly skyward"),
+            (&ROPE_OF_ENTANGLEMENT, "lashes itself tight"),
+            (&HELM_OF_TELEPATHY, "presses a suggestion"),
             (&ROD_OF_RULERSHIP, "commands obedience"),
             (&DUST_OF_SNEEZING_AND_CHOKING, "the room starts coughing"),
         ];
@@ -19682,9 +20040,6 @@ mod tests {
         for (item, action_name, aimed) in [
             (&RING_OF_INVISIBILITY, "turn ring of invisibility", false),
             (&BROOM_OF_FLYING, "ride broom of flying", false),
-            (&RING_OF_TELEKINESIS, "use ring of telekinesis", true),
-            (&ROPE_OF_ENTANGLEMENT, "throw rope of entanglement", true),
-            (&HELM_OF_TELEPATHY, "use helm of telepathy", true),
         ] {
             let mut e = empty_arena_seeded(3);
             let pc = e

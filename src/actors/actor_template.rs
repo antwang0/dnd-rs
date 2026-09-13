@@ -7944,6 +7944,42 @@ impl ActorInstance {
         out
     }
 
+    /// Every action this actor can take **because of something in the
+    /// pack** — `available_actions` minus the stat block.
+    ///
+    /// The third of the three lists, and the one that answers *"what
+    /// does carrying this get me that standing there empty-handed would
+    /// not?"* `available_actions` is the union and cannot be asked that,
+    /// because an action on it might be the wand or might be the wizard.
+    ///
+    /// The AI is what needs the distinction, and it needed it for a
+    /// reason the union hides. Its two single-target control rungs are
+    /// **name-keyed cohorts** — hand-ordered lists of spell names, where
+    /// the order is the priority — resolved through `find_action`, which
+    /// reads `self.actions` alone. So every lock an *item* granted was
+    /// invisible to them: a Wand of Paralysis, a Wand of Hold Monster,
+    /// the Iron Bands of Bilarro, twenty-odd more, none of them ever
+    /// used by an AI-driven creature in the engine's history. Widening
+    /// those cohorts to the union would have been the wrong repair
+    /// twice over — it would need a hand-written row per item, and it
+    /// would price a consumable scroll as though it were a spell the
+    /// caster could cast again tomorrow. The item lane is its own rung
+    /// over its own list, and this is the list.
+    ///
+    /// Deduped per item name, like both of its siblings: a second copy
+    /// of a wand is a deeper pool, not a second option.
+    pub fn item_actions(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
+        let mut out: Vec<&'static (dyn Action + Send + Sync)> = Vec::new();
+        let mut seen: HashSet<&'static str> = HashSet::new();
+        for item in self.active_items() {
+            if item.on_use.is_empty() || !seen.insert(item.name) {
+                continue;
+            }
+            out.extend(item.on_use.iter().copied());
+        }
+        out
+    }
+
     /// Restore full HP, all spell slots, clear non-permanent conditions,
     /// concentration and any temp HP. 5e long rest semantics.
     pub fn long_rest(&mut self) {
