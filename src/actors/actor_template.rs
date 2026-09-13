@@ -2720,6 +2720,81 @@ const CONDITION_ATTACK_BONUSES: &[ConditionAttackBonus] = &[
     },
 ];
 
+/// One row of [`CONDITION_ABILITY_FLOORS`] — a condition that puts a
+/// floor under one of its holder's ability scores for as long as it is
+/// held.
+///
+/// The condition-lane twin of `Item::ability_score_floors`, and the
+/// third way an ability score moves in this engine. The other two are
+/// both about an object: a floor while you carry it (the Gauntlets of
+/// Ogre Power), a bonus while you carry it (the Ioun Stones). This is
+/// the one about something done *to* a creature, which can be taken back
+/// off it and which runs out on a timer.
+struct ConditionAbilityFloor {
+    /// The condition whose presence sets the floor.
+    source: Condition,
+    /// Which score it holds up.
+    ability: AbilityScoreType,
+    /// The number it holds it up to — RAW's *"your Strength changes to a
+    /// score determined by the potion's rarity"*.
+    score: u32,
+}
+
+/// Condition-driven ability-score floors, read by
+/// `ActorInstance::ability_score` alongside the carried-item floors it
+/// already folded.
+///
+/// SRD 5.2's five Potions of Giant Strength, and nothing else. They are
+/// the belts one shelf over with a timer on them, and the two compose by
+/// the same rule two floors always do — the higher wins — because they
+/// meet at the same accessor. A wizard who drinks the storm-giant potion
+/// while wearing the hill-giant belt is at 29, not 21 and not 50.
+///
+/// Ordered as RAW's own table prints them, and the ordering is not
+/// load-bearing: the fold takes the maximum.
+const CONDITION_ABILITY_FLOORS: &[ConditionAbilityFloor] = &[
+    ConditionAbilityFloor {
+        source: Condition::HillGiantStrong,
+        ability: AbilityScoreType::Strength,
+        score: 21,
+    },
+    ConditionAbilityFloor {
+        source: Condition::StoneGiantStrong,
+        ability: AbilityScoreType::Strength,
+        score: 23,
+    },
+    ConditionAbilityFloor {
+        source: Condition::FireGiantStrong,
+        ability: AbilityScoreType::Strength,
+        score: 25,
+    },
+    ConditionAbilityFloor {
+        source: Condition::CloudGiantStrong,
+        ability: AbilityScoreType::Strength,
+        score: 27,
+    },
+    ConditionAbilityFloor {
+        source: Condition::StormGiantStrong,
+        ability: AbilityScoreType::Strength,
+        score: 29,
+    },
+];
+
+/// The ability and score `c` holds a floor under, or `None` for the
+/// conditions that hold none.
+///
+/// The read side of [`CONDITION_ABILITY_FLOORS`] for anybody who is not
+/// `ability_score` — which today is the invariant that checks the
+/// Potions of Giant Strength stand on the same rungs as the belts. It is
+/// public for that: the alternative is a second hand-kept copy of the
+/// table in the test, which is the thing the table exists to avoid.
+pub fn condition_ability_floor(c: Condition) -> Option<(AbilityScoreType, u32)> {
+    CONDITION_ABILITY_FLOORS
+        .iter()
+        .find(|row| row.source == c)
+        .map(|row| (row.ability, row.score))
+}
+
 /// One row in the `ABILITY_MOD_INITIATIVE_BONUSES` cohort — a single
 /// passive-feature flag that adds the holder's modifier for a specific
 /// ability to the initiative-roll total. Held as a `(flag_fn, ability)`
@@ -10315,6 +10390,17 @@ impl ActorInstance {
             .flat_map(|item| item.ability_score_floors.iter())
             .filter(|(a, _)| *a == ast)
             .map(|(_, score)| *score)
+            // …and the floors a *condition* holds up, which is the same
+            // sentence with a timer on it. Folded into the same maximum
+            // rather than applied after it, because two floors compose
+            // by the higher one winning whichever lane each arrived
+            // down — see `CONDITION_ABILITY_FLOORS`.
+            .chain(
+                CONDITION_ABILITY_FLOORS
+                    .iter()
+                    .filter(|row| row.ability == ast && self.has_condition(row.source))
+                    .map(|row| row.score),
+            )
             .fold(base, u32::max);
         // Bonuses on one ability sum, then meet the tightest ceiling any
         // of them named; a score already above that ceiling is left

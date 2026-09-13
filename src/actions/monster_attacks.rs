@@ -3560,6 +3560,21 @@ pub struct SwallowAttack {
 }
 
 impl Action for SwallowAttack {
+    /// Harmful, and not damaging. RAW's Swallow is a *place* it puts
+    /// you — "the creature is swallowed and has the Blinded and
+    /// Restrained conditions" — and the acid that follows is charged at
+    /// the start of each of the swallower's turns by `digest_swallowed`,
+    /// not by this action.
+    ///
+    /// The same category `Action::deals_damage`'s docstring names: Shove,
+    /// Grapple, Hold Person, Banishment. All of them are aimed at an
+    /// enemy and none of them takes a hit point, so all of them override
+    /// the `is_harmful()` default. This one had not, which made it the
+    /// only damaging action on the roster with nothing to say about what
+    /// kind of damage it deals — and it deals none.
+    fn deals_damage(&self) -> bool {
+        false
+    }
     fn name(&self) -> &str {
         self.display_name
     }

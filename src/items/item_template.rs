@@ -2911,27 +2911,90 @@ pub static POTION_OF_COLD_RESISTANCE: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
-/// rounds (+1d4 weapon damage rider, size bump). Sibling to Potion of
-/// Growth — same condition envelope, distinct in-fiction trigger so the
-/// loot pool covers the offensive bruiser consumable lane at two rolls.
+/// **Potion of Giant Strength (hill)** (Potion, Uncommon) — *"When you
+/// drink this potion, your Strength changes to a score determined by the
+/// potion's rarity. The potion has no effect on you if your Strength is
+/// equal to or greater than the score."* Hill giant: 21.
 ///
-/// **Not on `ability_score_floors`,** and the reason is the one thing
-/// that lane cannot do. RAW's potion sets Strength to 21 for an hour,
-/// which is the Belt of Giant Strength (hill) one shelf over with a
-/// timer on it — but the floor is read off the *inventory*, and a potion
-/// leaves the inventory the moment it is drunk. Putting the clause on a
-/// condition instead would need a per-condition score table beside
-/// `condition_links` and `condition_damage_types`, which is a lane worth
+/// The bottom rung of [`GIANT_STRENGTH_POTIONS`], and the Belt of Giant
+/// Strength one shelf over with an hour on it — same sentence, same
+/// floor, and a fraction of the price because it is gone when the fight
+/// is.
+///
+/// It used to install `Enlarged`, and its docstring named the blocker:
+/// *"the floor is read off the inventory, and a potion leaves the
+/// inventory the moment it is drunk. Putting the clause on a condition
+/// instead would need a per-condition score table … a lane worth
 /// building the day a second timed score-setter arrives and is not worth
-/// building for one potion. `Enlarged` is the honest stand-in in the
-/// meantime: it is the same fiction and it pays on the same swing.
+/// building for one potion."* There are five of them now, and the lane
+/// turned out to want no score table at all: the five conditions are
+/// five rows on `CONDITION_ABILITY_FLOORS`, read at the same
+/// `ability_score` chokepoint the belts already went through.
+///
+/// What the `Enlarged` stand-in could not pay is most of what a Strength
+/// score is. It bought a damage die and a size; a floor of 21 buys the
+/// attack roll, the damage roll, every Strength save, the grapple and
+/// the shove contests, the initiative die and the carrying capacity —
+/// and buys them to a wizard at 8 and to nobody already at 21, which is
+/// the whole texture RAW is after.
 pub static POTION_OF_HILL_GIANT_STRENGTH: Item = Item {
     name: "Potion of Hill Giant Strength",
     glyph: 'G',
     on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_HILL_GIANT_STRENGTH],
     ..Item::DEFAULTS
 };
+
+/// **Potion of Giant Strength (stone)** (Rare) — Strength 23. See
+/// [`POTION_OF_HILL_GIANT_STRENGTH`] for the family.
+pub static POTION_OF_STONE_GIANT_STRENGTH: Item = Item {
+    name: crate::actions::item_actions::POTION_OF_STONE_GIANT_STRENGTH_NAME,
+    glyph: 'G',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_STONE_GIANT_STRENGTH],
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Giant Strength (fire)** (Rare) — Strength 25.
+pub static POTION_OF_FIRE_GIANT_STRENGTH: Item = Item {
+    name: crate::actions::item_actions::POTION_OF_FIRE_GIANT_STRENGTH_NAME,
+    glyph: 'G',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_FIRE_GIANT_STRENGTH],
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Giant Strength (cloud)** (Very Rare) — Strength 27.
+pub static POTION_OF_CLOUD_GIANT_STRENGTH: Item = Item {
+    name: crate::actions::item_actions::POTION_OF_CLOUD_GIANT_STRENGTH_NAME,
+    glyph: 'G',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_CLOUD_GIANT_STRENGTH],
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Giant Strength (storm)** (Legendary) — Strength 29, the
+/// highest number anything in the engine puts on a sheet, for one fight.
+pub static POTION_OF_STORM_GIANT_STRENGTH: Item = Item {
+    name: crate::actions::item_actions::POTION_OF_STORM_GIANT_STRENGTH_NAME,
+    glyph: 'G',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_STORM_GIANT_STRENGTH],
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's five Potions of Giant Strength, in the order its own table
+/// prints them.
+///
+/// A cohort for the reason [`GIANT_STRENGTH_BELTS`] is one, and the two
+/// are worth reading side by side: the same five scores, one shelf
+/// permanent and attuned and one shelf drunk and gone. The invariant is
+/// the ladder's — the scores climb, each rung is a floor on Strength and
+/// on nothing else, and each potion's rung is its belt's rung — which is
+/// the failure a five-row copy-paste always has and which nothing else
+/// on the board would notice.
+pub static GIANT_STRENGTH_POTIONS: &[&Item] = &[
+    &POTION_OF_HILL_GIANT_STRENGTH,
+    &POTION_OF_STONE_GIANT_STRENGTH,
+    &POTION_OF_FIRE_GIANT_STRENGTH,
+    &POTION_OF_CLOUD_GIANT_STRENGTH,
+    &POTION_OF_STORM_GIANT_STRENGTH,
+];
 
 /// Slippers of Spider Climbing — passive trinket that grants the wearer
 /// a climbing speed equal to their walking speed (modeled via the
@@ -8029,6 +8092,15 @@ pub static LOOT_POOL: &[&Item] = &[
     &POTION_OF_FIRE_RESISTANCE,
     &POTION_OF_COLD_RESISTANCE,
     &POTION_OF_HILL_GIANT_STRENGTH,
+    // The other four rungs of the giant-strength ladder, weighted the
+    // way RAW's own rarities are: the hill-giant bottle is Uncommon and
+    // belongs with the ordinary consumables it sits beside, and a
+    // storm-giant one is Legendary and should be the reason a room is
+    // remembered.
+    &POTION_OF_STONE_GIANT_STRENGTH,
+    &POTION_OF_FIRE_GIANT_STRENGTH,
+    &POTION_OF_CLOUD_GIANT_STRENGTH,
+    &POTION_OF_STORM_GIANT_STRENGTH,
     // Passive-condition trinkets — Slippers of Spider Climbing
     // (SpiderClimbing speed bump), Winged Boots (Flying), Boots of the
     // Forest (Longstriding +10 ft), Cloak of Etherealness (DamageResistant
@@ -9667,6 +9739,67 @@ mod tests {
         );
         // And the shelf is the whole sheet: RAW prints one per ability.
         assert_eq!(abilities.len(), 6, "six scores, six books");
+    }
+
+    /// The five Potions of Giant Strength climb, are findable, and each
+    /// stands on the same rung as the belt of its own name.
+    ///
+    /// Two ladders with the same five scores on them is exactly the
+    /// shape where a copy-paste is silent: a fire-giant potion that
+    /// installed the stone-giant condition is a legal item, it drops, it
+    /// gets drunk, and the only symptom is two points of Strength
+    /// nobody was counting. The belts are the second reading that makes
+    /// the check possible — RAW gives the two shelves the same numbers,
+    /// so each can check the other.
+    #[test]
+    fn the_giant_strength_potions_stand_on_the_belts_rungs() {
+        use crate::engine::types::AbilityScoreType;
+
+        assert_eq!(
+            GIANT_STRENGTH_POTIONS.len(),
+            GIANT_STRENGTH_BELTS.len(),
+            "the book prints the same five giants on both shelves"
+        );
+        let mut last = 0;
+        for (potion, belt) in GIANT_STRENGTH_POTIONS.iter().zip(GIANT_STRENGTH_BELTS) {
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == potion.name),
+                "{} cannot be found by anybody",
+                potion.name
+            );
+            assert!(
+                !potion.requires_attunement,
+                "{} is a potion, and no potion in the book asks for a bond",
+                potion.name
+            );
+            assert_eq!(
+                potion.on_use.len(),
+                1,
+                "{} should offer exactly one thing to do with it",
+                potion.name
+            );
+            // The belt says what score this rung is; the potion has to
+            // agree, and the only place it says so is the condition its
+            // action installs.
+            let (ability, score) = belt.ability_score_floors[0];
+            assert_eq!(ability, AbilityScoreType::Strength);
+            assert!(score > last, "{} does not climb past the rung below", belt.name);
+            last = score;
+            let installed = potion.on_use[0]
+                .installs_condition()
+                .unwrap_or_else(|| panic!("{} installs nothing", potion.name));
+            let row = crate::actors::actor_template::condition_ability_floor(installed)
+                .unwrap_or_else(|| {
+                    panic!("{} installs {installed:?}, which sets no score", potion.name)
+                });
+            assert_eq!(
+                row,
+                (AbilityScoreType::Strength, score),
+                "{} does not stand on the same rung as the {}",
+                potion.name,
+                belt.name
+            );
+        }
     }
 
     /// The Ring of Resistance covers RAW's whole 1d10 table and each

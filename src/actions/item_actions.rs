@@ -3627,22 +3627,43 @@ pub static DRINK_POTION_OF_COLD_RESISTANCE: SelfConditionItem = SelfConditionIte
     billing: ItemUseBilling::Consumed,
 };
 
-/// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
-/// rounds (+1d4 weapon damage rider, size bump). 5e RAW: STR becomes 21
-/// for 1 hour; the engine doesn't overwrite ability scores, so we route
-/// through the Enlarged envelope every other "size up" consumable
-/// (Potion of Growth) uses — same flavor, slightly different in-fiction
-/// trigger. Single-use; rejects re-drink when already enlarged. Fires
-/// through the shared `SelfConditionItem` impl.
+/// Potion of Giant Strength (hill) — Action; Strength 21 for the fight.
+/// The bottom rung of SRD 5.2's five, and the Belt of Giant Strength one
+/// shelf over with an hour on it.
+///
+/// This used to install `Enlarged` instead, under a docstring saying
+/// why: *"5e RAW: STR becomes 21 for 1 hour; the engine doesn't
+/// overwrite ability scores, so we route through the Enlarged envelope
+/// every other 'size up' consumable uses."* It does overwrite them now —
+/// the same `ability_score_floors` lane the belts have been riding since
+/// theirs stopped being `+2 damage and +10 max HP` — and the difference
+/// is most of what a Strength score does. The Enlarged envelope paid a
+/// damage die and a size bump; a floor of 21 pays the attack roll, the
+/// damage roll, every Strength save, the grapple and the shove contests,
+/// the initiative die and the carrying capacity, and it pays a wizard
+/// everything and a barbarian already at 20 nothing at all.
+///
+/// The whole family rides `SelfConditionItem` and needed nothing new
+/// from it: the condition each rung installs is read by
+/// `CONDITION_ABILITY_FLOORS` at `ActorInstance::ability_score`, which
+/// is the one accessor all six of those go through.
+///
+/// `reject_when_active: false`, and this is the one place on the chassis
+/// where a refresh is worth allowing: the rungs are five *different*
+/// conditions, so a drinker holding the hill-giant potion who finds the
+/// storm-giant one should be able to drink it. Nothing is wasted by
+/// letting them — a second bottle of the same rung buys nothing, because
+/// a floor is a floor.
 pub static DRINK_POTION_OF_HILL_GIANT_STRENGTH: SelfConditionItem = SelfConditionItem {
     action_name: "drink potion of hill giant strength",
     action_aliases: &["giant strength", "giant str"],
     item_name: POTION_OF_HILL_GIANT_STRENGTH_NAME,
-    log_text: "{actor} drinks a potion of hill giant strength; their frame swells.",
-    condition: Condition::Enlarged,
-    timer: ConditionTimer::Rounds(10),
+    log_text: "{actor} drinks a potion of giant strength; the muscle of a hill giant settles into them.",
+    condition: Condition::HillGiantStrong,
+    // RAW's hour. Longer than any fight the engine runs.
+    timer: ConditionTimer::Rounds(100),
     bonus_action: false,
-    reject_when_active: true,
+    reject_when_active: false,
     temp_hp: None,
     ward: TypedWard::None,
     billing: ItemUseBilling::Consumed,
@@ -9970,4 +9991,76 @@ pub static APPLY_OIL_OF_SHARPNESS: WeaponOilItem = WeaponOilItem {
     // RAW's hour, in rounds. Longer than any fight the engine runs,
     // which is the point — see the chassis docstring.
     timer: ConditionTimer::Rounds(100),
+};
+
+// ---------------------------------------------------------------------
+// The Potions of Giant Strength — SRD 5.2's five-rung ladder, and the
+// Belts of Giant Strength one shelf over with an hour on them.
+// ---------------------------------------------------------------------
+
+pub const POTION_OF_STONE_GIANT_STRENGTH_NAME: &str = "Potion of Stone Giant Strength";
+pub const POTION_OF_FIRE_GIANT_STRENGTH_NAME: &str = "Potion of Fire Giant Strength";
+pub const POTION_OF_CLOUD_GIANT_STRENGTH_NAME: &str = "Potion of Cloud Giant Strength";
+pub const POTION_OF_STORM_GIANT_STRENGTH_NAME: &str = "Potion of Storm Giant Strength";
+
+/// Potion of Giant Strength (stone) — Strength 23. See
+/// [`DRINK_POTION_OF_HILL_GIANT_STRENGTH`] for the family.
+pub static DRINK_POTION_OF_STONE_GIANT_STRENGTH: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of stone giant strength",
+    action_aliases: &["stone giant strength", "pgs-stone"],
+    item_name: POTION_OF_STONE_GIANT_STRENGTH_NAME,
+    log_text: "{actor} drinks a potion of giant strength; stone-giant sinew knots under their skin.",
+    condition: Condition::StoneGiantStrong,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    reject_when_active: false,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// Potion of Giant Strength (fire) — Strength 25.
+pub static DRINK_POTION_OF_FIRE_GIANT_STRENGTH: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of fire giant strength",
+    action_aliases: &["fire giant strength", "pgs-fire"],
+    item_name: POTION_OF_FIRE_GIANT_STRENGTH_NAME,
+    log_text: "{actor} drinks a potion of giant strength; the heat of a fire giant's arms runs up theirs.",
+    condition: Condition::FireGiantStrong,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    reject_when_active: false,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// Potion of Giant Strength (cloud) — Strength 27.
+pub static DRINK_POTION_OF_CLOUD_GIANT_STRENGTH: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of cloud giant strength",
+    action_aliases: &["cloud giant strength", "pgs-cloud"],
+    item_name: POTION_OF_CLOUD_GIANT_STRENGTH_NAME,
+    log_text: "{actor} drinks a potion of giant strength; a cloud giant's weight settles behind every movement.",
+    condition: Condition::CloudGiantStrong,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    reject_when_active: false,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// Potion of Giant Strength (storm) — Strength 29, the top of the
+/// ladder and the highest number anything in the engine puts on a sheet.
+pub static DRINK_POTION_OF_STORM_GIANT_STRENGTH: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of storm giant strength",
+    action_aliases: &["storm giant strength", "pgs-storm"],
+    item_name: POTION_OF_STORM_GIANT_STRENGTH_NAME,
+    log_text: "{actor} drinks a potion of giant strength; for an hour they are as strong as the storm.",
+    condition: Condition::StormGiantStrong,
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    reject_when_active: false,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };

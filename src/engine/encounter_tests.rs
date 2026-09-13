@@ -105542,3 +105542,185 @@ fn every_leveled_spell_names_its_school() {
         schoolless.into_iter().collect::<Vec<_>>().join("\n  ")
     );
 }
+
+/// Every action that deals damage says what kind.
+///
+/// `Action::damage_types()` started as a hint for the prompt's "this
+/// thing resists fire" line, which is the sort of job a default of
+/// "empty" is fine for. It is read by three things now, and none of
+/// them are hints:
+///
+///   - **the cast frame.** `Action::execute` stamps
+///     `DamageTypeSet::from_types(&self.damage_types())` on every cast,
+///     and the elemental-absorption features read it off the frame
+///     rather than off the payload — a cast that declares nothing is
+///     one Absorb Elements has no element for.
+///   - **Transmuted Spell.** The Sorcerer metamagic remaps a cast's
+///     elemental damage to the target's worst weakness, and it decides
+///     whether the prime is worth burning by asking this.
+///   - **the AI's own resistance arithmetic**, which is what stops a
+///     fire wizard emptying its slots into a fire elemental.
+///
+/// So a damaging action with an empty list is not under-documented, it
+/// is invisible to all three — and the symptom is a metamagic that
+/// silently declines and an AI that happily throws fire at a salamander.
+///
+/// The sweep is one-directional on purpose: an action may legitimately
+/// name types without dealing damage on every use (a weapon that only
+/// hurts on a hit still knows what it is), and `chooses_damage_type`
+/// actions name a whole menu. Only the empty-and-damaging corner is a
+/// bug.
+#[test]
+fn every_damaging_action_says_what_kind_of_damage() {
+    use crate::actions::action_template::Action;
+
+    // The actions whose damage type is genuinely not knowable until it
+    // resolves. Named one by one, with the reason, because "it depends"
+    // is exactly the excuse a forgotten declaration would hide behind.
+    const TYPED_AT_RESOLUTION: &[&str] = &[
+        // The wand's d100 picks a spell, and the spell picks the
+        // damage. Nothing is known at declaration time — see
+        // `item_actions::WAND_OF_WONDER_TABLE`.
+        "wave wand of wonder",
+    ];
+
+    let mut silent: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let mut swept = 0usize;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let templates = EncounterInstance::template_pool()
+        .into_iter()
+        .chain(
+            crate::actors::creatures::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+    let check = |action: &'static (dyn Action + Send + Sync),
+                     swept: &mut usize,
+                     silent: &mut std::collections::BTreeSet<&'static str>| {
+        if !action.deals_damage() || TYPED_AT_RESOLUTION.contains(&action.name()) {
+            return;
+        }
+        *swept += 1;
+        if action.damage_types().is_empty() {
+            silent.insert(action.name());
+        }
+    };
+    for (i, template) in templates.enumerate() {
+        let Ok(id) = e.instantiate_creature(template, Coordinate::new(1, 1), 0, 20_000 + i)
+        else {
+            continue;
+        };
+        let actions: Vec<&'static (dyn Action + Send + Sync)> =
+            e.actors[&id].actions.to_vec();
+        e.actors.remove(&id);
+        for action in actions {
+            check(action, &mut swept, &mut silent);
+        }
+    }
+    // And the pack, which the roster walk cannot reach: an item's
+    // actions belong to whoever picked it up, so a wand that lies on
+    // the floor for the whole run is one no stat block has ever
+    // carried. The loot table is where they all come from.
+    for item in crate::items::item_template::LOOT_POOL
+        .iter()
+        .chain(crate::items::item_template::STAVES)
+        .chain(crate::items::item_template::MAGIC_ARMOURY)
+    {
+        for action in item.on_use {
+            check(*action, &mut swept, &mut silent);
+        }
+    }
+    assert!(
+        swept > 300,
+        "only {swept} damaging actions swept — the roster walk has stopped working"
+    );
+    assert!(
+        silent.is_empty(),
+        "{} damaging actions declare no damage type, so no metamagic, ward or AI \
+         resistance check can see them:\n  {}",
+        silent.len(),
+        silent.into_iter().collect::<Vec<_>>().join("\n  ")
+    );
+}
+
+/// A potion of giant strength is a floor, and a floor is worth
+/// everything to whoever has the worst Strength and nothing to whoever
+/// already has the number.
+///
+/// The clause the `Enlarged` stand-in could not say, and the reason the
+/// condition lane exists: RAW's second sentence — *"the potion has no
+/// effect on you if your Strength is equal to or greater than the
+/// score"* — is what makes the bottle a gift to the party's wizard
+/// rather than a flat upgrade for its barbarian.
+#[test]
+fn a_giant_strength_potion_lifts_the_weak_and_leaves_the_strong_alone() {
+    use crate::actions::item_actions::DRINK_POTION_OF_STORM_GIANT_STRENGTH;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::AbilityScoreType;
+    use crate::items::item_template::{
+        BELT_OF_STORM_GIANT_STRENGTH, POTION_OF_STORM_GIANT_STRENGTH,
+    };
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let before = e.actors[&wiz].ability_score(AbilityScoreType::Strength);
+    assert!(before < 29, "a wizard is not already as strong as a storm");
+    let before_hit = e.actors[&wiz].ability_modifier(AbilityScoreType::Strength);
+
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .pickup_item(&POTION_OF_STORM_GIANT_STRENGTH);
+    let action: &dyn Action = &DRINK_POTION_OF_STORM_GIANT_STRENGTH;
+    for ef in action.side_effects(&mut e, wiz, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&wiz].ability_score(AbilityScoreType::Strength),
+        29,
+        "the whole score, not a rider on one roll"
+    );
+    assert!(
+        e.actors[&wiz].ability_modifier(AbilityScoreType::Strength) > before_hit,
+        "and the modifier every Strength roll in the engine is derived from"
+    );
+    assert!(
+        !e.actors[&wiz].has_item_named("Potion of Storm Giant Strength"),
+        "the bottle is emptied by the drinking"
+    );
+
+    // A belt on top of the potion is two floors, and two floors mean the
+    // higher one — not the sum.
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .pickup_item(&BELT_OF_STORM_GIANT_STRENGTH);
+    assert_eq!(
+        e.actors[&wiz].ability_score(AbilityScoreType::Strength),
+        29,
+        "a belt and a bottle of the same giant are one giant"
+    );
+
+    // And on somebody who is already there, the bottle buys nothing.
+    let brute = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 1)
+        .unwrap();
+    {
+        let f = e.actors.get_mut(&brute).unwrap();
+        f.pickup_item(&BELT_OF_STORM_GIANT_STRENGTH);
+        f.pickup_item(&POTION_OF_STORM_GIANT_STRENGTH);
+    }
+    let already = e.actors[&brute].ability_score(AbilityScoreType::Strength);
+    assert_eq!(already, 29, "the belt has already put them at the top");
+    for ef in action.side_effects(&mut e, brute, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&brute].ability_score(AbilityScoreType::Strength),
+        29,
+        "the potion has no effect on somebody already at the score"
+    );
+}

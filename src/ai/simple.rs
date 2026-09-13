@@ -3827,6 +3827,21 @@ const ITEM_SELF_BUFF_CONDITIONS: &[Condition] = &[
     Condition::TrueSighted,
     // One damage type, chosen or printed.
     Condition::EnergyWarded,
+    // The giant-strength ladder, bottom of the table because a Strength
+    // floor is worth everything to whoever has the worst Strength on the
+    // board and nothing at all to whoever has the best — and the AI
+    // cannot tell which of those it is holding the bottle for. Above
+    // nothing and below every row that is worth the same to anybody.
+    //
+    // Five rows rather than one, because they are five conditions; the
+    // one-buff-per-fight gate reads the whole table, so a drinker who
+    // has already had the storm-giant bottle will not open the
+    // hill-giant one on top of it.
+    Condition::StormGiantStrong,
+    Condition::CloudGiantStrong,
+    Condition::FireGiantStrong,
+    Condition::StoneGiantStrong,
+    Condition::HillGiantStrong,
 ];
 
 /// The pack's **primes** — the item actions that sharpen or shield their
@@ -23416,22 +23431,29 @@ mod tests {
                 checked += 1;
                 // Three ways to be reachable: a row on either cohort, an
                 // attack roll (the damage-free grab rung), or a rung
-                // that names the action itself.
-                // Four ways to be reachable: a row on either cohort, an
-                // attack roll (the damage-free grab rung), or a rung
-                // that names the action itself.
+                // that names the action itself inline rather than
+                // through a table.
                 //
-                // The one exemption is True Strike, which is reachable
-                // by nothing and should be. It spends the caster's
-                // whole Action to buy advantage on one attack made
-                // later, which is a losing trade for anything that
-                // attacks every turn — and the AI does. A rung for it
-                // would be a rung that makes the caster worse.
+                // The last list is that fourth road plus one deliberate
+                // orphan. `try_swallow`, `try_hypnotic_gaze`, the
+                // escape rung and the telekinetic shove all reach for
+                // their action by name, so no table holds them.
+                //
+                // **True Strike** is the orphan, and is reachable by
+                // nothing on purpose: it spends the caster's whole
+                // Action to buy advantage on one attack made later,
+                // which is a losing trade for anything that attacks
+                // every turn — and the AI does. A rung for it would be
+                // a rung that makes the caster worse.
                 let reachable = named.contains(action.name())
                     || action.is_weapon_attack()
                     || matches!(
                         action.name(),
-                        "hypnotic gaze" | "escape grapple" | "telekinetic" | "true strike"
+                        "swallow"
+                            | "hypnotic gaze"
+                            | "escape grapple"
+                            | "telekinetic"
+                            | "true strike"
                     );
                 if !reachable {
                     orphans.push(format!("{} carries {}", t.name, action.name()));

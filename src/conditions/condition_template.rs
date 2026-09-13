@@ -2147,6 +2147,41 @@ pub enum Condition {
     /// Magic has no more business grounding it than it has unstrapping
     /// an ordinary one.
     ShieldAnimated,
+    /// The strength of a hill giant, for an hour — SRD 5.2's **Potion of
+    /// Giant Strength**, *"when you drink this potion, your Strength
+    /// changes to a score determined by the potion's rarity … The potion
+    /// has no effect on you if your Strength is equal to or greater than
+    /// the score."*
+    ///
+    /// The bottom rung of a five-rung ladder — `StoneGiantStrong`,
+    /// `FireGiantStrong`, `CloudGiantStrong`, `StormGiantStrong` follow
+    /// — and five conditions rather than one with a number on it for
+    /// exactly the reason the Belts of Giant Strength are five statics:
+    /// nothing in the engine carries a magnitude alongside a condition
+    /// flag, and inventing a payload lane for one item family would be a
+    /// wider change than five rows on a table.
+    ///
+    /// Read through `CONDITION_ABILITY_FLOORS` by
+    /// `ActorInstance::ability_score`, which is the same chokepoint the
+    /// belts' `Item::ability_score_floors` goes through — so a drinker
+    /// who is *also* wearing a belt keeps the better of the two, which
+    /// is what two floors mean.
+    ///
+    /// **A floor, not an assignment**, which is RAW's own second
+    /// sentence and the whole texture of the item: it is worth
+    /// everything to a wizard and nothing to a barbarian already above
+    /// the number.
+    HillGiantStrong,
+    /// Strength 23 for an hour. See [`Condition::HillGiantStrong`].
+    StoneGiantStrong,
+    /// Strength 25 for an hour. See [`Condition::HillGiantStrong`].
+    FireGiantStrong,
+    /// Strength 27 for an hour. See [`Condition::HillGiantStrong`].
+    CloudGiantStrong,
+    /// Strength 29 for an hour — the highest number anything in the
+    /// engine puts on a sheet, and for one fight only. See
+    /// [`Condition::HillGiantStrong`].
+    StormGiantStrong,
     /// Darkvisioned (5e **Darkvision**, level-2 transmutation, touch, 8
     /// hours). "That creature has darkvision out to a range of 60
     /// feet."
@@ -3833,6 +3868,11 @@ impl Condition {
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::WeaponEnchanted => "wielding an enchanted weapon",
             Condition::ShieldAnimated => "guarded by a hovering shield",
+            Condition::HillGiantStrong => "strong as a hill giant",
+            Condition::StoneGiantStrong => "strong as a stone giant",
+            Condition::FireGiantStrong => "strong as a fire giant",
+            Condition::CloudGiantStrong => "strong as a cloud giant",
+            Condition::StormGiantStrong => "strong as a storm giant",
             Condition::Darkvisioned => "seeing in the dark",
             Condition::WaterWalking => "walking on water",
             Condition::WaterBreathing => "breathing water",
