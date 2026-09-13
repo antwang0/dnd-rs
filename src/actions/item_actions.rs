@@ -5576,6 +5576,14 @@ const BAG_OF_TRICKS_NAME: &str = "Bag of Tricks";
 const OATHBOW_NAME: &str = "Oathbow";
 const BRONZE_GRIFFON_FIGURINE_NAME: &str = "Bronze Griffon Figurine";
 const ONYX_DOG_FIGURINE_NAME: &str = "Onyx Dog Figurine";
+// The vessels. RAW's four elemental-commanding wonders are the same
+// four bodies the gems above hold and the opposite bargain: the gem is
+// Uncommon and gone, the vessel is Rare and still in the pack at dawn.
+const BOWL_OF_COMMANDING_WATER_ELEMENTALS_NAME: &str = "Bowl of Commanding Water Elementals";
+const BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS_NAME: &str = "Brazier of Commanding Fire Elementals";
+const CENSER_OF_CONTROLLING_AIR_ELEMENTALS_NAME: &str = "Censer of Controlling Air Elementals";
+const STONE_OF_CONTROLLING_EARTH_ELEMENTALS_NAME: &str = "Stone of Controlling Earth Elementals";
+const PIPES_OF_THE_SEWERS_NAME: &str = "Pipes of the Sewers";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
@@ -6151,6 +6159,11 @@ pub static ALL_SUMMON_ITEMS: &[&SummonItem] = &[
     &REACH_INTO_BAG_OF_TRICKS,
     &SET_DOWN_BRONZE_GRIFFON,
     &SET_DOWN_ONYX_DOG,
+    &FILL_BOWL_OF_WATER_ELEMENTALS,
+    &LIGHT_BRAZIER_OF_FIRE_ELEMENTALS,
+    &SWING_CENSER_OF_AIR_ELEMENTALS,
+    &SET_DOWN_STONE_OF_EARTH_ELEMENTALS,
+    &PLAY_PIPES_OF_THE_SEWERS,
 ];
 
 /// Scroll of Conjure Animals — Action; two spectral wolves on free
@@ -6371,6 +6384,159 @@ pub static SET_DOWN_ONYX_DOG: SummonItem = SummonItem {
     base_instance_id: 211,
     concentration: None,
     charges: None,
+};
+
+/// **Bowl of Commanding Water Elementals** (Wondrous item, Rare) —
+/// *"you can take a Magic action to summon a Water Elemental. … The
+/// elemental disappears after 1 hour, when it dies, or when you dismiss
+/// it as a Bonus Action. The bowl can't be used this way again until
+/// the next dawn."*
+///
+/// The head of a four-item family RAW prints as four separate wonders
+/// — bowl, brazier, censer, stone — and which is the **same four
+/// bodies** the elemental gems above already put on the board. That
+/// overlap is the reason the family is worth having rather than a
+/// reason to skip it: the two shelves are opposite bargains over one
+/// creature, and until now the engine only sold one of them.
+///
+///   - A **gem** is Uncommon, needs no attunement, and is *gone*:
+///     `charges: None`, so `SummonItem::side_effects` consumes the
+///     object. One fight, one elemental, and the party is poorer.
+///   - A **vessel** is Rare and survives its own use. RAW's *"can't be
+///     used this way again until the next dawn"* is a pool of exactly
+///     one that refills on a rest, which is `charges: Some(1)` against
+///     an `Item::charges` of 1 and a flat `recharge` — the same lane
+///     the Bag of Tricks and the wands run on, sized down to a single
+///     draw.
+///
+/// So a dungeon run that finds a bowl gets a water elemental in *every
+/// room*, and one that finds an emerald gets one water elemental ever.
+/// That difference is the whole of what a rarity step buys on this
+/// shelf, and it is a difference the engine can only express because
+/// `App::start_next_encounter` long-rests between fights.
+///
+/// The dismissal clause is not modeled and does not need to be: the
+/// engine has no "dismiss a summon" verb, RAW's hour is longer than any
+/// fight, and a body that outlives the encounter is a body the
+/// encounter never has to think about. The *"as close to the bowl as
+/// possible"* placement is `find_adjacent_spawn` around the holder,
+/// which is where the bowl is — nobody sets one down in this engine.
+pub static FILL_BOWL_OF_WATER_ELEMENTALS: SummonItem = SummonItem {
+    action_name: "command water elemental bowl",
+    action_aliases: &["bowl", "water bowl", "elemental bowl"],
+    item_name: BOWL_OF_COMMANDING_WATER_ELEMENTALS_NAME,
+    log_label: "bowl of commanding water elementals",
+    template: &crate::actors::creatures::water_elementals::WATER_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 212,
+    concentration: None,
+    charges: Some(1),
+};
+
+/// **Brazier of Commanding Fire Elementals** (Wondrous item, Rare) — a
+/// Fire Elemental, on the daily pool. See
+/// [`FILL_BOWL_OF_WATER_ELEMENTALS`] for the family and for why a
+/// vessel is worth four times what the matching gem is.
+pub static LIGHT_BRAZIER_OF_FIRE_ELEMENTALS: SummonItem = SummonItem {
+    action_name: "command fire elemental brazier",
+    action_aliases: &["brazier", "fire brazier", "elemental brazier"],
+    item_name: BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS_NAME,
+    log_label: "brazier of commanding fire elementals",
+    template: &crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 213,
+    concentration: None,
+    charges: Some(1),
+};
+
+/// **Censer of Controlling Air Elementals** (Wondrous item, Rare) — an
+/// Air Elemental, on the daily pool. See
+/// [`FILL_BOWL_OF_WATER_ELEMENTALS`] for the family.
+pub static SWING_CENSER_OF_AIR_ELEMENTALS: SummonItem = SummonItem {
+    action_name: "command air elemental censer",
+    action_aliases: &["censer", "air censer", "elemental censer"],
+    item_name: CENSER_OF_CONTROLLING_AIR_ELEMENTALS_NAME,
+    log_label: "censer of controlling air elementals",
+    template: &crate::actors::creatures::air_elementals::AIR_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 214,
+    concentration: None,
+    charges: Some(1),
+};
+
+/// **Stone of Controlling Earth Elementals** (Wondrous item, Rare) — an
+/// Earth Elemental, on the daily pool. See
+/// [`FILL_BOWL_OF_WATER_ELEMENTALS`] for the family.
+///
+/// RAW gates this one on *"while touching this 5-pound stone to the
+/// ground"*, which the other three do not print and which the engine
+/// cannot ask: every actor in it is standing on the floor at all times,
+/// there being no third coordinate for anything but a flier's altitude.
+/// The clause would therefore be either always true or a restriction on
+/// flight the book does not intend, and the honest reading of an
+/// always-true gate is no gate.
+pub static SET_DOWN_STONE_OF_EARTH_ELEMENTALS: SummonItem = SummonItem {
+    action_name: "command earth elemental stone",
+    action_aliases: &["earth stone", "elemental stone", "control stone"],
+    item_name: STONE_OF_CONTROLLING_EARTH_ELEMENTALS_NAME,
+    log_label: "stone of controlling earth elementals",
+    template: &crate::actors::creatures::earth_elementals::EARTH_ELEMENTAL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 215,
+    concentration: None,
+    charges: Some(1),
+};
+
+/// **Pipes of the Sewers** (Wondrous item, Uncommon, requires
+/// attunement) — *"The pipes have 3 charges and regain 1d3 expended
+/// charges daily at dawn. If you play the pipes as a Magic action, you
+/// can take a Bonus Action to expend 1 to 3 charges, calling forth one
+/// Swarm of Rats with each expended charge."*
+///
+/// The cheap end of the summoning shelf and the first entry on it that
+/// calls up a **swarm**, which is a different kind of body from
+/// everything else here: a Swarm of Rats has half the hit points of a
+/// panther and resistance to the three physical types, so what it buys
+/// is not damage but a tile somebody has to spend a turn clearing.
+///
+/// Two collapses of RAW, both of them the standing ones on this lane:
+///
+///   - **One charge, one swarm**, rather than RAW's *"1 to 3"*. The
+///     variable-spend shape is the Ring of the Ram's, and it exists
+///     there because each extra charge buys more *damage* on one
+///     target. Here each charge buys another body, and
+///     `SummonItem::count` is the field that says how many — so a
+///     three-charge blast would be a second action rather than a
+///     bigger one. Three separate calls is the same three swarms at
+///     the same price.
+///   - **No "enough rats within half a mile"**, RAW's GM-adjudicated
+///     gate. There is no half-mile and no GM; the engine's equivalent
+///     question is whether there is a free tile, which
+///     `custom_validate_input` already asks of every summon.
+///
+/// The passive first sentence — ordinary and giant rats are Indifferent
+/// toward the piper — is a reaction-roll rule, and this engine's
+/// creatures arrive on a team rather than with an attitude.
+pub static PLAY_PIPES_OF_THE_SEWERS: SummonItem = SummonItem {
+    action_name: "play pipes of the sewers",
+    action_aliases: &["sewer pipes", "pipes", "rat pipes"],
+    item_name: PIPES_OF_THE_SEWERS_NAME,
+    log_label: "pipes of the sewers",
+    template: &crate::actors::creatures::swarms::SWARM_OF_RATS_TEMPLATE,
+    size: crate::engine::types::Size::Medium,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 216,
+    concentration: None,
+    charges: Some(1),
 };
 
 

@@ -3957,6 +3957,108 @@ pub static ONYX_DOG_FIGURINE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// RAW's *"can't be used this way again until the next dawn"* — the
+/// recharge line the four elemental vessels below share, and the
+/// smallest pool in the file: one charge back, every rest, up to a
+/// printed maximum of one.
+///
+/// A flat constant rather than a die because the sentence is not a
+/// roll. `DAILY_1D6_PLUS_1` up the file is the wands' clause and says
+/// *how many* come back; this one says *the thing works again*, which
+/// is the same statement a pool of one can make.
+const DAILY_ONE: DiceExpr = DiceExpr {
+    dice: None,
+    constant: 1,
+};
+
+/// **Bowl of Commanding Water Elementals** (Wondrous item, Rare) — one
+/// Water Elemental per rest, out of a bowl that is still a bowl
+/// afterwards.
+///
+/// The head of a family of four whose whole point is the contrast with
+/// the four elemental gems above: the same four bodies, one shelf
+/// Uncommon and consumed, one shelf Rare and refilling. See
+/// `item_actions::FILL_BOWL_OF_WATER_ELEMENTALS` for why that contrast
+/// is the item rather than a duplication of one.
+///
+/// No attunement, which RAW prints for all four and which is worth
+/// noticing on a shelf where nearly every Rare wants a bond: the
+/// vessels compete for a *slot in the pack* and for nothing else, so a
+/// party already wearing three bound items can still carry one.
+pub static BOWL_OF_COMMANDING_WATER_ELEMENTALS: Item = Item {
+    name: "Bowl of Commanding Water Elementals",
+    glyph: 'u',
+    on_use: &[&crate::actions::item_actions::FILL_BOWL_OF_WATER_ELEMENTALS],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    ..Item::DEFAULTS
+};
+
+/// **Brazier of Commanding Fire Elementals** (Wondrous item, Rare) — a
+/// Fire Elemental per rest. See [`BOWL_OF_COMMANDING_WATER_ELEMENTALS`]
+/// for the family.
+pub static BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS: Item = Item {
+    name: "Brazier of Commanding Fire Elementals",
+    glyph: 'u',
+    on_use: &[&crate::actions::item_actions::LIGHT_BRAZIER_OF_FIRE_ELEMENTALS],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    ..Item::DEFAULTS
+};
+
+/// **Censer of Controlling Air Elementals** (Wondrous item, Rare) — an
+/// Air Elemental per rest. See [`BOWL_OF_COMMANDING_WATER_ELEMENTALS`]
+/// for the family.
+pub static CENSER_OF_CONTROLLING_AIR_ELEMENTALS: Item = Item {
+    name: "Censer of Controlling Air Elementals",
+    glyph: 'u',
+    on_use: &[&crate::actions::item_actions::SWING_CENSER_OF_AIR_ELEMENTALS],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    ..Item::DEFAULTS
+};
+
+/// **Stone of Controlling Earth Elementals** (Wondrous item, Rare) — an
+/// Earth Elemental per rest. See
+/// [`BOWL_OF_COMMANDING_WATER_ELEMENTALS`] for the family, and
+/// `item_actions::SET_DOWN_STONE_OF_EARTH_ELEMENTALS` for the one
+/// clause this vessel prints that the other three do not.
+pub static STONE_OF_CONTROLLING_EARTH_ELEMENTALS: Item = Item {
+    name: "Stone of Controlling Earth Elementals",
+    glyph: 'u',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_STONE_OF_EARTH_ELEMENTALS],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    ..Item::DEFAULTS
+};
+
+/// **Pipes of the Sewers** (Wondrous item, Uncommon, requires
+/// attunement) — three swarms of rats out of a pipe that refills at
+/// dawn.
+///
+/// The cheapest *repeatable* summon in the engine, and the only one
+/// that calls up a swarm. See
+/// `item_actions::PLAY_PIPES_OF_THE_SEWERS` for the two collapses of
+/// RAW's charge clause.
+///
+/// The one attunement on this batch, which is RAW and is also the right
+/// price: three bodies a fight for an Uncommon is the best rate on the
+/// shelf, and the bond is what stops it being free.
+pub static PIPES_OF_THE_SEWERS: Item = Item {
+    name: "Pipes of the Sewers",
+    glyph: 'p',
+    on_use: &[&crate::actions::item_actions::PLAY_PIPES_OF_THE_SEWERS],
+    charges: 3,
+    // RAW's "regains 1d3 expended charges daily at dawn" — the Bag of
+    // Tricks' line, for a pool the same size.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// Scroll of Longstrider — Action consumable that installs the
 /// `Longstriding` condition (+10 ft walking speed) for 100 rounds on a
 /// touched ally. 5e RAW: Longstrider is a level-1 transmutation; the
@@ -6953,6 +7055,19 @@ pub static LOOT_POOL: &[&Item] = &[
     &HORN_OF_VALHALLA,
     &BRONZE_GRIFFON_FIGURINE,
     &ONYX_DOG_FIGURINE,
+    // The vessels — the same four elementals the gems above hold, on a
+    // pool that survives the fight. One entry apiece and no more,
+    // because a Rare that pays out again in the next room is the
+    // strongest row on this shelf by a distance: over a four-room run a
+    // bowl is four water elementals and an emerald is one.
+    &BOWL_OF_COMMANDING_WATER_ELEMENTALS,
+    &BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS,
+    &CENSER_OF_CONTROLLING_AIR_ELEMENTALS,
+    &STONE_OF_CONTROLLING_EARTH_ELEMENTALS,
+    // The Uncommon end of the repeatable half. Three swarms a fight is
+    // a lot of bodies for the tier, which is why RAW charges an
+    // attunement slot for it and why one entry is the right weight.
+    &PIPES_OF_THE_SEWERS,
     // The staves. Single entries each — a staff is the deepest item on
     // the table (three to nine spells and a pool big enough to matter)
     // and should be the rarest thing a party walks away with. Ordered

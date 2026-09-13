@@ -19482,6 +19482,106 @@ mod tests {
         );
     }
 
+    /// The five repeatable summoning items are five things the AI
+    /// actually opens.
+    ///
+    /// `the_ai_reaches_the_summon_rung` pins that the rung exists and
+    /// that a Beast Master's bond gets found on it. That is a different
+    /// claim from this one: these five are the first summons in the
+    /// engine priced in `Resource::ItemCharges` *and* not consumed, so
+    /// they are the first that can be declined by the affordability
+    /// gate without also vanishing from the pack — which is precisely
+    /// the shape of silent no-op this file has caught four times.
+    ///
+    /// A fighter carries them, which is the whole point of the shelf:
+    /// the vessels are the answer a party with no caster in it has to
+    /// being outnumbered, and a chassis with a spell list would give
+    /// the rung something else to find.
+    #[test]
+    fn the_ai_opens_the_repeatable_summoning_items() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{
+            BOWL_OF_COMMANDING_WATER_ELEMENTALS, BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS,
+            CENSER_OF_CONTROLLING_AIR_ELEMENTALS, PIPES_OF_THE_SEWERS,
+            STONE_OF_CONTROLLING_EARTH_ELEMENTALS,
+        };
+
+        // (the item, the log fragment `spawn_adjacent_summons` prints)
+        let rows: &[(&'static crate::items::item_template::Item, &str)] = &[
+            (
+                &BOWL_OF_COMMANDING_WATER_ELEMENTALS,
+                "bowl of commanding water elementals",
+            ),
+            (
+                &BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS,
+                "brazier of commanding fire elementals",
+            ),
+            (
+                &CENSER_OF_CONTROLLING_AIR_ELEMENTALS,
+                "censer of controlling air elementals",
+            ),
+            (
+                &STONE_OF_CONTROLLING_EARTH_ELEMENTALS,
+                "stone of controlling earth elementals",
+            ),
+            (&PIPES_OF_THE_SEWERS, "pipes of the sewers"),
+        ];
+        for (item, fragment) in rows {
+            let mut used_in = 0;
+            for seed in 0..8u64 {
+                let mut e = empty_arena_seeded(seed);
+                let pc = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 8), 0, 0)
+                    .unwrap();
+                // Three of them, clustered and across the room: inside
+                // the engagement gate the summon rung reads, and far
+                // enough that closing to melee is not obviously better.
+                for (i, y) in [7isize, 9, 11].into_iter().enumerate() {
+                    e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(20, y), 1, i)
+                        .unwrap();
+                }
+                {
+                    let a = e.actors.get_mut(&pc).unwrap();
+                    a.pickup_item(item);
+                    // The vessels take no attunement; the pipes do, and
+                    // an unattuned item is carried and inert. `pickup_item`
+                    // bonds on the way in when there is a slot free, so
+                    // the claim here is that one was.
+                    assert!(
+                        !item.requires_attunement || a.is_attuned_to(item.name),
+                        "{} is inert in the pack",
+                        item.name
+                    );
+                }
+
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 8_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages().join("\n").contains(fragment) {
+                    used_in += 1;
+                }
+            }
+            assert!(
+                used_in > 0,
+                "eight fights and the AI never once opened the {}",
+                item.name
+            );
+        }
+    }
+
     /// A swing an item grants is a swing the AI can see.
     ///
     /// The pickers split on a question two lists answer differently.

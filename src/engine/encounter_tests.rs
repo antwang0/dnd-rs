@@ -57032,6 +57032,127 @@ fn the_summoning_items_put_bodies_on_the_board_and_bill_correctly() {
     );
 }
 
+/// The four elemental vessels each call the body they are named for,
+/// once per rest, and are still in the pack when the rest is over.
+///
+/// The gem shelf and the vessel shelf hold the *same four creatures*,
+/// so the only thing that distinguishes them is the one thing this
+/// test is about: a gem is Uncommon and gone, and a vessel is Rare and
+/// refills. If the recharge line were wrong — a missing `recharge`, a
+/// `charges: None` that consumed the bowl — nothing else in the suite
+/// would notice, because a vessel used once looks exactly like a gem
+/// used once. The difference only ever shows up on the second room of
+/// a dungeon run, which is where a player would find it and a test
+/// would not.
+///
+/// Also the naming check the Dragon Scale Mails get for the same
+/// reason: four near-identical statics differing in one field is where
+/// a copy-paste puts a fire elemental in the water bowl, and the only
+/// symptom is a party that gets the wrong elemental out of a thing
+/// named for the right one.
+#[test]
+fn an_elemental_vessel_refills_at_a_rest_and_a_gem_does_not() {
+    use crate::actions::item_actions::{
+        FILL_BOWL_OF_WATER_ELEMENTALS, LIGHT_BRAZIER_OF_FIRE_ELEMENTALS,
+        SET_DOWN_STONE_OF_EARTH_ELEMENTALS, SWING_CENSER_OF_AIR_ELEMENTALS, SummonItem,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{
+        BOWL_OF_COMMANDING_WATER_ELEMENTALS, BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS,
+        CENSER_OF_CONTROLLING_AIR_ELEMENTALS, Item, STONE_OF_CONTROLLING_EARTH_ELEMENTALS,
+    };
+
+    // (the vessel, the action it offers, the name on the body it calls)
+    let family: &[(&'static Item, &'static SummonItem, &str)] = &[
+        (
+            &BOWL_OF_COMMANDING_WATER_ELEMENTALS,
+            &FILL_BOWL_OF_WATER_ELEMENTALS,
+            "Water Elemental",
+        ),
+        (
+            &BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS,
+            &LIGHT_BRAZIER_OF_FIRE_ELEMENTALS,
+            "Fire Elemental",
+        ),
+        (
+            &CENSER_OF_CONTROLLING_AIR_ELEMENTALS,
+            &SWING_CENSER_OF_AIR_ELEMENTALS,
+            "Air Elemental",
+        ),
+        (
+            &STONE_OF_CONTROLLING_EARTH_ELEMENTALS,
+            &SET_DOWN_STONE_OF_EARTH_ELEMENTALS,
+            "Earth Elemental",
+        ),
+    ];
+
+    for (vessel, action, body) in family {
+        // Wide and empty: the elementals are Large and the spawn loop
+        // is best-effort about finding room for one.
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let user = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 12), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&user).unwrap().pickup_item(vessel);
+
+        let fire = |e: &mut EncounterInstance, user: usize| {
+            let aei = ActionExecutionInfo::new(*action, user, None, None, None);
+            let ok = aei.validate(e);
+            if ok {
+                e.push_action(aei);
+                e.process_stack();
+            }
+            ok
+        };
+
+        assert!(fire(&mut e, user), "{} would not open", vessel.name);
+        let summoned: Vec<usize> = e.actors.keys().copied().filter(|id| *id != user).collect();
+        assert_eq!(summoned.len(), 1, "{} is one elemental", vessel.name);
+        // The label, not just a body: a copy-pasted template is a legal
+        // item that is not the one on the tin.
+        assert!(
+            e.actors[&summoned[0]].name().contains(body),
+            "{} called up a {} instead of a {body}",
+            vessel.name,
+            e.actors[&summoned[0]].name()
+        );
+        assert_eq!(e.actors[&summoned[0]].team(), e.actors[&user].team());
+        assert!(
+            !e.actors[&summoned[0]].has_condition(Condition::Conjured),
+            "{} holds nobody's concentration",
+            vessel.name
+        );
+
+        // The pool is one deep and the object survives it.
+        e.actors.get_mut(&user).unwrap().reset_for_new_round();
+        assert!(
+            !fire(&mut e, user),
+            "{} paid out twice in one day",
+            vessel.name
+        );
+        assert!(
+            e.actors[&user].has_item_named(vessel.name),
+            "{} was spent like a gem",
+            vessel.name
+        );
+
+        // And the rest is what makes it a vessel rather than a gem.
+        e.long_rest();
+        e.actors.get_mut(&user).unwrap().reset_for_new_round();
+        assert_eq!(
+            e.actors[&user].item_charges_remaining(vessel.name),
+            1,
+            "{} came back from a rest with the wrong pool",
+            vessel.name
+        );
+        assert!(
+            fire(&mut e, user),
+            "{} did not refill overnight",
+            vessel.name
+        );
+    }
+}
+
 /// Every `SummonItem` in the engine is in [`ALL_SUMMON_ITEMS`], and
 /// every one of them is reachable from an `Item` that names it.
 ///
