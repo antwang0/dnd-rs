@@ -107018,3 +107018,115 @@ fn a_goblin_with_nobody_to_hide_behind_takes_the_arrow() {
         );
     }
 }
+
+/// SRD 5.2 Chain Devil **Unnerving Gaze**: *"Trigger: A creature the
+/// devil can see starts its turn within 30 feet of the devil and can see
+/// the devil. Response—Wisdom Saving Throw: DC 15. Failure: The target
+/// has the Frightened condition until the end of its turn. Success: The
+/// target is immune to this devil's Unnerving Gaze for 24 hours."*
+///
+/// Both outcomes across seeds, because the save is a save: some fighters
+/// look away and some do not, and the two outcomes are different
+/// mechanics rather than two shades of one. The failure installs
+/// Frightened *linked to the devil*, which is what the roster-wide
+/// `no_source_of_fear_installs_it_without_a_link` sweep insists on. The
+/// success installs a permanent immunity to that devil and nothing else.
+#[test]
+fn a_chain_devils_stare_either_lands_or_is_never_a_problem_again() {
+    use crate::actors::creatures::chain_devils::CHAIN_DEVIL_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (mut frightened, mut shrugged) = (0, 0);
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let devil = e
+            .instantiate_creature(&CHAIN_DEVIL_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 4), 0, 0)
+            .unwrap();
+        open_turn_for(&mut e, pc);
+
+        if e.actors[&pc].has_condition(Condition::Frightened) {
+            frightened += 1;
+            assert_eq!(
+                e.actors[&pc].linked_by(Condition::Frightened),
+                Some(devil),
+                "seed {}: the fear has to know whose face it is",
+                seed
+            );
+            assert!(
+                !e.actors[&pc].is_immune_to_gaze_of(devil),
+                "seed {}: a failed save buys no immunity",
+                seed
+            );
+        } else {
+            shrugged += 1;
+            assert!(
+                e.actors[&pc].is_immune_to_gaze_of(devil),
+                "seed {}: a made save is good for twenty-four hours",
+                seed
+            );
+        }
+        // Either way the devil has spent the reaction it would have used
+        // on an opportunity attack — which is the price of the stare and
+        // the reason a kyton that gazes is a kyton you can walk away
+        // from.
+        assert!(
+            !e.actors[&devil].has_reaction(),
+            "seed {}: the gaze is a reaction",
+            seed
+        );
+    }
+    assert!(frightened > 0, "forty stares and nobody flinched");
+    assert!(shrugged > 0, "forty stares and nobody held the look");
+}
+
+/// The three ways a kyton's stare does not reach: too far, out of sight,
+/// and already answered.
+///
+/// RAW's trigger is *"starts its turn within 30 feet of the devil and
+/// can see the devil"*, and the immunity clause closes the loop — a
+/// creature that has made the save once never rolls against that devil
+/// again, which is what stops a kyton from re-rolling the same fighter
+/// every round until it fails.
+#[test]
+fn a_kytons_stare_reaches_thirty_feet_and_no_further() {
+    use crate::actors::creatures::chain_devils::CHAIN_DEVIL_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    // Forty feet away — 16 tiles, comfortably past RAW's 12.
+    let mut e = ei_with_terrain_seeded(40, 20, &[], 3);
+    let devil = e
+        .instantiate_creature(&CHAIN_DEVIL_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+        .unwrap();
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(30, 4), 0, 0)
+        .unwrap();
+    open_turn_for(&mut e, pc);
+    assert!(
+        !e.actors[&pc].has_condition(Condition::Frightened),
+        "thirty feet is thirty feet"
+    );
+    assert!(
+        !e.actors[&pc].is_immune_to_gaze_of(devil),
+        "and a stare that never happened costs the fighter nothing either"
+    );
+    assert!(
+        e.actors[&devil].has_reaction(),
+        "nor the devil its reaction"
+    );
+
+    // Having made the save once, the fighter never rolls again — which
+    // is what stops the kyton re-rolling them every round until they
+    // fail.
+    e.actors.get_mut(&pc).unwrap().note_gaze_immunity(devil);
+    for _ in 0..3 {
+        e.skip_turn();
+        open_turn_for(&mut e, pc);
+        assert!(
+            !e.actors[&pc].has_condition(Condition::Frightened),
+            "the fighter has already met that face"
+        );
+    }
+}

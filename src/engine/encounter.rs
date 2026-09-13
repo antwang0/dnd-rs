@@ -680,6 +680,15 @@ const CONSUMED_ON_SAVE: &[Condition] = &[
 /// the field would silently collapse the aura to 0.
 const AURA_OF_CONQUEST_PSYCHIC: u32 = 5;
 
+/// SRD 5.2 Chain Devil **Unnerving Gaze**: *"Wisdom Saving Throw: DC
+/// 15."* Printed rather than derived — the kyton's own numbers give
+/// `8 + PB 3 + CHA 2 = 13`, and a stat block's save DC is not obliged to
+/// be the formula.
+const UNNERVING_GAZE_DC: i32 = 15;
+
+/// …and its *"within 30 feet"*, in tiles on the 2.5-ft grid.
+const UNNERVING_GAZE_RANGE: isize = 12;
+
 /// How far below their rolled initiative a Thief's Reflexes extra turn
 /// sits. RAW is a flat 10, and the flatness is the point — it is a fixed
 /// distance down a d20-scale order, so on a typical table the extra turn
@@ -15012,6 +15021,15 @@ impl EncounterInstance {
         // beside each other — all three read the actor's state at the
         // top of the turn and none depends on the others.
         self.apply_sunlight_hypersensitivity(actor_id);
+        // SRD 5.2 Chain Devil **Unnerving Gaze**: the one reaction in
+        // the book whose trigger is a turn opening rather than a swing.
+        // Fourth in the start-of-turn run and last of the four that read
+        // the actor's own state, because it is the only one that can
+        // install a condition the turn about to happen has to live
+        // with — and because a creature the sunlight has just killed
+        // should not be made to look at anything. See
+        // `apply_unnerving_gaze`.
+        self.apply_unnerving_gaze(actor_id);
         // 5e **passive Perception**, doing the one job RAW gives it:
         // noticing something without consciously looking for it. See
         // `notice_hidden_enemies`.
@@ -15170,6 +15188,132 @@ impl EncounterInstance {
             damage_type: DamageType::Psychic,
         }
         .apply(self);
+    }
+
+    /// SRD 5.2 Chain Devil **Unnerving Gaze** — *"Trigger: A creature
+    /// the devil can see starts its turn within 30 feet of the devil and
+    /// can see the devil. Response—Wisdom Saving Throw: DC 15, the
+    /// triggering creature. Failure: The target has the Frightened
+    /// condition until the end of its turn. Success: The target is
+    /// immune to this devil's Unnerving Gaze for 24 hours."*
+    ///
+    /// The one reaction in the book that answers a turn *starting*
+    /// rather than a swing, which is why it lives here beside the other
+    /// start-of-turn passives instead of on any of the attack
+    /// chokepoint's cohorts. Everything about it is read off the actor
+    /// whose turn has just opened, which is exactly the shape the three
+    /// clauses above it have.
+    ///
+    /// **Both creatures have to be able to see.** RAW says so twice —
+    /// *"a creature the devil can see"* and *"and can see the devil"* —
+    /// and the two are not the same question: an Invisible kyton still
+    /// sees you and you are not unnerved by what you cannot look at.
+    /// Both directions go through `viewer_can_see`.
+    ///
+    /// **The reaction is spent**, which is the whole budget: one gaze
+    /// per round, whoever it lands on. A kyton that has already stared
+    /// somebody down this round watches the next creature's turn open
+    /// and does nothing, and — since the reaction is the same slot an
+    /// opportunity attack comes out of — a kyton that gazes is a kyton
+    /// that cannot punish a walk-away.
+    ///
+    /// **DC 15 is printed rather than derived**, unlike almost every
+    /// other save in the engine. The kyton's own numbers give
+    /// `8 + PB 3 + CHA 2 = 13`, and RAW prints 15; a stat block's save
+    /// DC is not obliged to be the formula and this one is not.
+    ///
+    /// **"Until the end of its turn" is served by `UntilStartOfNextTurn`**,
+    /// which is the closest timer the engine has and overshoots by the
+    /// remainder of the round. What the overshoot actually costs is
+    /// small and worth naming: for the rest of the round the frightened
+    /// creature swings at disadvantage on *reactions* — an opportunity
+    /// attack, a riposte — where RAW would have let it. Every other
+    /// clause of Frightened is about the holder's own turn, which has
+    /// already ended.
+    fn apply_unnerving_gaze(&mut self, actor_id: usize) {
+        let eligible = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.is_combat_active());
+        if !eligible {
+            return;
+        }
+        let team = match self.actors.get(&actor_id) {
+            Some(a) => a.team(),
+            None => return,
+        };
+        // Sorted so a seeded replay picks the same devil when two of
+        // them are watching the same doorway.
+        let watchers: Vec<usize> = self
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                self.actors.get(id).is_some_and(|d| {
+                    d.has_unnerving_gaze()
+                        && d.is_combat_active()
+                        && d.team() != team
+                        && d.has_reaction()
+                })
+            })
+            .collect();
+        for devil in watchers {
+            if self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.is_immune_to_gaze_of(devil))
+            {
+                continue;
+            }
+            // 30 ft = 12 tiles on the 2.5-ft grid.
+            if self
+                .footprint_distance(actor_id, devil)
+                .is_none_or(|d| d > UNNERVING_GAZE_RANGE)
+            {
+                continue;
+            }
+            if !self.viewer_can_see(devil, actor_id) || !self.viewer_can_see(actor_id, devil) {
+                continue;
+            }
+            let save = self.roll_save_vs_condition(
+                actor_id,
+                crate::engine::types::AbilityScoreType::Wisdom,
+                UNNERVING_GAZE_DC,
+                Condition::Frightened,
+            );
+            if let Some(d) = self.actors.get_mut(&devil) {
+                d.consume_resource(crate::engine::side_effects::Resource::Reaction);
+            }
+            let (victim_name, devil_name) =
+                (self.actor_name(actor_id), self.actor_name(devil));
+            if save.passed() {
+                if let Some(a) = self.actors.get_mut(&actor_id) {
+                    a.note_gaze_immunity(devil);
+                }
+                self.log(format!(
+                    "  unnerving gaze: {} meets {}'s stare and is never troubled by it again.",
+                    victim_name, devil_name
+                ));
+                // RAW's immunity is to *this* devil's gaze, so the walk
+                // carries on: a second kyton in the room is a second
+                // face to look at.
+                continue;
+            }
+            self.log(format!(
+                "  unnerving gaze: {} cannot look away from {}.",
+                victim_name, devil_name
+            ));
+            for effect in crate::engine::side_effects::install_condition_with_link(
+                Condition::Frightened,
+                actor_id,
+                devil,
+                crate::conditions::ConditionTimer::UntilStartOfNextTurn,
+            ) {
+                effect.apply(self);
+            }
+            // One reaction, one gaze: a creature that has been
+            // frightened by one kyton has spent that kyton's reaction,
+            // and any other kyton in the room still gets its own look.
+        }
     }
 
     /// 5e Oath of Redemption Paladin **Protective Spirit** (subclass

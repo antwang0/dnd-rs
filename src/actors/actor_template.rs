@@ -3714,6 +3714,25 @@ pub struct CreatureTemplate {
     /// the creature a swing lands on before anything is rolled, and this
     /// is the one that runs in the ungenerous direction.
     pub redirects_attacks: bool,
+    /// SRD 5.2 Chain Devil **Unnerving Gaze** — *"Trigger: A creature
+    /// the devil can see starts its turn within 30 feet of the devil and
+    /// can see the devil. Response—Wisdom Saving Throw: DC 15, the
+    /// triggering creature. Failure: The target has the Frightened
+    /// condition until the end of its turn. Success: The target is
+    /// immune to this devil's Unnerving Gaze for 24 hours."*
+    ///
+    /// The only reaction in SRD 5.2 that fires on somebody else's turn
+    /// *starting* rather than on a swing, which is why it is a flag here
+    /// and a start-of-turn pass in `EncounterInstance::apply_unnerving_gaze`
+    /// rather than a row on any of the attack chokepoint's cohorts.
+    ///
+    /// The kyton's stat block used to carry the 2014 version of this
+    /// clause — **Unnerving Mask**, where the devil's face becomes
+    /// somebody the target has lost — and this file said it was left out
+    /// because *"the engine has no lane for a per-target illusion that
+    /// reshapes itself"*. SRD 5.2 rewrote it as a plain gaze and a plain
+    /// save, and there was nothing left to need a lane for.
+    pub has_unnerving_gaze: bool,
     /// SRD 5.2 **Riposte**, the Pirate Captain's version of the reaction
     /// above: *"On a miss, the pirate makes one Rapier attack against
     /// the triggering creature if within range."*
@@ -4667,6 +4686,7 @@ impl CreatureTemplate {
             has_magic_resistance: false,
             parry_bonus: 0,
             redirects_attacks: false,
+            has_unnerving_gaze: false,
             parry_ripostes: false,
             recharge_abilities: Vec::new(),
             legendary_actions_per_round: 0,
@@ -5829,6 +5849,20 @@ pub struct ActorInstance {
     parry_bonus: i32,
     parry_ripostes: bool,
     redirects_attacks: bool,
+    has_unnerving_gaze: bool,
+    /// Creatures whose Unnerving Gaze this one has already shrugged off
+    /// — RAW's *"the target is immune to this devil's Unnerving Gaze for
+    /// 24 hours"*, which inside one encounter is simply *forever*.
+    ///
+    /// Keyed by the devil rather than held as a condition, because the
+    /// immunity RAW grants is to *that* devil's gaze: a party fighting
+    /// two kytons has saved against one of them and still has the other
+    /// to look at. A condition could not say which.
+    ///
+    /// Twenty-four hours is longer than any fight and shorter than the
+    /// long rest that separates two, so nothing clears it and nothing
+    /// needs to: the set dies with the encounter.
+    gaze_immunities: HashSet<usize>,
     /// Recharge tracking: maps action name → (min_roll, is_available).
     /// At start-of-turn the engine rolls a d6 for each exhausted ability;
     /// if the roll >= min_roll the ability becomes available again.
@@ -6224,6 +6258,8 @@ impl ActorInstance {
             parry_bonus: ct.parry_bonus,
             parry_ripostes: ct.parry_ripostes,
             redirects_attacks: ct.redirects_attacks,
+            has_unnerving_gaze: ct.has_unnerving_gaze,
+            gaze_immunities: HashSet::new(),
             recharge_abilities: ct
                 .recharge_abilities
                 .iter()
@@ -6717,6 +6753,25 @@ impl ActorInstance {
     /// on the roster. See `CreatureTemplate::redirects_attacks`.
     pub fn redirects_attacks(&self) -> bool {
         self.redirects_attacks
+    }
+
+    /// True when this creature's stare costs anybody who starts a turn
+    /// near it a Wisdom save — SRD 5.2's Chain Devil. See
+    /// `CreatureTemplate::has_unnerving_gaze`.
+    pub fn has_unnerving_gaze(&self) -> bool {
+        self.has_unnerving_gaze
+    }
+
+    /// True once this creature has made its save against `devil_id`'s
+    /// gaze — RAW's twenty-four hours, which outlasts the fight.
+    pub fn is_immune_to_gaze_of(&self, devil_id: usize) -> bool {
+        self.gaze_immunities.contains(&devil_id)
+    }
+
+    /// Record that this creature met `devil_id`'s stare and did not
+    /// flinch.
+    pub fn note_gaze_immunity(&mut self, devil_id: usize) {
+        self.gaze_immunities.insert(devil_id);
     }
 
     /// True while the actor holds something that gives spell attack

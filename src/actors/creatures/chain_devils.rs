@@ -21,13 +21,28 @@ use std::sync::LazyLock;
 /// - **chain devil chain** (standalone) — the same swing, once.
 ///
 /// **Devil's Sight** and **Magic Resistance** are the family envelope.
-/// The kyton also has RAW's **Unnerving Mask** — a reaction-adjacent
-/// clause where the devil's face becomes someone the target has lost,
-/// forcing a DC 14 WIS save or Frightened. It is not carried: the engine
-/// has no lane for a per-target illusion that reshapes itself, and the
-/// clause RAW attaches it to (Animate Chains) is a summon of terrain
-/// this stat block does not have. What is kept is the half that
-/// mattered — the chains, and the fact that they hold.
+///
+/// **Unnerving Gaze** is the kyton's Reaction and it ships — *"Trigger:
+/// A creature the devil can see starts its turn within 30 feet of the
+/// devil and can see the devil. Response—Wisdom Saving Throw: DC 15.
+/// Failure: The target has the Frightened condition until the end of
+/// its turn. Success: The target is immune to this devil's Unnerving
+/// Gaze for 24 hours."*
+///
+/// It used to be left out, and this docstring used to explain why: the
+/// 2014 version of the clause was **Unnerving Mask**, where the devil's
+/// face becomes somebody the target has lost, and *"the engine has no
+/// lane for a per-target illusion that reshapes itself"*. SRD 5.2
+/// rewrote it as a plain stare and a plain save, and there was nothing
+/// left to need a lane for. See
+/// `EncounterInstance::apply_unnerving_gaze`.
+///
+/// It pairs with the chains rather than duplicating them, which is what
+/// makes the kyton read as a torturer instead of a bruiser: the chains
+/// stop you moving and the stare stops you wanting to. Both are saves
+/// the party has to pass every round, and the gaze costs the reaction
+/// the devil would otherwise spend punishing a walk-away — so a kyton
+/// that stares is a kyton you can leave.
 ///
 /// The reach is the other half. Ten feet means a kyton restrains from
 /// outside the reach of most of what it restrains, and a Restrained
@@ -75,6 +90,10 @@ pub static CHAIN_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         has_magic_resistance: true,
         features: HashSet::from([DEVILS_SIGHT_TAG, MAGICAL_ATTACKS_TAG]),
+        // SRD 5.2's Reaction, and the only one in the book that answers
+        // a turn opening rather than a swing landing. See the docstring
+        // above and `EncounterInstance::apply_unnerving_gaze`.
+        has_unnerving_gaze: true,
         ..CreatureTemplate::defaults()
     }
 });
