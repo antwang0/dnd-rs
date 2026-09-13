@@ -7538,47 +7538,6 @@ impl ActorInstance {
             .copied()
     }
 
-    /// The action that *is* the spell called `spell_name`, wherever this
-    /// creature keeps it — its own stat block, or something in the pack.
-    ///
-    /// `find_action` one method up asks about the stat block only, which
-    /// is right for the question it is usually asked: "does this
-    /// creature know Counterspell" is a fact about the creature. This is
-    /// the other question — "can this creature cast Dimension Door right
-    /// now" — and the answer includes a Cape of the Mountebank.
-    ///
-    /// Matched on [`Action::printed_spell_name`] as well as on the
-    /// action's own name, because an item's row is named for the item:
-    /// the cape's is *"cape of the mountebank: dimension door"*, and the
-    /// thing a caller wants is the spell it is a printing of. That
-    /// method exists for exactly this and `staves::StaffSpell` is the
-    /// one chassis that can answer it honestly — it forwards the real
-    /// resolver rather than a re-statement of it.
-    ///
-    /// **The stat block wins a tie**, which keeps this purely additive:
-    /// a caster who knows the spell reaches for it the way it always
-    /// did, and only a creature that does *not* know it now finds the
-    /// one in its pack.
-    ///
-    /// Read by the AI's `try_teleport_escape`, which had been asking
-    /// `find_action` and therefore could never reach the two items in
-    /// the file whose whole content is an escape.
-    ///
-    /// [`Action::printed_spell_name`]: crate::actions::action_template::Action::printed_spell_name
-    pub fn find_printing_of(
-        &self,
-        spell_name: &str,
-    ) -> Option<&'static (dyn Action + Send + Sync)> {
-        self.find_action(spell_name).or_else(|| {
-            self.active_items()
-                .flat_map(|i| i.on_use.iter().copied())
-                .find(|a| {
-                    a.printed_spell_name()
-                        .is_some_and(|n| n.eq_ignore_ascii_case(spell_name))
-                })
-        })
-    }
-
     /// First melee weapon action on this actor's action list — the
     /// shared predicate used by both the opportunity-attack dispatcher
     /// (`EncounterInstance::dispatch_opportunity_attacks`) and the

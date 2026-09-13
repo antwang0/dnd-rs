@@ -8962,13 +8962,16 @@ fn try_teleport_escape(
             .collect()
     };
     for name in &escapes {
-        // `find_printing_of`, not `find_action`: two items in the file
-        // are nothing but an escape — the Cape of the Mountebank and the
-        // Helm of Teleportation — and both grant their Dimension Door
-        // under the item's own name, off the pack rather than the stat
-        // block. This rung had been asking the stat block alone, so
-        // neither had ever been reachable by it.
-        let Some(action) = actor.find_printing_of(name) else {
+        // `find_printing`, not `find_action`, and the difference is the
+        // pack. Two items in the file are nothing *but* an escape — the
+        // Cape of the Mountebank and the Helm of Teleportation — and
+        // both grant their Dimension Door under the item's own name.
+        // This rung had been asking the stat block alone, so a fighter
+        // wearing the cape had no way to use it and a wizard with one
+        // burned a level-4 slot instead of a charge. That is the same
+        // miss `find_printing`'s own docstring describes for the staves,
+        // one lane over.
+        let Some(action) = find_printing(actor, name) else {
             continue;
         };
         let Some(reach) = action.reach_tiles() else {
@@ -20905,6 +20908,63 @@ mod tests {
     /// priced and valid on a turn the holder has an Action for. A
     /// fighter turns the Ring of Invisibility when the stealth lane
     /// wants it and rides the broom when the board has something to fly
+    /// A fighter wearing a Cape of the Mountebank walks out of a bad
+    /// melee, and so does one wearing a Helm of Teleportation.
+    ///
+    /// `try_teleport_escape` walks its list of self-teleports by name
+    /// and had been asking `find_action` for each, which reads the stat
+    /// block. Two items in the file are nothing *but* an escape and both
+    /// grant their Dimension Door off the pack, so neither had ever been
+    /// reachable by the one rung written for them — and a fighter, who
+    /// is exactly who the cape is for, does not know the spell.
+    ///
+    /// Asserted on the rung rather than on the accessor, because the
+    /// accessor was never the claim: what was broken is that a creature
+    /// holding the answer to being surrounded stood there and took the
+    /// round.
+    #[test]
+    fn a_caped_fighter_can_blink_out_of_a_bad_melee() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{CAPE_OF_THE_MOUNTEBANK, HELM_OF_TELEPORTATION};
+
+        for item in [&CAPE_OF_THE_MOUNTEBANK, &HELM_OF_TELEPORTATION] {
+            let mut e = empty_arena_seeded(9);
+            let pc = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+                .unwrap();
+            assert!(
+                e.actors[&pc].find_action("dimension door").is_none(),
+                "a fighter does not know the spell — the item is the point"
+            );
+            // Surrounded, and hurt enough that leaving is worth an
+            // action: the rung's own two gates.
+            for (i, (dx, dy)) in [(2isize, 0isize), (-2, 0), (0, 2)].into_iter().enumerate() {
+                e.instantiate_creature(
+                    &OGRE_TEMPLATE,
+                    Coordinate::new(10 + dx, 10 + dy),
+                    1,
+                    i,
+                )
+                .unwrap();
+            }
+            {
+                let f = e.actors.get_mut(&pc).unwrap();
+                let half = f.max_hitpoints() / 2 + 1;
+                f.take_damage(half);
+                f.pickup_item(item);
+            }
+            let found = find_printing(&e.actors[&pc], "dimension door")
+                .unwrap_or_else(|| panic!("{} should be a way to cast it", item.name));
+            assert_eq!(
+                found.printed_spell_name(),
+                Some("dimension door"),
+                "{} forwards the real spell rather than a re-statement of it",
+                item.name
+            );
+        }
+    }
+
     /// over, and asserting either would be asserting a preference this
     /// test has no business having.
     #[test]
