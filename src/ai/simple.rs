@@ -1100,6 +1100,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3l''. The pack's primes — the oil that sharpens a blade for
+        //       the rest of the fight and the shield that lets go of
+        //       its arm. Directly below the bottle rung and outside its
+        //       one-per-fight gate; see `ITEM_PRIMES` for why neither
+        //       belongs on that table.
+        if let Some(aei) = try_item_prime(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3m. Warding Bond — cleric / paladin lv2 abjuration. Touch-
         //     range damage-share bond: bonded ally gets +1 AC, +1 saves,
         //     and damage resistance; the caster takes the mirrored
@@ -3819,6 +3828,57 @@ const ITEM_SELF_BUFF_CONDITIONS: &[Condition] = &[
     // One damage type, chosen or printed.
     Condition::EnergyWarded,
 ];
+
+/// The pack's **primes** — the item actions that sharpen or shield their
+/// own user and are not a bottle, in the order a holder would reach for
+/// them.
+///
+/// A name-keyed table rather than a condition-keyed one, and a rung of
+/// its own rather than two more rows on `ITEM_SELF_BUFF_CONDITIONS`,
+/// because neither of these is the thing that table is gating. That gate
+/// is *"one buff per fight"* — the potion lane's answer to a creature
+/// with six bottles, which is a real problem because each bottle costs a
+/// turn and is gone. These two are not that:
+///
+///   - the **Animated Shield** costs nothing at all. RAW prints no
+///     charges on it, so a bearer may animate it every fight and it is
+///     never the wrong turn to do so. Putting it in the bottle table
+///     would have made a fighter who drank a Potion of Speed on turn one
+///     go the whole fight with the shield strapped to their arm.
+///   - the **Oil of Sharpness** is a bottle, but the condition it
+///     installs is `WeaponEnchanted` — which a friendly Magic Weapon
+///     also installs. A row there would have let somebody else's cast
+///     close the holder's own potion lane.
+///
+/// Each entry's own validator is what stops a repeat: the shield refuses
+/// while it is already hovering and the oil refuses while the blade is
+/// already enchanted. So the rung needs no state, which is as well —
+/// `decide` is handed an `&EncounterInstance`.
+const ITEM_PRIMES: &[&str] = &[
+    // The oil first: it is a consumable, it is `+3` on every swing for
+    // the rest of the fight, and it costs an Action — which means the
+    // turn it is worth spending is the first one, before the fight has
+    // eaten the swings it would have paid for.
+    "apply oil of sharpness",
+    // Then the shield, which costs a Bonus Action and can therefore
+    // ride the same turn as the oil.
+    "animate shield",
+];
+
+/// Sharpen or shield, when a fight is on.
+///
+/// Beside `try_item_self_buff` above and directly below it, on the same
+/// engagement gate and for the same reason: a turn spent priming in an
+/// empty room is a turn spent on the walk between rooms. See
+/// [`ITEM_PRIMES`] for why the two rows are not on that rung's table.
+fn try_item_prime(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    ITEM_PRIMES
+        .iter()
+        .find_map(|name| try_self_action_when_enemy_within(encounter, actor_id, 24, name))
+}
 
 /// Drink the best thing in the pack, once, when a fight is on.
 ///
@@ -20457,6 +20517,7 @@ mod tests {
             .chain(MELEE_ADJACENT_PRIMES.iter().copied())
             .chain(KINDLED_WEAPONS.iter().map(|(name, _)| *name))
             .chain(SLOT_RESTORING_ITEMS.iter().copied())
+            .chain(ITEM_PRIMES.iter().copied())
             // The two rungs that name one item apiece inline rather than
             // through a table.
             .chain([

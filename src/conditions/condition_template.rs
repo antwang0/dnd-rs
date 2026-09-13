@@ -2126,6 +2126,27 @@ pub enum Condition {
     /// enchanted stops overcoming resistance the same instant it stops
     /// adding +1.
     WeaponEnchanted,
+    /// The shield that is flying beside you rather than strapped to your
+    /// arm — SRD 5.2's **Animated Shield**, *"the Shield leaps into the
+    /// air and hovers in your space to protect you as if you were
+    /// wielding it, leaving your hands free. The Shield remains animate
+    /// for 1 minute, until you take a Bonus Action to end this effect,
+    /// or until you die or have the Incapacitated condition."*
+    ///
+    /// `+2 AC` off `CONDITION_AC_BONUSES`, which is the shield's own
+    /// number and the only clause of RAW's sentence the engine has a
+    /// surface for. *"Leaving your hands free"* is the clause the item
+    /// is really for at a table and has nothing to read here: this
+    /// engine has no hands — no two-handed weapon refuses to be swung
+    /// beside a shield, and no spell refuses a somatic component for
+    /// want of a spare one. The AC arrives either way, so what the
+    /// player loses is the reason it was worth a Bonus Action rather
+    /// than nothing.
+    ///
+    /// **Not** dispellable: RAW's shield is not a spell, and Dispel
+    /// Magic has no more business grounding it than it has unstrapping
+    /// an ordinary one.
+    ShieldAnimated,
     /// Darkvisioned (5e **Darkvision**, level-2 transmutation, touch, 8
     /// hours). "That creature has darkvision out to a range of 60
     /// feet."
@@ -3811,6 +3832,7 @@ impl Condition {
             Condition::MoilShrouded => "shrouded in moil",
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::WeaponEnchanted => "wielding an enchanted weapon",
+            Condition::ShieldAnimated => "guarded by a hovering shield",
             Condition::Darkvisioned => "seeing in the dark",
             Condition::WaterWalking => "walking on water",
             Condition::WaterBreathing => "breathing water",

@@ -9792,3 +9792,182 @@ pub static WAVE_WAND_OF_WONDER: WandOfWonderItem = WandOfWonderItem {
     billing: ItemUseBilling::Charges(1),
     table: WAND_OF_WONDER_TABLE,
 };
+
+/// **Animated Shield** — Bonus Action; the Shield lets go of your arm
+/// and hovers. SRD 5.2: *"the Shield leaps into the air and hovers in
+/// your space to protect you as if you were wielding it, leaving your
+/// hands free."*
+///
+/// `ItemUseBilling::Free`, which is the whole of what makes it a shield
+/// rather than a potion: RAW prints no charges and no pool, so a bearer
+/// may animate it every fight and every round of every fight. What it
+/// costs is the Bonus Action, once, and what it buys is `+2 AC` for a
+/// minute. See `Condition::ShieldAnimated` for the half of RAW's
+/// sentence the engine has nothing to read.
+pub static ANIMATE_SHIELD: SelfConditionItem = SelfConditionItem {
+    action_name: "animate shield",
+    action_aliases: &["animate", "hover shield"],
+    item_name: ANIMATED_SHIELD_NAME,
+    log_text: "{actor}'s shield leaps into the air and takes up station beside them.",
+    condition: Condition::ShieldAnimated,
+    // RAW's one minute.
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
+    // Nothing is spent, so a refresh costs only the Bonus Action — but
+    // refusing it is still right: a second animation of an already
+    // hovering shield does nothing at all, and the picker should say so
+    // rather than take the turn's Bonus Action for it.
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Free,
+};
+
+pub const ANIMATED_SHIELD_NAME: &str = "Animated Shield";
+
+/// **An oil poured over a blade** — SRD 5.2's Oil of Sharpness, *"for 1
+/// hour, the coated item is magical and has a +3 bonus to attack and
+/// damage rolls."*
+///
+/// Three clauses, three lanes, and they are the same three Magic Weapon
+/// already uses: the attack half rides `attack_bonus_buff`, the damage
+/// half rides `damage_bonus_buff`, and *"is magical"* rides
+/// `Condition::WeaponEnchanted` — the row `engine::magic` reads to let a
+/// swing through a wraith's resistance. See `spells::MagicWeapon`, which
+/// is this at a third of the size and with a concentration behind it.
+///
+/// **No concentration to lose**, and that is the item. Magic Weapon is a
+/// level-2 slot *and* the caster's concentration for the fight, which is
+/// the same concentration they wanted for Haste or Web; a vial costs a
+/// turn and then nothing at all. It is why RAW prices the oil Very Rare
+/// and the spell at level 2.
+///
+/// **The whole fight, and no longer.** RAW's hour outlives any fight the
+/// engine runs, so the buff has no in-combat expiry to model — and it
+/// does not survive the night either: `ActorInstance::long_rest` zeroes
+/// both buff ledgers, which is exactly where an hour that started in the
+/// last room has run out.
+///
+/// A chassis rather than one bespoke action, because *"coat a weapon"*
+/// is a shape the book prints more than once and the only things that
+/// differ are the two numbers.
+pub struct WeaponOilItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    /// Full log line; `{actor}` is substituted with the user's name.
+    pub log_text: &'static str,
+    /// RAW's bonus to attack rolls.
+    pub attack_bonus: i32,
+    /// RAW's bonus to damage rolls. A separate field from the attack
+    /// bonus because the book prints them separately and the next oil
+    /// may not print them equal.
+    pub damage_bonus: i32,
+    /// How long *"is magical"* lasts. The two numeric buffs have no
+    /// timer of their own — see the struct docstring.
+    pub timer: ConditionTimer,
+}
+
+impl Action for WeaponOilItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        // A weapon that is already enchanted is one this vial would be
+        // wasted on — the buffs would stack, but the engine's magic
+        // lanes are per-creature rather than per-weapon, so a second
+        // coat is a second creature's worth of oil poured on the same
+        // blade. Same refusal `SelfConditionItem::reject_when_active`
+        // makes, for the same reason.
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| !a.has_condition(Condition::WeaponEnchanted))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::{AdjustAttackBuff, AdjustDamageBuff};
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(self.log_text.replace("{actor}", &name));
+        vec![
+            Box::new(AdjustAttackBuff {
+                actor_id: caster_id,
+                delta: self.attack_bonus,
+            }),
+            Box::new(AdjustDamageBuff {
+                actor_id: caster_id,
+                delta: self.damage_bonus,
+            }),
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::WeaponEnchanted,
+                timer: self.timer,
+            }),
+        ]
+    }
+}
+
+pub const OIL_OF_SHARPNESS_NAME: &str = "Oil of Sharpness";
+
+/// Oil of Sharpness — Action; `+3` to attack and damage for the fight,
+/// and a blade that counts as magic while it lasts. See
+/// [`WeaponOilItem`].
+pub static APPLY_OIL_OF_SHARPNESS: WeaponOilItem = WeaponOilItem {
+    action_name: "apply oil of sharpness",
+    action_aliases: &["oil", "sharpen", "oil of sharpness"],
+    item_name: OIL_OF_SHARPNESS_NAME,
+    log_text: "{actor} works a shimmer of silver oil along their blade.",
+    attack_bonus: 3,
+    damage_bonus: 3,
+    // RAW's hour, in rounds. Longer than any fight the engine runs,
+    // which is the point — see the chassis docstring.
+    timer: ConditionTimer::Rounds(100),
+};

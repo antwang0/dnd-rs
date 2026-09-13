@@ -2477,6 +2477,15 @@ const CONDITION_AC_BONUSES: &[ConditionAcBonus] = &[
         source: Condition::EvasiveFootwork,
         bonus: 4,
     },
+    // SRD 5.2 **Animated Shield** — a Shield's own `+2`, on a Shield
+    // that is hovering rather than held. The only row in this cohort
+    // that comes off an item rather than a spell or a class feature,
+    // and the only one Dispel Magic has no business touching; see
+    // `Condition::ShieldAnimated`.
+    ConditionAcBonus {
+        source: Condition::ShieldAnimated,
+        bonus: 2,
+    },
 ];
 
 /// One row in the `CONDITION_SAVE_BONUSES` / `CONDITION_CHECK_BONUSES`

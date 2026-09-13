@@ -6453,6 +6453,113 @@ pub static ROD_OF_ALERTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Animated Shield** (Armor: Shield, Very Rare, requires attunement)
+/// — *"While holding this Shield, you can take a Bonus Action to cause
+/// it to animate. The Shield leaps into the air and hovers in your space
+/// to protect you as if you were wielding it, leaving your hands free.
+/// The Shield remains animate for 1 minute, until you take a Bonus
+/// Action to end this effect, or until you die or have the Incapacitated
+/// condition."*
+///
+/// A `+2` that is not on `ItemBonuses`, and the difference is the whole
+/// item: the plain Shield in this file carries `ac: 2` and is simply on,
+/// and this one is off until somebody spends a Bonus Action on it. That
+/// buys RAW's *"leaving your hands free"* at a table — and this engine
+/// has no hands, so what it buys here is a defence a player chooses to
+/// turn on, on the turn they can spare the action, rather than a number
+/// on a sheet.
+///
+/// Once per fight is the realistic cost: a minute is ten rounds and
+/// nothing is spent, so the decision is only ever *when*, which is the
+/// first round somebody is not spending their Bonus Action on something
+/// louder. See `Condition::ShieldAnimated`.
+pub static ANIMATED_SHIELD: Item = Item {
+    name: crate::actions::item_actions::ANIMATED_SHIELD_NAME,
+    glyph: '#',
+    on_use: &[&crate::actions::item_actions::ANIMATE_SHIELD],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Oil of Sharpness** (Wondrous item, Very Rare) — *"For 1 hour, the
+/// coated item is magical and has a +3 bonus to attack and damage
+/// rolls."*
+///
+/// The biggest number a consumable in this file puts on a swing, and the
+/// only one that puts it on *every* swing for the rest of the fight. A
+/// Potion of Heroism is a lump of temporary hit points and a Potion of
+/// Speed is a round-limited sprint; this is `+3 / +3` on a greatsword
+/// from the turn it is poured to the end of the encounter.
+///
+/// Worth reading against `spells::MAGIC_WEAPON`, which is the same three
+/// clauses at a third of the size: that one costs a level-2 slot **and**
+/// the caster's concentration for the fight — the same concentration
+/// they wanted for Haste or Web — and a vial costs a turn and then
+/// nothing at all. It is why RAW prices the oil Very Rare and the spell
+/// at level 2, and why a party that finds one gives it to whoever swings
+/// most often rather than to the caster.
+///
+/// **It makes the blade magical**, which against the undead half of this
+/// bestiary is worth more than the numbers: a wraith and a specter both
+/// halve nonmagical steel, and the oil is an answer a party with no
+/// magic weapon can buy.
+pub static OIL_OF_SHARPNESS: Item = Item {
+    name: crate::actions::item_actions::OIL_OF_SHARPNESS_NAME,
+    glyph: 'q',
+    on_use: &[&crate::actions::item_actions::APPLY_OIL_OF_SHARPNESS],
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Warmth** (Wondrous item, Uncommon, requires attunement) —
+/// *"you have Resistance to Cold damage."*
+///
+/// RAW's other half — *"you and everything you wear and carry are
+/// unharmed by temperatures as low as −50 degrees Fahrenheit"* — is the
+/// Extreme Cold environmental hazard, which `engine::weather` does not
+/// carry: that module's own docstring explains why, and the short
+/// version is that every entry in RAW's environment table but two is
+/// measured in hours and no fight in the book is.
+///
+/// So it is the Ring of Cold Resistance at a lower rarity, which is
+/// exactly what the book prints — and worth having both of for the same
+/// reason the file keeps a Ring of Protection and an Ioun Stone of
+/// Protection: two items that differ by a rarity step are a decision
+/// about which one to attune.
+pub static RING_OF_WARMTH: Item = Item {
+    name: "Ring of Warmth",
+    glyph: 'w',
+    damage_resistances: &[crate::engine::types::DamageType::Cold],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Horseshoes of Speed** (Wondrous item, Rare) — *"While all four
+/// horseshoes are attached to the same creature, its Speed is increased
+/// by 30 feet."*
+///
+/// The largest flat speed bonus in the file by a factor of three, and
+/// the reason it can be: RAW's set only fits a hoof. A horse with these
+/// on covers ninety feet in a turn, which on a board this size is most
+/// of it — and the party's mounted scout is the only member of it who
+/// can be wearing them.
+///
+/// **The hoof clause is not modeled** and it is the one that matters:
+/// nothing stops a fighter putting them on. The engine has no equipment
+/// slots and no anatomy, so *"touch one of the horseshoes to the hoof of
+/// a horse or similar creature"* has nothing to read — what it has
+/// instead is the mount layer, and a party that finds these will put
+/// them on the mount anyway, because thirty feet is worth more to the
+/// thing carrying two people than to either of them.
+///
+/// No attunement, which is RAW and is the other half of what makes them
+/// worth finding: they cost a rider nothing they were saving for a ring.
+pub static HORSESHOES_OF_SPEED: Item = Item {
+    name: "Horseshoes of Speed",
+    glyph: 'n',
+    bonuses: ItemBonuses { speed: 30, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
 /// **Wand of Wonder** (Wand, Rare, requires attunement) — *"This wand
 /// has 7 charges. While holding it, you can take a Magic action to
 /// expend 1 charge while choosing a point within 120 feet of yourself.
@@ -7747,6 +7854,18 @@ pub static LOOT_POOL: &[&Item] = &[
     // family, because a table this wide wants to be a thing that happens
     // to a party once rather than a tool they learn to use.
     &WAND_OF_WONDER,
+    // The shield that is off until somebody turns it on, and the vial
+    // that puts the biggest number in the file on a swing. Single
+    // entries: both are Very Rare, and the oil in particular is a
+    // consumable a party would rather find once and argue about than
+    // find three of.
+    &ANIMATED_SHIELD,
+    &OIL_OF_SHARPNESS,
+    // The uncommon half of the cold-resistance pair, and the shoes.
+    // Neither wants an attunement slot, which is most of why they are
+    // worth picking up at all once the ceiling starts to bite.
+    &RING_OF_WARMTH,
+    &HORSESHOES_OF_SPEED,
     // The headband, beside the Ioun Stone of Intellect it is the other
     // reading of: a floor rather than a bonus, and Uncommon rather than
     // Very Rare, so it is the one a first-room party can actually find.

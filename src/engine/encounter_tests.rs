@@ -105339,3 +105339,94 @@ fn a_hydra_opportunity_attacks_once_per_head() {
         "two heads answer two withdrawals"
     );
 }
+
+/// The Animated Shield is a `+2` that is off until somebody turns it on,
+/// costs nothing to turn on, and refuses to be turned on twice.
+#[test]
+fn an_animated_shield_is_a_bonus_action_and_two_points_of_armour() {
+    use crate::actions::item_actions::ANIMATE_SHIELD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::ANIMATED_SHIELD;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let who = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let bare = e.actors[&who].armor_class();
+    e.actors.get_mut(&who).unwrap().pickup_item(&ANIMATED_SHIELD);
+    assert_eq!(
+        e.actors[&who].armor_class(),
+        bare,
+        "a shield nobody has animated is a shield on somebody's back"
+    );
+
+    let action: &dyn Action = &ANIMATE_SHIELD;
+    assert!(action.validate_input(&e, who, None, None, None));
+    for ef in action.side_effects(&mut e, who, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&who].armor_class(),
+        bare + 2,
+        "and a hovering one is worth a shield"
+    );
+    assert!(
+        e.actors[&who].has_item_named("Animated Shield"),
+        "nothing was spent — RAW prints no charges on it"
+    );
+    assert!(
+        !action.validate_input(&e, who, None, None, None),
+        "a second animation of an already hovering shield does nothing"
+    );
+}
+
+/// The Oil of Sharpness puts `+3` on every swing for the rest of the
+/// fight, makes the blade count as magic while it lasts, and is gone.
+///
+/// The last claim is the one worth pinning beside `spells::MAGIC_WEAPON`,
+/// which buys the same three clauses for a level-2 slot *and* the
+/// caster's concentration: the oil holds no concentration, so there is
+/// nothing an enemy can break to take it back.
+#[test]
+fn oil_of_sharpness_sharpens_every_swing_for_the_rest_of_the_fight() {
+    use crate::actions::item_actions::APPLY_OIL_OF_SHARPNESS;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::OIL_OF_SHARPNESS;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let who = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&who).unwrap().pickup_item(&OIL_OF_SHARPNESS);
+    assert_eq!(e.actors[&who].attack_bonus_buff(), 0);
+    assert!(!e.actors[&who].has_condition(Condition::WeaponEnchanted));
+
+    let action: &dyn Action = &APPLY_OIL_OF_SHARPNESS;
+    assert!(action.validate_input(&e, who, None, None, None));
+    for ef in action.side_effects(&mut e, who, None, None, None) {
+        ef.apply(&mut e);
+    }
+    let oiled = &e.actors[&who];
+    assert_eq!(oiled.attack_bonus_buff(), 3);
+    assert_eq!(oiled.damage_bonus_buff(), 3);
+    assert!(
+        oiled.has_condition(Condition::WeaponEnchanted),
+        "a wraith halves nonmagical steel, and this is an answer to that"
+    );
+    assert!(
+        !oiled.has_item_named("Oil of Sharpness"),
+        "the vial is emptied by the pouring"
+    );
+    assert!(
+        !action.validate_input(&e, who, None, None, None),
+        "and there is nothing left to pour"
+    );
+
+    // A night is where RAW's hour runs out.
+    e.actors.get_mut(&who).unwrap().long_rest();
+    assert_eq!(
+        e.actors[&who].attack_bonus_buff(),
+        0,
+        "the buff does not survive the rest that ends the hour"
+    );
+}
