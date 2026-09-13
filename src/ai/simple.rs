@@ -2564,6 +2564,16 @@ const ITEM_LOCKDOWN_CONDITIONS: &[Condition] = &[
     // which is the seam `LOCKDOWNS` draws in the same place.
     Condition::Dominated,
     Condition::Charmed,
+    // Tier 3, and the only row here that is not a lock on the target's
+    // *turn*: SRD 5.2's Dimensional Shackles lock their exit. Last,
+    // because it is worth nothing at all against a creature that is
+    // still fighting — and it is never offered against one, since the
+    // action's own gate is RAW's prerequisite that the target already be
+    // Incapacitated. What that produces is the right play: the rung
+    // reaches for a real lock first, and once one has landed on the
+    // thing with the most hit points on the board, it bolts that thing
+    // to the floor before it can blink away.
+    Condition::Shackled,
 ];
 
 /// The conditions an item-granted lock can install that leave the target

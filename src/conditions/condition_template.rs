@@ -2147,6 +2147,25 @@ pub enum Condition {
     /// Magic has no more business grounding it than it has unstrapping
     /// an ordinary one.
     ShieldAnimated,
+    /// Bound against every kind of stepping sideways — SRD 5.2's
+    /// **Dimensional Shackles**, *"while wearing them, the creature
+    /// can't use any method of extraplanar movement, including
+    /// teleportation or travel to a different plane of existence."*
+    ///
+    /// The only condition in the file whose whole content is a *veto*
+    /// on a lane rather than a number, a timer or a posture, and it is
+    /// read at one place: `TeleportActor::apply`, which is the side
+    /// effect every teleport in the engine resolves through — fifteen
+    /// call sites across the spell list, the class features, the species
+    /// traits and the bestiary. Gating there rather than on each of
+    /// those is what makes the clause true of teleports nobody has
+    /// written yet, and true of being teleported by somebody *else*,
+    /// which is RAW: a Thunder Step that tries to bring a shackled ally
+    /// along leaves them where they are.
+    ///
+    /// Permanent, which is RAW's own duration — *"the shackles can't be
+    /// removed while bound"*, and the engine has no lockpick.
+    Shackled,
     /// The strength of a hill giant, for an hour — SRD 5.2's **Potion of
     /// Giant Strength**, *"when you drink this potion, your Strength
     /// changes to a score determined by the potion's rarity … The potion
@@ -3868,6 +3887,7 @@ impl Condition {
             Condition::ElementallyWeaponed => "wielding an elemental weapon",
             Condition::WeaponEnchanted => "wielding an enchanted weapon",
             Condition::ShieldAnimated => "guarded by a hovering shield",
+            Condition::Shackled => "bound in dimensional shackles",
             Condition::HillGiantStrong => "strong as a hill giant",
             Condition::StoneGiantStrong => "strong as a stone giant",
             Condition::FireGiantStrong => "strong as a fire giant",
@@ -4384,6 +4404,40 @@ impl Condition {
                 | Condition::CunningStrikeObscure
                 | Condition::CunningStrikeKnockOut
         )
+    }
+
+    /// True if this condition bars its holder from stepping sideways out
+    /// of the world — a teleport, in or out.
+    ///
+    /// Read at `TeleportActor::apply`, which is the side effect every
+    /// teleport in the engine resolves through: fifteen call sites
+    /// across the spell list, the class features, the species traits and
+    /// the bestiary. Gating there rather than at each of them is what
+    /// makes the clause true of teleports nobody has written yet, and
+    /// true of being teleported by somebody *else* — a Thunder Step that
+    /// tries to bring a barred ally along leaves them standing there.
+    ///
+    /// Two members, and the second is a fix rather than a feature:
+    ///
+    ///   - **Shackled** is SRD 5.2's Dimensional Shackles, whose whole
+    ///     content is this sentence.
+    ///   - **Caged** is Forcecage, and it had been leaking. RAW: *"if
+    ///     the creature tries to use teleportation or interplanar travel
+    ///     to leave the cage, it must first make a Charisma saving
+    ///     throw."* The engine's `Caged` zeroes movement and leaves the
+    ///     action economy alone — correctly, RAW's prisoner can still
+    ///     cast — so a caged wizard could Misty Step out of a
+    ///     seventh-level spell whose entire point is that you cannot
+    ///     leave. The save is not modeled and the bar is absolute, which
+    ///     is the narrower reading and the one that makes the spell mean
+    ///     something.
+    ///
+    /// Deliberately **not** every condition that pins somebody down.
+    /// Restrained, Grappled and Entangled are all about the ground, and
+    /// RAW lets a grappled creature Misty Step away — that is most of
+    /// what the spell is for.
+    pub fn bars_extraplanar_movement(&self) -> bool {
+        matches!(self, Condition::Shackled | Condition::Caged)
     }
 
     /// True if this condition zeros out movement. Read by

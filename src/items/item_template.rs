@@ -6516,7 +6516,27 @@ pub static ROD_OF_ALERTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Wand of Enemy Detection** (Wand, Rare, requires attunement) —
+/// **Dimensional Shackles** (Wondrous item, Rare) — *"the shackles
+/// prevent a creature bound by them from using any method of
+/// extraplanar movement, including teleportation."*
+///
+/// The answer to a boss that leaves. Against the bestiary's blinkers — a
+/// phase spider, an efreeti, a rakshasa, a pit fiend, a lich with Misty
+/// Step in its pocket — this is the difference between a fight and a
+/// chase, and it needs no attunement and no charges.
+///
+/// What it costs instead is a *prerequisite*: RAW's shackles only go on
+/// a creature that is already Incapacitated, so somebody has to have
+/// landed the lockdown first. See
+/// [`crate::actions::item_actions::DimensionalShacklesItem`].
+pub static DIMENSIONAL_SHACKLES: Item = Item {
+    name: crate::actions::item_actions::DIMENSIONAL_SHACKLES_NAME,
+    glyph: 'X',
+    on_use: &[&crate::actions::item_actions::BIND_DIMENSIONAL_SHACKLES],
+    ..Item::DEFAULTS
+};
+
+/// **Wand of Enemy Detection** (Wand, Rare, requires attunement) —/// **Wand of Enemy Detection** (Wand, Rare, requires attunement) —
 /// *"The wand can sense the presence of hostile creatures that are
 /// Invisible, ethereal, disguised, or hidden, as well as those in plain
 /// sight."*
@@ -8043,6 +8063,10 @@ pub static LOOT_POOL: &[&Item] = &[
     // family, because a table this wide wants to be a thing that happens
     // to a party once rather than a tool they learn to use.
     &WAND_OF_WONDER,
+    // The shackles that answer a boss that leaves. No attunement, no
+    // charges, and a prerequisite instead: somebody has to land the
+    // lockdown first.
+    &DIMENSIONAL_SHACKLES,
     // The wand that answers the Hide layer and the ring that answers
     // being outnumbered. Single entries; both are the sort of item a
     // party remembers finding.

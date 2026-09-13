@@ -821,6 +821,28 @@ pub struct TeleportActor {
 impl ApplicableSideEffect for TeleportActor {
     fn apply(&self, ei: &mut EncounterInstance) {
         let name = ei.actor_name(self.actor_id);
+        // The two conditions that bar stepping sideways out of the
+        // world — Dimensional Shackles and a Forcecage. Asked here
+        // rather than at each teleport's own validator, because this is
+        // the side effect every teleport in the engine resolves through,
+        // so the clause is true of the ones nobody has written yet and
+        // true of being teleported by somebody *else*. See
+        // `Condition::bars_extraplanar_movement`.
+        if let Some(bar) = ei.actors.get(&self.actor_id).and_then(|a| {
+            a.conditions()
+                .keys()
+                .find(|c| c.bars_extraplanar_movement())
+                .copied()
+        }) {
+            if !name.is_empty() {
+                ei.log(format!(
+                    "  {} is {} and cannot step out of the world.",
+                    name,
+                    bar.name()
+                ));
+            }
+            return;
+        }
         match ei.place_actor_at(self.actor_id, self.dest) {
             Ok(()) => {
                 if !name.is_empty() {

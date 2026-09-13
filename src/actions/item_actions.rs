@@ -10370,3 +10370,148 @@ pub static SUMMON_RING_DJINNI: SummonItem = SummonItem {
     concentration: Some("Ring of Djinni Summoning"),
     billing: ItemUseBilling::Charges(1),
 };
+
+/// **Dimensional Shackles** — SRD 5.2: *"You can use a Magic action to
+/// place these shackles on an Incapacitated creature. The shackles
+/// adjust to fit a creature of Small to Large size. In addition to
+/// serving as mundane manacles, the shackles prevent a creature bound by
+/// them from using any method of extraplanar movement, including
+/// teleportation or travel to a different plane of existence. They don't
+/// prevent the creature from passing through an interdimensional
+/// portal."*
+///
+/// The only item on the table with no save, no attack roll and no
+/// duration — and the only one whose price is a *prerequisite*: the
+/// target must already be Incapacitated, which means somebody has
+/// already landed a Hold Person, a Hypnotic Pattern, a Power Word Stun
+/// or a knockout. That is what stops a pair of shackles from being a
+/// third-level lockdown for free.
+///
+/// What they buy, once on, is `Condition::Shackled` for good — the
+/// condition whose whole content is a veto on `TeleportActor`, which is
+/// the side effect every teleport in the engine goes through. Against
+/// the bestiary's blinkers — a phase spider, an efreeti, a rakshasa, a
+/// pit fiend — that is the difference between a boss fight and a boss
+/// leaving.
+///
+/// **Size is not checked.** RAW fits them to Small through Large and the
+/// engine could ask; it does not, because the clause the item is *for*
+/// is the one in the paragraph above, and a Huge creature that is
+/// Incapacitated in front of you has already lost the fight the shackles
+/// were going to decide.
+pub struct DimensionalShacklesItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    /// Touch, in tiles.
+    pub reach: isize,
+}
+
+impl Action for DimensionalShacklesItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Shackled)
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        // RAW's prerequisite, asked at the gate the picker and the AI's
+        // candidate walks both read, so a creature still on its feet
+        // never appears as something to shackle.
+        target.is_incapacitated() && !target.has_condition(Condition::Shackled)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        first_target_id(target_ids)
+            .and_then(|id| encounter.actors.get(&id))
+            .is_some_and(|t| t.is_combat_active() && self.affects_creature(t))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // The shackles leave the pack because they are now on somebody
+        // else's wrists — RAW gives no way to take them off, so this is
+        // the one consumable in the file that is spent by being *used
+        // up* rather than destroyed.
+        if !consume_caster_item(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let holder = encounter.actor_name(caster_id);
+        let bound = encounter.actor_name(target_id);
+        encounter.log(format!("{} locks the shackles onto {}.", holder, bound));
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Shackled,
+            // RAW gives no duration: "the shackles can't be removed
+            // while bound".
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+pub const DIMENSIONAL_SHACKLES_NAME: &str = "Dimensional Shackles";
+
+/// Dimensional Shackles — Action, touch, on somebody who is already
+/// Incapacitated. See [`DimensionalShacklesItem`].
+pub static BIND_DIMENSIONAL_SHACKLES: DimensionalShacklesItem = DimensionalShacklesItem {
+    action_name: "bind dimensional shackles",
+    action_aliases: &["shackles", "shackle", "dimensional shackles"],
+    item_name: DIMENSIONAL_SHACKLES_NAME,
+    reach: crate::actions::action_template::MELEE_REACH,
+};

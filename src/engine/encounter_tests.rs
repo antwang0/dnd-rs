@@ -105803,3 +105803,113 @@ fn the_wand_of_enemy_detection_finds_what_is_hiding() {
         "one word, one charge"
     );
 }
+
+/// Dimensional Shackles stop a teleport, and they only go on somebody
+/// who has already stopped fighting.
+///
+/// The gate is at `TeleportActor::apply` rather than at any teleport's
+/// own validator, which is what makes it true of all fifteen teleport
+/// sites in the engine at once — and true of being teleported by
+/// somebody else, which is the reading RAW supports.
+#[test]
+fn dimensional_shackles_bolt_a_boss_to_the_floor() {
+    use crate::actions::item_actions::BIND_DIMENSIONAL_SHACKLES;
+    use crate::actions::spells::MISTY_STEP;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::items::item_template::DIMENSIONAL_SHACKLES;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let jailer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let boss = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&jailer)
+        .unwrap()
+        .pickup_item(&DIMENSIONAL_SHACKLES);
+
+    let action: &dyn Action = &BIND_DIMENSIONAL_SHACKLES;
+    let target = vec![boss];
+    assert!(
+        !action.validate_input(&e, jailer, Some(&target), None, None),
+        "RAW's shackles go on an Incapacitated creature, and this one is on its feet"
+    );
+
+    e.actors
+        .get_mut(&boss)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Rounds(3));
+    assert!(action.validate_input(&e, jailer, Some(&target), None, None));
+    for ef in action.side_effects(&mut e, jailer, Some(&target), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&boss].has_condition(Condition::Shackled));
+    assert!(
+        !e.actors[&jailer].has_item_named("Dimensional Shackles"),
+        "they are on somebody else's wrists now"
+    );
+
+    // And the teleport goes nowhere — from any of the fifteen sites,
+    // because the gate is on the side effect they all resolve through.
+    e.actors.get_mut(&boss).unwrap().remove_condition(Condition::Stunned);
+    let was = e.actors[&boss].location();
+    crate::engine::side_effects::TeleportActor {
+        actor_id: boss,
+        dest: Coordinate::new(15, 15),
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&boss].location(),
+        was,
+        "the shackles bar every method of extraplanar movement"
+    );
+
+    // The spell that would have carried them out is refused the same
+    // way, and so is a teleport somebody else aims at them.
+    e.actors
+        .get_mut(&boss)
+        .unwrap()
+        .give_resource(crate::engine::side_effects::Resource::BonusAction);
+    for ef in MISTY_STEP.execute(&mut e, boss, None, Some(&vec![Coordinate::new(12, 12)]), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&boss].location(), was, "Misty Step included");
+}
+
+/// A Forcecage is a cage. It had been leaking.
+///
+/// RAW: *"if the creature tries to use teleportation or interplanar
+/// travel to leave the cage, it must first make a Charisma saving
+/// throw."* The engine's `Caged` zeroes movement and correctly leaves the
+/// action economy alone — a caged wizard can still cast — so before the
+/// bar it could Misty Step out of a seventh-level spell whose whole
+/// content is that you cannot leave.
+#[test]
+fn nobody_blinks_out_of_a_forcecage() {
+    use crate::actions::spells::MISTY_STEP;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let caged = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    {
+        let w = e.actors.get_mut(&caged).unwrap();
+        w.add_condition(Condition::Caged, ConditionTimer::Rounds(10));
+        w.give_resource(crate::engine::side_effects::Resource::BonusAction);
+    }
+    let was = e.actors[&caged].location();
+    for ef in MISTY_STEP.execute(&mut e, caged, None, Some(&vec![Coordinate::new(12, 12)]), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&caged].location(),
+        was,
+        "a seventh-level spell whose whole content is that you cannot leave"
+    );
+}
