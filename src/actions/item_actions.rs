@@ -5730,6 +5730,7 @@ const HAMMER_OF_THUNDERBOLTS_NAME: &str = "Hammer of Thunderbolts";
 const CLOAK_OF_INVISIBILITY_NAME: &str = "Cloak of Invisibility";
 const POTION_OF_GASEOUS_FORM_NAME: &str = "Potion of Gaseous Form";
 const EFREETI_BOTTLE_NAME: &str = "Efreeti Bottle";
+const CIRCLET_OF_BLASTING_NAME: &str = "Circlet of Blasting";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
@@ -8111,3 +8112,37 @@ pub static UNSTOPPER_EFREETI_BOTTLE: SummonItem = SummonItem {
     concentration: None,
     billing: ItemUseBilling::Consumed,
 };
+
+
+/// **Circlet of Blasting** (Wondrous item, Uncommon) — *"While wearing
+/// this circlet, you can cast Scorching Ray with it (+5 to hit). The
+/// circlet can't cast this spell again until the next dawn."*
+///
+/// The second non-staff row on the `StaffSpell` chassis, after the Cape
+/// of the Mountebank, and the pair is what that adapter turns out to be
+/// for: RAW keeps printing *"you can cast X from it"* on things that are
+/// not staves, and the alternative is a bespoke `Action` impl per item
+/// that re-implements a spell the engine already has. What the circlet
+/// throws is `spells::SCORCHING_RAY` — three rays, three attack rolls,
+/// the spell's own resolver — and the wearer's spell slots are untouched.
+///
+/// RAW's *"+5 to hit"* is not modeled and is the one divergence worth
+/// naming. The chassis forwards the spell whole, and the spell rolls the
+/// caster's own spell attack bonus; splitting that would mean threading
+/// an attack-bonus override through `spell_attack_roll` for one item.
+/// The direction of the error depends entirely on who is wearing it — a
+/// wizard rolls better than +5 and a fighter rolls worse — which is the
+/// honest shape for an Uncommon that RAW lets anybody put on.
+///
+/// One cast a day, which is RAW's own sentence and the Cape's lane: a
+/// pool of one, a flat charge back at the rest, and a circlet that is
+/// still a circlet.
+pub static CIRCLET_OF_BLASTING_RAY: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "circlet of blasting: scorching ray",
+        action_aliases: &["circlet", "blasting", "scorch"],
+        item_name: CIRCLET_OF_BLASTING_NAME,
+        charges: 1,
+        spell_level: 2,
+        spell: || &*crate::actions::spells::SCORCHING_RAY,
+    };

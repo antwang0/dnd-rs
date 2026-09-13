@@ -4023,6 +4023,58 @@ pub static STONE_OF_CONTROLLING_EARTH_ELEMENTALS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Spell Turning** (Ring, Legendary, requires attunement) —
+/// *"While wearing this ring, you have Advantage on saving throws
+/// against spells."*
+///
+/// One field, and the strongest single row on
+/// `grants_spell_save_advantage`: the Mantle of Spell Resistance and the
+/// Robe of the Archmagi are the lane's other two, and this is the only
+/// one that is a ring — so a wearer can have it *and* a robe, which is
+/// the whole reason RAW prints three items with one sentence between
+/// them.
+///
+/// **Two of RAW's three sentences are absent** and both need machinery
+/// the engine does not have. *"If you succeed on the save for a spell of
+/// level 7 or lower, the spell has no effect on you"* is a save that
+/// negates rather than halves, and the save pipeline's
+/// `SaveDamagePolicy` is chosen by the *spell* rather than by the
+/// target: a per-defender override of every caster's policy is a
+/// different lane from the one that exists. *"You can take a Reaction to
+/// turn the spell back on its caster"* is the ring's headline and needs
+/// a reaction window that opens on a successful save, which the
+/// dispatcher has no trigger for — every window it has opens on damage,
+/// a hit, or a creature moving.
+///
+/// What ships is the first sentence, which is the one that fires on
+/// every spell in the game rather than on the tail of them, and it is
+/// worth a Legendary on its own: advantage on a saving throw is worth
+/// about three and a half points of DC, on every Fireball, every Hold
+/// Person and every dragon's breath for the rest of the fight.
+pub static RING_OF_SPELL_TURNING: Item = Item {
+    name: "Ring of Spell Turning",
+    glyph: '=',
+    grants_spell_save_advantage: true,
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Circlet of Blasting** (Wondrous item, Uncommon) — one Scorching Ray
+/// a day, out of a hat anybody can wear.
+///
+/// The cheapest offensive spell on the loot table and the only one a
+/// chassis with no spell list can cast three attack rolls out of. See
+/// `item_actions::CIRCLET_OF_BLASTING_RAY` for what RAW's *"+5 to hit"*
+/// becomes and why.
+pub static CIRCLET_OF_BLASTING: Item = Item {
+    name: "Circlet of Blasting",
+    glyph: 'o',
+    on_use: &[&crate::actions::item_actions::CIRCLET_OF_BLASTING_RAY],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    ..Item::DEFAULTS
+};
+
 /// **Elven Chain** (Armor, chain shirt; Rare) — *"You gain a +1 bonus to
 /// Armor Class while you wear this armor."*
 ///
@@ -7418,6 +7470,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // the Shield of the Cavalier is the largest single bonus to Armor
     // Class here, and the Armor of Invulnerability halves the three
     // damage types most of the bestiary deals.
+    // The Legendary end of the spell-save lane, and the only ring on
+    // it: a wearer can have this and the Robe of the Archmagi at once,
+    // which is what RAW prints three items with one sentence for.
+    &RING_OF_SPELL_TURNING,
+    // The cheapest offensive spell on the table, and the only one a
+    // chassis with no spell list can throw three attack rolls out of.
+    &CIRCLET_OF_BLASTING,
     &ELVEN_CHAIN,
     &GLAMOURED_STUDDED_LEATHER,
     &SHIELD_OF_THE_CAVALIER,

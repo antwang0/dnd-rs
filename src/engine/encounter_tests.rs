@@ -98113,6 +98113,101 @@ fn the_mace_of_terror_runs_dry_without_leaving_the_wielder_empty_handed() {
     );
 }
 
+/// The Ring of Spell Turning bends a saving throw, and the Circlet
+/// throws a spell nobody on the chassis knows.
+///
+/// Two items, two lanes, and each is the *only* thing its lane could
+/// have got wrong.
+///
+///   - The ring is a single boolean, and a boolean set on the wrong
+///     field is an item that does nothing and looks exactly like one
+///     that works. Read through `compute_save_mode`, which is the
+///     chokepoint every saving throw in the engine goes through, so the
+///     assertion is that the mode changed rather than that some
+///     particular spell was resisted.
+///   - The circlet is the second non-staff row on the `StaffSpell`
+///     chassis, and what makes it worth having is that it hands a
+///     *fighter* a three-ray spell. The claim is that the ray is on the
+///     list at all, that it is affordable once, and that it is not
+///     affordable twice.
+#[test]
+fn the_ring_bends_a_save_and_the_circlet_casts_a_spell() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::items::item_template::{CIRCLET_OF_BLASTING, RING_OF_SPELL_TURNING};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+
+    // The ring, both directions, asked at the chokepoint every save
+    // against a spell reads: `has_magic_resistance`, which is where the
+    // item leg of that predicate lives.
+    assert!(
+        !e.actors[&pc].has_magic_resistance(),
+        "a bare fighter resists no spells"
+    );
+    {
+        let a = e.actors.get_mut(&pc).unwrap();
+        a.pickup_item(&RING_OF_SPELL_TURNING);
+        assert!(
+            a.is_attuned_to(RING_OF_SPELL_TURNING.name),
+            "a Legendary ring wants a bond and a fresh fighter has three slots"
+        );
+    }
+    assert!(
+        e.actors[&pc].has_magic_resistance(),
+        "the ring's one sentence did not reach the save pipeline"
+    );
+    // …and it goes away with the ring, so the flag is the item's and
+    // not something the fixture was carrying anyway.
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .remove_item_by_name(RING_OF_SPELL_TURNING.name);
+    assert!(!e.actors[&pc].has_magic_resistance());
+    let _ = goblin;
+
+    // The circlet: one ray a day on a chassis with no spell list.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&CIRCLET_OF_BLASTING);
+    let ray = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "circlet of blasting: scorching ray")
+        .expect("wearing the circlet offers the ray");
+    let at = vec![goblin];
+    assert!(
+        ray.validate_input(&e, pc, Some(&at), None, None),
+        "a fighter in a circlet should be able to cast it once"
+    );
+    for ef in ray.execute(&mut e, pc, Some(&at), None, None) {
+        ef.apply(&mut e);
+    }
+    e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+    assert!(
+        !ray.validate_input(&e, pc, Some(&at), None, None),
+        "a second ray came out of a one-charge circlet"
+    );
+    assert!(
+        e.actors[&pc].has_item_named(CIRCLET_OF_BLASTING.name),
+        "the pool ran dry and took the circlet with it"
+    );
+}
+
 /// The armour shelf's four new suits do what their one sentence says.
 ///
 /// Every row here is a single field on `Item`, which is exactly why they
