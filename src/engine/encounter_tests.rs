@@ -97878,7 +97878,7 @@ fn the_thunderous_greatclub_thunders_on_every_hit_and_claps_forward() {
 
 /// The Mace of Terror spends a charge and stays a mace.
 ///
-/// The clause `AreaSaveConditionItem::charge_cost` exists for. Every
+/// The clause [`ItemUseBilling::Charges`] exists for. Every
 /// other row on that chassis is a wand or a scroll, billed through
 /// `spend_item_use`, which drops the object when the pool empties —
 /// correct for a wand and a disaster for a magic weapon. Three waves of
@@ -97925,6 +97925,99 @@ fn the_mace_of_terror_runs_dry_without_leaving_the_wielder_empty_handed() {
         e.actors[&fighter].has_item_named(MACE_OF_TERROR.name),
         "the pool ran dry and took the mace with it"
     );
+}
+
+/// An at-will item is still in the pack on the third round.
+///
+/// The claim [`ItemUseBilling::Free`] exists for, and the one the
+/// engine could not make before it. RAW writes a dozen worn items with
+/// no pool and no expenditure — *"While wearing this ring, you can cast
+/// Telekinesis from it"* — and the only two billing lanes the file had
+/// were "spend a charge" and "spend the object". Written on the second
+/// of those, a Ring of Telekinesis is a ring that falls off the first
+/// time it works, and the symptom is a player who used their Legendary
+/// ring once.
+///
+/// Three rows, one per chassis the arm reaches, because the billing is
+/// wired separately into each one's `cost()` and `side_effects()` and a
+/// fourth round is the only thing that can tell a working wire from a
+/// silent one:
+///
+///   - `SingleSaveConditionItem` — the ring, and the rope beside it;
+///   - `SelfConditionItem` — the broom.
+///
+/// The negative half is the one that would actually have shipped: the
+/// item is *there*, with no charge ledger entry for it, after as many
+/// uses as anybody cares to make.
+#[test]
+fn an_at_will_item_is_not_spent_by_using_it() {
+    use crate::items::item_template::{
+        BROOM_OF_FLYING, Item, RING_OF_TELEKINESIS, ROPE_OF_ENTANGLEMENT,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    // (the item, the action it offers, whether it is aimed at a target)
+    let rows: &[(&'static Item, &str, bool)] = &[
+        (&RING_OF_TELEKINESIS, "use ring of telekinesis", true),
+        (&ROPE_OF_ENTANGLEMENT, "throw rope of entanglement", true),
+        (&BROOM_OF_FLYING, "ride broom of flying", false),
+    ];
+    for (item, action_name, aimed) in rows {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&fighter).unwrap();
+            a.pickup_item(item);
+            assert!(
+                !item.requires_attunement || a.is_attuned_to(item.name),
+                "{} is inert in the pack",
+                item.name
+            );
+        }
+        let use_it = *e.actors[&fighter]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == *action_name)
+            .unwrap_or_else(|| panic!("holding the {} should offer {action_name}", item.name));
+        let targets = aimed.then(|| vec![goblin]);
+
+        for round in 0..4 {
+            // The broom refuses a refresh while the wearer is already
+            // airborne — that is `reject_when_active`, not a spent
+            // item — so it is cleared between rounds to keep the
+            // question about billing.
+            e.actors
+                .get_mut(&fighter)
+                .unwrap()
+                .remove_condition(Condition::Flying);
+            e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+            assert!(
+                use_it.validate_input(&e, fighter, targets.as_ref(), None, None),
+                "round {round}: the {} should still be usable",
+                item.name
+            );
+            for ef in use_it.execute(&mut e, fighter, targets.as_ref(), None, None) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                e.actors[&fighter].has_item_named(item.name),
+                "round {round}: using the {} took it away",
+                item.name
+            );
+            assert_eq!(
+                e.actors[&fighter].item_charges_remaining(item.name),
+                0,
+                "{} invented a charge pool RAW does not print",
+                item.name
+            );
+        }
+    }
 }
 
 /// The Elixir of Health, and the clause a self-only potion could not
@@ -98017,7 +98110,7 @@ fn an_elixir_of_health_can_be_poured_into_somebody_who_cannot_lift_it() {
 
 /// The Ring of Shooting Stars is the same lesson on the other chassis.
 ///
-/// `AreaSaveDamageItem` had no `charge_cost` until this ring, because
+/// `AreaSaveDamageItem` billed every row as a consumable until this ring, because
 /// every row on it was a scroll — and a scroll *is* its own single use,
 /// so "consume the object" and "spend the charge" were the same rule.
 /// A ring is not: running its motes dry has to leave a ring on the
@@ -98104,7 +98197,7 @@ fn the_ring_of_shooting_stars_empties_and_stays_a_ring() {
 ///
 /// `MagicMissileItem` was four scrolls and wands, each of which *is*
 /// its own single use. A robe is not, so the chassis grew the same
-/// `charge_cost` the two area chassis already have. Pinned here rather
+/// charge lane the two area chassis already have. Pinned here rather
 /// than only beside the item because the failure mode is silent in the
 /// same direction every time: a robe billed as a consumable vanishes
 /// off the wearer on the first star, and looks from the inside exactly
@@ -102253,7 +102346,7 @@ fn the_robe_of_eyes_cannot_be_blinded_and_the_scales_do_both_halves() {
 /// and stops after three.
 ///
 /// The Mace of Terror's test one shelf over, and for the same two
-/// reasons: a `charge_cost` row must leave its object in the pack when
+/// reasons: an [`ItemUseBilling::Charges`] row must leave its object in the pack when
 /// the pool empties, and a very rare item that can be used a fourth time
 /// is not a very rare item.
 #[test]

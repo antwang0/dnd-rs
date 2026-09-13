@@ -19373,7 +19373,7 @@ mod tests {
     /// sort key, and on the driver loop re-entering the ladder. This
     /// suite has caught three silent no-ops of exactly that shape, and
     /// each of these items is a fresh chance at a fourth: the robe is
-    /// the first `charge_cost` burst on a caster chassis, the potion is
+    /// the first charge-priced burst on a caster chassis, the potion is
     /// the first consumable with a pool larger than one, and the cape is
     /// the first non-staff on the `StaffSpell` lane.
     ///
@@ -19577,6 +19577,141 @@ mod tests {
             assert!(
                 used_in > 0,
                 "eight fights and the AI never once opened the {}",
+                item.name
+            );
+        }
+    }
+
+    /// The at-will shelf is a shelf the AI reaches for.
+    ///
+    /// A fifth pass at the silent no-op this suite has caught four
+    /// times, and the first one where the new thing is a *billing* arm
+    /// rather than a new effect. `ItemUseBilling::Free` puts no entry in
+    /// the cost vector at all, which is exactly the shape that can be
+    /// dropped without a trace: a row whose price is empty is a row the
+    /// affordability gate has nothing to say about, so an item that
+    /// never fires and an item that is always affordable look the same
+    /// from outside.
+    ///
+    /// The two area rows are on the strong claim — the log has to show
+    /// them — and the five single-target ones on the weaker and honest
+    /// claim: offered, priced and valid on a turn the holder has an
+    /// Action for.
+    ///
+    /// The split is not a judgement about the items. Writing it turned
+    /// up the thing worth knowing: **no single-target item lockdown in
+    /// the engine is reachable by the AI at all.** `pick_from_cohort`
+    /// looks the cohort's rows up with `ActorInstance::find_action`,
+    /// which reads the template's own list and not the pack, so a Wand
+    /// of Paralysis, a Wand of Hold Monster, the Iron Bands of Bilarro
+    /// and twenty more have never once been used by an AI-driven
+    /// creature. That is a bug in the ladder rather than in these
+    /// items, it is older than they are, and it is fixed one commit
+    /// along — where these five rows move up to the strong claim.
+    ///
+    /// The two self-buffs stay on the weak claim permanently. A fighter
+    /// turns the Ring of Invisibility when the stealth lane wants it and
+    /// rides the broom when the board has something to fly over, and
+    /// asserting either would be asserting a preference this test has no
+    /// business having.
+    #[test]
+    fn the_ai_reaches_the_at_will_shelf() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{
+            BROOM_OF_FLYING, DUST_OF_SNEEZING_AND_CHOKING, HELM_OF_TELEPATHY, Item,
+            RING_OF_INVISIBILITY, RING_OF_TELEKINESIS, ROD_OF_RULERSHIP, ROPE_OF_ENTANGLEMENT,
+        };
+
+        // (the item, a fragment of the line its use prints)
+        let rows: &[(&'static Item, &str)] = &[
+            (&ROD_OF_RULERSHIP, "commands obedience"),
+            (&DUST_OF_SNEEZING_AND_CHOKING, "the room starts coughing"),
+        ];
+        for (item, fragment) in rows {
+            let mut used_in = 0;
+            for seed in 0..8u64 {
+                let mut e = empty_arena_seeded(seed);
+                let pc = e
+                    .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 8), 0, 0)
+                    .unwrap();
+                // Three of them, clustered: inside the rope's eight
+                // tiles once the fighter closes, and worth an area.
+                for (i, y) in [7isize, 9, 11].into_iter().enumerate() {
+                    e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(11, y), 1, i)
+                        .unwrap();
+                }
+                {
+                    let a = e.actors.get_mut(&pc).unwrap();
+                    a.pickup_item(item);
+                    assert!(
+                        !item.requires_attunement || a.is_attuned_to(item.name),
+                        "{} is inert in the pack",
+                        item.name
+                    );
+                }
+
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 8_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages().join("\n").contains(fragment) {
+                    used_in += 1;
+                }
+            }
+            assert!(
+                used_in > 0,
+                "eight fights and the AI never once used the {}",
+                item.name
+            );
+        }
+
+        // The two self-buffs, on the weaker claim: offered, priced and
+        // valid on a turn the holder has an Action for.
+        for (item, action_name, aimed) in [
+            (&RING_OF_INVISIBILITY, "turn ring of invisibility", false),
+            (&BROOM_OF_FLYING, "ride broom of flying", false),
+            (&RING_OF_TELEKINESIS, "use ring of telekinesis", true),
+            (&ROPE_OF_ENTANGLEMENT, "throw rope of entanglement", true),
+            (&HELM_OF_TELEPATHY, "use helm of telepathy", true),
+        ] {
+            let mut e = empty_arena_seeded(3);
+            let pc = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 8), 0, 0)
+                .unwrap();
+            // Adjacent, so the rope's eight tiles reach it too.
+            let foe = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(7, 8), 1, 0)
+                .unwrap();
+            {
+                let a = e.actors.get_mut(&pc).unwrap();
+                a.pickup_item(item);
+                assert!(
+                    !item.requires_attunement || a.is_attuned_to(item.name),
+                    "{} is inert in the pack",
+                    item.name
+                );
+            }
+            let offered = *e.actors[&pc]
+                .available_actions()
+                .iter()
+                .find(|a| a.name() == action_name)
+                .unwrap_or_else(|| panic!("the {} is not on the fighter's list", item.name));
+            let targets = aimed.then(|| vec![foe]);
+            assert!(
+                offered.validate_input(&e, pc, targets.as_ref(), None, None),
+                "the {}'s own validator refuses a use a fighter can afford",
                 item.name
             );
         }

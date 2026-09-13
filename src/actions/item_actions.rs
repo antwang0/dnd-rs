@@ -84,6 +84,96 @@ pub fn item_use_cost(
     }
 }
 
+/// **What one use of an item costs the item.** The third price on every
+/// row in this file, beside the action economy and the targeting.
+///
+/// The question has always had three answers and only ever had names
+/// for two of them, in two different places:
+///
+///   - A `charge_cost: Option<u32>` field, grown four separate times on
+///     four chassis — and `SummonItem::charges`, which is the same
+///     field under a fifth name — added when the Mace of Terror, the
+///     Ring of Shooting Stars, the Robe of Stars, the Ring of the Ram
+///     and the Bag of Tricks each needed a pool their object outlived,
+///     each spelled out again in its own docstring.
+///   - Silence, on every other chassis, meaning *consume the object*.
+///     That is the right answer for a scroll and a potion, which is
+///     what those chassis carried, and it is not a choice anybody made
+///     — it is what `spend_item_use` does when nothing says otherwise.
+///
+/// The third answer had no spelling at all, and it is the one RAW uses
+/// most often for a **worn** magic item: *"While wearing this ring, you
+/// can cast Telekinesis from it"*. No pool, no expenditure, and the ring
+/// is still on your finger. On the old lane that is the `None` arm,
+/// which drops the ring on the floor the first time it is used — so
+/// until this enum existed the engine could not express an at-will
+/// item, and the dozen of them on the SRD's shelf were unreachable
+/// rather than unimplemented.
+///
+/// One enum across the chassis rather than an `Option` per struct,
+/// because the three arms are one question and a per-struct `Option`
+/// cannot ask it: `None` already means "consume" on one field and
+/// "free" is what a reader would guess it meant.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ItemUseBilling {
+    /// **The use is the object.** A scroll burns, a potion empties, a
+    /// gem shatters. Spent inside `side_effects` through
+    /// `spend_item_use`, which decrements a pool if the item has one
+    /// and removes the object when it runs dry.
+    Consumed,
+    /// **A pool the object outlives.** A wand, a staff, a rod with a
+    /// daily use. Priced in `Resource::ItemCharges`, so the picker greys
+    /// the row out and says why, and the `ConsumeResource` tail of
+    /// `Action::execute` spends it — never `spend_item_use`, because a
+    /// Mace of Terror whose three charges are gone is still a mace.
+    Charges(u32),
+    /// **Nothing.** The item's own clause has no limit on it; what the
+    /// use costs is the Action, and the chassis has already charged
+    /// that. A Ring of Telekinesis, a Rope of Entanglement, a Wind Fan.
+    ///
+    /// The arm that makes the enum worth having. It is indistinguishable
+    /// from `Charges(0)` in arithmetic and not in meaning: a zero-count
+    /// charge is a pool that happens to be free, and this is an item
+    /// that has no pool.
+    Free,
+}
+
+impl ItemUseBilling {
+    /// What one use adds to the chassis's own action-economy cost.
+    ///
+    /// Empty for both of the arms that do not price in the ledger —
+    /// `Consumed` bills inside the effect and `Free` bills nothing —
+    /// so a caller can `extend` with this unconditionally.
+    pub fn costs(&self, item_name: &'static str) -> Vec<Resource> {
+        match self {
+            ItemUseBilling::Charges(count) => vec![Resource::ItemCharges {
+                item: item_name,
+                count: *count,
+            }],
+            ItemUseBilling::Consumed | ItemUseBilling::Free => Vec::new(),
+        }
+    }
+
+    /// Take the object, for the one arm whose price is the object.
+    ///
+    /// Returns whether the use may proceed, so a resolver's first line
+    /// can be `if !billing.take(…) { return Vec::new(); }` whatever the
+    /// arm: the two that bill elsewhere always say yes, and `Consumed`
+    /// says no when there was nothing left to spend — which is the
+    /// defensive case `spend_item_use` exists to catch.
+    pub fn take(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        item_name: &str,
+    ) -> bool {
+        match self {
+            ItemUseBilling::Consumed => consume_caster_item(encounter, caster_id, item_name),
+            ItemUseBilling::Charges(_) | ItemUseBilling::Free => true,
+        }
+    }
+}
+
 /// Config struct for "area damage with a save for half" consumable
 /// items — the shared shape behind Scroll of Fireball / Cone of Cold /
 /// Lightning Bolt and the Wand of Fireballs / Lightning Bolts. Each
@@ -143,20 +233,16 @@ pub struct AreaSaveDamageItem {
     /// may leave this at `0`. Same contract as
     /// `AreaSaveConditionItem::reach`.
     pub reach: isize,
-    /// Charges one use costs, for an item that is **not** consumed by
-    /// using it, or `None` for the consumables that are. Identical in
-    /// meaning and mechanism to `AreaSaveConditionItem::charge_cost` —
-    /// see that field for why the charge goes in `cost()` rather than
-    /// being spent inside `side_effects`.
+    /// What one use costs the object — see [`ItemUseBilling`].
     ///
     /// Every row on this chassis was a scroll until the Ring of
     /// Shooting Stars, and a scroll is entirely its own one use, so
     /// "consume the object" was the same rule as "spend the charge".
     /// A ring is not: running its motes dry has to leave a ring on the
     /// wearer's finger, and the consumable lane would have deleted the
-    /// item mid-fight. The condition chassis one screen down learned
-    /// the same thing from the Mace of Terror.
-    pub charge_cost: Option<u32>,
+    /// item mid-fight. The condition chassis further down learned the
+    /// same thing from the Mace of Terror.
+    pub billing: ItemUseBilling,
 }
 
 impl Action for AreaSaveDamageItem {
@@ -199,12 +285,7 @@ impl Action for AreaSaveDamageItem {
         // explain, where a spend buried in `side_effects` is a use that
         // silently does nothing.
         let mut costs = action_only();
-        if let Some(count) = self.charge_cost {
-            costs.push(Resource::ItemCharges {
-                item: self.item_name,
-                count,
-            });
-        }
+        costs.extend(self.billing.costs(self.item_name));
         costs
     }
 
@@ -233,11 +314,9 @@ impl Action for AreaSaveDamageItem {
             return Vec::new();
         };
         // A row priced in charges is billed by `Action::execute`'s tail
-        // off the `cost()` above; only the consumables bill here. See
-        // `charge_cost`.
-        if self.charge_cost.is_none()
-            && !consume_caster_item(encounter, caster_id, self.item_name)
-        {
+        // off the `cost()` above, and an at-will row is billed by
+        // nothing; only the consumables bill here. See [`ItemUseBilling`].
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
 
@@ -409,6 +488,16 @@ pub struct SelfConditionItem {
     /// no choice, which is every buff on this module that is not a
     /// resistance potion. See `TypedWard`.
     pub ward: TypedWard,
+    /// What one use costs the object — see [`ItemUseBilling`].
+    ///
+    /// Every row on this chassis was a potion or a scroll for as long
+    /// as the chassis existed, and both of those *are* their own one
+    /// use, so the lane had no reason to ask. The Broom of Flying is
+    /// the first that is neither: RAW's broom hovers whenever you stand
+    /// astride it, with no pool and nothing spent, and on the
+    /// consume-on-use lane the first flight would have burned the
+    /// broom.
+    pub billing: ItemUseBilling,
 }
 
 /// The types a Potion of Resistance can be found warding against.
@@ -495,7 +584,9 @@ impl Action for SelfConditionItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        item_use_cost(e, c, self.bonus_action)
+        let mut costs = item_use_cost(e, c, self.bonus_action);
+        costs.extend(self.billing.costs(self.item_name));
+        costs
     }
 
     fn custom_validate_input(
@@ -529,7 +620,7 @@ impl Action for SelfConditionItem {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::engine::side_effects::GainTempHp;
-        if !consume_caster_item(encounter, caster_id, self.item_name) {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let name = encounter.actor_name(caster_id);
@@ -706,7 +797,7 @@ pub static READ_FIREBALL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 150 ft range — well past any current map.
     reach: 60,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Config struct for "Magic Missile auto-hit dart volley" consumables —
@@ -732,16 +823,12 @@ pub struct MagicMissileItem {
     pub darts: u32,
     /// Maximum reach in tiles for the targeting picker (30 = 150 ft RAW).
     pub reach: isize,
-    /// Charges one use costs, for an item that is **not** consumed by
-    /// using it, or `None` for the consumables that are. Same meaning
-    /// and same mechanism as `AreaSaveConditionItem::charge_cost` — the
-    /// price goes in `cost()` so the picker can grey the option out
-    /// rather than offering a use that silently does nothing.
+    /// What one use costs the object — see [`ItemUseBilling`].
     ///
     /// Every row here was a scroll or a stick until the Robe of Stars,
     /// and both of those *are* their one use. A robe is not: pulling
     /// the last star off it has to leave a robe on the wearer.
-    pub charge_cost: Option<u32>,
+    pub billing: ItemUseBilling,
 }
 
 impl Action for MagicMissileItem {
@@ -778,12 +865,7 @@ impl Action for MagicMissileItem {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         let mut costs = action_only();
-        if let Some(count) = self.charge_cost {
-            costs.push(Resource::ItemCharges {
-                item: self.item_name,
-                count,
-            });
-        }
+        costs.extend(self.billing.costs(self.item_name));
         costs
     }
 
@@ -811,9 +893,7 @@ impl Action for MagicMissileItem {
         };
         // A row priced in charges is billed by `Action::execute`'s tail
         // off the `cost()` above; only the consumables bill here.
-        if self.charge_cost.is_none()
-            && !consume_caster_item(encounter, caster_id, self.item_name)
-        {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let mut total = 0u32;
@@ -847,7 +927,7 @@ pub static READ_MAGIC_MISSILE_SCROLL: MagicMissileItem = MagicMissileItem {
     log_label: "scroll of magic missile",
     darts: 3,
     reach: 30,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Config struct for "single-target save-or-take-damage" consumables —
@@ -1046,10 +1126,8 @@ pub struct SpellAttackDamageItem {
     /// How far a hit shoves the target away from the user, in tiles, or
     /// `0` for a row that only deals damage.
     pub push_tiles: u32,
-    /// Charges one use costs, for an item that is **not** consumed by
-    /// using it, or `None` for the consumables that are. Same contract
-    /// as `AreaSaveConditionItem::charge_cost`.
-    pub charge_cost: Option<u32>,
+    /// What one use costs the object — see [`ItemUseBilling`].
+    pub billing: ItemUseBilling,
 }
 
 impl Action for SpellAttackDamageItem {
@@ -1095,12 +1173,7 @@ impl Action for SpellAttackDamageItem {
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         let mut costs = action_only();
-        if let Some(count) = self.charge_cost {
-            costs.push(Resource::ItemCharges {
-                item: self.item_name,
-                count,
-            });
-        }
+        costs.extend(self.billing.costs(self.item_name));
         costs
     }
 
@@ -1128,9 +1201,7 @@ impl Action for SpellAttackDamageItem {
         };
         // A row priced in charges is billed by `Action::execute`'s tail;
         // only the consumables bill here.
-        if self.charge_cost.is_none()
-            && !consume_caster_item(encounter, caster_id, self.item_name)
-        {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let roll = crate::actions::spells::spell_attack_roll(
@@ -1206,7 +1277,7 @@ pub static USE_RING_OF_THE_RAM: SpellAttackDamageItem = SpellAttackDamageItem {
     reach: 24,
     // 5 ft RAW; 2 tiles.
     push_tiles: 2,
-    charge_cost: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 const RING_OF_THE_RAM_NAME: &str = "Ring of the Ram";
@@ -1366,6 +1437,7 @@ pub static DRINK_POTION_OF_HEROISM: SelfConditionItem = SelfConditionItem {
     reject_when_active: false,
     temp_hp: Some(10),
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Invisibility — Action; installs the Invisible condition for
@@ -1381,6 +1453,7 @@ pub static DRINK_POTION_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
     reject_when_active: false,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const POTION_OF_SUPERIOR_HEALING_NAME: &str = "Potion of Superior Healing";
@@ -1419,6 +1492,7 @@ pub static DRINK_POTION_OF_STONESKIN: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Potion of Invulnerability** (Potion, Rare) — *"For 1 minute after
@@ -1452,6 +1526,7 @@ pub static DRINK_POTION_OF_INVULNERABILITY: SelfConditionItem = SelfConditionIte
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const POTION_OF_INVULNERABILITY_NAME: &str = "Potion of Invulnerability";
@@ -1480,7 +1555,7 @@ pub static READ_LIGHTNING_BOLT_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // A line is aimed by naming a tile inside it, so `reach` is unread.
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Config struct for "single-target heal" consumable items — the shared
@@ -1805,6 +1880,7 @@ pub static WEAR_BOOTS_OF_SPEED: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_CONE_OF_COLD_NAME: &str = "Scroll of Cone of Cold";
@@ -1831,7 +1907,7 @@ pub static READ_CONE_OF_COLD_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft RAW; 24 tiles, and its own reach.
     shape: AreaShape::Cone { length: 24 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Magic Missiles — 5 darts of 1d4+1 force each, auto-hit, no
@@ -1844,7 +1920,7 @@ pub static USE_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileItem {
     log_label: "wand of magic missiles",
     darts: 5,
     reach: 30,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const POTION_OF_FLYING_NAME: &str = "Potion of Flying";
@@ -1866,6 +1942,7 @@ pub static DRINK_POTION_OF_FLYING: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Climbing — Bonus Action; installs `SpiderClimbing` for 10
@@ -1882,6 +1959,7 @@ pub static DRINK_POTION_OF_CLIMBING: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Fireballs: 8d6 fire DEX-save burst. Sits a tier above the
@@ -1899,7 +1977,7 @@ pub static USE_WAND_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     dc: 15,
     shape: AreaShape::Burst { radius: 4 },
     reach: 60,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const WAND_OF_LIGHTNING_BOLTS_NAME: &str = "Wand of Lightning Bolts";
@@ -1920,7 +1998,7 @@ pub static USE_WAND_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageItem 
     dc: 15,
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_SHATTER_NAME: &str = "Scroll of Shatter";
@@ -1943,7 +2021,7 @@ pub static READ_SHATTER_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 2 },
     // 60 ft range = 24 tiles, matching the spell's reach.
     reach: 24,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const WAND_OF_CONE_OF_COLD_NAME: &str = "Wand of Cone of Cold";
@@ -1964,7 +2042,7 @@ pub static USE_WAND_OF_CONE_OF_COLD: AreaSaveDamageItem = AreaSaveDamageItem {
     dc: 15,
     shape: AreaShape::Cone { length: 24 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_MASS_HEALING_WORD_NAME: &str = "Scroll of Mass Healing Word";
@@ -2177,6 +2255,7 @@ pub static DRINK_POTION_OF_MAGE_ARMOR: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Blur — Action; installs `Blurred` for 10 rounds (attacks
@@ -2195,6 +2274,7 @@ pub static DRINK_POTION_OF_BLUR: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Greater Wand of Magic Missiles — 7 darts of 1d4+1 force each, auto-hit,
@@ -2240,7 +2320,7 @@ pub static PULL_ROBE_STAR: MagicMissileItem = MagicMissileItem {
     log_label: "robe of stars",
     darts: 7,
     reach: 30,
-    charge_cost: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 pub static USE_GREATER_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileItem {
@@ -2250,7 +2330,7 @@ pub static USE_GREATER_WAND_OF_MAGIC_MISSILES: MagicMissileItem = MagicMissileIt
     log_label: "greater wand of magic missiles",
     darts: 7,
     reach: 30,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Burning Hands — 3d6 fire DEX-save cone, RAW's fifteen feet
@@ -2275,7 +2355,7 @@ pub static READ_BURNING_HANDS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 15 ft RAW; 6 tiles, and its own reach.
     shape: AreaShape::Cone { length: 6 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Thunderwave — 2d8 thunder CON-save burst, 2-tile radius.
@@ -2299,7 +2379,7 @@ pub static READ_THUNDERWAVE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 15 ft cube self-centered in RAW; we cap at the picker reach for
     // safety (caster picks the cube's center). 6 tiles ≈ 15 ft.
     reach: 6,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Config struct for "area save-or-condition" consumable items — the
@@ -2366,24 +2446,17 @@ pub struct AreaSaveConditionItem {
     /// Timer for the install (typically `Rounds(10)` for combat-scale
     /// CC consumables — ~1 minute RAW).
     pub timer: ConditionTimer,
-    /// Charges one use costs, for an item that is **not** consumed by
-    /// using it, or `None` for the consumables that are.
+    /// What one use costs the object — see [`ItemUseBilling`].
     ///
     /// The distinction the rest of this module did not need. Every item
-    /// on this chassis until now has been a wand, a scroll or a set of
-    /// pipes — objects whose entire existence is their charges, so
-    /// `spend_item_use`'s "decrement, and drop the object when the pool
-    /// empties" is exactly right for them. The Mace of Terror is the
-    /// first that is something else as well: it is a mace. Running its
-    /// three charges dry must leave a mace in the wielder's hand, and
-    /// the old lane would have deleted a magic weapon mid-fight.
-    ///
-    /// `Some(n)` prices the use in `Resource::ItemCharges`, the ledger
-    /// the staves already spend through — see that variant's docstring
-    /// for why the pool emptying takes nothing away — and leaves the
-    /// billing to `Action::execute`'s own tail. `None` keeps the
-    /// consumable behaviour, which is what every existing row wants.
-    pub charge_cost: Option<u32>,
+    /// on this chassis until the Mace of Terror was a wand, a scroll or
+    /// a set of pipes — objects whose entire existence is their
+    /// charges, so `spend_item_use`'s "decrement, and drop the object
+    /// when the pool empties" is exactly right for them. The mace is
+    /// something else as well: it is a mace. Running its three charges
+    /// dry must leave a weapon in the wielder's hand, and the
+    /// consume-on-use lane would have deleted one mid-fight.
+    pub billing: ItemUseBilling,
 }
 
 impl Action for AreaSaveConditionItem {
@@ -2450,12 +2523,7 @@ impl Action for AreaSaveConditionItem {
         // `side_effects` is what lets the picker grey the option out
         // and say why, exactly as it does for a spell slot.
         let mut costs = action_only();
-        if let Some(count) = self.charge_cost {
-            costs.push(Resource::ItemCharges {
-                item: self.item_name,
-                count,
-            });
-        }
+        costs.extend(self.billing.costs(self.item_name));
         costs
     }
 
@@ -2482,11 +2550,9 @@ impl Action for AreaSaveConditionItem {
             return Vec::new();
         };
         // A row priced in charges is billed by `Action::execute`'s tail
-        // off the `cost()` above; only the consumables bill here. See
-        // `charge_cost`.
-        if self.charge_cost.is_none()
-            && !consume_caster_item(encounter, caster_id, self.item_name)
-        {
+        // off the `cost()` above, and an at-will row is billed by
+        // nothing; only the consumables bill here. See [`ItemUseBilling`].
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let name = encounter.actor_name(caster_id);
@@ -2558,6 +2624,14 @@ pub struct SingleSaveConditionItem {
     pub condition: Condition,
     /// Timer for the install.
     pub timer: ConditionTimer,
+    /// What one use costs the object — see [`ItemUseBilling`].
+    ///
+    /// Every row here was a wand or a scroll until the worn items
+    /// arrived, and both of those are entirely their own charges. A
+    /// ring is not: *"While wearing this ring, you can cast Telekinesis
+    /// from it"* has no pool at all, and on the consume-on-use lane the
+    /// first cast would have taken the ring off the wearer's finger.
+    pub billing: ItemUseBilling,
 }
 
 impl Action for SingleSaveConditionItem {
@@ -2585,6 +2659,23 @@ impl Action for SingleSaveConditionItem {
         false
     }
 
+    /// An Action, plus the charges for a row that declares a price in
+    /// them. In `cost()` rather than spent inside `side_effects` so the
+    /// picker can grey the row out and say why — the same reason the
+    /// two area chassis put it here.
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        costs.extend(self.billing.costs(self.item_name));
+        costs
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -2607,7 +2698,7 @@ impl Action for SingleSaveConditionItem {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        if !consume_caster_item(encounter, caster_id, self.item_name) {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let name = encounter.actor_name(caster_id);
@@ -2659,7 +2750,7 @@ pub static USE_WAND_OF_WEB: AreaSaveConditionItem = AreaSaveConditionItem {
     reach: 24,
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Pipes of Haunting — Action; 4-tile burst, WIS save vs DC 13, fail =
@@ -2681,7 +2772,7 @@ pub static PLAY_PIPES_OF_HAUNTING: AreaSaveConditionItem = AreaSaveConditionItem
     reach: 12,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Mace of Terror** — SRD 5.2: *"This magic mace has 3 charges, and it
@@ -2691,7 +2782,7 @@ pub static PLAY_PIPES_OF_HAUNTING: AreaSaveConditionItem = AreaSaveConditionItem
 /// Wisdom saving throw or have the Frightened condition for 1 minute."*
 ///
 /// The first row on this chassis that is **not** a consumable, and the
-/// reason `charge_cost` exists. The Pipes of Haunting above are the
+/// reason [`ItemUseBilling`] exists. The Pipes of Haunting above are the
 /// same effect at a lower DC, and when the pipes run out there is
 /// nothing left worth carrying; when this mace runs out there is still
 /// a mace, and the old billing lane would have taken it away.
@@ -2718,7 +2809,7 @@ pub static SOUND_MACE_OF_TERROR: AreaSaveConditionItem = AreaSaveConditionItem {
     reach: 12,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 const MACE_OF_TERROR_NAME: &str = "Mace of Terror";
@@ -2734,7 +2825,7 @@ pub const RING_OF_SHOOTING_STARS_NAME: &str = "Ring of Shooting Stars";
 /// successful one."*
 ///
 /// The first row on `AreaSaveDamageItem` that is not a scroll, and the
-/// reason that chassis grew a `charge_cost`. A scroll is entirely its
+/// reason that chassis grew a billing arm of its own. A scroll is entirely its
 /// own single use, so "consume the object" and "spend the charge" were
 /// the same rule for every row before this one; a ring is not, and
 /// running its motes dry has to leave a ring on the wearer's finger.
@@ -2775,7 +2866,7 @@ pub static FIRE_SHOOTING_STAR: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 3 },
     // 60 ft = 24 tiles.
     reach: 24,
-    charge_cost: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Clap of Thunder** — the Thunderous Greatclub's Magic action:
@@ -2821,7 +2912,7 @@ pub static CLAP_OF_THUNDER: AreaSaveConditionItem = AreaSaveConditionItem {
     // timer.
     condition: Condition::Prone,
     timer: ConditionTimer::Permanent,
-    charge_cost: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 const THUNDEROUS_GREATCLUB_NAME: &str = "Thunderous Greatclub";
@@ -2845,6 +2936,7 @@ pub static USE_WAND_OF_PARALYSIS: SingleSaveConditionItem = SingleSaveConditionI
     reach: 24,
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Fear — Action; single-target, WIS save vs DC 15, fail =
@@ -2867,6 +2959,7 @@ pub static USE_WAND_OF_FEAR: SingleSaveConditionItem = SingleSaveConditionItem {
     reach: 24,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_HOLD_PERSON_NAME: &str = "Scroll of Hold Person";
@@ -2900,6 +2993,7 @@ pub static READ_HOLD_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     reach: 24,
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Hold Monster — Action; single-target, WIS save vs DC 15,
@@ -2920,6 +3014,7 @@ pub static READ_HOLD_MONSTER_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     reach: 36,
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Confusion — Action; 4-tile burst, WIS save vs DC 15, fail =
@@ -2942,7 +3037,7 @@ pub static USE_WAND_OF_CONFUSION: AreaSaveConditionItem = AreaSaveConditionItem 
     reach: 36,
     condition: Condition::Confused,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Hypnotic Pattern — Action; 4-tile burst, WIS save vs DC 14,
@@ -2965,7 +3060,7 @@ pub static READ_HYPNOTIC_PATTERN_SCROLL: AreaSaveConditionItem = AreaSaveConditi
     reach: 48,
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Vitriolic Sphere — Action; 10d4 acid DEX-save burst,
@@ -2990,7 +3085,7 @@ pub static READ_VITRIOLIC_SPHERE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem
     // 150 ft range RAW; well past any current map. Capped at 60 to
     // match the Fireball scroll's picker envelope.
     reach: 60,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Archmage Pearl of Power — bonus action; restore one expended level-4
@@ -3027,6 +3122,7 @@ pub static DRINK_POTION_OF_SANCTUARY: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Cure Wounds — Action; touch (1-tile) ally heal for 3d8+3.
@@ -3083,6 +3179,7 @@ pub static DRINK_POTION_OF_GROWTH: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Longstrider — Bonus Action; installs `Longstriding` for
@@ -3102,6 +3199,7 @@ pub static DRINK_POTION_OF_LONGSTRIDER: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const POTION_OF_LONGSTRIDER_NAME: &str = "Potion of Longstrider";
@@ -3331,6 +3429,7 @@ pub static READ_BLINDNESS_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     reach: 12,
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Bane — Action; 4-tile burst, CHA save vs DC 13, fail =
@@ -3352,7 +3451,7 @@ pub static READ_BANE_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     reach: 12,
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Faerie Fire — Action; 4-tile burst, DEX save vs DC 13, fail
@@ -3374,7 +3473,7 @@ pub static READ_FAERIE_FIRE_SCROLL: AreaSaveConditionItem = AreaSaveConditionIte
     reach: 24,
     condition: Condition::Outlined,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Polymorph — Action; single-target, WIS save vs DC 15, fail =
@@ -3499,6 +3598,7 @@ pub static DRINK_POTION_OF_BARKSKIN: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Fire Resistance — Action; wards the drinker against fire
@@ -3522,6 +3622,7 @@ pub static DRINK_POTION_OF_FIRE_RESISTANCE: SelfConditionItem = SelfConditionIte
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::Fixed(DamageType::Fire),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Cold Resistance — the Fire potion's sibling, one damage
@@ -3539,6 +3640,7 @@ pub static DRINK_POTION_OF_COLD_RESISTANCE: SelfConditionItem = SelfConditionIte
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::Fixed(DamageType::Cold),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Hill Giant Strength — Action; installs `Enlarged` for 10
@@ -3559,6 +3661,7 @@ pub static DRINK_POTION_OF_HILL_GIANT_STRENGTH: SelfConditionItem = SelfConditio
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const WAND_OF_SLEEP_NAME: &str = "Wand of Sleep";
@@ -3588,6 +3691,7 @@ pub static USE_WAND_OF_SLEEP: SingleSaveConditionItem = SingleSaveConditionItem 
     reach: 24,
     condition: Condition::Asleep,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Slow — Action; 4-tile burst, WIS save vs DC 13, fail =
@@ -3611,7 +3715,7 @@ pub static READ_SLOW_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     reach: 24,
     condition: Condition::Slowed,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Stinking Cloud — Action; 4-tile burst, CON save vs DC 15,
@@ -3635,7 +3739,7 @@ pub static READ_STINKING_CLOUD_SCROLL: AreaSaveConditionItem = AreaSaveCondition
     reach: 24,
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Death Ward — Action; install `DeathWarded` on a single
@@ -3792,6 +3896,7 @@ pub static USE_WAND_OF_BINDING: SingleSaveConditionItem = SingleSaveConditionIte
     reach: 24,
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Banishment — Action; single-target CHA save vs DC 15,
@@ -3812,6 +3917,7 @@ pub static READ_BANISHMENT_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     reach: 24,
     condition: Condition::Mazed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Fear — Action; 30-ft cone, WIS save vs DC 15, fail =
@@ -3843,7 +3949,7 @@ pub static READ_FEAR_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     reach: 0,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_CHARM_PERSON_NAME: &str = "Scroll of Charm Person";
@@ -3872,6 +3978,7 @@ pub static READ_CHARM_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     reach: 12,
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Charm Monster — Action; single-target WIS save vs DC 15, fail =
@@ -3890,6 +3997,7 @@ pub static USE_WAND_OF_CHARM_MONSTER: SingleSaveConditionItem = SingleSaveCondit
     reach: 24,
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Tasha's Hideous Laughter — Action; single-target WIS save vs
@@ -3909,6 +4017,7 @@ pub static READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL: SingleSaveConditionItem = Single
     reach: 12,
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Heat Metal — Action; single-target CON save vs DC 13, fail =
@@ -3930,6 +4039,7 @@ pub static READ_HEAT_METAL_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     reach: 24,
     condition: Condition::HeatMetaled,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Ice Storm — Action; 4-tile burst, DEX save vs DC 15, fail =
@@ -3948,7 +4058,7 @@ pub static READ_ICE_STORM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
     reach: 48,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Web — Action; 4-tile burst, DEX save vs DC 13, fail =
@@ -3967,7 +4077,7 @@ pub static READ_WEB_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     reach: 24,
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Resistance — the unlabelled bottle, and the best of the
@@ -3991,6 +4101,7 @@ pub static DRINK_POTION_OF_RESISTANCE: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::Likeliest,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Vigilance — Bonus Action; installs `DangerSense` for 10 rounds
@@ -4009,6 +4120,7 @@ pub static DRINK_POTION_OF_VIGILANCE: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const NECKLACE_OF_FIREBALLS_NAME: &str = "Necklace of Fireballs";
@@ -4037,7 +4149,7 @@ pub static USE_NECKLACE_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Dust of Disappearance — Bonus Action; installs `Invisible` on the
@@ -4054,6 +4166,7 @@ pub static USE_DUST_OF_DISAPPEARANCE: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Suggestion — Action; single-target WIS save vs DC 15, fail =
@@ -4074,6 +4187,7 @@ pub static USE_WAND_OF_SUGGESTION: SingleSaveConditionItem = SingleSaveCondition
     reach: 12,
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Calm Emotions — Action; 4-tile burst, CHA save vs DC 13,
@@ -4096,7 +4210,7 @@ pub static READ_CALM_EMOTIONS_SCROLL: AreaSaveConditionItem = AreaSaveConditionI
     reach: 24,
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Blindness — Action; single-target CON save vs DC 15, fail =
@@ -4114,6 +4228,7 @@ pub static USE_WAND_OF_BLINDNESS: SingleSaveConditionItem = SingleSaveConditionI
     reach: 24,
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Ring of Spell Storing — single-use Magic-Missile-style force-dart
@@ -4131,7 +4246,7 @@ pub static USE_RING_OF_SPELL_STORING: MagicMissileItem = MagicMissileItem {
     darts: 3,
     // 30 tile reach matches the Scroll of Magic Missile (150 ft RAW).
     reach: 30,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Mass Cure Wounds — Action; self-centered 4-tile burst that
@@ -4179,7 +4294,7 @@ pub static READ_CLOUDKILL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles. Capped to map-realistic 48.
     reach: 48,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Prayer of Healing — 2d8+3 per-ally heal, up to 6 closest
@@ -4233,6 +4348,7 @@ pub static DRINK_POTION_OF_HASTE: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Flesh to Stone — Action; single-target CON save vs DC 15,
@@ -4250,6 +4366,7 @@ pub static READ_FLESH_TO_STONE_SCROLL: SingleSaveConditionItem = SingleSaveCondi
     reach: 24,
     condition: Condition::Petrified,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Synaptic Static — Action; 4-tile burst, INT save vs DC 15,
@@ -4271,7 +4388,7 @@ pub static READ_SYNAPTIC_STATIC_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Burst { radius: 4 },
     // 120 ft RAW; 48 tiles.
     reach: 48,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Circle of Death — Action; 6-tile burst, CON save vs DC 15,
@@ -4294,7 +4411,7 @@ pub static READ_CIRCLE_OF_DEATH_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Burst { radius: 6 },
     // 150 ft RAW; 48 tiles (engine cap).
     reach: 48,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Mind Blank — Action; installs `MindBlanked` on the drinker
@@ -4315,6 +4432,7 @@ pub static DRINK_POTION_OF_MIND_BLANK: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_DISINTEGRATE_NAME: &str = "Scroll of Disintegrate";
@@ -4387,6 +4505,7 @@ pub static USE_WAND_OF_HOLD_MONSTER: SingleSaveConditionItem = SingleSaveConditi
     reach: 36,
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Foresight — Action; installs `Foreseen` for 10 rounds.
@@ -4409,6 +4528,7 @@ pub static DRINK_POTION_OF_FORESIGHT: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Necklace of Prayer Beads — Bonus Action; installs `Blessed` on a
@@ -4531,6 +4651,7 @@ pub static READ_PHANTASMAL_KILLER_SCROLL: SingleSaveConditionItem = SingleSaveCo
     reach: 48,
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Mirror Image — Action; installs `MirroredImages` on the
@@ -4553,6 +4674,7 @@ pub static DRINK_POTION_OF_MIRROR_IMAGE: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_HELLISH_REBUKE_NAME: &str = "Scroll of Hellish Rebuke";
@@ -4619,6 +4741,7 @@ pub static USE_EYES_OF_CHARMING: SingleSaveConditionItem = SingleSaveConditionIt
     reach: 12,
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Gem of Brightness — Action; 30-ft cone, CON save vs DC 14, fail =
@@ -4644,7 +4767,7 @@ pub static USE_GEM_OF_BRIGHTNESS: AreaSaveConditionItem = AreaSaveConditionItem 
     reach: 0,
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_RESILIENT_SPHERE_NAME: &str = "Scroll of Resilient Sphere";
@@ -4676,6 +4799,7 @@ pub static READ_RESILIENT_SPHERE_SCROLL: SingleSaveConditionItem = SingleSaveCon
     reach: 12,
     condition: Condition::Sphered,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Telekinesis — Action; single-target, STR save vs DC 15,
@@ -4697,6 +4821,7 @@ pub static READ_TELEKINESIS_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     reach: 24,
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Telekinesis — Action; single-target, STR save vs DC 17, fail
@@ -4715,6 +4840,7 @@ pub static USE_WAND_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditio
     reach: 36,
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Earthen Grasp — Action; single-target, STR save vs DC 13,
@@ -4736,6 +4862,7 @@ pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveCondit
     reach: 12,
     condition: Condition::EarthenGrasped,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Sleep — Action; 4-tile burst centered on a picked tile.
@@ -4913,7 +5040,7 @@ pub static READ_MOONBEAM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 3 },
     // 120 ft RAW; 48 tiles.
     reach: 48,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Guiding Bolt — Action; single-target, 4d6 radiant damage on
@@ -5059,6 +5186,7 @@ pub static READ_BLINK_SCROLL: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Contagion — Action; single-target, CON save vs DC 15, fail
@@ -5082,6 +5210,7 @@ pub static READ_CONTAGION_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     reach: crate::actions::action_template::MELEE_REACH,
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 const SCROLL_OF_SPIDER_CLIMB_NAME: &str = "Scroll of Spider Climb";
@@ -5110,6 +5239,7 @@ pub static READ_SPIDER_CLIMB_SCROLL: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Heroism — Action; self-install `Heroic` (Frightened
@@ -5135,6 +5265,7 @@ pub static READ_HEROISM_SCROLL: SelfConditionItem = SelfConditionItem {
     reject_when_active: false,
     temp_hp: Some(10),
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Wand of Bless — Bonus Action; single-target ally buff. Installs
@@ -5178,7 +5309,7 @@ pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageI
     // 100 ft RAW (Lightning Bolt's line); 40 tiles, and its own reach.
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Mind Blank — Action; self-install `MindBlanked` for 10
@@ -5200,6 +5331,7 @@ pub static READ_MIND_BLANK_SCROLL: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Config struct for "multi-target ally buff" consumable items — the
@@ -5457,6 +5589,7 @@ pub static USE_WAND_OF_STUNNING: SingleSaveConditionItem = SingleSaveConditionIt
     reach: 24,
     condition: Condition::Stunned,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Iron Bands of Bilarro — Action; throw at a target, STR save vs DC 17,
@@ -5479,6 +5612,7 @@ pub static USE_IRON_BANDS_OF_BILARRO: SingleSaveConditionItem = SingleSaveCondit
     reach: 24,
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Sanctuary — Bonus Action; install `Sanctuary` for 10 rounds
@@ -5584,6 +5718,15 @@ const BRAZIER_OF_COMMANDING_FIRE_ELEMENTALS_NAME: &str = "Brazier of Commanding 
 const CENSER_OF_CONTROLLING_AIR_ELEMENTALS_NAME: &str = "Censer of Controlling Air Elementals";
 const STONE_OF_CONTROLLING_EARTH_ELEMENTALS_NAME: &str = "Stone of Controlling Earth Elementals";
 const PIPES_OF_THE_SEWERS_NAME: &str = "Pipes of the Sewers";
+// The at-will shelf — the items RAW writes no limit on at all. See
+// `ItemUseBilling::Free`, the arm they are the first users of.
+const RING_OF_TELEKINESIS_NAME: &str = "Ring of Telekinesis";
+const RING_OF_INVISIBILITY_NAME: &str = "Ring of Invisibility";
+const ROPE_OF_ENTANGLEMENT_NAME: &str = "Rope of Entanglement";
+const BROOM_OF_FLYING_NAME: &str = "Broom of Flying";
+const ROD_OF_RULERSHIP_NAME: &str = "Rod of Rulership";
+const HELM_OF_TELEPATHY_NAME: &str = "Helm of Telepathy";
+const DUST_OF_SNEEZING_AND_CHOKING_NAME: &str = "Dust of Sneezing and Choking";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
@@ -5610,7 +5753,7 @@ pub static READ_PYROTECHNICS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 2 },
     // 60 ft RAW range; 24 tiles.
     reach: 24,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Flame Arrows — Action; install `FlamingArrowed` for 10
@@ -5633,6 +5776,7 @@ pub static READ_FLAME_ARROWS_SCROLL: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Ashardalon's Stride — Bonus Action; install `AshardalonStriding`
@@ -5655,6 +5799,7 @@ pub static DRINK_POTION_OF_ASHARDALONS_STRIDE: SelfConditionItem = SelfCondition
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Potion of Otherworldly Guise — Bonus Action; install `OtherworldlyGuised`
@@ -5677,6 +5822,7 @@ pub static DRINK_POTION_OF_OTHERWORLDLY_GUISE: SelfConditionItem = SelfCondition
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Horn of Blasting — Action; RAW's 30-foot cone of thunder, 5d6
@@ -5824,7 +5970,7 @@ pub static THROW_JAVELIN_OF_LIGHTNING: AreaSaveDamageItem = AreaSaveDamageItem {
     // 120 ft RAW; 48 tiles, and its own reach.
     shape: AreaShape::Line { length: 48, half_width: 1 },
     reach: 0,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Bead of Force — Action; a single bead torn from a Necklace of Beads
@@ -5850,7 +5996,7 @@ pub static THROW_BEAD_OF_FORCE: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 2 },
     // 60 ft RAW; 24 tiles.
     reach: 24,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Fly — Action; install `Flying` for 10 rounds on a single
@@ -5899,6 +6045,7 @@ pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     reach: crate::actions::action_template::MELEE_REACH,
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Longstrider — Action; install `Longstriding` (+10 ft
@@ -6009,11 +6156,9 @@ pub struct SummonItem {
     /// elemental is simply *there*, and a horn once blown cannot be
     /// un-blown by a Magic Missile to the ribs.
     pub concentration: Option<&'static str>,
-    /// `Some(n)` prices the use in `Resource::ItemCharges` — the lane a
-    /// permanent object with a pool uses, where the object outlives the
-    /// pool. `None` bills through `spend_item_use`, where one use is
-    /// the whole object: a scroll, a gem that shatters.
-    pub charges: Option<u32>,
+    /// What one use costs the object — see [`ItemUseBilling`]. A gem
+    /// shatters and a bowl does not.
+    pub billing: ItemUseBilling,
 }
 
 impl Action for SummonItem {
@@ -6064,12 +6209,7 @@ impl Action for SummonItem {
         // `is_harmful` flag says, and Fast Hands has no business
         // turning a bonus action into a fire elemental.
         let mut costs = action_only();
-        if let Some(count) = self.charges {
-            costs.push(Resource::ItemCharges {
-                item: self.item_name,
-                count,
-            });
-        }
+        costs.extend(self.billing.costs(self.item_name));
         costs
     }
     fn custom_validate_input(
@@ -6094,10 +6234,10 @@ impl Action for SummonItem {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         // A charged item is billed by `cost()` through the resource
-        // ledger; an uncharged one is the object itself and is spent
+        // ledger; a consumable one is the object itself and is spent
         // here. Exactly one of the two runs, which is what keeps a gem
         // from being both shattered and decremented.
-        if self.charges.is_none() && !consume_caster_item(encounter, caster_id, self.item_name) {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let spawned = crate::actions::spells::spawn_adjacent_summons(
@@ -6185,7 +6325,7 @@ pub static READ_CONJURE_ANIMALS_SCROLL: SummonItem = SummonItem {
     // copy of. See `ALL_SUMMON_ITEMS`.
     base_instance_id: 200,
     concentration: Some("Scroll of Conjure Animals"),
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Elemental Gem** (Wondrous item, Uncommon) — *"Breaking this gem
@@ -6219,7 +6359,7 @@ pub static BREAK_AIR_ELEMENTAL_GEM: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 202,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Elemental Gem (Yellow Diamond) — an Earth Elemental. See
@@ -6235,7 +6375,7 @@ pub static BREAK_EARTH_ELEMENTAL_GEM: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 203,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Elemental Gem (Red Corundum) — a Fire Elemental. See
@@ -6251,7 +6391,7 @@ pub static BREAK_FIRE_ELEMENTAL_GEM: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 204,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Elemental Gem (Emerald) — a Water Elemental. See
@@ -6267,7 +6407,7 @@ pub static BREAK_WATER_ELEMENTAL_GEM: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 205,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Horn of Valhalla, Silver** (Wondrous item, Rare) — *"You can use
@@ -6297,7 +6437,7 @@ pub static BLOW_HORN_OF_VALHALLA: SummonItem = SummonItem {
     search_radius: 3,
     base_instance_id: 206,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Bag of Tricks, Gray** (Wondrous item, Uncommon) — *"You can take a
@@ -6337,7 +6477,7 @@ pub static REACH_INTO_BAG_OF_TRICKS: SummonItem = SummonItem {
     base_instance_id: 209,
     search_radius: 3,
     concentration: None,
-    charges: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Figurine of Wondrous Power, Bronze Griffon** (Wondrous item,
@@ -6365,7 +6505,7 @@ pub static SET_DOWN_BRONZE_GRIFFON: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 210,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Figurine of Wondrous Power, Onyx Dog** (Wondrous item, Rare) — a
@@ -6383,7 +6523,7 @@ pub static SET_DOWN_ONYX_DOG: SummonItem = SummonItem {
     search_radius: 3,
     base_instance_id: 211,
     concentration: None,
-    charges: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// **Bowl of Commanding Water Elementals** (Wondrous item, Rare) —
@@ -6400,12 +6540,13 @@ pub static SET_DOWN_ONYX_DOG: SummonItem = SummonItem {
 /// creature, and until now the engine only sold one of them.
 ///
 ///   - A **gem** is Uncommon, needs no attunement, and is *gone*:
-///     `charges: None`, so `SummonItem::side_effects` consumes the
-///     object. One fight, one elemental, and the party is poorer.
+///     `ItemUseBilling::Consumed`, so `SummonItem::side_effects`
+///     consumes the object. One fight, one elemental, and the party is poorer.
 ///   - A **vessel** is Rare and survives its own use. RAW's *"can't be
 ///     used this way again until the next dawn"* is a pool of exactly
-///     one that refills on a rest, which is `charges: Some(1)` against
-///     an `Item::charges` of 1 and a flat `recharge` — the same lane
+///     one that refills on a rest, which is
+///     `ItemUseBilling::Charges(1)` against an `Item::charges` of 1 and
+///     a flat `recharge` — the same lane
 ///     the Bag of Tricks and the wands run on, sized down to a single
 ///     draw.
 ///
@@ -6432,7 +6573,7 @@ pub static FILL_BOWL_OF_WATER_ELEMENTALS: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 212,
     concentration: None,
-    charges: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Brazier of Commanding Fire Elementals** (Wondrous item, Rare) — a
@@ -6450,7 +6591,7 @@ pub static LIGHT_BRAZIER_OF_FIRE_ELEMENTALS: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 213,
     concentration: None,
-    charges: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Censer of Controlling Air Elementals** (Wondrous item, Rare) — an
@@ -6467,7 +6608,7 @@ pub static SWING_CENSER_OF_AIR_ELEMENTALS: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 214,
     concentration: None,
-    charges: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Stone of Controlling Earth Elementals** (Wondrous item, Rare) — an
@@ -6492,7 +6633,7 @@ pub static SET_DOWN_STONE_OF_EARTH_ELEMENTALS: SummonItem = SummonItem {
     search_radius: 4,
     base_instance_id: 215,
     concentration: None,
-    charges: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Pipes of the Sewers** (Wondrous item, Uncommon, requires
@@ -6536,7 +6677,7 @@ pub static PLAY_PIPES_OF_THE_SEWERS: SummonItem = SummonItem {
     search_radius: 3,
     base_instance_id: 216,
     concentration: None,
-    charges: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 
@@ -6564,7 +6705,7 @@ pub static READ_MAGNIFY_GRAVITY_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Burst { radius: 1 },
     // 60 ft RAW = 24 tiles.
     reach: 24,
-    charge_cost: None,
+    billing: ItemUseBilling::Consumed,
 };
 
 /// Scroll of Elemental Weapon — Action; install `ElementallyWeaponed` for
@@ -7410,6 +7551,7 @@ pub static DRINK_POTION_OF_WATER_BREATHING: SelfConditionItem = SelfConditionIte
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const POTION_OF_WATER_BREATHING_NAME: &str = "Potion of Water Breathing";
@@ -7434,6 +7576,7 @@ pub static USE_GEM_OF_SEEING: SelfConditionItem = SelfConditionItem {
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
 };
 
 const GEM_OF_SEEING_NAME: &str = "Gem of Seeing";
@@ -7448,7 +7591,7 @@ const GEM_OF_SEEING_NAME: &str = "Gem of Seeing";
 /// condition: a burst centred on the wearer, a Wisdom save, and a
 /// charge rather than the object itself. Three charges, `1d3` back at
 /// dawn, and a robe at zero charges is still a robe — which is the
-/// whole reason `charge_cost` exists on this chassis. See
+/// whole reason [`ItemUseBilling::Charges`] exists. See
 /// `SOUND_MACE_OF_TERROR`.
 ///
 /// **Two of RAW's three clauses are not modeled**, and they are the two
@@ -7480,7 +7623,7 @@ pub static SWIRL_ROBE_OF_SCINTILLATING_COLORS: AreaSaveConditionItem = AreaSaveC
     // because the robe is a three-charge rare rather than a Wand of
     // Paralysis, and because RAW's own window is that short.
     timer: ConditionTimer::Rounds(1),
-    charge_cost: Some(1),
+    billing: ItemUseBilling::Charges(1),
 };
 
 const ROBE_OF_SCINTILLATING_COLORS_NAME: &str = "Robe of Scintillating Colors";
@@ -7493,9 +7636,9 @@ const ROBE_OF_SCINTILLATING_COLORS_NAME: &str = "Robe of Scintillating Colors";
 /// The first potion on the loot table with a *pool* rather than a
 /// swallow. RAW's "three uses" is `Item::charges`, which
 /// `spend_item_use` already spends the way this needs it spent — three
-/// breaths and then the bottle goes, so the item does not need the
-/// `charge_cost` lane the mace and the robe use to survive their own
-/// emptying.
+/// breaths and then the bottle goes, so the potion stays on
+/// [`ItemUseBilling::Consumed`] rather than the `Charges` lane the mace
+/// and the robe use to survive their own emptying.
 ///
 /// RAW's two-step — drink, then breathe, three times — collapses to one
 /// action per breath. The cork coming out is not a decision the engine
@@ -7556,3 +7699,255 @@ pub static CAPE_OF_THE_MOUNTEBANK_STEP: crate::actions::staves::StaffSpell =
     };
 
 const CAPE_OF_THE_MOUNTEBANK_NAME: &str = "Cape of the Mountebank";
+
+/// **Ring of Telekinesis** (Ring, Very Rare, requires attunement) —
+/// *"While wearing this ring, you can cast Telekinesis from it."*
+///
+/// The first action in the engine billed [`ItemUseBilling::Free`], and
+/// the sentence that made the arm necessary. RAW prints no charges, no
+/// daily limit and no expenditure: the ring casts a level-5 spell,
+/// every turn, for as long as the wearer has an Action to spend. On the
+/// consume-on-use lane that is a ring which falls off the first time it
+/// works.
+///
+/// Priced as the Wand of Telekinesis is — the same `Lifted` install,
+/// the same STR save — at the wand's DC 17 rather than the scroll's 15,
+/// because a Very Rare attuned ring should not be the weaker of the two
+/// and because RAW's own ring names no DC to prefer. Reach is the
+/// spell's 60 feet (24 tiles) rather than the wand's 90: the wand's
+/// longer arm is that item's own clause, not the spell's.
+///
+/// What the wearer pays instead of charges is **the attunement slot and
+/// the Action**, every turn, forever — which is the price RAW actually
+/// charges for the ring and the reason it is Very Rare. The engine can
+/// now say that.
+pub static USE_RING_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use ring of telekinesis",
+    action_aliases: &["telekinesis ring", "tk ring", "lift"],
+    item_name: RING_OF_TELEKINESIS_NAME,
+    log_text: "{actor} turns the ring; the target floats helplessly skyward.",
+    save: AbilityScoreType::Strength,
+    dc: 17,
+    // 60 ft RAW on the spell; 24 tiles.
+    reach: 24,
+    condition: Condition::Lifted,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Free,
+};
+
+/// **Rope of Entanglement** (Wondrous item, Rare) — *"While holding one
+/// end of the rope, you can take a Magic action to command the other end
+/// to dart forward and entangle one creature you can see within 20 feet
+/// of yourself. The target must succeed on a DC 15 Dexterity saving
+/// throw or have the Restrained condition."*
+///
+/// The at-will lane's crowd-control row, and the cheapest reusable
+/// Restrained in the game: no attunement, no charges, no concentration,
+/// and it can be thrown again the round after it misses. What holds it
+/// in check is RAW's twenty feet — eight tiles, which is inside most
+/// enemies' charge — and the fact that it is one target.
+///
+/// RAW's release clause (*"by letting go of your end"*, or a Bonus
+/// Action to coil it back) is not modeled, and neither is the rope's own
+/// hit-point pool. Both are about un-doing the effect early, and the
+/// engine's answer to that question is the timer: a minute is RAW's own
+/// ceiling on how long a target stays wrapped up if nobody intervenes.
+/// The escape RAW *does* give the victim — a DC 15 Strength (Athletics)
+/// or Dexterity (Acrobatics) check — is the repeat-save lane's shape and
+/// is left to it rather than invented here.
+pub static THROW_ROPE_OF_ENTANGLEMENT: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "throw rope of entanglement",
+    action_aliases: &["rope", "entangle", "entanglement"],
+    item_name: ROPE_OF_ENTANGLEMENT_NAME,
+    log_text: "{actor} commands the rope; it darts forward and lashes itself tight.",
+    save: AbilityScoreType::Dexterity,
+    dc: 15,
+    // 20 ft RAW; 8 tiles.
+    reach: 8,
+    condition: Condition::Restrained,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Free,
+};
+
+/// **Helm of Telepathy** (Wondrous item, Uncommon, requires
+/// attunement) — *"you can cast Detect Thoughts or Suggestion (save DC
+/// 13) from the helm. Once either spell is cast from the helm, that
+/// spell can't be cast from it again until the next dawn."*
+///
+/// Suggestion is the half of that sentence the engine has: it is the
+/// Charmed install the Wand of Suggestion already runs, at the helm's
+/// lower DC. Detect Thoughts has no surface here — the engine has no
+/// hidden information for a reader to find, every creature's stat block
+/// being on the panel — and a second row that did nothing would be worse
+/// than an absent one.
+///
+/// RAW's *"can't be cast again until the next dawn"* is a pool of one on
+/// [`ItemUseBilling::Charges`] rather than a consumption, because a helm
+/// whose one Suggestion is spent is still a helm. That distinction is
+/// the whole of what separates this row from a scroll, and it is the
+/// distinction the old lane could not draw.
+pub static WEAR_HELM_OF_TELEPATHY: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "use helm of telepathy",
+    action_aliases: &["helm", "telepathy", "suggest"],
+    item_name: HELM_OF_TELEPATHY_NAME,
+    log_text: "{actor}'s helm presses a suggestion into an unguarded mind.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // 30 ft RAW on Suggestion; 12 tiles.
+    reach: 12,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Charges(1),
+};
+
+/// **Ring of Invisibility** (Ring, Legendary, requires attunement) —
+/// *"you can take a Magic action to give yourself the Invisible
+/// condition. You remain Invisible until the ring is removed or until
+/// you take a Bonus Action to become visible again."*
+///
+/// The Legendary end of the at-will shelf, and the item the arm is
+/// really for: RAW's ring has no charges, no duration and no daily
+/// limit, so on every lane the engine had before this one it was a ring
+/// that vanished along with its wearer.
+///
+/// The one collapse is the **duration**. RAW's invisibility here lasts
+/// until the wearer chooses otherwise; the engine's `Invisible` is a
+/// timed condition that the attack pipeline strips on a swing, which is
+/// the 5e rule for every other source of it in the game and the rule
+/// the whole stealth lane is written around. Ten rounds is therefore
+/// the install, and the wearer who wants it back has an Action and a
+/// ring that is still on their finger — which is a fair reading of
+/// "until you become visible again" and the only one that does not need
+/// a second invisibility that behaves unlike the first.
+pub static TURN_RING_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
+    action_name: "turn ring of invisibility",
+    action_aliases: &["invisibility ring", "vanish", "invis ring"],
+    item_name: RING_OF_INVISIBILITY_NAME,
+    log_text: "{actor} turns the ring and is gone.",
+    condition: Condition::Invisible,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    // Re-firing it would spend an Action to refresh a timer that has not
+    // run out, which is never what a wearer wants and is exactly what an
+    // AI with a free option will do every turn.
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Free,
+};
+
+/// **Broom of Flying** (Wondrous item, Uncommon, requires attunement) —
+/// *"you stand astride it and take a Magic action to make it hover
+/// beneath you, at which time it can be ridden in the air. It has a Fly
+/// Speed of 50 feet."*
+///
+/// The cheapest flight in the game and the first that is not a
+/// consumable or a spell: an Uncommon item, an Action, and the wearer is
+/// airborne for as long as they stay on it. The Potion of Flying is the
+/// same condition for one fight and then gone; the Winged Boots are four
+/// charges of it; this is a broom.
+///
+/// Its 50-foot fly speed is RAW's and is not modeled as a *different*
+/// number from the `Flying` condition's own — that condition is the
+/// engine's single airborne lane, it carries one speed bonus, and
+/// splitting it per source would mean a second kind of flight for the
+/// benefit of one item. What the broom gets that the potion does not is
+/// that it can be done again next fight.
+///
+/// The second half of RAW's entry — sending the broom off on errands
+/// within a mile — is overland travel, and there is none.
+pub static RIDE_BROOM_OF_FLYING: SelfConditionItem = SelfConditionItem {
+    action_name: "ride broom of flying",
+    action_aliases: &["broom", "fly broom"],
+    item_name: BROOM_OF_FLYING_NAME,
+    log_text: "{actor} stands astride the broom and it lifts off the floor.",
+    condition: Condition::Flying,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Free,
+};
+
+/// **Rod of Rulership** (Rod, Rare, requires attunement) — *"You can
+/// take a Magic action to present the rod and command obedience from
+/// each creature of your choice that you can see within 120 feet of
+/// yourself. Each target must succeed on a DC 15 Wisdom saving throw or
+/// have the Charmed condition for 8 hours. … Once used, this property
+/// can't be used again until the next dawn."*
+///
+/// The widest crowd-control area an item in this engine offers, and the
+/// reason it is once a day. Twelve tiles of radius centred on the
+/// wielder catches most of a room, and `AreaSaveConditionItem` is
+/// enemy-only, so RAW's *"each creature of your choice"* is the
+/// chassis's own default rather than a softening of it.
+///
+/// RAW's 120 feet is 48 tiles, which is wider than any board the
+/// generator makes; the radius here is 24, the widest emanation
+/// anything in the engine has (a cloaker's Moan), because an area
+/// larger than the map is an area with no edge and no decision in it.
+/// The eight hours are the engine's minute, for the reason every other
+/// long-duration charm is: the clock stops when the fight does.
+///
+/// `Charges(1)` with a daily refill on the item, not consumption — a rod
+/// whose one command is spent is still a rod, and RAW would have the
+/// party carry it to the next room.
+pub static PRESENT_ROD_OF_RULERSHIP: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "present rod of rulership",
+    action_aliases: &["rulership", "rod", "command obedience"],
+    item_name: ROD_OF_RULERSHIP_NAME,
+    log_text: "{actor} presents the rod and commands obedience.",
+    save: AbilityScoreType::Wisdom,
+    dc: 15,
+    // Centred on the wielder, so the reach is the radius for the same
+    // reason the Mace of Terror's is: no point inside the area is
+    // further away than its edge.
+    shape: AreaShape::Burst { radius: 24 },
+    reach: 24,
+    condition: Condition::Charmed,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Charges(1),
+};
+
+/// **Dust of Sneezing and Choking** (Wondrous item, Uncommon) — *"you
+/// can throw the dust into the air, forcing yourself and every creature
+/// in a 30-foot Emanation originating from you to make a DC 15
+/// Constitution saving throw. Constructs, Elementals, Oozes, Plants, and
+/// Undead succeed on the save automatically."*
+///
+/// The cursed twin of the Dust of Disappearance, which is already on the
+/// shelf and looks exactly like it — RAW's joke is that Identify cannot
+/// tell them apart. The engine keeps the joke's mechanical half (the two
+/// share a glyph and an inventory line that reads the same at a glance)
+/// and not its social half, there being no shopkeeper to be lied to.
+///
+/// **RAW's "yourself" is not modeled**, and that is the one real
+/// divergence. `AreaSaveConditionItem` resolves enemy-only, which is the
+/// standing behaviour of every harmful item on this chassis and the
+/// thing the AI's area rungs are written against; a row that caught its
+/// own thrower would be the first, and it would be caught by a veto
+/// rather than by a decision. The cost of that is that the engine's dust
+/// is a weapon rather than a trap — which is what a player who knows
+/// what they are holding would use it as anyway.
+///
+/// The creature-type exemptions are left to the condition gate:
+/// `actor_immune_to_condition` already refuses an Incapacitated on
+/// anything immune to it, which covers the constructs and undead on
+/// RAW's list that carry that immunity and is honest about the ones that
+/// do not.
+pub static THROW_DUST_OF_SNEEZING_AND_CHOKING: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "throw dust of sneezing and choking",
+    action_aliases: &["sneezing dust", "choking dust", "sneeze"],
+    item_name: DUST_OF_SNEEZING_AND_CHOKING_NAME,
+    log_text: "{actor} flings a pinch of dust into the air; the room starts coughing.",
+    save: AbilityScoreType::Constitution,
+    dc: 15,
+    // 30 ft Emanation RAW; 12 tiles, and the reach is the same number
+    // for the same reason the Mace of Terror's is.
+    shape: AreaShape::Burst { radius: 12 },
+    reach: 12,
+    condition: Condition::Incapacitated,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Consumed,
+};

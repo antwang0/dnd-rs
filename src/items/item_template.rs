@@ -4032,6 +4032,117 @@ pub static STONE_OF_CONTROLLING_EARTH_ELEMENTALS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Telekinesis** (Ring, Very Rare, requires attunement) —
+/// *"While wearing this ring, you can cast Telekinesis from it."*
+///
+/// The first item in the file whose use costs **nothing**: no charges,
+/// no daily limit, no object spent. See
+/// `item_actions::ItemUseBilling::Free` for why that sentence had no
+/// spelling in the engine until now, and
+/// `item_actions::USE_RING_OF_TELEKINESIS` for the DC it is priced at.
+///
+/// It is the strongest thing on the loot table by throughput and the
+/// attunement is the whole of what holds it back: one of three slots,
+/// permanently, for a level-5 lockdown every turn.
+pub static RING_OF_TELEKINESIS: Item = Item {
+    name: "Ring of Telekinesis",
+    glyph: '=',
+    on_use: &[&crate::actions::item_actions::USE_RING_OF_TELEKINESIS],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Invisibility** (Ring, Legendary, requires attunement) — an
+/// Action, and the wearer is gone.
+///
+/// The Legendary end of the at-will shelf. See
+/// `item_actions::TURN_RING_OF_INVISIBILITY` for the one collapse RAW's
+/// open-ended duration takes.
+pub static RING_OF_INVISIBILITY: Item = Item {
+    name: "Ring of Invisibility",
+    glyph: '=',
+    on_use: &[&crate::actions::item_actions::TURN_RING_OF_INVISIBILITY],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Rope of Entanglement** (Wondrous item, Rare) — a reusable
+/// Restrained on a rope, with no attunement and no pool.
+///
+/// The cheapest repeatable crowd control in the game, and the reason
+/// the at-will lane is not simply a Legendary convenience: this is a
+/// Rare that any chassis can pick up and use every round. RAW's twenty
+/// feet is what prices it.
+pub static ROPE_OF_ENTANGLEMENT: Item = Item {
+    name: "Rope of Entanglement",
+    glyph: 'r',
+    on_use: &[&crate::actions::item_actions::THROW_ROPE_OF_ENTANGLEMENT],
+    ..Item::DEFAULTS
+};
+
+/// **Broom of Flying** (Wondrous item, Uncommon, requires attunement) —
+/// flight that can be done again next fight.
+///
+/// The Uncommon end of the at-will shelf, and the engine's cheapest
+/// answer to a board with a chasm on it. The Potion of Flying is the
+/// same condition once; the Winged Boots are four charges of it; this
+/// is a broom that keeps working.
+pub static BROOM_OF_FLYING: Item = Item {
+    name: "Broom of Flying",
+    glyph: 'B',
+    on_use: &[&crate::actions::item_actions::RIDE_BROOM_OF_FLYING],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Rod of Rulership** (Rod, Rare, requires attunement) — one command,
+/// once a day, and most of a room stops fighting.
+///
+/// The widest area any item in the engine offers. See
+/// `item_actions::PRESENT_ROD_OF_RULERSHIP` for why the radius is 24
+/// tiles rather than RAW's 48, and why a spent rod is still a rod.
+pub static ROD_OF_RULERSHIP: Item = Item {
+    name: "Rod of Rulership",
+    glyph: '/',
+    on_use: &[&crate::actions::item_actions::PRESENT_ROD_OF_RULERSHIP],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Helm of Telepathy** (Wondrous item, Uncommon, requires
+/// attunement) — one Suggestion a day at DC 13.
+///
+/// The cheap end of the Charmed ladder, under the Wand of Suggestion
+/// and the Wand of Charm Monster. See
+/// `item_actions::WEAR_HELM_OF_TELEPATHY` for why only half of RAW's
+/// sentence is here.
+pub static HELM_OF_TELEPATHY: Item = Item {
+    name: "Helm of Telepathy",
+    glyph: 'h',
+    on_use: &[&crate::actions::item_actions::WEAR_HELM_OF_TELEPATHY],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Dust of Sneezing and Choking** (Wondrous item, Uncommon) — one
+/// throw, a 30-foot emanation, and DC 15 or the room stops acting.
+///
+/// RAW's joke is that this is indistinguishable from the Dust of
+/// Disappearance until somebody uses it, and the two share a glyph here
+/// for that reason. See
+/// `item_actions::THROW_DUST_OF_SNEEZING_AND_CHOKING` for the half of
+/// the joke the engine keeps and the half it cannot.
+pub static DUST_OF_SNEEZING_AND_CHOKING: Item = Item {
+    name: "Dust of Sneezing and Choking",
+    glyph: 'd',
+    on_use: &[&crate::actions::item_actions::THROW_DUST_OF_SNEEZING_AND_CHOKING],
+    ..Item::DEFAULTS
+};
+
 /// **Pipes of the Sewers** (Wondrous item, Uncommon, requires
 /// attunement) — three swarms of rats out of a pipe that refills at
 /// dawn.
@@ -4798,7 +4909,7 @@ pub static MACE_OF_SMITING: Item = Item {
 /// Running the pool dry leaves a mace, not a gap in the pack: the action
 /// is priced in `Resource::ItemCharges` rather than billed through
 /// `spend_item_use`, which is the lane that drops a wand when its last
-/// charge goes. See `item_actions::AreaSaveConditionItem::charge_cost`.
+/// charge goes. See `item_actions::ItemUseBilling`.
 ///
 /// `grants_magical_attacks` even with no bonus, for the reason the Mace
 /// of Disruption has it: RAW calls it a magic mace, and a magic weapon
@@ -7068,6 +7179,20 @@ pub static LOOT_POOL: &[&Item] = &[
     // a lot of bodies for the tier, which is why RAW charges an
     // attunement slot for it and why one entry is the right weight.
     &PIPES_OF_THE_SEWERS,
+    // The at-will shelf — the items RAW writes no limit on. Single
+    // entries, and the reason is the same one the vessels get: an
+    // option that comes back every *turn* is a different kind of loot
+    // from one that comes back every rest, and the rarest thing on the
+    // table should be the one a party never has to put down. The rod,
+    // the helm and the dust ride along as the charged and consumable
+    // neighbours of the same batch.
+    &RING_OF_TELEKINESIS,
+    &RING_OF_INVISIBILITY,
+    &ROPE_OF_ENTANGLEMENT,
+    &BROOM_OF_FLYING,
+    &ROD_OF_RULERSHIP,
+    &HELM_OF_TELEPATHY,
+    &DUST_OF_SNEEZING_AND_CHOKING,
     // The staves. Single entries each — a staff is the deepest item on
     // the table (three to nine spells and a pool big enough to matter)
     // and should be the rarest thing a party walks away with. Ordered
