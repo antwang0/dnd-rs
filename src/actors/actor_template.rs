@@ -5877,6 +5877,26 @@ pub struct ActorInstance {
     /// flag, keeping the write-side a single unconditional insert. A
     /// non-swashbuckler attacker's ledger just goes unread.
     melee_attack_targets_this_turn: HashSet<usize>,
+    /// SRD 5.2 **Defender** allocation: how many points of the sword's
+    /// printed bonus this actor moved onto their own Armor Class, and
+    /// `None` while the choice for this turn has not been made yet.
+    ///
+    /// Three states rather than two, and the third one is doing work.
+    /// `None` is *undecided* — it is what `reset_for_new_round` leaves
+    /// behind, and it is the only state in which the first swing of a
+    /// turn is allowed to choose. `Some(0)` is a wielder who looked at
+    /// the swing in front of them and kept the whole bonus on the blade,
+    /// which must not be re-decided by the second swing of the same
+    /// turn; RAW hands the choice to *"the first time you attack with
+    /// the weapon on each of your turns"* and a `bool` beside an `i32`
+    /// would be the same two facts with a fourth, impossible state.
+    ///
+    /// Never read raw. `defender_guard()` clamps it against what the
+    /// pack currently holds, which is where RAW's *"you must hold the
+    /// weapon to gain a bonus to AC from it"* lives — disarm the
+    /// wielder mid-turn and the guard lapses without anybody having to
+    /// notice.
+    defender_guard: Option<i32>,
     /// 5e two-weapon fighting ledger: has this actor swung a **light
     /// melee weapon** at Action cost during their current turn?
     ///
@@ -6161,6 +6181,7 @@ impl ActorInstance {
             has_fancy_footwork: ct.has_fancy_footwork,
             has_dread_ambusher: ct.has_dread_ambusher,
             melee_attack_targets_this_turn: HashSet::new(),
+            defender_guard: None,
             light_weapon_swing_this_turn: false,
             draconic_ancestry: ct.draconic_ancestry,
             sorcery_points: ct.sorcery_points,
@@ -10674,7 +10695,13 @@ impl ActorInstance {
         let defense_bonus = if self.has_defense_style { 1 } else { 0 };
         let raw_base = self.base_ac as i32 + self.total_item_bonuses().ac + defense_bonus;
         let floor = self.ac_floor();
-        (raw_base.max(floor) + self.condition_ac_bonus()).max(0) as u32
+        // SRD 5.2 Defender, the half of its sentence that lands on this
+        // number. Stacked on top of whichever of base-or-floor wins,
+        // beside the condition bonuses rather than inside the base, for
+        // the reason the floor comparison exists at all: a Mage Armored
+        // wielder should get their floor *and* their guard, and folding
+        // the guard into `raw_base` would let the floor swallow it.
+        (raw_base.max(floor) + self.condition_ac_bonus() + self.defender_guard()).max(0) as u32
     }
 
     /// Flat AC contribution from active conditions — Shield of Faith
@@ -11272,6 +11299,60 @@ impl ActorInstance {
     /// `+N weapon`-style items pick up their +N damage half once per swing.
     pub fn item_damage_bonus(&self) -> i32 {
         self.total_item_bonuses().damage_bonus
+    }
+
+    /// The largest transferable pool in the pack — SRD 5.2's Defender,
+    /// *"you can transfer some or all of the weapon's bonus to your
+    /// Armor Class"*, asked from the wielder's side.
+    ///
+    /// `max` rather than `sum`, and that is a rules decision rather
+    /// than a defensive one. RAW's clause is about *the* weapon you
+    /// attacked with; a wielder holding two Defenders attacked with one
+    /// of them, so the pool is three points and not six.
+    ///
+    /// Rides `active_items`, so an unattuned Defender — or one that has
+    /// left the pack — offers nothing to move. That single filter is
+    /// both of RAW's gates at once: the attunement clause every
+    /// legendary weapon prints, and this one's own *"you must hold the
+    /// weapon"*.
+    pub fn shiftable_weapon_bonus(&self) -> i32 {
+        self.active_items()
+            .map(|i| i.shiftable_bonus)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Points of Defender bonus currently standing on this actor's AC —
+    /// `0` for the whole roster except a wielder who moved some there
+    /// on their own turn.
+    ///
+    /// Clamped against `shiftable_weapon_bonus` on every read, which is
+    /// why the field it reads is never read directly: a wielder
+    /// disarmed after allocating holds a number that no longer has a
+    /// sword behind it, and RAW says the AC goes with the weapon. The
+    /// clamp also keeps the two halves honest in the one direction that
+    /// matters — the same value is added to AC and subtracted from the
+    /// swing, so a guard that outlived its weapon would otherwise be a
+    /// permanent to-hit penalty paid for nothing.
+    pub fn defender_guard(&self) -> i32 {
+        self.defender_guard
+            .unwrap_or(0)
+            .clamp(0, self.shiftable_weapon_bonus())
+    }
+
+    /// True while this turn's Defender allocation has not been made.
+    /// The gate on RAW's *"the first time you attack with the weapon on
+    /// each of your turns"* — a second swing finds it `false` and
+    /// leaves the first swing's decision standing.
+    pub fn defender_guard_undecided(&self) -> bool {
+        self.defender_guard.is_none()
+    }
+
+    /// Record this turn's Defender allocation. Clamped into the pool the
+    /// pack actually offers, so a caller that asks for more than the
+    /// weapon has gets the weapon.
+    pub fn set_defender_guard(&mut self, points: i32) {
+        self.defender_guard = Some(points.clamp(0, self.shiftable_weapon_bonus()));
     }
 
     /// Flat to-hit bonus contributed only by *conditions* whose dice
@@ -12044,6 +12125,16 @@ impl ActorInstance {
         // attacker's ledger populates and clears the same as the
         // swash's without any read-side effect.
         self.melee_attack_targets_this_turn.clear();
+        // SRD 5.2 Defender: *"the adjusted bonuses remain in effect
+        // until the start of your next turn."* This is that start, and
+        // clearing to `None` rather than to `Some(0)` is what re-opens
+        // the choice — the guard lapses and the wielder may put it back
+        // up, but only by swinging the sword again. A turn in which the
+        // Defender's wielder never attacks is a turn they spend at the
+        // full `+3 / +3` and no guard, which is what RAW's clause says
+        // and is also the direction a deviation should fail in: the
+        // free half of this item is the AC, and it should never be free.
+        self.defender_guard = None;
         // 5e two-weapon fighting: the main-hand light swing that opens
         // the off-hand bonus attack is good for this turn only. Cleared
         // here so a dual-wielder who holds their bonus action can't

@@ -1107,6 +1107,25 @@ pub fn render_sideinfo(
                 Style::default().fg(Color::Yellow),
             )));
         }
+        // SRD 5.2 Defender's allocation, and the reason it is printed
+        // rather than left to be inferred from the AC: it is the one
+        // number on this panel that moves *during* a turn, and it moves
+        // two other numbers with it. A wielder whose AC quietly went up
+        // by two between their first swing and their second has no
+        // other way to find out why — or to find out that the same two
+        // points came off the swing.
+        //
+        // Only when there is some, like the bank above: it is zero for
+        // every creature that is not holding the one sword, and zero
+        // for that wielder on a turn they decided to keep the blade
+        // sharp instead.
+        let guard = curr_actor.defender_guard();
+        if guard > 0 {
+            stats_lines.push(Line::from(Span::styled(
+                format!("Defender: +{} moved to AC this turn", guard),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
         // The attunement ledger, and only when there is something to
         // say about it. A party three rooms in carrying nothing that
         // attunes should not be told it has three free slots it has no

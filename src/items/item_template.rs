@@ -486,6 +486,34 @@ pub struct Item {
     /// before they have found a magic weapon, and it stops being
     /// relevant the moment they have.
     pub grants_silvered_attacks: bool,
+    /// How much of this weapon's printed bonus its wielder may move
+    /// onto their own Armor Class for a turn — SRD 5.2's **Defender**,
+    /// *"the first time you attack with the weapon on each of your
+    /// turns, you can transfer some or all of the weapon's bonus to
+    /// your Armor Class"*, and nothing else on the roster.
+    ///
+    /// The number is the whole of the transferable pool, not the amount
+    /// transferred: a Defender prints `3` here beside its `attack_bonus:
+    /// 3` / `damage_bonus: 3`, and what the wielder actually moves on
+    /// any given turn lives on the *actor* (`ActorInstance::
+    /// defender_guard`), because it is a decision rather than a
+    /// property of the object. The two numbers are separate for the
+    /// reason the attunement lanes are separate from the bonus fields:
+    /// the sword in the shop has a transferable pool and no allocation,
+    /// and the allocation has to reset when the turn does.
+    ///
+    /// A field rather than a flag because RAW's pool and RAW's bonus
+    /// are the same number only by coincidence of this one item's
+    /// stat block. A `+1 Defender` would print `1` here and a bare
+    /// `+3 Weapon` prints `0`, and "is this a Defender" is not the
+    /// question any read site asks — every one of them asks *how many
+    /// points are on the table*.
+    ///
+    /// Read through `ActorInstance::shiftable_weapon_bonus`, which
+    /// takes the largest pool in the pack (two Defenders do not stack
+    /// into six points: RAW's clause is about *the* weapon you attacked
+    /// with, and you attacked with one of them).
+    pub shiftable_bonus: i32,
     /// True when carrying this item lets the holder breathe wherever
     /// they are — 5e's Necklace of Adaptation, "you can breathe
     /// normally in any environment", and nothing else on the roster.
@@ -873,6 +901,7 @@ impl Item {
         passive_conditions: &[],
         grants_magical_attacks: false,
         grants_silvered_attacks: false,
+        shiftable_bonus: 0,
         grants_unfettered_breathing: false,
         blunts_critical_hits: false,
         halves_ranged_weapon_damage: false,
@@ -2376,6 +2405,50 @@ pub static WEAPON_PLUS_THREE: Item = Item {
         ..ItemBonuses::ZERO
     },
     grants_magical_attacks: true,
+    ..Item::DEFAULTS
+};
+
+/// **Defender** (Weapon, any melee; Legendary, requires attunement) —
+/// *"You gain a +3 bonus to attack rolls and damage rolls made with
+/// this magic weapon. The first time you attack with the weapon on each
+/// of your turns, you can transfer some or all of the weapon's bonus to
+/// your Armor Class. … The adjusted bonuses remain in effect until the
+/// start of your next turn, although you must hold the weapon to gain a
+/// bonus to AC from it."*
+///
+/// [`WEAPON_PLUS_THREE`] directly above with one sentence added, and the
+/// sentence is the item: every other weapon in the file hands its
+/// wielder a number, and this one hands them a *choice*. It is the only
+/// entry on the loot table whose benefit is not decided when it is
+/// picked up.
+///
+/// The `+3 / +3` ships on the ordinary bonus lanes, so a Defender that
+/// nobody ever reallocates is exactly the legendary weapon one rung up
+/// from the top of the mundane ladder. The transferable pool rides
+/// `shiftable_bonus`, the per-turn allocation rides
+/// `ActorInstance::defender_guard`, and the point where the choice is
+/// actually made is the first swing of the wielder's own turn — see
+/// `attack::set_defender_guard_for_swing`, which is the engine's answer
+/// to RAW's "you can".
+///
+/// **Attunement, and why it matters more here than on a +3 Weapon.**
+/// The AC half of the item is gated twice over — once by the bond and
+/// once by RAW's *"you must hold the weapon"* — and both gates are the
+/// same `active_items` filter, because a weapon that has left the
+/// wielder's pack is neither held nor attuned. Disarm a Defender's
+/// wielder mid-turn and the guard they put up lapses with it, which is
+/// the direction RAW's clause points.
+pub static DEFENDER: Item = Item {
+    name: "Defender",
+    glyph: '|',
+    bonuses: ItemBonuses {
+        attack_bonus: 3,
+        damage_bonus: 3,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    shiftable_bonus: 3,
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -8133,6 +8206,9 @@ pub static LOOT_POOL: &[&Item] = &[
     // rare drop, paired with the existing +1 (common, weight 2) and
     // +2 (single entry) tiers.
     &WEAPON_PLUS_THREE,
+    // …and the legendary rung above it, which is the same numbers plus
+    // a decision. Single entry, like every other top-of-ladder weapon.
+    &DEFENDER,
     // The two defensive ladders, weighted to mirror the offensive one
     // rung for rung: the `+1`s common, the `+2`s single, the `+3`s
     // single. Keeping the three ladders on one weighting is what makes
@@ -8961,7 +9037,17 @@ mod tests {
     /// is not a weapon, and it must not carry the flag.
     #[test]
     fn exactly_the_weapons_carry_the_magic() {
-        let tiers = [&WEAPON_PLUS_ONE, &WEAPON_PLUS_TWO, &WEAPON_PLUS_THREE];
+        // The `+N` ladder, and the Defender standing on its top rung:
+        // RAW's *"+3 bonus to attack rolls and damage rolls made with
+        // this magic weapon"* is the `+3 Weapon`'s own sentence, and a
+        // legendary blade that a wraith could halve would be the same
+        // bug the `+3` tier shipped with.
+        let tiers = [
+            &WEAPON_PLUS_ONE,
+            &WEAPON_PLUS_TWO,
+            &WEAPON_PLUS_THREE,
+            &DEFENDER,
+        ];
         for item in tiers {
             assert!(
                 item.grants_magical_attacks,

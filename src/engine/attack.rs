@@ -1706,6 +1706,87 @@ pub fn ranged_only_ac(target: &ActorInstance, is_melee: bool) -> i32 {
     }
 }
 
+/// SRD 5.2 **Defender**, the clause that makes it something other than
+/// a `+3 Weapon`: *"the first time you attack with the weapon on each of
+/// your turns, you can transfer some or all of the weapon's bonus to
+/// your Armor Class."*
+///
+/// RAW says *"you can"*, and an engine with nobody to ask has to answer
+/// it. The rule this one uses is: **move the points the swing is not
+/// using.**
+///
+/// A d20 attack against AC `ac` with modifier `m` lands on every face
+/// but a natural 1 as soon as `m + 2 ≥ ac` — face 2 is the lowest roll
+/// that can hit anything, and face 1 misses whatever the modifier is.
+/// So the largest `k` with `m - k + 2 ≥ ac` is bonus this swing was
+/// paying for and not spending, and moving it onto the wielder's AC is
+/// free in the strict sense: the set of d20 faces that hit is exactly
+/// the same before and after. Anything beyond that `k` would be buying
+/// AC with hit chance, which is a trade RAW allows and this engine
+/// declines to make on a player's behalf.
+///
+/// Every number in `m` is one the swing is certain to get. The Bless /
+/// Bane lane is the one term that is not yet rolled, and it is read
+/// through `worst_case_d4_rider` — a Baned wielder assumes the worst
+/// the die can do, a Blessed one banks nothing. Banking an unrolled
+/// average would occasionally hand back a hit that had already been
+/// paid for, and then the transfer would not be free.
+///
+/// Three gates, each a clause of RAW:
+///
+/// * **`is_melee && !is_spell`** — *"attack with the weapon"*, and the
+///   Defender is *Weapon (Any Melee Weapon)*. A Fire Bolt from the same
+///   hand is not the sword swinging.
+/// * **the wielder's own turn** — *"on each of your turns"*. An
+///   opportunity attack on somebody else's turn is still a swing with
+///   the weapon, and it is not a turn of yours; it inherits whatever
+///   guard is already standing and re-decides nothing.
+/// * **`defender_guard_undecided`** — *"the first time"*. The second
+///   swing of a Multiattack finds the decision made and leaves it.
+///
+/// The allocation is recorded even when it comes out zero, which is
+/// what closes that last gate: a wielder who kept the whole bonus on
+/// the blade against their first target must not get to reconsider
+/// against their second.
+pub fn set_defender_guard_for_swing(
+    encounter: &mut EncounterInstance,
+    p: &AttackParams,
+    target_ac: i32,
+) {
+    if !p.is_melee || p.is_spell {
+        return;
+    }
+    if encounter.current_turn_actor_id() != Some(p.caster_id) {
+        return;
+    }
+    let Some(attacker) = encounter.actors.get(&p.caster_id) else {
+        return;
+    };
+    let pool = attacker.shiftable_weapon_bonus();
+    if pool <= 0 || !attacker.defender_guard_undecided() {
+        return;
+    }
+    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
+    let modifier = p.attack_bonus
+        + buff
+        + cond_attack_bonus
+        + encounter.worst_case_d4_rider(p.caster_id);
+    // `+ 2`: the lowest d20 face that can hit anything.
+    let spare = (modifier + 2 - target_ac).clamp(0, pool);
+    let Some(attacker) = encounter.actors.get_mut(&p.caster_id) else {
+        return;
+    };
+    attacker.set_defender_guard(spare);
+    if spare > 0 {
+        let name = attacker.name().to_string();
+        encounter.log(format!(
+            "{} shifts {} of the Defender's bonus to Armor Class.",
+            name,
+            format_args!("+{}", spare),
+        ));
+    }
+}
+
 /// Cohort row: a shield whose bearer pulls a ranged attack aimed at
 /// somebody standing near them onto themselves.
 ///
@@ -2270,6 +2351,15 @@ pub fn resolve_attack_outcome_with_rider(
     // `condition_attack_bonus`) is still active when we sum the bonus.
     // The rider clear below removes Inspired alongside Helped/Hidden,
     // so swapping the order would zero out the +3.
+    //
+    // SRD 5.2's Defender makes its choice immediately before that read,
+    // and the order is the whole of RAW's *"the adjusted bonuses remain
+    // in effect"*: the transfer takes effect on the swing that declares
+    // it, so the points have to have left the blade before the blade's
+    // bonus is summed. It is also the last moment at which the target's
+    // effective AC — cover, Multiattack Defense and all — is known,
+    // which is the number the decision is made against.
+    set_defender_guard_for_swing(encounter, &p, target_ac);
     let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
     // 5e Fighting Style: **Archery** — +2 to attack rolls made with ranged
     // weapons. RAW carves out spell attack rolls ("ranged weapon attacks"

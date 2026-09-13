@@ -15783,7 +15783,16 @@ impl EncounterInstance {
                 (
                     a.attack_bonus_buff()
                         + a.item_attack_bonus()
-                        + a.exhaustion_d20_penalty(),
+                        + a.exhaustion_d20_penalty()
+                        // SRD 5.2 Defender: whatever the wielder moved
+                        // onto their AC this turn is no longer on the
+                        // blade. Subtracted on the same lane the item
+                        // bonus was added on, one term over, because
+                        // the two are one number seen from either end —
+                        // and because a transfer that came off a
+                        // different lane than it went onto could be
+                        // made to stack with itself.
+                        - a.defender_guard(),
                     a.condition_attack_bonus(),
                 )
             })
@@ -15801,8 +15810,39 @@ impl EncounterInstance {
     pub fn caster_damage_buffs(&self, caster_id: usize) -> i32 {
         self.actors
             .get(&caster_id)
-            .map(|a| a.item_damage_bonus() + a.damage_bonus_buff())
+            // Defender's other half — RAW transfers the bonus to
+            // "attack rolls *and* damage rolls" as one clause, so the
+            // damage lane pays the same points the to-hit lane does.
+            .map(|a| a.item_damage_bonus() + a.damage_bonus_buff() - a.defender_guard())
             .unwrap_or(0)
+    }
+
+    /// The worst the Bless / Bane d4 lane can do to this actor's next
+    /// d20 — `0` for anybody it would help or leave alone, and `-4` per
+    /// surviving penalty die for anybody it would hurt.
+    ///
+    /// The pessimist's read of `bless_bane_attack_die`, for the one
+    /// caller that has to commit to a number *before* the die is rolled:
+    /// SRD 5.2's Defender, deciding how much of its bonus a swing can
+    /// spare. Bless is deliberately not counted on the other side. A
+    /// wielder who banked on the average of a d4 they had not rolled
+    /// would occasionally hand back a hit they had already paid an AC
+    /// point for, and the whole point of the rule in
+    /// `attack::set_defender_guard_for_swing` is that the points it
+    /// moves are ones the swing was not using.
+    ///
+    /// Shares the two cohorts with the roller rather than re-listing
+    /// them, so a condition added to either table is answered here the
+    /// same turn it is answered there.
+    pub fn worst_case_d4_rider(&self, actor_id: usize) -> i32 {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return 0;
+        };
+        let count = |cohort: &'static [(Condition, &'static str)]| -> i32 {
+            cohort.iter().filter(|(c, _)| actor.has_condition(*c)).count() as i32
+        };
+        let net = count(Self::D4_BONUS_CONDITIONS) - count(Self::D4_PENALTY_CONDITIONS);
+        net.min(0) * 4
     }
 
     /// Conditions that each add their own **1d4** to a d20 total —

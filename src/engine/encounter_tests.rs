@@ -105960,3 +105960,324 @@ fn the_initiative_die_answers_to_both_conditions_that_name_it() {
         "a creature that was stunned before the fight began rolls badly for it"
     );
 }
+
+/// Open `who`'s own turn, so a swing resolved next is a swing they took
+/// *on their turn* — which is the difference between the Defender
+/// deciding its allocation and an opportunity attack inheriting one.
+///
+/// Walks the queue rather than reaching into the tracker, because the
+/// thing under test reads `current_turn_actor_id` and that accessor
+/// answers off the same slot `process_stack` opens.
+fn open_turn_for(e: &mut EncounterInstance, who: usize) {
+    for _ in 0..40 {
+        e.process_stack();
+        if e.current_turn_actor_id() == Some(who) {
+            return;
+        }
+        e.skip_turn();
+    }
+    panic!("the queue never came round to actor {}", who);
+}
+
+/// A fighter holding an attuned Defender, and somebody standing next to
+/// them to swing at. Returns `(encounter, wielder, target)`.
+fn defender_wielder_against(
+    target: &'static crate::actors::actor_template::CreatureTemplate,
+) -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::DEFENDER;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wielder = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let mark = e
+        .instantiate_creature(target, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    let sword = e.actors.get_mut(&wielder).unwrap();
+    sword.pickup_item(&DEFENDER);
+    // `pickup_item` forms the bond itself when a slot is free, which a
+    // fighter carrying nothing else always has. Asserted rather than
+    // assumed: every number below is the *attuned* sword's.
+    assert!(sword.is_attuned_to(DEFENDER.name), "the bond forms");
+    (e, wielder, mark)
+}
+
+/// Swing `attack_bonus: 5` at whoever is standing there. The number is
+/// the caller's half of the to-hit total — the Defender's own `+3`
+/// arrives through `caster_attack_buffs`, which is the lane under test.
+fn swing_at(e: &mut EncounterInstance, attacker: usize, target: usize) {
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    resolve_attack_outcome(
+        e,
+        AttackParams {
+            caster_id: attacker,
+            target_id: target,
+            action_name: "longsword",
+            attack_bonus: 5,
+            damage_dice: Dice::new(1, 8),
+            damage_bonus: 3,
+            damage_type: DamageType::Slashing,
+            is_melee: true,
+            long_range: None,
+            min_range: None,
+            is_spell: false,
+        },
+    );
+}
+
+/// SRD 5.2 **Defender**: *"the first time you attack with the weapon on
+/// each of your turns, you can transfer some or all of the weapon's
+/// bonus to your Armor Class."*
+///
+/// The engine's answer to *"you can"* is to move the points the swing
+/// was not using, and this is the arithmetic. A fighter swinging at
+/// `+5` of their own plus the sword's `+3` rolls at `+8` against a
+/// zombie's AC 8: every d20 face but a natural 1 already lands, and
+/// would still land at `+6`. So two points are spare, they go onto the
+/// wielder's AC, and the third stays on the blade because giving that
+/// one away would start costing hits.
+///
+/// The two halves are asserted against the same number from both ends,
+/// which is what makes this a test of a *transfer* rather than of two
+/// unrelated bonuses: AC up by exactly what to-hit and damage came down
+/// by.
+#[test]
+fn a_defender_moves_only_the_bonus_its_swing_was_not_using() {
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let (mut e, wielder, mark) = defender_wielder_against(&ZOMBIE_TEMPLATE);
+    assert_eq!(
+        e.actors[&mark].armor_class(),
+        8,
+        "the arithmetic below is written against this number"
+    );
+    let ac_before = e.actors[&wielder].armor_class();
+    let (to_hit_before, _) = e.caster_attack_buffs(wielder);
+    let damage_before = e.caster_damage_buffs(wielder);
+
+    open_turn_for(&mut e, wielder);
+    assert!(
+        e.actors[&wielder].defender_guard_undecided(),
+        "a fresh turn re-opens the choice"
+    );
+    swing_at(&mut e, wielder, mark);
+
+    assert_eq!(
+        e.actors[&wielder].defender_guard(),
+        2,
+        "+5 and +3 against AC 8 can spare two points and no more"
+    );
+    assert_eq!(
+        e.actors[&wielder].armor_class(),
+        ac_before + 2,
+        "and the two points are standing on the wielder's AC"
+    );
+    assert_eq!(
+        e.caster_attack_buffs(wielder).0,
+        to_hit_before - 2,
+        "off the blade by exactly what went onto the arm"
+    );
+    assert_eq!(
+        e.caster_damage_buffs(wielder),
+        damage_before - 2,
+        "RAW moves the attack and damage halves as one clause"
+    );
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("shifts +2 of the Defender's bonus")),
+        "and the log says where the AC came from"
+    );
+}
+
+/// The same sword, the same wielder, a target worth taking seriously —
+/// and nothing moves.
+///
+/// A skeleton's AC 14 is two points above what a `+8` swing can reach
+/// on every face but a 1, so there is no spare bonus to move and the
+/// blade keeps all three points. This is the assertion that stops the
+/// rule above from being "a Defender always guards": the transfer is
+/// free or it does not happen.
+#[test]
+fn a_defender_against_a_hard_target_keeps_its_bonus_on_the_blade() {
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+
+    let (mut e, wielder, mark) = defender_wielder_against(&SKELETON_TEMPLATE);
+    assert_eq!(e.actors[&mark].armor_class(), 14, "a real defence");
+    let ac_before = e.actors[&wielder].armor_class();
+    let (to_hit_before, _) = e.caster_attack_buffs(wielder);
+
+    open_turn_for(&mut e, wielder);
+    swing_at(&mut e, wielder, mark);
+
+    assert_eq!(
+        e.actors[&wielder].defender_guard(),
+        0,
+        "nothing is spare against AC 14"
+    );
+    assert_eq!(
+        e.actors[&wielder].armor_class(),
+        ac_before,
+        "so the wielder is no harder to hit"
+    );
+    assert_eq!(
+        e.caster_attack_buffs(wielder).0,
+        to_hit_before,
+        "and the swing kept everything it was paying for"
+    );
+    assert!(
+        !e.actors[&wielder].defender_guard_undecided(),
+        "a decision of zero is still a decision — the next swing this \
+         turn does not get to reopen it"
+    );
+}
+
+/// *"The first time you attack with the weapon on each of your turns."*
+///
+/// Two swings, one turn, two very different targets: the zombie the
+/// allocation was decided against, and a skeleton the wielder would
+/// dearly like the whole `+3` back for. RAW pins the choice to the first
+/// swing, so the guard the zombie bought stays up and the skeleton is
+/// swung at with what is left.
+#[test]
+fn a_second_swing_does_not_re_decide_the_defenders_allocation() {
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let (mut e, wielder, zombie) = defender_wielder_against(&ZOMBIE_TEMPLATE);
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+        .unwrap();
+
+    open_turn_for(&mut e, wielder);
+    swing_at(&mut e, wielder, zombie);
+    assert_eq!(e.actors[&wielder].defender_guard(), 2, "decided on the zombie");
+
+    swing_at(&mut e, wielder, skeleton);
+    assert_eq!(
+        e.actors[&wielder].defender_guard(),
+        2,
+        "and a harder second target does not buy the points back"
+    );
+}
+
+/// *"The adjusted bonuses remain in effect until the start of your next
+/// turn."*
+///
+/// The guard survives everybody else's turn — which is the entire
+/// purpose of putting it up — and lapses the moment the wielder's own
+/// comes round again.
+#[test]
+fn the_defenders_guard_lapses_at_the_start_of_its_wielders_next_turn() {
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let (mut e, wielder, mark) = defender_wielder_against(&ZOMBIE_TEMPLATE);
+    let ac_before = e.actors[&wielder].armor_class();
+
+    open_turn_for(&mut e, wielder);
+    swing_at(&mut e, wielder, mark);
+    assert_eq!(e.actors[&wielder].defender_guard(), 2);
+
+    e.skip_turn();
+    e.process_stack();
+    assert_eq!(
+        e.actors[&wielder].defender_guard(),
+        2,
+        "the guard is up through the other side's turn, which is the point"
+    );
+
+    open_turn_for(&mut e, wielder);
+    assert_eq!(
+        e.actors[&wielder].defender_guard(),
+        0,
+        "and it lapses when the wielder's own turn opens"
+    );
+    assert_eq!(
+        e.actors[&wielder].armor_class(),
+        ac_before,
+        "back to the AC they started with"
+    );
+    assert!(
+        e.actors[&wielder].defender_guard_undecided(),
+        "free to decide again, but only by swinging again"
+    );
+}
+
+/// *"Although you must hold the weapon to gain a bonus to AC from it."*
+///
+/// The clamp in `defender_guard` is what enforces that clause, and this
+/// is both directions of it. The AC goes when the sword does — and,
+/// just as importantly, the *penalty* goes too: a guard that outlived
+/// its weapon would be a to-hit tax the wielder was paying for an AC
+/// bonus they no longer had.
+#[test]
+fn a_defender_takes_its_guard_with_it_when_the_bond_breaks() {
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::items::item_template::DEFENDER;
+
+    let (mut e, wielder, mark) = defender_wielder_against(&ZOMBIE_TEMPLATE);
+    let bare_ac = {
+        let a = e.actors.get_mut(&wielder).unwrap();
+        a.end_attunement(DEFENDER.name);
+        let ac = a.armor_class();
+        assert!(a.attune_to(DEFENDER.name), "re-bond for the real run");
+        ac
+    };
+    let bare_to_hit = {
+        let a = e.actors.get_mut(&wielder).unwrap();
+        a.end_attunement(DEFENDER.name);
+        let buffs = a.attack_bonus_buff() + a.item_attack_bonus();
+        assert!(a.attune_to(DEFENDER.name), "re-bond for the real run");
+        buffs
+    };
+
+    open_turn_for(&mut e, wielder);
+    swing_at(&mut e, wielder, mark);
+    assert_eq!(e.actors[&wielder].defender_guard(), 2, "the guard goes up");
+
+    e.actors.get_mut(&wielder).unwrap().end_attunement(DEFENDER.name);
+    assert_eq!(
+        e.actors[&wielder].defender_guard(),
+        0,
+        "and comes straight back down with the sword"
+    );
+    assert_eq!(
+        e.actors[&wielder].armor_class(),
+        bare_ac,
+        "no AC left over from a weapon that is no longer live"
+    );
+    assert_eq!(
+        e.caster_attack_buffs(wielder).0,
+        bare_to_hit,
+        "and no to-hit penalty left over either"
+    );
+}
+
+/// *"On each of your turns"*, and an opportunity attack is not one.
+///
+/// The wielder swings on the zombie's turn — a reaction is still a swing
+/// with the weapon — and the sword makes no decision, because RAW's
+/// clause is about the wielder's turn rather than about the swing. The
+/// allocation stays open for whenever their own turn arrives.
+#[test]
+fn a_swing_on_somebody_elses_turn_does_not_arm_the_defender() {
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let (mut e, wielder, mark) = defender_wielder_against(&ZOMBIE_TEMPLATE);
+    let ac_before = e.actors[&wielder].armor_class();
+
+    open_turn_for(&mut e, mark);
+    swing_at(&mut e, wielder, mark);
+
+    assert!(
+        e.actors[&wielder].defender_guard_undecided(),
+        "a reaction swing is not the first attack of *your* turn"
+    );
+    assert_eq!(
+        e.actors[&wielder].armor_class(),
+        ac_before,
+        "so nothing moved onto the wielder's AC"
+    );
+}
