@@ -8026,12 +8026,14 @@ impl ActorInstance {
             let score = self.base_ability_score_mut(ability);
             *score = (*score + by).min(ceiling).max(*score);
             let now = *score;
-            // Every copy, for the reason `spend_item_use` empties every
-            // copy of a spent wand: a second Tome of Clear Thought in
-            // the same pack is a second book, and reading one does not
-            // read the other — but leaving it would have the rest after
-            // this one read it too, which is a party that farms
-            // Intelligence out of one drop.
+            // One copy per row, which is what makes two of the same
+            // book worth two readings: the shelf above is built by
+            // walking the inventory, so a pack holding two Tomes of
+            // Clear Thought contributes two rows and each of them
+            // spends one of the two. `remove_item_by_name` pops a
+            // single copy, which is the behaviour that wants — unlike
+            // `spend_item_use`, whose pool is shared across copies and
+            // so empties all of them at once.
             self.remove_item_by_name(name);
             learned.push((name, ability, now));
         }

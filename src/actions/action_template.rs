@@ -2342,17 +2342,6 @@ pub trait Action {
             // resource was consumed elsewhere). Skip silently; the engine logs context.
             return Vec::new();
         }
-        // 5e Sorcerer Distant Spell metamagic: a ranged action burns the
-        // prime as it fires. Gated on reach > 2 so a melee swing or
-        // polearm-reach attack can't consume the prime — matches the
-        // `extra_spell_reach` gate. Consumed here (before side_effects)
-        // so the prime can't double-fire on a multi-target spell or be
-        // observed by the spell's own logic in any surprising way.
-        if let Some(reach) = self.reach_tiles()
-            && reach > 2
-        {
-            encounter.consume_distant_spell(caster_id);
-        }
         // Open the cast frame before any of the action's own logic runs,
         // so every resolution site nested inside `side_effects` — burst
         // save loops, shared damage rolls, ally-shield sweeps — can read
@@ -2410,6 +2399,15 @@ pub trait Action {
         // burned, no concentration starts, and nothing downstream ever
         // learns a Fireball was on its way.
         //
+        // **Above the Distant Spell burn below**, and the order is the
+        // rule rather than tidiness. A cancelled spell should cost its
+        // caster their slot and their action — RAW says so twice — and
+        // nothing else. Three of the four sorcerer primes are consumed
+        // inside the block this sits in front of or after it, so a
+        // countered Twinned Spell keeps its prime for the next cast; a
+        // Distant Spell burned *before* the interrupt would be the odd
+        // one out, spent on a spell that never left the caster's mouth.
+        //
         // What still happens is the bill. RAW: *"a canceled spell
         // dissipates with no effect, and any resources used to cast it
         // are wasted"* — so the early return carries the same cost tail
@@ -2460,6 +2458,17 @@ pub trait Action {
                 .filter(|r| !matches!(r, Resource::SpellSlot(_)))
                 .collect();
             return billing_side_effects(caster_id, &costs, self.hasted_action_eligible());
+        }
+        // 5e Sorcerer Distant Spell metamagic: a ranged action burns the
+        // prime as it fires. Gated on reach > 2 so a melee swing or
+        // polearm-reach attack can't consume the prime — matches the
+        // `extra_spell_reach` gate. Consumed here (before side_effects)
+        // so the prime can't double-fire on a multi-target spell or be
+        // observed by the spell's own logic in any surprising way.
+        if let Some(reach) = self.reach_tiles()
+            && reach > 2
+        {
+            encounter.consume_distant_spell(caster_id);
         }
         encounter.enter_cast(
             self.school(),

@@ -9621,6 +9621,16 @@ impl WandOfWonderItem {
     /// *not* do is go back through `Action::execute`: the wand has
     /// already paid its Action and its charge, and a second trip would
     /// open a second cast frame and bill the spell's slot on top.
+    ///
+    /// **So the cast frame is the wand's**, not the spell's, and one
+    /// consequence is worth naming: a wand-flung Fireball opens a frame
+    /// with no school on it, so an Evocation Wizard's Sculpt Spells
+    /// finds nothing to sculpt. That reads correctly — the wizard did
+    /// not cast it, the wand did, and RAW's wand names no caster for the
+    /// spell it produces — but it is a consequence of where the frame is
+    /// opened rather than a decision made about evokers, and the day
+    /// somebody wants it the other way the fix is a nested
+    /// `enter_cast` around each forwarded row.
     pub(crate) fn resolve(
         &self,
         encounter: &mut EncounterInstance,
