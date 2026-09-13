@@ -1082,6 +1082,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3k'. The wand that finds what is hiding. Above every buff on
+        //      this stretch because a revealed enemy changes what all of
+        //      them are worth: a Haste spent on a turn with nothing to
+        //      swing at is a Haste spent on the walk. Its own validator
+        //      refuses unless somebody within sixty feet is actually
+        //      hiding, so the rung costs nothing on the turns it does
+        //      nothing — which is most of them.
+        if let Some(aei) = try_reveal_hidden_enemies(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3l. The concentration self-buff cohort, lower half — the four
         //     Investitures, Wind Wall, Shadow Blade, Antilife Shell, the
         //     two paladin auras, Holy Weapon and Pass Without Trace. See
@@ -3843,6 +3854,30 @@ const ITEM_SELF_BUFF_CONDITIONS: &[Condition] = &[
     Condition::StoneGiantStrong,
     Condition::HillGiantStrong,
 ];
+
+/// The item actions that put a hidden enemy back on the map.
+///
+/// One row, and a rung of its own rather than a name on `ITEM_PRIMES`
+/// above, because it is aimed at the other side of the board: a prime
+/// makes its user better and this makes the enemy findable, which is a
+/// different question and belongs at a different height on the ladder.
+const HIDDEN_ENEMY_FINDERS: &[&str] = &["use wand of enemy detection"];
+
+/// Find what is hiding, when there is something hiding to find.
+///
+/// No engagement gate, which is the difference between this and every
+/// other item rung on this stretch: the action's own validator already
+/// asks the sharper question — *is any hostile within sixty feet
+/// currently hidden* — and a creature that cannot see its enemies is
+/// exactly the creature that should not be asked whether one is nearby.
+fn try_reveal_hidden_enemies(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    HIDDEN_ENEMY_FINDERS
+        .iter()
+        .find_map(|name| try_self_action(encounter, actor_id, name))
+}
 
 /// The pack's **primes** — the item actions that sharpen or shield their
 /// own user and are not a bottle, in the order a holder would reach for
@@ -20553,6 +20588,7 @@ mod tests {
             .chain(KINDLED_WEAPONS.iter().map(|(name, _)| *name))
             .chain(SLOT_RESTORING_ITEMS.iter().copied())
             .chain(ITEM_PRIMES.iter().copied())
+            .chain(HIDDEN_ENEMY_FINDERS.iter().copied())
             // The escape rung, which is matched on the *spell* a row is
             // a printing of rather than on the row's own name — see
             // `find_printing_of`. Both item escapes on the table answer

@@ -6516,7 +6516,58 @@ pub static ROD_OF_ALERTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Rod of Resurrection** (Rod, Legendary, requires attunement by a
+/// **Wand of Enemy Detection** (Wand, Rare, requires attunement) —
+/// *"The wand can sense the presence of hostile creatures that are
+/// Invisible, ethereal, disguised, or hidden, as well as those in plain
+/// sight."*
+///
+/// The only item on the table that answers the Hide layer without
+/// rolling anything. Every other answer the engine has is a contest a
+/// hider usually wins — see
+/// [`crate::actions::item_actions::WandOfEnemyDetectionItem`] — and this
+/// is a charge instead.
+///
+/// It is worth the most in the fights it is worth anything in at all,
+/// which is a shape almost nothing else in the pool has: against a room
+/// of ogres it is a stick, and against goblins, a drow patrol or an
+/// assassin it is the difference between a fight and an ambush. Its own
+/// validator refuses the use when nobody within sixty feet is hiding, so
+/// the charge is never spent on learning the room is empty.
+pub static WAND_OF_ENEMY_DETECTION: Item = Item {
+    name: crate::actions::item_actions::WAND_OF_ENEMY_DETECTION_NAME,
+    glyph: '/',
+    charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
+    on_use: &[&crate::actions::item_actions::USE_WAND_OF_ENEMY_DETECTION],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Djinni Summoning** (Ring, Legendary, requires attunement) —
+/// *"you can speak its command word as a Magic action to summon a
+/// particular djinni from the Elemental Plane of Air … It remains as
+/// long as you maintain Concentration … Once used, the ring can't be
+/// used again until the next dawn."*
+///
+/// The largest thing anybody in this engine can call out of a piece of
+/// jewellery: a CR 11 elemental with a scimitar, a whirlwind and a spell
+/// list of its own. Once a day, and it holds the summoner's
+/// concentration for as long as it stands — which is the price that
+/// matters, because a summoner holding a djinni is a summoner not
+/// holding a Haste or a Hypnotic Pattern.
+pub static RING_OF_DJINNI_SUMMONING: Item = Item {
+    name: crate::actions::item_actions::RING_OF_DJINNI_SUMMONING_NAME,
+    glyph: '=',
+    charges: 1,
+    // RAW's "not again until the next dawn", and the engine's dawn is a
+    // long rest.
+    recharge: Some(DiceExpr { dice: None, constant: 1 }),
+    on_use: &[&crate::actions::item_actions::SUMMON_RING_DJINNI],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Rod of Resurrection** (Rod, Legendary, requires attunement by a/// **Rod of Resurrection** (Rod, Legendary, requires attunement by a
 /// cleric, druid or paladin) — *"This rod has 5 charges … you can expend
 /// 1 charge to cast Heal or 5 charges to cast Resurrection. The rod
 /// regains 1 expended charge daily at dawn."*
@@ -7992,6 +8043,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // family, because a table this wide wants to be a thing that happens
     // to a party once rather than a tool they learn to use.
     &WAND_OF_WONDER,
+    // The wand that answers the Hide layer and the ring that answers
+    // being outnumbered. Single entries; both are the sort of item a
+    // party remembers finding.
+    &WAND_OF_ENEMY_DETECTION,
+    &RING_OF_DJINNI_SUMMONING,
     // The three that cast a real spell for a charge. Single entries and
     // the rarest rows in the pool — two Legendaries and a Rare — because
     // each of them answers a question the party otherwise cannot: a

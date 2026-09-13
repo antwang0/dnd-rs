@@ -105729,3 +105729,77 @@ fn a_giant_strength_potion_lifts_the_weak_and_leaves_the_strong_alone() {
         "the potion has no effect on somebody already at the score"
     );
 }
+
+/// The Wand of Enemy Detection takes a hider off the map, and refuses to
+/// spend a charge on an empty room.
+///
+/// The Hide layer's every other answer is a contest the hider usually
+/// wins: `resolve_hide_attempt` writes the successful Stealth total down
+/// as the DC anybody Searching has to beat, so a rogue who rolled well
+/// is a rogue nobody finds. This is the item that does not roll.
+#[test]
+fn the_wand_of_enemy_detection_finds_what_is_hiding() {
+    use crate::actions::item_actions::USE_WAND_OF_ENEMY_DETECTION;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::items::item_template::WAND_OF_ENEMY_DETECTION;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let seeker = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(10, 1), 1, 0)
+        .unwrap();
+    // Twenty-six tiles of clear ground away — outside RAW's sixty feet
+    // by two, which is the point of putting them there.
+    let far = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(29, 29), 1, 1)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(3, 3), 0, 2)
+        .unwrap();
+    e.actors
+        .get_mut(&seeker)
+        .unwrap()
+        .pickup_item(&WAND_OF_ENEMY_DETECTION);
+
+    let action: &dyn Action = &USE_WAND_OF_ENEMY_DETECTION;
+    assert!(
+        !action.validate_input(&e, seeker, None, None, None),
+        "nobody is hiding, so the charge would buy nothing"
+    );
+
+    for id in [near, far, ally] {
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+    }
+    assert!(action.validate_input(&e, seeker, None, None, None));
+    let charges_before = e.actors[&seeker].item_charges_remaining("Wand of Enemy Detection");
+
+    for ef in action.execute(&mut e, seeker, None, None, None) {
+        ef.apply(&mut e);
+    }
+
+    assert!(
+        !e.actors[&near].has_condition(Condition::Hidden),
+        "an enemy inside sixty feet is on the map again"
+    );
+    assert!(
+        e.actors[&far].has_condition(Condition::Hidden),
+        "and one outside it is not — the wand reaches sixty feet"
+    );
+    assert!(
+        e.actors[&ally].has_condition(Condition::Hidden),
+        "RAW's wand senses creatures hostile to its holder, and the rogue \
+         standing beside them is not one"
+    );
+    assert_eq!(
+        e.actors[&seeker].item_charges_remaining("Wand of Enemy Detection"),
+        charges_before - 1,
+        "one word, one charge"
+    );
+}

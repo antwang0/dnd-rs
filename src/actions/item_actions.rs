@@ -6330,6 +6330,7 @@ pub static ALL_SUMMON_ITEMS: &[&SummonItem] = &[
     &SET_DOWN_STONE_OF_EARTH_ELEMENTALS,
     &PLAY_PIPES_OF_THE_SEWERS,
     &UNSTOPPER_EFREETI_BOTTLE,
+    &SUMMON_RING_DJINNI,
 ];
 
 /// Scroll of Conjure Animals — Action; two spectral wolves on free
@@ -10167,3 +10168,205 @@ pub static RING_OF_THREE_WISHES_CAST: crate::actions::staves::StaffSpell =
         spell: || &*crate::actions::spells::WISH,
         only_targets: None,
     };
+
+/// **Wand of Enemy Detection** — SRD 5.2: *"you can take a Magic action
+/// and expend 1 charge to speak the wand's command word. For the next
+/// minute, you know the direction of the nearest creature hostile to you
+/// within 60 feet, but not its distance … The wand can sense the
+/// presence of hostile creatures that are Invisible, ethereal,
+/// disguised, or hidden, as well as those in plain sight."*
+///
+/// The last sentence is the wand, and it is the only thing on the loot
+/// table that answers the Hide layer without rolling anything. The
+/// engine's ordinary answers are a Search action — an Intelligence
+/// wager against a hider's own Stealth total, which the hider usually
+/// wins because the total was recorded on a roll they chose to make —
+/// and the passive sweep at the top of every turn, which is that same
+/// contest against a flat number. This is neither: it is a charge, and
+/// every hostile within sixty feet is simply on the map again.
+///
+/// **Direction-without-distance is not modeled**, and could not be: RAW
+/// gives the wand's holder a bearing on a grid they can already read.
+/// What survives the translation is the clause that matters at a table
+/// — the hider stops being hidden — and that is what this spends the
+/// charge on.
+///
+/// **It reveals rather than blinds.** `Condition::Invisible` is left
+/// alone: RAW's wand tells you *where* an invisible creature is, and
+/// being seen through is a different sentence that `TrueSighted` and the
+/// Gem of Seeing already own. Hidden is the condition that answers "am I
+/// on the map", and it is the one this takes away.
+pub struct WandOfEnemyDetectionItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    /// RAW's sixty feet, in tiles.
+    pub reach: isize,
+}
+
+impl Action for WandOfEnemyDetectionItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        // Aimed at the other side of the board, and worth nothing at
+        // all when nobody over there is hiding.
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        costs.extend(ItemUseBilling::Charges(1).costs(self.item_name));
+        costs
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Refused when there is nobody to find, which is most turns.
+        // Spending a charge to learn that the room is empty is exactly
+        // what RAW's wand is for and exactly what an automatic rung
+        // should never do.
+        !self.hidden_enemies(encounter, caster_id).is_empty()
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let found = self.hidden_enemies(encounter, caster_id);
+        if found.is_empty() {
+            return Vec::new();
+        }
+        let holder = encounter.actor_name(caster_id);
+        encounter.log(format!("{} speaks the wand's command word.", holder));
+        for id in found {
+            let name = encounter.actor_name(id);
+            if encounter
+                .actors
+                .get_mut(&id)
+                .is_some_and(|a| a.remove_condition(Condition::Hidden))
+            {
+                encounter.log(format!("  the wand finds {}.", name));
+            }
+        }
+        Vec::new()
+    }
+}
+
+impl WandOfEnemyDetectionItem {
+    /// Every hostile inside the wand's reach that is currently hiding.
+    ///
+    /// Shared by the validator and the side-effect builder so the two
+    /// cannot disagree about whether the charge buys anything — the same
+    /// split `AbsorbedEnergyItem::best_slot` makes, and for the same
+    /// reason.
+    ///
+    /// Deliberately **not** gated on line of sight. A wand that only
+    /// found what its holder could already see would find nothing: a
+    /// hider behind a pillar is the case the item exists for.
+    fn hidden_enemies(&self, encounter: &EncounterInstance, caster_id: usize) -> Vec<usize> {
+        let Some(holder) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let (team, loc, span) = (
+            holder.team(),
+            holder.location(),
+            crate::engine::util::get_tiles_from_size(holder.size()),
+        );
+        encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                encounter.actors.get(id).is_some_and(|a| {
+                    a.team() != team
+                        && a.is_combat_active()
+                        && a.has_condition(Condition::Hidden)
+                        && crate::engine::util::footprint_chebyshev(
+                            loc,
+                            span,
+                            a.location(),
+                            crate::engine::util::get_tiles_from_size(a.size()),
+                        ) <= self.reach
+                })
+            })
+            .collect()
+    }
+}
+
+pub const WAND_OF_ENEMY_DETECTION_NAME: &str = "Wand of Enemy Detection";
+
+/// Wand of Enemy Detection — Action and a charge; every hiding enemy
+/// within sixty feet is on the map again. See
+/// [`WandOfEnemyDetectionItem`].
+pub static USE_WAND_OF_ENEMY_DETECTION: WandOfEnemyDetectionItem = WandOfEnemyDetectionItem {
+    action_name: "use wand of enemy detection",
+    action_aliases: &["enemy detection", "detect enemies", "wand of enemy detection"],
+    item_name: WAND_OF_ENEMY_DETECTION_NAME,
+    // RAW's 60 feet.
+    reach: 24,
+};
+
+pub const RING_OF_DJINNI_SUMMONING_NAME: &str = "Ring of Djinni Summoning";
+
+/// **Ring of Djinni Summoning** — SRD 5.2: *"While wearing this ring,
+/// you can speak its command word as a Magic action to summon a
+/// particular djinni from the Elemental Plane of Air. The djinni appears
+/// in an unoccupied space you choose within 120 feet of yourself. It
+/// remains as long as you maintain Concentration … The djinni is
+/// friendly to you and your companions … Once used, the ring can't be
+/// used again until the next dawn."*
+///
+/// The largest thing anybody in this engine can call out of a piece of
+/// jewellery: a CR 11 elemental with a scimitar, a 3d8 whirlwind and its
+/// own spell list, on a Legendary ring that costs no slot and no
+/// attunement — which is RAW, and is why it is once a day and why it
+/// holds the summoner's concentration.
+///
+/// The concentration is the price the engine can actually charge. A
+/// summoner holding a djinni is a summoner not holding a Haste, a Web or
+/// a Hypnotic Pattern, and the AI's own summon rung reads that trade —
+/// see `SummonItem::concentration`.
+pub static SUMMON_RING_DJINNI: SummonItem = SummonItem {
+    action_name: "summon ring djinni",
+    action_aliases: &["ring djinni", "djinni ring"],
+    item_name: RING_OF_DJINNI_SUMMONING_NAME,
+    log_label: "ring of djinni summoning",
+    template: &crate::actors::creatures::djinn::DJINNI_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    // Large body: the wider ring the spell lane uses for one.
+    search_radius: 4,
+    base_instance_id: 218,
+    concentration: Some("Ring of Djinni Summoning"),
+    billing: ItemUseBilling::Charges(1),
+};
