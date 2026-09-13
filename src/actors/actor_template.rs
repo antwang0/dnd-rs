@@ -5500,6 +5500,38 @@ pub struct ActorInstance {
     /// place that sees every point of damage after mitigation — the
     /// number RAW's thresholds are measured in.
     damage_this_turn: u32,
+    /// The creature that last landed damage on this one since the end of
+    /// its own previous turn — SRD 5.2 **Hellish Rebuke**'s trigger,
+    /// *"you take damage from a creature within 60 feet of yourself that
+    /// you can see"*, held open until its holder has had a turn to
+    /// answer it.
+    ///
+    /// The third of the three damage ledgers on this struct, and the
+    /// only one that asks *who*: `damage_from_inside` asks whether the
+    /// blow came from a stomach, `damage_this_turn` asks only how much
+    /// and when, and this one names the creature. All three are tallied
+    /// at the same `DealDamage` chokepoint for the same reason — it is
+    /// the one place in the engine that sees damage after mitigation.
+    ///
+    /// **The window is a turn wide, and it has to be.** RAW's Reaction
+    /// fires at the instant of the blow, on the attacker's turn, and
+    /// this engine has no reaction window to offer: every window the
+    /// dispatcher opens is after the thing it would have answered. So
+    /// the mark is written when the blow lands and cleared at the end of
+    /// the *holder's* own turn rather than at its start, which leaves it
+    /// standing across exactly the span RAW's reaction could have been
+    /// spent in — from the blow to the holder's next chance to act.
+    /// Clearing it at turn start instead would wipe the mark a tenth of
+    /// a second before the only creature who could read it woke up.
+    ///
+    /// **Who struck is read through `current_turn_actor_id`**, the same
+    /// proxy the Berserker Axe's curse and the Mage Slayer feat use, and
+    /// with the same known edge: a reaction or a readied shot arriving
+    /// on the victim's own turn is attributed to the victim and
+    /// therefore to nobody, because self-damage never writes the mark.
+    /// That fails closed — an unanswered blow rather than a rebuke aimed
+    /// at the wrong creature.
+    damager_since_own_turn: Option<usize>,
     /// Extra opportunity-attack Reactions drawn on since this creature's
     /// turn began — SRD 5.2's **Reactive Heads**. Cleared by
     /// `reset_for_new_round`; the size of the pool is derived from
@@ -6101,6 +6133,7 @@ impl ActorInstance {
             heads_lost_since_own_turn: 0,
             fire_since_own_turn: false,
             damage_this_turn: 0,
+            damager_since_own_turn: None,
             extra_opportunity_reactions_used: 0,
             regen_suppressors: ct.regen_suppressors.clone(),
             flinches: ct.flinches.clone(),
@@ -7452,6 +7485,28 @@ impl ActorInstance {
     /// end of every turn, beside the swallow tally's own clear.
     pub fn clear_damage_this_turn(&mut self) {
         self.damage_this_turn = 0;
+    }
+
+    /// Name the creature that just hurt this one. Overwrites: a victim
+    /// struck twice before their turn comes round answers whoever hit
+    /// them last, which is the choice RAW would have left them and the
+    /// one the engine has no channel to ask about.
+    pub fn note_damager(&mut self, source: usize) {
+        self.damager_since_own_turn = Some(source);
+    }
+
+    /// Who has damaged this creature since the end of its own last turn,
+    /// if anybody — the trigger Hellish Rebuke's
+    /// `custom_validate_input` asks about.
+    pub fn damager_since_own_turn(&self) -> Option<usize> {
+        self.damager_since_own_turn
+    }
+
+    /// Close the rebuke window. Called at the **end** of the holder's own
+    /// turn; see the field's docstring for why that end and not the
+    /// start of the next one.
+    pub fn clear_damager_since_own_turn(&mut self) {
+        self.damager_since_own_turn = None;
     }
 
     /// Take one head off. Returns the number left, which is `0` when the

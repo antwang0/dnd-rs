@@ -1310,6 +1310,14 @@ impl ApplicableSideEffect for DealDamage {
         // everybody. See `EncounterInstance::trigger_berserker_axe`.
         if landed > 0 {
             ei.trigger_berserker_axe(self.actor_id);
+            // SRD 5.2 **Hellish Rebuke**: *"you take damage from a
+            // creature within 60 feet of yourself that you can see."*
+            // The axe one line up reads the same event through the same
+            // `current_turn_actor_id` proxy and asks only whether it
+            // happened; this one remembers who. Both are here for the
+            // reason the two tallies above them are: the clause is
+            // about damage that actually landed.
+            ei.note_damager(self.actor_id);
         }
         for (condition, label) in flinched {
             ei.log(format!("  {}: {} is {}", label, name, condition.name()));

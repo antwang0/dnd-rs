@@ -826,6 +826,35 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3f''''''. Hellish Rebuke — the spell the racial above is a
+        //           copy of, and the only rung on the ladder whose
+        //           target is chosen by somebody else. RAW fires it in
+        //           answer to a blow, so there is exactly one creature
+        //           on the board it can legally name: whoever hurt the
+        //           caster since their last turn ended. The picker walks
+        //           the hostiles as usual and the spell's own
+        //           `custom_validate_input` throws away all but that
+        //           one.
+        //
+        //           Directly below the racial because they are the same
+        //           burst and a tiefling warlock carries both: the
+        //           once-per-rest one should go first, since the slot
+        //           behind this one can be spent again next round and
+        //           the racial cannot.
+        //
+        //           Above everything that wants an Action and below
+        //           nothing that wants a Reaction, which is the only
+        //           ordering question it raises. It costs a Reaction, so
+        //           firing it does not end the turn — the ladder carries
+        //           on to the Action rungs underneath with the burst
+        //           already paid for. What it *does* spend is the
+        //           reaction a later opportunity attack would have
+        //           wanted, and that is RAW's trade rather than the
+        //           engine's.
+        if let Some(aei) = try_hellish_rebuke(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g-. Light Domain Cleric Radiance of the Dawn — once-per-rest
         //      Channel Divinity, a 30 ft self-centred radiant burst that
         //      hits hostiles only. Gated on two of them inside the
@@ -7938,6 +7967,29 @@ fn try_infernal_rebuke(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     try_single_target_class_feature_hostile(encounter, actor_id, "infernal rebuke", 24)
+}
+
+/// SRD 5.2 **Hellish Rebuke** — level-1 evocation, a Reaction taken *"in
+/// response to taking damage from a creature within 60 feet of yourself
+/// that you can see."*
+///
+/// The same picker the racial above uses, and it needs no rung-side
+/// gate of its own: the spell's `custom_validate_input` refuses every
+/// target but the creature that actually hurt the caster, so the walk
+/// over hostiles finds at most one candidate and the highest-HP
+/// tie-break never has a tie to break. A caster nobody has touched
+/// since their last turn finds nothing and the rung falls through,
+/// which is exactly the turn RAW would not have let them cast it on.
+///
+/// 24 tiles is RAW's 60 ft on the 2.5 ft grid — the same number the
+/// spell's own `reach_tiles` declares, mirrored here so the walk skips
+/// out-of-range hostiles before building a candidate for the validator
+/// to throw away.
+fn try_hellish_rebuke(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    try_single_target_class_feature_hostile(encounter, actor_id, "hellish rebuke", 24)
 }
 
 /// Light Domain Cleric Radiance of the Dawn — once-per-rest Channel
@@ -20968,6 +21020,56 @@ mod tests {
     /// accessor was never the claim: what was broken is that a creature
     /// holding the answer to being surrounded stood there and took the
     /// round.
+    /// The rung fires at the creature that hurt the warlock, and at
+    /// nothing else on the board.
+    ///
+    /// Both hostiles are in range, in sight, and identical; the only
+    /// thing that separates them is which of them threw the punch. So
+    /// this asserts the one property the rung has that no other
+    /// single-target rung on the ladder does — its target is chosen by
+    /// somebody else — and it would fail on a picker that fell back to
+    /// "highest HP in range" the way its siblings do.
+    ///
+    /// Asserted on the rung rather than by driving a whole turn,
+    /// because a warlock's turn has a dozen rungs above this one that a
+    /// Mage Armor or a Hex would legitimately win, and a test that
+    /// asserted the order of those would be asserting a preference it
+    /// has no business having.
+    #[test]
+    fn a_warlock_answers_the_fist_that_hit_them() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+
+        let mut e = empty_arena_seeded(11);
+        let warlock = e
+            .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let attacker = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(16, 10), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 16), 1, 1)
+            .unwrap();
+
+        assert!(
+            try_hellish_rebuke(&e, warlock).is_none(),
+            "nothing has happened yet, so there is nothing to answer"
+        );
+
+        e.actors
+            .get_mut(&warlock)
+            .unwrap()
+            .note_damager(attacker);
+
+        let aei = try_hellish_rebuke(&e, warlock).expect("the rung answers a blow");
+        assert_eq!(
+            aei.target_ids(),
+            Some(&[attacker][..]),
+            "and answers the creature that struck, not the other one"
+        );
+        assert_ne!(attacker, bystander);
+    }
+
     #[test]
     fn a_caped_fighter_can_blink_out_of_a_bad_melee() {
         use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;

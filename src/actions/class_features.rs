@@ -9896,10 +9896,16 @@ fn resolve_single_target_burst_save_for_half(
 /// (RAW: "cast hellish rebuke as a 2nd-level spell"). No slot cost —
 /// the once-per-rest feature gate is the load-bearing resource.
 ///
-/// Action cost rather than the RAW reaction cost — the engine doesn't
-/// have a clean "reactive on being damaged" hook for player-driven
-/// actions, and the action cost keeps the racial useful even when the
-/// tiefling hasn't been hit yet.
+/// Action cost rather than the RAW reaction cost, and it stays that way
+/// on purpose now that the hook it once lacked exists. The spell it
+/// copies reads `ActorInstance::damager_since_own_turn` and refuses
+/// every target but the creature that hurt its caster; this could too.
+/// It does not, because the two are priced differently: the spell is
+/// paid for out of a slot pool that refills, and this is one burst per
+/// long rest on a racial that a tiefling of any class carries. A charge
+/// that narrow should not also need somebody to have hit you first —
+/// there are whole fights in which nothing does, and a once-a-day
+/// feature that never came up is not a feature.
 ///
 /// Routes through the shared
 /// `resolve_single_target_burst_save_for_half` helper — the

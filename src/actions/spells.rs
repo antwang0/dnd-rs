@@ -15443,12 +15443,31 @@ impl Action for StormOfVengeance {
 pub static STORM_OF_VENGEANCE: LazyLock<StormOfVengeance> =
     LazyLock::new(|| StormOfVengeance {});
 
-/// Hellish Rebuke — 5e level-1 evocation (warlock signature). Reaction
-/// spell: when you take damage, deal fire damage to the attacker. Target
-/// makes a DEX save vs the caster's CHA-based DC. On fail: 2d10 fire;
-/// on save: half. Upcasting: +1d10 per slot level above 1. Cost is a
-/// Reaction + spell slot (RAW: "1 reaction, which you take in response
-/// to being damaged by a creature within 60 feet").
+/// **Hellish Rebuke** — SRD 5.2 level-1 evocation (warlock signature).
+/// *"Reaction, which you take in response to taking damage from a
+/// creature within 60 feet of yourself that you can see."* The target
+/// makes a DEX save against the caster's CHA-based DC: 2d10 fire on a
+/// fail, half on a save, +1d10 per slot level above 1.
+///
+/// **The trigger is enforced**, and for a long time it was not. The cost
+/// said `Reaction + slot` and nothing asked what the reaction was
+/// answering, so any warlock could open a round by spending a Reaction
+/// nobody had provoked to drop 2d10 on a creature a hundred feet away
+/// that had never touched them — a level-1 slot buying a second damage
+/// action every round, off an economy RAW only pays out when somebody
+/// has already been hurt. The old docstring described the trigger
+/// accurately; the code simply never read it.
+///
+/// `custom_validate_input` now refuses every target but the creature
+/// named on `ActorInstance::damager_since_own_turn`. That mark is
+/// written at the damage chokepoint and cleared at the end of its
+/// holder's own turn, which is the span RAW's Reaction could have been
+/// spent in — see the field's docstring for why an engine with no
+/// reaction window has to measure it from that end.
+///
+/// Range and sight are left to the shared validator, which already
+/// refuses a target past `reach_tiles` or out of line of sight — RAW's
+/// *"within 60 feet of yourself that you can see"*, twice over.
 pub struct HellishRebuke {}
 
 impl Action for HellishRebuke {
@@ -15490,6 +15509,26 @@ impl Action for HellishRebuke {
         // Hellish Rebuke is a reaction spell per RAW.
         let lvl = crate::engine::action_overrides::cast_level(overrides, 1);
         vec![Resource::Reaction, Resource::SpellSlot(lvl)]
+    }
+    /// RAW's trigger, which is the whole of what makes this a Reaction
+    /// rather than a second Scorching Ray: only the creature that hurt
+    /// you can be rebuked for it. See the struct docstring.
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter
+            .actors
+            .get(&caster_id)
+            .and_then(|a| a.damager_since_own_turn())
+            == Some(target_id)
     }
     fn side_effects(
         &self,

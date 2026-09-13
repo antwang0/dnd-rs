@@ -9447,6 +9447,49 @@ mod tests {
         );
     }
 
+    /// Nothing on the table offers to move more bonus than it has.
+    ///
+    /// SRD 5.2's Defender transfers *"some or all of the weapon's
+    /// bonus"*, which makes the printed `+N` the ceiling on the pool and
+    /// not a coincidence that the two numbers on this one stat block
+    /// happen to be three. A `+1 Defender` whose `shiftable_bonus`
+    /// stayed at `3` would let its wielder walk away from a swing at
+    /// `-2` to hit and `+3` AC, which is not a trade RAW puts on the
+    /// table — and would read, from the struct literal, like a typo
+    /// nobody could see.
+    ///
+    /// The damage half is checked too, because RAW moves one clause and
+    /// the engine pays it out of both lanes: a weapon that transferred
+    /// more damage than it printed would hand its wielder a *penalty*
+    /// on every hit for the privilege.
+    #[test]
+    fn nothing_offers_to_move_more_bonus_than_it_has() {
+        for item in LOOT_POOL {
+            if item.shiftable_bonus == 0 {
+                continue;
+            }
+            assert!(
+                item.shiftable_bonus > 0,
+                "{} offers a negative transfer, which is not a thing RAW writes",
+                item.name
+            );
+            assert!(
+                item.shiftable_bonus <= item.bonuses.attack_bonus,
+                "{} offers to move {} to AC and only prints +{} to hit",
+                item.name,
+                item.shiftable_bonus,
+                item.bonuses.attack_bonus
+            );
+            assert!(
+                item.shiftable_bonus <= item.bonuses.damage_bonus,
+                "{} offers to move {} to AC and only prints +{} to damage",
+                item.name,
+                item.shiftable_bonus,
+                item.bonuses.damage_bonus
+            );
+        }
+    }
+
     /// The whole tier is findable. A magic-weapon axis nobody can arm
     /// themselves for is a rule that only ever takes things away —
     /// every monster that resists mundane steel and no way for the

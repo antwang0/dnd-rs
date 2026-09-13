@@ -106281,3 +106281,174 @@ fn a_swing_on_somebody_elses_turn_does_not_arm_the_defender() {
         "so nothing moved onto the wielder's AC"
     );
 }
+
+/// A warlock with a slot, a Reaction, and a grudge waiting to be earned.
+/// Returns `(encounter, warlock, attacker, bystander)` — two hostiles so
+/// every assertion below can be made in both directions.
+fn warlock_and_two_hostiles() -> (EncounterInstance, usize, usize, usize) {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let attacker = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 6), 1, 0)
+        .unwrap();
+    (e, warlock, attacker, bystander)
+}
+
+/// Can this warlock legally rebuke `target` right now?
+fn rebuke_is_legal(e: &EncounterInstance, warlock: usize, target: usize) -> bool {
+    use crate::actions::spells::HELLISH_REBUKE;
+    use crate::actions::action_template::ActionExecutionInfo;
+
+    ActionExecutionInfo::new(&*HELLISH_REBUKE, warlock, Some(vec![target]), None, None)
+        .validate(e)
+}
+
+/// `who` hits `victim` for `amount` on `who`'s own turn — the shape the
+/// rebuke's trigger is written about.
+fn strike_on_own_turn(e: &mut EncounterInstance, who: usize, victim: usize, amount: u32) {
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+
+    open_turn_for(e, who);
+    DealDamage {
+        actor_id: victim,
+        amount,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(e);
+}
+
+/// SRD 5.2 **Hellish Rebuke**: *"Reaction, which you take in response to
+/// taking damage from a creature within 60 feet of yourself that you can
+/// see."*
+///
+/// The trigger, in both directions and on the same board. Before anybody
+/// has touched the warlock there is nobody on the board they may rebuke;
+/// after one fighter hits them there is exactly one, and it is not the
+/// fighter standing quietly four squares away.
+///
+/// This is the difference between a Reaction and a second damage action.
+/// Without the gate the spell was a level-1 slot that bought 2d10 at 120
+/// feet every single round, off an economy RAW only opens after somebody
+/// has already been hurt.
+#[test]
+fn a_warlock_rebukes_the_creature_that_hurt_them_and_nobody_else() {
+    let (mut e, warlock, attacker, bystander) = warlock_and_two_hostiles();
+
+    assert!(
+        !rebuke_is_legal(&e, warlock, attacker),
+        "a reaction with nothing to react to is not a spell"
+    );
+    assert!(
+        !rebuke_is_legal(&e, warlock, bystander),
+        "and that holds for everybody on the board, not just one of them"
+    );
+
+    strike_on_own_turn(&mut e, attacker, warlock, 6);
+
+    assert!(
+        rebuke_is_legal(&e, warlock, attacker),
+        "the blow is what opens the spell"
+    );
+    assert!(
+        !rebuke_is_legal(&e, warlock, bystander),
+        "and it opens it against exactly one creature"
+    );
+}
+
+/// The rebuke, cast. RAW's damage is 2d10 fire on a failed DEX save and
+/// half on a made one, so *some* fire lands on every seed — and the
+/// Reaction goes with it, which is the resource that makes the spell
+/// cost anything at all.
+#[test]
+fn a_rebuke_that_is_owed_lands_and_spends_the_reaction() {
+    use crate::actions::spells::HELLISH_REBUKE;
+    use crate::engine::side_effects::Resource;
+
+    let (mut e, warlock, attacker, _) = warlock_and_two_hostiles();
+    strike_on_own_turn(&mut e, attacker, warlock, 6);
+    let hp_before = e.actors[&attacker].hitpoints();
+    assert!(
+        e.actors[&warlock].can_consume_resource(Resource::Reaction),
+        "the warlock has a reaction to spend"
+    );
+
+    for ef in HELLISH_REBUKE.execute(&mut e, warlock, Some(&vec![attacker]), None, None) {
+        ef.apply(&mut e);
+    }
+
+    assert!(
+        e.actors[&attacker].hitpoints() < hp_before,
+        "a made save still takes half — something burns either way"
+    );
+    assert!(
+        !e.actors[&warlock].can_consume_resource(Resource::Reaction),
+        "and the reaction is what paid for it"
+    );
+}
+
+/// *"In response to taking damage from a creature"* — and a Fireball you
+/// stood in is not a creature.
+///
+/// Self-damage writes no mark, which is the one line that keeps the
+/// engine's known attribution gap from becoming a bug: a blow that lands
+/// on the victim's own turn is credited to the victim by the shared
+/// `current_turn_actor_id` proxy, and crediting it to nobody is the safe
+/// direction to fail in.
+#[test]
+fn a_warlock_does_not_owe_themselves_a_rebuke() {
+    let (mut e, warlock, attacker, _) = warlock_and_two_hostiles();
+
+    strike_on_own_turn(&mut e, warlock, warlock, 6);
+
+    assert!(
+        e.actors[&warlock].damager_since_own_turn().is_none(),
+        "nothing hurt the warlock but the warlock"
+    );
+    assert!(
+        !rebuke_is_legal(&e, warlock, attacker),
+        "so there is nobody to answer"
+    );
+}
+
+/// *"Until the start of your next turn"* is the Defender's window. This
+/// one's is the other way round: the mark stands from the blow until the
+/// **end** of the warlock's own turn, because that is the last moment
+/// they could have spent the Reaction on it.
+///
+/// Asserted across the turn boundary in both directions — still owed
+/// while the warlock's turn is open, gone once it has closed — which is
+/// what would catch a clear moved to `reset_for_new_round` with the rest
+/// of the per-turn ledgers. That version would wipe the mark at the top
+/// of the only turn that could read it, and every assertion in the two
+/// tests above would still pass.
+#[test]
+fn the_rebuke_window_closes_at_the_end_of_the_warlocks_own_turn() {
+    let (mut e, warlock, attacker, _) = warlock_and_two_hostiles();
+    strike_on_own_turn(&mut e, attacker, warlock, 6);
+
+    open_turn_for(&mut e, warlock);
+    assert_eq!(
+        e.actors[&warlock].damager_since_own_turn(),
+        Some(attacker),
+        "the warlock wakes up still owed a rebuke — the whole point"
+    );
+    assert!(rebuke_is_legal(&e, warlock, attacker));
+
+    e.skip_turn();
+    assert!(
+        e.actors[&warlock].damager_since_own_turn().is_none(),
+        "and the debt is written off when they let the turn go"
+    );
+    assert!(
+        !rebuke_is_legal(&e, warlock, attacker),
+        "an unspent reaction does not bank the trigger"
+    );
+}

@@ -14755,6 +14755,33 @@ impl EncounterInstance {
         }
     }
 
+    /// Write the rebuke mark on `victim_id`: the creature whose turn it
+    /// is just hurt them, and they may answer it once before their own
+    /// turn ends.
+    ///
+    /// Called from the `DealDamage` chokepoint on every blow that
+    /// lands, beside `trigger_berserker_axe`, which reads the same event
+    /// through the same proxy.
+    ///
+    /// **Self-damage never writes the mark**, and that one line carries
+    /// three RAW clauses at once: Hellish Rebuke's *"from a creature"*,
+    /// the absurdity of rebuking yourself for your own Fireball, and the
+    /// engine's own known gap where a reaction landing on the victim's
+    /// turn is attributed to the victim. All three want the same answer
+    /// — no mark — and the third is why this fails closed rather than
+    /// guessing.
+    pub fn note_damager(&mut self, victim_id: usize) {
+        let Some(source) = self.current_turn_actor_id() else {
+            return;
+        };
+        if source == victim_id {
+            return;
+        }
+        if let Some(victim) = self.actors.get_mut(&victim_id) {
+            victim.note_damager(source);
+        }
+    }
+
     /// The nearest combat-active creature `viewer_id` can see, other
     /// than itself — the concrete form of RAW's *"the creature nearest
     /// to you that you can see or hear"*.
@@ -15451,6 +15478,19 @@ impl EncounterInstance {
         // something a creature owes at the close of its own turn — and
         // read from the same `ended` slot, before the queue moves off it.
         self.ground_fliers_in_the_wind(ended);
+        // SRD 5.2 **Hellish Rebuke**'s trigger window closes here — at
+        // the end of its holder's own turn, which is the last moment
+        // they could have answered the blow. Beside the three clauses
+        // above because it is the same shape: something measured from
+        // one of a creature's own turns to the next, read off the same
+        // `ended` slot before the queue moves. See
+        // `ActorInstance::damager_since_own_turn` for why the window
+        // closes at this end of the turn and not the other.
+        if let Some(id) = ended
+            && let Some(a) = self.actors.get_mut(&id)
+        {
+            a.clear_damager_since_own_turn();
+        }
         // The slot moved, so whoever lands in it has not had their turn
         // opened yet — even when the queue has a single actor and the
         // "move" lands back on the same id. `ensure_turn_started` reads
