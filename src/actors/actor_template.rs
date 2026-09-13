@@ -8652,9 +8652,15 @@ impl ActorInstance {
     }
 
     /// 5e Short Rest — 1 hour of downtime. Restores: Hit Dice-based
-    /// healing (we approximate with CON-mod * level HP), fighter features
-    /// (Second Wind, Action Surge), and warlock Pact Magic slots (lv1-5).
-    /// Does NOT restore full HP, clear conditions, or reset concentration.
+    /// healing (we approximate with CON-mod * level HP), every charge on
+    /// the `SHORT_REST_FEATURES` registry (Second Wind, Action Surge,
+    /// superiority dice, Channel Divinity, …), the level-20 sorcerer's
+    /// four sorcery points, and the warlock's Pact Magic slots. Does NOT
+    /// restore full HP, clear conditions, or reset concentration.
+    ///
+    /// The Pact Magic line is the newest and was the longest claimed:
+    /// this docstring named it for a long time while the body never
+    /// touched a spell slot. See `class_features::PACT_MAGIC_TAG`.
     pub fn short_rest(&mut self, roller: &mut impl Roller) {
         if !matches!(self.hp_state, HpState::Active) {
             return;
@@ -8720,6 +8726,21 @@ impl ActorInstance {
         // testable. Capped at `sorcery_points_max` via `give_sorcery_points`.
         if self.has_passive_feature(SORCEROUS_RESTORATION_TAG) {
             self.give_sorcery_points(4);
+        }
+
+        // SRD 5.2 Warlock **Pact Magic**: *"You regain all expended Pact
+        // Magic spell slots when you finish a Short Rest."* Beside
+        // Sorcerous Restoration directly above because the two are the
+        // same shape — a passive tag whose whole content is a refill
+        // that is not a feature charge — and after it because a warlock
+        // is never also a level-20 sorcerer and the order between them
+        // therefore decides nothing.
+        //
+        // The same call the long rest makes, which is the point: this is
+        // the one class for which the two rests are the same event. See
+        // `class_features::PACT_MAGIC_TAG`.
+        if self.has_passive_feature(crate::actions::class_features::PACT_MAGIC_TAG) {
+            self.spell_slot_manager.restore_spell_slots();
         }
 
         // The short rest is the attunement window RAW actually names —

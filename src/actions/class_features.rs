@@ -11205,6 +11205,35 @@ pub const TIDES_OF_CHAOS_TAG: &str = "sorcerer.tides_of_chaos";
 /// because the feature is passive — the SP-give is the entire effect).
 pub const SORCEROUS_RESTORATION_TAG: &str = "sorcerer.sorcerous_restoration";
 
+/// SRD 5.2 Warlock **Pact Magic**, the half of it that is not a slot
+/// table: *"You regain all expended Pact Magic spell slots when you
+/// finish a Short Rest."*
+///
+/// Every other caster in the engine gets its book back once a night and
+/// the warlock gets theirs back in an hour, which is the entire reason
+/// the class's slots are few and all top-level. It is also the premise
+/// half a dozen docstrings in `creatures::warlocks` already argue from
+/// — *"a resource they get again in ten minutes"*, *"the only class
+/// that can put a green hag on the board twice in an afternoon"* — and
+/// the premise was false: `ActorInstance::short_rest` restored fighter
+/// features, superiority dice, Channel Divinity and sorcery points, and
+/// its own docstring claimed *"warlock Pact Magic slots (lv1-5)"* while
+/// the code never touched a slot.
+///
+/// Read by `ActorInstance::short_rest` as a templated branch beside
+/// Sorcerous Restoration above, for the same reason that one is not a
+/// `SHORT_REST_FEATURES` row: the registry refills *charges*, and
+/// neither of these two is a charge. One hands back sorcery points and
+/// this one hands back spell slots.
+///
+/// **It restores every level, not a band.** RAW's pact pool is a
+/// handful of slots that all sit at the warlock's highest level, and
+/// this engine's warlock template approximates that with four at level
+/// 5 plus a thin lower spread — a shape its own docstring describes as
+/// standing in for the pact pool. Refilling only part of it would be
+/// refilling part of one pool.
+pub const PACT_MAGIC_TAG: &str = "warlock.pact_magic";
+
 /// 5e Wild Magic Sorcerer **Bend Luck** feature tag (level 6). Passive
 /// reaction: when a creature you can see makes an attack roll against
 /// you, you may spend 2 sorcery points + your reaction to subtract a

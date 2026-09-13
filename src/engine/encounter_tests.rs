@@ -106452,3 +106452,110 @@ fn the_rebuke_window_closes_at_the_end_of_the_warlocks_own_turn() {
         "an unspent reaction does not bank the trigger"
     );
 }
+
+/// SRD 5.2 Warlock **Pact Magic**: *"You regain all expended Pact Magic
+/// spell slots when you finish a Short Rest."*
+///
+/// The class's defining resource, and for a long time the only caster
+/// feature in the engine that was documented in three places and
+/// implemented in none: `short_rest`'s own docstring named *"warlock
+/// Pact Magic slots (lv1-5)"* and the body never touched a slot.
+///
+/// Both directions on one board, because the claim is about the warlock
+/// and not about short rests: the wizard beside them burns the same
+/// slots, sits down for the same hour, and gets none of them back. A
+/// short rest that refilled everybody would pass the warlock half of
+/// this test and break the game.
+#[test]
+fn an_hour_of_sitting_down_gives_a_warlock_their_slots_and_a_wizard_nothing() {
+    use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let warlock = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 0)
+        .unwrap();
+
+    // Empty both books, level by level, and remember how full they were.
+    let mut maxima: Vec<(usize, u32, u32)> = Vec::new();
+    for who in [warlock, wizard] {
+        for lvl in 1..=9u32 {
+            let had = e.actors[&who].spell_slot_manager.spell_slots(lvl).max_spell_slots;
+            if had == 0 {
+                continue;
+            }
+            maxima.push((who, lvl, had));
+            let a = e.actors.get_mut(&who).unwrap();
+            while a.spell_slot_manager.spell_slots(lvl).spell_slots > 0 {
+                a.spell_slot_manager.consume_spell_slot(lvl);
+            }
+        }
+    }
+    assert!(
+        maxima.iter().any(|(w, _, _)| *w == warlock)
+            && maxima.iter().any(|(w, _, _)| *w == wizard),
+        "both casters need a book for this to be asking anything"
+    );
+
+    let mut roller = crate::engine::dice::FastRandRoller::with_seed(4);
+    for who in [warlock, wizard] {
+        e.actors.get_mut(&who).unwrap().short_rest(&mut roller);
+    }
+
+    for (who, lvl, had) in maxima {
+        let now = e.actors[&who].spell_slot_manager.spell_slots(lvl).spell_slots;
+        if who == warlock {
+            assert_eq!(
+                now, had,
+                "the pact comes back whole at level {} — that is the class",
+                lvl
+            );
+        } else {
+            assert_eq!(
+                now, 0,
+                "a wizard's level-{} slot is a night's sleep away, not an hour's",
+                lvl
+            );
+        }
+    }
+}
+
+/// The same hour, for the eleven patrons.
+///
+/// Pact Magic sits on the base warlock template and every subclass
+/// clones that feature set, so this should hold for all of them without
+/// anybody writing it down eleven times — and if a patron is ever built
+/// by hand instead of from the baseline, this is what notices.
+#[test]
+fn every_patron_pact_comes_back_on_the_hour() {
+    use crate::actions::class_features::PACT_MAGIC_TAG;
+    use crate::actors::creatures::warlocks::{
+        ARCHFEY_WARLOCK_TEMPLATE, CELESTIAL_WARLOCK_TEMPLATE, DAO_WARLOCK_TEMPLATE,
+        DJINNI_WARLOCK_TEMPLATE, EFREETI_WARLOCK_TEMPLATE, FIEND_WARLOCK_TEMPLATE,
+        GREAT_OLD_ONE_WARLOCK_TEMPLATE, MARID_WARLOCK_TEMPLATE, UNDYING_WARLOCK_TEMPLATE,
+        WARLOCK_TEMPLATE,
+    };
+
+    let patrons = [
+        &*WARLOCK_TEMPLATE,
+        &*FIEND_WARLOCK_TEMPLATE,
+        &*UNDYING_WARLOCK_TEMPLATE,
+        &*GREAT_OLD_ONE_WARLOCK_TEMPLATE,
+        &*ARCHFEY_WARLOCK_TEMPLATE,
+        &*CELESTIAL_WARLOCK_TEMPLATE,
+        &*MARID_WARLOCK_TEMPLATE,
+        &*DAO_WARLOCK_TEMPLATE,
+        &*DJINNI_WARLOCK_TEMPLATE,
+        &*EFREETI_WARLOCK_TEMPLATE,
+    ];
+    for patron in patrons {
+        assert!(
+            patron.features.contains(PACT_MAGIC_TAG),
+            "{} is a warlock and does not have Pact Magic",
+            patron.name
+        );
+    }
+}

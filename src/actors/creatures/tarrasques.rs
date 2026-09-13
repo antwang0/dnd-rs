@@ -13,9 +13,14 @@ use std::sync::LazyLock;
 
 /// Tarrasque — CR 30, the apex 5e creature. Gargantuan (4×4 footprint),
 /// AC 25, ~697 average HP. Apex-tier defense profile:
-/// - Resistant to bludgeoning / piercing / slashing from non-magical
-///   weapons (we collapse to a flat physical-resistance for simplicity
-///   since the engine doesn't track magic-weapon properties).
+/// - Resistant to bludgeoning / piercing / slashing **from non-magical
+///   attacks**, on the real lane: `resistant_to_nonmagical_physical`
+///   at the bottom of the block, which the `+N` weapons and the
+///   `MAGICAL_ATTACK_SOURCES` cohort are read against. The docstring
+///   used to describe a collapse to flat physical resistance *"since
+///   the engine doesn't track magic-weapon properties"*; it does, and
+///   the difference is the whole reason a party goes looking for a
+///   magic sword before picking this fight.
 /// - Immune to fire and poison.
 /// - Immune to Charmed / Frightened / Paralyzed / Poisoned (raw RAW).
 ///

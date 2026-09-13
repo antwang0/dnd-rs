@@ -16,11 +16,18 @@ use std::sync::LazyLock;
 /// Warlock PC template. CHA-primary half-caster with Pact Magic — RAW
 /// the warlock's defining feature is short-rest spell slots: a small
 /// pool (~2-4) that all sit at the warlock's highest available slot
-/// level, refreshing on a short rest. The engine doesn't model short
-/// rests as a discrete event today (long rest is the only refresh
-/// trigger), so we approximate with a flat 4 slots concentrated at
-/// level 5 — the load-bearing apex slot the warlock blasts with — plus
-/// a thin lower-level spread for situational picks.
+/// level, refreshing on a short rest.
+///
+/// The *pool* is approximated — a flat 4 slots concentrated at level 5,
+/// the load-bearing apex slot the warlock blasts with, plus a thin
+/// lower-level spread for situational picks — because a table with one
+/// populated row is not a shape this engine's slot manager is built
+/// around. The *refresh* is not approximated any more: `PACT_MAGIC_TAG`
+/// on the feature set below hands the whole spread back at
+/// `ActorInstance::short_rest`, which is what the rest of this file's
+/// docstrings have been arguing from all along. They used to be
+/// arguing from a mechanic that was written down in three places and
+/// implemented in none.
 ///
 /// Loadout philosophy:
 /// - **Eldritch Blast** as the at-will ranged cantrip (the warlock's
@@ -313,6 +320,13 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             crate::actions::class_features::LANCE_OF_LETHARGY_TAG,
             crate::actions::class_features::ELDRITCH_MIND_TAG,
             crate::actions::class_features::DEVILS_SIGHT_TAG,
+            // The one feature on this list that is not an invocation,
+            // and the only one every warlock has: Pact Magic's
+            // short-rest refill. On the base template rather than on
+            // each patron, so the eleven subclasses that clone this set
+            // inherit the class's defining resource instead of eleven
+            // copies of it. See `class_features::PACT_MAGIC_TAG`.
+            crate::actions::class_features::PACT_MAGIC_TAG,
         ]),
         ..CreatureTemplate::defaults()
     }

@@ -11,11 +11,16 @@ use std::sync::LazyLock;
 /// end. The lance gives them a reach-2 swing option for opening
 /// engagements. Pair them with mooks to soak attacks for the big swing.
 ///
-/// 5e MM Knight has Bravery (advantage vs Frightened, modeled as
-/// proficient WIS save here), Brave (immune to Frightened — we lift to
-/// proficient WIS save instead since the engine doesn't yet model the
-/// fear-immunity nuance), and the Leadership reaction (skipped — it
-/// requires shouted-orders mechanics we don't yet model).
+/// SRD 5.2's knight prints *"Immunities Frightened"* and a `+2` WIS
+/// save, and the block below carries both — the immunity on
+/// `condition_immunities`, the save on `proficient_saves`. An older
+/// version of this docstring said the immunity had been *"lifted to a
+/// proficient WIS save instead, since the engine doesn't yet model the
+/// fear-immunity nuance"*, which was a claim about an engine that had
+/// a `condition_immunities` field the whole time.
+///
+/// The **Leadership** reaction is still skipped: it needs a
+/// shouted-orders channel nothing in the engine has.
 pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&LONGSWORD);
