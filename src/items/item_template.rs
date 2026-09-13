@@ -4023,6 +4023,156 @@ pub static STONE_OF_CONTROLLING_EARTH_ELEMENTALS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Elven Chain** (Armor, chain shirt; Rare) — *"You gain a +1 bonus to
+/// Armor Class while you wear this armor."*
+///
+/// A `+1` and no attunement, which is the whole of what makes it worth a
+/// Rare slot on this table: every other `+1` to Armor Class in the file
+/// asks for one of three bonds. The Ring of Protection, the Cloak of
+/// Protection and the Bracers of Defense all do; this does not, so it is
+/// the armour a party puts on the character whose three slots are
+/// already spent.
+///
+/// RAW's second sentence — *"You are considered trained with this armor
+/// even if you lack training with Medium or Heavy armor"* — has no
+/// surface. The engine has no armour-training gate and no armour slot:
+/// a creature's Armor Class is its template's number plus whatever the
+/// pack adds, so there is no proficiency to be missing.
+pub static ELVEN_CHAIN: Item = Item {
+    name: "Elven Chain",
+    glyph: '[',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Glamoured Studded Leather** (Armor, studded leather; Rare) — *"While
+/// wearing this armor, you gain a +1 bonus to Armor Class."*
+///
+/// The Elven Chain's twin one armour weight down, and on this table the
+/// pair are the same item: neither needs a bond, both are a flat `+1`,
+/// and the engine has no armour weight for the difference to land on.
+/// They are both here anyway, because RAW prints both and a loot table
+/// that carries one `+1`-and-no-attunement armour at Rare is a table
+/// where the draw is half as likely as the book's.
+///
+/// RAW's second clause is a Bonus Action that changes what the armour
+/// looks like. There is nobody on the board to fool: the engine has no
+/// disguise lane and no NPC reaction roll, and the illusion is the half
+/// of the item that exists entirely between fights.
+pub static GLAMOURED_STUDDED_LEATHER: Item = Item {
+    name: "Glamoured Studded Leather",
+    glyph: '[',
+    bonuses: ItemBonuses { ac: 1, ..ItemBonuses::ZERO },
+    ..Item::DEFAULTS
+};
+
+/// **Shield of the Cavalier** (Armor, shield; Very Rare, requires
+/// attunement) — *"While holding this Shield, you have a +2 bonus to
+/// Armor Class. This bonus is in addition to the Shield's normal bonus
+/// to AC."*
+///
+/// The largest single bonus to Armor Class in the file, and RAW's
+/// *"in addition to"* is this engine's default rather than a clause it
+/// has to honour specially: `ItemBonuses` are summed across the pack, so
+/// a creature carrying this and the plain `Shield` is at `+4` without
+/// anything here saying so.
+///
+/// Two of RAW's three properties are absent and both need a lane the
+/// engine does not have. **Forceful Bash** is an attack made *with the
+/// shield* as one of the Attack action's rolls — the attack pipeline has
+/// no notion of which object a swing was made with, which is the same
+/// absence `Condition::DragonSlaying` documents for the magic armoury.
+/// **Protective Field** is a Reaction that raises a five-foot emanation
+/// nothing can pass into, pushing whoever is not inside it out: a
+/// one-tile Wall of Force with a concentration timer, and the reaction
+/// dispatcher has no window for "an ally within five feet is about to be
+/// hit" to open in.
+pub static SHIELD_OF_THE_CAVALIER: Item = Item {
+    name: "Shield of the Cavalier",
+    glyph: 'S',
+    bonuses: ItemBonuses { ac: 2, ..ItemBonuses::ZERO },
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Armor of Invulnerability** (Armor, plate; Legendary, requires
+/// attunement) — *"You have Resistance to Bludgeoning, Piercing, and
+/// Slashing damage while you wear this armor."*
+///
+/// The top of the `damage_resistances` lane by a distance. Every other
+/// row on it names one type, or five in the Dragon Scale Mails' case
+/// spread across five separate suits; this one names the three that most
+/// of the bestiary deals. A creature wearing it takes half from every
+/// claw, bite, sword and arrow on the board.
+///
+/// **Metal Shell is not modeled** — RAW's Magic action for ten minutes
+/// of outright *immunity* to the same three types, once a day. The lane
+/// exists (`damage_immunities` is a field one line down) and the action
+/// lane exists too, but nothing in the engine can install a typed
+/// immunity *temporarily*: `damage_immunities` is read off the carried
+/// item, so an action that granted it would have to add and remove an
+/// item, and a condition that granted it would be a new cohort row for
+/// one clause. The resistance half is the item's headline and is what
+/// makes it Legendary; the shell is ten minutes of a fight that lasts
+/// two.
+pub static ARMOR_OF_INVULNERABILITY: Item = Item {
+    name: "Armor of Invulnerability",
+    glyph: '[',
+    damage_resistances: &[
+        crate::engine::types::DamageType::Bludgeoning,
+        crate::engine::types::DamageType::Piercing,
+        crate::engine::types::DamageType::Slashing,
+    ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Cloak of Invisibility** (Wondrous item, Legendary, requires
+/// attunement) — three hoods a day.
+///
+/// The middle rung of a three-item ladder RAW prints on purpose: the
+/// Potion of Invisibility is one use and gone, the Ring of Invisibility
+/// is at will, and this is a pool of three that refills at dawn. See
+/// `item_actions::PULL_UP_CLOAK_OF_INVISIBILITY`.
+pub static CLOAK_OF_INVISIBILITY: Item = Item {
+    name: "Cloak of Invisibility",
+    glyph: 'c',
+    on_use: &[&crate::actions::item_actions::PULL_UP_CLOAK_OF_INVISIBILITY],
+    charges: 3,
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Gaseous Form** (Potion, Rare) — every defence in the
+/// game, and no way to use the turn you bought it with.
+///
+/// See `item_actions::DRINK_POTION_OF_GASEOUS_FORM` for why this is the
+/// one buff consumable on the shelf the AI is deliberately not taught to
+/// reach for.
+pub static POTION_OF_GASEOUS_FORM: Item = Item {
+    name: "Potion of Gaseous Form",
+    glyph: '!',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_GASEOUS_FORM],
+    ..Item::DEFAULTS
+};
+
+/// **Efreeti Bottle** (Wondrous item, Very Rare) — a CR 11 fiend out of
+/// a brass bottle, and the largest single payout on the summoning shelf.
+///
+/// See `item_actions::UNSTOPPER_EFREETI_BOTTLE` for what happens to
+/// RAW's d10 and why the two tails of it are not things to hand a player
+/// at random.
+pub static EFREETI_BOTTLE: Item = Item {
+    name: "Efreeti Bottle",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::UNSTOPPER_EFREETI_BOTTLE],
+    ..Item::DEFAULTS
+};
+
 /// **Ring of Telekinesis** (Ring, Very Rare, requires attunement) —
 /// *"While wearing this ring, you can cast Telekinesis from it."*
 ///
@@ -7262,6 +7412,22 @@ pub static LOOT_POOL: &[&Item] = &[
     &ROD_OF_RULERSHIP,
     &HELM_OF_TELEPATHY,
     &DUST_OF_SNEEZING_AND_CHOKING,
+    // The armour shelf's three missing suits and the two cloaks. The
+    // two `+1`s are the only armour in the file that asks for no bond,
+    // which is what a party whose three slots are spent is looking for;
+    // the Shield of the Cavalier is the largest single bonus to Armor
+    // Class here, and the Armor of Invulnerability halves the three
+    // damage types most of the bestiary deals.
+    &ELVEN_CHAIN,
+    &GLAMOURED_STUDDED_LEATHER,
+    &SHIELD_OF_THE_CAVALIER,
+    &ARMOR_OF_INVULNERABILITY,
+    // The middle rung of RAW's three-item invisibility ladder, and the
+    // escape consumable the AI is deliberately not taught to drink.
+    &CLOAK_OF_INVISIBILITY,
+    &POTION_OF_GASEOUS_FORM,
+    // The biggest body any item in the engine puts on the board.
+    &EFREETI_BOTTLE,
     // The staves. Single entries each — a staff is the deepest item on
     // the table (three to nine spells and a pool big enough to matter)
     // and should be the rarest thing a party walks away with. Ordered

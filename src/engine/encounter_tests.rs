@@ -98113,6 +98113,202 @@ fn the_mace_of_terror_runs_dry_without_leaving_the_wielder_empty_handed() {
     );
 }
 
+/// The armour shelf's four new suits do what their one sentence says.
+///
+/// Every row here is a single field on `Item`, which is exactly why they
+/// are worth a sweep rather than four tests: a declarative item has no
+/// resolver to go wrong and exactly one way to be wrong — the number, or
+/// the field. A Shield of the Cavalier written with `ac: 1` is a legal
+/// item that is not the one on the label, and the only symptom is a
+/// character who is one harder to hit than the book says.
+///
+/// Two claims the numbers alone cannot make:
+///
+///   - **RAW's "in addition to the Shield's normal bonus"** is this
+///     engine's default and not a clause anything honours specially —
+///     `ItemBonuses` sum across the pack. Asserted by carrying both.
+///   - **The Armor of Invulnerability halves the three types most of
+///     the bestiary deals**, which is a damage-pipeline claim rather
+///     than an arithmetic one.
+#[test]
+fn the_new_armour_is_worth_what_it_prints() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::DamageType;
+    use crate::items::item_template::{
+        ARMOR_OF_INVULNERABILITY, ELVEN_CHAIN, GLAMOURED_STUDDED_LEATHER, SHIELD,
+        SHIELD_OF_THE_CAVALIER,
+    };
+
+    let board = || {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        (e, id)
+    };
+
+    for (item, bonus) in [
+        (&ELVEN_CHAIN, 1),
+        (&GLAMOURED_STUDDED_LEATHER, 1),
+        (&SHIELD_OF_THE_CAVALIER, 2),
+    ] {
+        let (mut e, id) = board();
+        let bare = e.actors[&id].armor_class();
+        {
+            let a = e.actors.get_mut(&id).unwrap();
+            a.pickup_item(item);
+            assert!(
+                !item.requires_attunement || a.is_attuned_to(item.name),
+                "{} is inert in the pack",
+                item.name
+            );
+        }
+        assert_eq!(
+            e.actors[&id].armor_class(),
+            bare + bonus,
+            "{} is not the +{bonus} it says it is",
+            item.name
+        );
+    }
+
+    // "In addition to the Shield's normal bonus" — the plain Shield is
+    // +2 and the cavalier's is +2 more.
+    let (mut e, id) = board();
+    let bare = e.actors[&id].armor_class();
+    {
+        let a = e.actors.get_mut(&id).unwrap();
+        a.pickup_item(&SHIELD);
+        a.pickup_item(&SHIELD_OF_THE_CAVALIER);
+    }
+    assert_eq!(
+        e.actors[&id].armor_class(),
+        bare + 4,
+        "the cavalier's shield should stack with an ordinary one"
+    );
+
+    // And the Legendary plate, on the lane that is not arithmetic.
+    let (mut e, id) = board();
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .pickup_item(&ARMOR_OF_INVULNERABILITY);
+    for dt in [
+        DamageType::Bludgeoning,
+        DamageType::Piercing,
+        DamageType::Slashing,
+    ] {
+        assert_eq!(
+            e.actors[&id].effective_damage(20, dt),
+            10,
+            "{dt:?} should be halved by the Armor of Invulnerability"
+        );
+    }
+    assert_eq!(
+        e.actors[&id].effective_damage(20, DamageType::Fire),
+        20,
+        "RAW's plate names three types and fire is not one of them"
+    );
+}
+
+/// The invisibility ladder has three rungs and they are three different
+/// items.
+///
+/// RAW prints three ways to become Invisible and prices each one
+/// differently, and the engine now carries all three. The difference is
+/// the whole of what separates them — the same condition, the same
+/// duration, three economies — so a test that only checked "does it turn
+/// the wearer invisible" would pass on three copies of one item.
+///
+///   - **Potion of Invisibility** — one use, and the bottle is gone.
+///   - **Cloak of Invisibility** — three uses, and the cloak is not.
+///   - **Ring of Invisibility** — no pool at all, and nothing is spent.
+#[test]
+fn the_three_printings_of_invisibility_cost_three_different_things() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{
+        CLOAK_OF_INVISIBILITY, Item, POTION_OF_INVISIBILITY, RING_OF_INVISIBILITY,
+    };
+
+    // (the item, how many times it can be used, does it survive)
+    let ladder: &[(&'static Item, u32, bool)] = &[
+        (&POTION_OF_INVISIBILITY, 1, false),
+        (&CLOAK_OF_INVISIBILITY, 3, true),
+        // Four is an arbitrary "more than anything with a pool"; the
+        // ring's point is that there is no number.
+        (&RING_OF_INVISIBILITY, 4, true),
+    ];
+    for (item, uses, survives) in ladder {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        {
+            let a = e.actors.get_mut(&id).unwrap();
+            a.pickup_item(item);
+            assert!(
+                !item.requires_attunement || a.is_attuned_to(item.name),
+                "{} is inert in the pack",
+                item.name
+            );
+        }
+        let go = *e.actors[&id]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == item.on_use[0].name())
+            .expect("holding it offers it");
+
+        for round in 0..*uses {
+            e.actors.get_mut(&id).unwrap().reset_for_new_round();
+            // Every row rejects a refresh while the holder is already
+            // Invisible, so the condition is cleared between uses —
+            // that is `reject_when_active`, not an empty pool.
+            e.actors
+                .get_mut(&id)
+                .unwrap()
+                .remove_condition(Condition::Invisible);
+            assert!(
+                go.validate_input(&e, id, None, None, None),
+                "{}: use {round} was refused",
+                item.name
+            );
+            for ef in go.execute(&mut e, id, None, None, None) {
+                ef.apply(&mut e);
+            }
+            assert!(
+                e.actors[&id].has_condition(Condition::Invisible),
+                "{}: use {round} did not turn the holder invisible",
+                item.name
+            );
+        }
+
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .remove_condition(Condition::Invisible);
+        let again = go.validate_input(&e, id, None, None, None);
+        assert_eq!(
+            e.actors[&id].has_item_named(item.name),
+            *survives,
+            "{} did not end up where its economy says",
+            item.name
+        );
+        if item.charges > 0 {
+            assert!(!again, "{} paid out past its printed pool", item.name);
+            // …and a night puts it back, which is the difference
+            // between a cloak and a bottle.
+            e.long_rest();
+            assert!(
+                e.actors[&id].item_charges_remaining(item.name) > 0,
+                "{} did not refill overnight",
+                item.name
+            );
+        } else if *survives {
+            assert!(again, "an at-will ring ran out of something");
+        }
+    }
+}
+
 /// An at-will item is still in the pack on the third round.
 ///
 /// The claim [`ItemUseBilling::Free`] exists for, and the one the

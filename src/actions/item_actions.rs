@@ -5710,6 +5710,9 @@ const ROD_OF_RULERSHIP_NAME: &str = "Rod of Rulership";
 const HELM_OF_TELEPATHY_NAME: &str = "Helm of Telepathy";
 const DUST_OF_SNEEZING_AND_CHOKING_NAME: &str = "Dust of Sneezing and Choking";
 const HAMMER_OF_THUNDERBOLTS_NAME: &str = "Hammer of Thunderbolts";
+const CLOAK_OF_INVISIBILITY_NAME: &str = "Cloak of Invisibility";
+const POTION_OF_GASEOUS_FORM_NAME: &str = "Potion of Gaseous Form";
+const EFREETI_BOTTLE_NAME: &str = "Efreeti Bottle";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
@@ -6287,6 +6290,7 @@ pub static ALL_SUMMON_ITEMS: &[&SummonItem] = &[
     &SWING_CENSER_OF_AIR_ELEMENTALS,
     &SET_DOWN_STONE_OF_EARTH_ELEMENTALS,
     &PLAY_PIPES_OF_THE_SEWERS,
+    &UNSTOPPER_EFREETI_BOTTLE,
 ];
 
 /// Scroll of Conjure Animals — Action; two spectral wolves on free
@@ -7983,4 +7987,110 @@ pub static HURL_HAMMER_OF_THUNDERBOLTS: AreaSaveConditionItem = AreaSaveConditio
     condition: Condition::Stunned,
     timer: ConditionTimer::Rounds(1),
     billing: ItemUseBilling::Charges(1),
+};
+
+
+/// **Cloak of Invisibility** (Wondrous item, Legendary, requires
+/// attunement) — *"This cloak has 3 charges and regains 1d3 expended
+/// charges daily at dawn. While wearing the cloak, you can take a Magic
+/// action to pull its hood over your head and expend 1 charge to give
+/// yourself the Invisible condition for 1 hour."*
+///
+/// The third route to Invisible on the shelf and the one in the middle
+/// of the other two, which is the whole reason RAW prints three. The
+/// Potion of Invisibility is Very Rare and gone; the Ring of
+/// Invisibility is Legendary and at will; this is Legendary with a pool
+/// of three that refills at dawn — a cloak a party can rely on for
+/// three fights and not for four.
+///
+/// RAW's *"until you pull the hood down"* is the same open-ended
+/// duration the ring prints, collapsed the same way and for the same
+/// reason: `Invisible` in this engine is the 5e condition every other
+/// source of it installs, and the attack pipeline strips it on a swing.
+/// See `TURN_RING_OF_INVISIBILITY`.
+pub static PULL_UP_CLOAK_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
+    action_name: "pull up cloak of invisibility",
+    action_aliases: &["invisibility cloak", "hood", "invis cloak"],
+    item_name: CLOAK_OF_INVISIBILITY_NAME,
+    log_text: "{actor} pulls the hood over their head and vanishes.",
+    condition: Condition::Invisible,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Charges(1),
+};
+
+/// **Potion of Gaseous Form** (Potion, Rare) — *"you gain the effect of
+/// the Gaseous Form spell for 1 hour (no Concentration required) or
+/// until you end the effect as a Bonus Action."*
+///
+/// The whole spell, through `Condition::Gaseous`: resistance to the
+/// three physical types, immunity to Prone, advantage on Strength,
+/// Dexterity and Constitution saves — and, as the price of all five, a
+/// speed of ten feet and no attacking or casting at all.
+///
+/// That price is why the potion is not on the AI's
+/// `ITEM_SELF_BUFF_CONDITIONS` table and never will be: a rung that
+/// drinks it hands the drinker every defence in the game and takes away
+/// the reason they were standing there. RAW's potion is an *escape*, and
+/// the engine has no lane that spends a turn on becoming unable to
+/// fight. It is the player's to reach for, which is what a Rare
+/// consumable with a clause that sharp should be.
+///
+/// RAW's "no Concentration required" is the whole difference between
+/// this and the spell, and the engine gets it for free: a potion holds
+/// nothing.
+pub static DRINK_POTION_OF_GASEOUS_FORM: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of gaseous form",
+    action_aliases: &["gaseous", "gaseous form", "mist"],
+    item_name: POTION_OF_GASEOUS_FORM_NAME,
+    log_text: "{actor} drinks the potion and thins into a drifting mist.",
+    condition: Condition::Gaseous,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: false,
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Efreeti Bottle** (Wondrous item, Very Rare) — *"When you take a
+/// Magic action to remove the stopper of this painted brass bottle, a
+/// cloud of thick smoke flows out … an Efreeti appears in an unoccupied
+/// space within 30 feet of you."*
+///
+/// The biggest single body any item in the engine puts on the board: a
+/// CR 11 fiend with a scimitar routine, innate spellcasting and fire
+/// immunity, beside a shelf whose next-largest payout is three
+/// berserkers.
+///
+/// **RAW's d10 is collapsed to the branch that happens eight times in
+/// ten.** The table is: on a 1 the efreeti attacks the opener and the
+/// bottle dies; on 2–9 it serves for an hour; on a 10 it grants three
+/// wishes. The engine takes the 2–9 branch, which is the same
+/// fixed-draw reading the Bag of Tricks takes of its own d8 and for the
+/// same reason — an item whose value is decided before the player can
+/// see it is an item nobody can make a decision about. Here the spread
+/// is wider than the bag's and the argument is stronger: the two tails
+/// are "the strongest thing on the loot table joins the other side" and
+/// "you win", and neither is a thing to hand a player at random.
+///
+/// One use, and the bottle goes with it. RAW's stopper can be pulled
+/// again in a day, which is a restriction on a calendar the engine does
+/// not keep; the figurines make the same trade and their docstrings say
+/// so.
+pub static UNSTOPPER_EFREETI_BOTTLE: SummonItem = SummonItem {
+    action_name: "unstopper efreeti bottle",
+    action_aliases: &["efreeti bottle", "brass bottle", "efreeti"],
+    item_name: EFREETI_BOTTLE_NAME,
+    log_label: "efreeti bottle",
+    template: &crate::actors::creatures::efreeti::EFREETI_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 217,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
 };
