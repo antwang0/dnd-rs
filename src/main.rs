@@ -14,6 +14,7 @@ use crate::ai::SimpleAi;
 use crate::app::{App, Tick};
 use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
+use crate::engine::board::BoardSettings;
 use crate::engine::lighting::AmbientLight;
 use crate::engine::weather::Weather;
 use crate::engine::terrain_gen::TerrainGenParams;
@@ -35,26 +36,33 @@ use std::io;
 struct Cli {
     seed: Option<u64>,
     pc_template: &'static CreatureTemplate,
-    /// What the sky is doing — see `crate::engine::lighting`. Defaults
-    /// to the lit board the game has always been played on; `dark`
-    /// turns the lights out and makes darkvision, torches and the Light
-    /// cantrip matter, and `daylight` puts the fight under an open sun
-    /// where the kobolds and the drow flinch.
-    ambient: AmbientLight,
-    /// What the sky is *doing* — see `crate::engine::weather`. Its own
-    /// axis rather than a fifth light level, because the two compose: a
-    /// rainy noon is `daylight` and `--rain` at once. Defaults to the
-    /// still air every fight was fought in before the weather layer.
-    weather: Weather,
-    /// How many of SRD 5.2's traps the dungeon is holding — see
-    /// `crate::engine::traps`. `0` by default, which is the clean floor
-    /// every fight in the engine has ever been fought on; `--traps`
-    /// arms `Cli::DEFAULT_TRAPS` of them, and `--traps=N` arms N.
+    /// Everything the `--flags` describe about the *place* rather than
+    /// about the party — the light, the sky and the floor. See
+    /// `crate::engine::board::BoardSettings`, which is also what carries
+    /// them from one room of the dungeon to the next.
     ///
-    /// A count rather than a flag, because the interesting question a
-    /// trapped board asks is how often it is worth spending an Action
-    /// on the floor, and that is entirely a matter of density.
-    traps: usize,
+    /// One field rather than three, and the reason is the bug it fixes:
+    /// the three were three fields here, spent one by one on the first
+    /// board in `main`, and only the light was ever put onto the second.
+    /// A `--rain` run bought one wet room; a `--traps=8` run bought one
+    /// trapped one. Grouping them is what makes "set up a board" a
+    /// single call that both the first room and every room after it go
+    /// through.
+    ///
+    ///   - the **light** defaults to the lit board the game has always
+    ///     been played on; `--dark` turns the lights out and makes
+    ///     darkvision, torches and the Light cantrip matter, and
+    ///     `--daylight` puts the fight under an open sun where the
+    ///     kobolds and the drow flinch;
+    ///   - the **weather** is its own axis rather than a fifth light
+    ///     level, because the two compose: a rainy noon is `--daylight`
+    ///     and `--rain` at once;
+    ///   - the **traps** are a count rather than a flag, because the
+    ///     interesting question a trapped board asks is how often it is
+    ///     worth spending an Action on the floor, and that is entirely a
+    ///     matter of density. `--traps` arms `Cli::DEFAULT_TRAPS` of
+    ///     them and `--traps=N` arms N.
+    board: BoardSettings,
 }
 
 /// What `Cli::parse` decided the arguments meant.
@@ -157,9 +165,11 @@ impl Cli {
         Ok(Invocation::Play(Self {
             seed,
             pc_template,
-            ambient,
-            weather,
-            traps,
+            board: BoardSettings {
+                ambient,
+                weather,
+                traps,
+            },
         }))
     }
 
@@ -305,12 +315,12 @@ fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, cli: &Cli) -> io::
 
     let mut encounter = EncounterInstance::from_params(&terrain_params, &actor_params, cli.seed)
         .expect("failed to create encounter");
-    encounter.set_ambient_light(cli.ambient);
-    encounter.set_weather(cli.weather);
-    encounter.scatter_traps(cli.traps);
+    // The same three lines every room after this one gets, through the
+    // same call — see `BoardSettings`.
+    cli.board.apply(&mut encounter);
 
     let n_teams = actor_params.n_teams;
-    let mut app = App::new(encounter, terrain_params, actor_params);
+    let mut app = App::new(encounter, terrain_params, actor_params, cli.board);
     // Team 0 is the player by default; everyone else gets the baseline AI.
     // Swap in custom controllers via App::set_controller when you want
     // smarter or bespoke behavior.
@@ -433,19 +443,19 @@ mod tests {
     #[test]
     fn a_light_level_flag_sets_the_ambient_and_leaves_the_rest_alone() {
         let cli = parse(&[]).expect("no args is always valid");
-        assert_eq!(cli.ambient, AmbientLight::default());
+        assert_eq!(cli.board.ambient, AmbientLight::default());
         for args in [
             &["--dark", "7", "Champion"][..],
             &["7", "--dark", "Champion"][..],
             &["7", "Champion", "--dark"][..],
         ] {
             let cli = parse(args).unwrap_or_else(|e| panic!("{:?}: {}", args, e));
-            assert_eq!(cli.ambient, AmbientLight::Darkness, "{:?}", args);
+            assert_eq!(cli.board.ambient, AmbientLight::Darkness, "{:?}", args);
             assert_eq!(cli.seed, Some(7), "{:?}", args);
             assert_eq!(cli.pc_template.name, "Champion", "{:?}", args);
         }
         assert_eq!(
-            parse(&["--daylight"]).expect("a bare flag").ambient,
+            parse(&["--daylight"]).expect("a bare flag").board.ambient,
             AmbientLight::Daylight
         );
     }
@@ -466,7 +476,7 @@ mod tests {
         ] {
             let cli = parse(args).unwrap_or_else(|e| panic!("{:?}: {}", args, e));
             assert_eq!(cli.pc_template.name, name);
-            assert_eq!(cli.ambient, AmbientLight::default(), "{:?}", args);
+            assert_eq!(cli.board.ambient, AmbientLight::default(), "{:?}", args);
         }
     }
 
@@ -476,24 +486,24 @@ mod tests {
     /// rainy noon is a real sky.
     #[test]
     fn a_weather_flag_sets_the_sky_and_composes_with_the_light() {
-        assert_eq!(parse(&[]).expect("no args is always valid").weather, Weather::Calm);
+        assert_eq!(parse(&[]).expect("no args is always valid").board.weather, Weather::Calm);
         for args in [
             &["--wind", "7", "Champion"][..],
             &["7", "--wind", "Champion"][..],
             &["7", "Champion", "--wind"][..],
         ] {
             let cli = parse(args).unwrap_or_else(|e| panic!("{:?}: {}", args, e));
-            assert_eq!(cli.weather, Weather::StrongWind, "{:?}", args);
+            assert_eq!(cli.board.weather, Weather::StrongWind, "{:?}", args);
             assert_eq!(cli.seed, Some(7), "{:?}", args);
             assert_eq!(cli.pc_template.name, "Champion", "{:?}", args);
         }
         let both = parse(&["--daylight", "--rain"]).expect("two axes, two flags");
-        assert_eq!(both.ambient, AmbientLight::Daylight);
-        assert_eq!(both.weather, Weather::HeavyPrecipitation);
+        assert_eq!(both.board.ambient, AmbientLight::Daylight);
+        assert_eq!(both.board.weather, Weather::HeavyPrecipitation);
         // …and the light flag alone leaves the sky still, so neither
         // axis can quietly set the other.
         assert_eq!(
-            parse(&["--dark"]).expect("a bare flag").weather,
+            parse(&["--dark"]).expect("a bare flag").board.weather,
             Weather::Calm
         );
     }
@@ -582,18 +592,18 @@ mod tests {
     /// the same argument list.
     #[test]
     fn the_trap_flag_takes_an_optional_count() {
-        assert_eq!(parse(&[]).unwrap().traps, 0, "clean floor by default");
-        assert_eq!(parse(&["--traps"]).unwrap().traps, Cli::DEFAULT_TRAPS);
-        assert_eq!(parse(&["--traps=12"]).unwrap().traps, 12);
-        assert_eq!(parse(&["--traps=0"]).unwrap().traps, 0);
+        assert_eq!(parse(&[]).unwrap().board.traps, 0, "clean floor by default");
+        assert_eq!(parse(&["--traps"]).unwrap().board.traps, Cli::DEFAULT_TRAPS);
+        assert_eq!(parse(&["--traps=12"]).unwrap().board.traps, 12);
+        assert_eq!(parse(&["--traps=0"]).unwrap().board.traps, 0);
 
         let cli = parse(&["--traps=3", "--rain", "--dark", "9", "Rogue"])
             .expect("the board flags compose with each other and with the seed");
-        assert_eq!(cli.traps, 3);
+        assert_eq!(cli.board.traps, 3);
         assert_eq!(cli.seed, Some(9));
         assert_eq!(cli.pc_template.name, "Rogue");
-        assert_eq!(cli.weather, Weather::HeavyPrecipitation);
-        assert_eq!(cli.ambient, AmbientLight::Darkness);
+        assert_eq!(cli.board.weather, Weather::HeavyPrecipitation);
+        assert_eq!(cli.board.ambient, AmbientLight::Darkness);
     }
 
     /// A count that is not a count is refused rather than read as a
@@ -603,7 +613,7 @@ mod tests {
     fn a_malformed_trap_count_is_refused_by_name() {
         let err = match parse(&["--traps=lots"]) {
             Err(e) => e,
-            Ok(cli) => panic!("\"lots\" is not {} traps", cli.traps),
+            Ok(cli) => panic!("\"lots\" is not {} traps", cli.board.traps),
         };
         assert!(err.contains("lots"), "{}", err);
     }

@@ -24367,7 +24367,7 @@ fn polar_bear_lion_fire_giant_cyclops_roc_templates_instantiate() {
 #[test]
 fn a_rider_falls_with_the_pegasus_they_are_sitting_on() {
     use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
-    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+    use crate::actors::creatures::guardian_nagas::GUARDIAN_NAGA_TEMPLATE;
     use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
 
     let mut e = ei_with_terrain(20, 20, &[]);
@@ -24428,7 +24428,7 @@ fn a_rider_falls_with_the_pegasus_they_are_sitting_on() {
 #[test]
 fn new_dinos_celestials_winter_creatures_instantiate() {
     use crate::actors::creatures::carrion_crawlers::CARRION_CRAWLER_TEMPLATE;
-    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+    use crate::actors::creatures::guardian_nagas::GUARDIAN_NAGA_TEMPLATE;
     use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
     use crate::actors::creatures::tyrannosauruses::T_REX_TEMPLATE;
     use crate::actors::creatures::winter_wolves::WINTER_WOLF_TEMPLATE;
@@ -98875,7 +98875,7 @@ fn the_two_vessels_take_a_creature_off_the_board() {
 fn the_talismans_fissure_is_a_save_or_die_with_a_consolation() {
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+    use crate::actors::creatures::guardian_nagas::GUARDIAN_NAGA_TEMPLATE;
     use crate::items::item_template::TALISMAN_OF_ULTIMATE_EVIL;
 
     // Holy Symbol, the half that is a field: +2 to spell attack rolls
@@ -98943,7 +98943,15 @@ fn the_talismans_fissure_is_a_save_or_die_with_a_consolation() {
         "nothing ever made the save, so the consolation branch is untested"
     );
 
-    // The Celestial notch, read off the save's own log line.
+    // The Celestial notch, read off the save's own log line. A
+    // **guardian naga** rather than the obvious unicorn or deva, and the
+    // reason is the rule working rather than a fixture convenience:
+    // almost every Celestial in the bestiary has Magic Resistance, which
+    // is advantage on saves against a magical effect, which cancels this
+    // notch to straight. That is the right answer — the fissure is a
+    // magic item's effect — and it would make a test of the notch
+    // silently vacuous. The naga is Celestial, grounded, and has no such
+    // trait.
     let disadvantaged = |template| {
         let mut e = ei_with_terrain(24, 24, &[]);
         let pc = e
@@ -98971,13 +98979,49 @@ fn the_talismans_fissure_is_a_save_or_die_with_a_consolation() {
             .any(|m| m.contains("Dexterity save") && m.contains("(dis)"))
     };
     assert!(
-        disadvantaged(&PEGASUS_TEMPLATE),
+        disadvantaged(&GUARDIAN_NAGA_TEMPLATE),
         "RAW's \"if the target is a Celestial, it has Disadvantage on the save\" \
          did not reach the die"
     );
     assert!(
         !disadvantaged(&GOBLIN_TEMPLATE),
         "the notch landed on something that is not a Celestial"
+    );
+
+    // RAW's "on the ground": what opens is a fissure in the floor, and a
+    // creature thirty feet up does not fall into one.
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&TALISMAN_OF_ULTIMATE_EVIL);
+    let fissure = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "open the talisman's fissure")
+        .expect("holding the talisman offers the fissure");
+    let at = vec![goblin];
+    assert!(
+        fissure.validate_input(&e, pc, Some(&at), None, None),
+        "a goblin standing on the flagstones is a legal target"
+    );
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        crate::conditions::Condition::Flying,
+        crate::conditions::ConditionTimer::Rounds(10),
+    );
+    assert!(
+        e.actors[&goblin].is_airborne(),
+        "the fixture's own premise: the goblin is off the floor"
+    );
+    assert!(
+        !fissure.validate_input(&e, pc, Some(&at), None, None),
+        "the fissure swallowed something that was not standing on the ground"
     );
 }
 

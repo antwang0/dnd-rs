@@ -8809,15 +8809,31 @@ impl Action for OpenTalismanFissure {
         costs
     }
 
+    /// Holding it, and RAW's *"one creature you can see **on the
+    /// ground**"*.
+    ///
+    /// The ground clause is the whole geometry of the item: what opens
+    /// is a fissure in the floor, and a creature thirty feet up does not
+    /// fall into one. `is_airborne` is the predicate every other lane
+    /// that means "is this creature in the air" reads — the terrain
+    /// waiver, the water surcharge, tremorsense's ground contact — so
+    /// the talisman asks the same question they do rather than reading
+    /// the Flying condition directly, which would miss a wyvern and
+    /// catch a prone wizard whose Fly spell has already dropped them.
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
-        _ti: Option<&Vec<usize>>,
+        target_ids: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        caster_holds(encounter, caster_id, TALISMAN_OF_ULTIMATE_EVIL_NAME)
+        if !caster_holds(encounter, caster_id, TALISMAN_OF_ULTIMATE_EVIL_NAME) {
+            return false;
+        }
+        first_target_id(target_ids)
+            .and_then(|id| encounter.actors.get(&id))
+            .is_some_and(|t| !t.is_airborne())
     }
 
     fn side_effects(

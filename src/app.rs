@@ -11,6 +11,7 @@ use crate::actions::action_template::{ActionExecutionInfo, TargetingSchema};
 use crate::actors::actor_template::{ActorInstance, HpState};
 use crate::ai::{Controller, ControllerDecision, PlayerController};
 use crate::engine::actor_gen::ActorGenParams;
+use crate::engine::board::BoardSettings;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::terrain_gen::TerrainGenParams;
 use crate::engine::types::Coordinate;
@@ -37,6 +38,13 @@ pub struct App {
     /// player long-rests after a victory.
     terrain_params: TerrainGenParams,
     actor_params: ActorGenParams,
+    /// What kind of place this run is happening in — see
+    /// [`BoardSettings`]. Held here rather than read back off the
+    /// outgoing encounter because one of the three cannot be read back:
+    /// a trap *density* is spent the moment it is scattered, and a
+    /// board that has been walked across has no way to say how many
+    /// traps it started with.
+    board: BoardSettings,
     encounter_number: u32,
     map_width: u16,
     map_height: u16,
@@ -66,10 +74,20 @@ pub struct App {
 }
 
 impl App {
+    /// Start a run on `encounter`, which the caller has already set up
+    /// with `board.apply`.
+    ///
+    /// `board` is passed rather than sniffed off `encounter` because
+    /// only two of its three fields can be sniffed: the light and the
+    /// weather are recorded on the board, and the trap count is spent by
+    /// `scatter_traps` and gone. Taking all three from one struct is
+    /// also what keeps the first room and every room after it set up by
+    /// the same code — see `BoardSettings`.
     pub fn new(
         encounter: EncounterInstance,
         terrain_params: TerrainGenParams,
         actor_params: ActorGenParams,
+        board: BoardSettings,
     ) -> Self {
         let map_width = terrain_params.width;
         let map_height = terrain_params.height;
@@ -79,6 +97,7 @@ impl App {
             default_controller: Box::new(PlayerController),
             terrain_params,
             actor_params,
+            board,
             encounter_number: 1,
             map_width: u16::try_from(map_width).unwrap_or(u16::MAX),
             map_height: u16::try_from(map_height).unwrap_or(u16::MAX),
@@ -144,16 +163,24 @@ impl App {
         // base so future scaling stays anchored to the original difficulty.
         let mut scaled_params = self.actor_params.clone();
         scaled_params.cr_target = self.scaled_cr_target();
-        // The lights carry over. The ambient light belongs to the
-        // *game* the player started, not to one encounter of it, so a
-        // `--dark` run stays dark across the whole dungeon rather than
-        // walking into daylight the moment the party takes a rest.
-        // Read off the encounter that is ending, which is the only
-        // place it has been recorded since `main` set it.
-        let ambient = self.encounter.ambient_light();
         match EncounterInstance::with_pcs(&self.terrain_params, &scaled_params, None, rested) {
             Ok(mut next) => {
-                next.set_ambient_light(ambient);
+                // The sky and the floor carry over. All three belong to
+                // the *game* the player started rather than to one
+                // encounter of it, so a `--dark --rain --traps=6` run
+                // stays dark, wet and trapped for the whole dungeon
+                // instead of walking into a dry, lit, clean room the
+                // moment the party takes a rest.
+                //
+                // This used to be one line reading `ambient_light()`
+                // back off the encounter that was ending, under a
+                // comment making exactly this argument about the light
+                // alone. The argument was always about all three; the
+                // other two were simply dropped. See `BoardSettings`,
+                // and note the ordering there — the traps are scattered
+                // *after* `with_pcs` has placed the party, which is why
+                // this cannot move above the generation.
+                self.board.apply(&mut next);
                 // Into the *new* log, not the old one. The rest happens
                 // between two maps and the encounter it happened in is
                 // about to be dropped, so a level-up announced there is
@@ -1248,7 +1275,7 @@ mod tests {
                 }
             }
         }
-        App::new(encounter, terrain_params, actor_params)
+        App::new(encounter, terrain_params, actor_params, BoardSettings::default())
     }
 
     fn spawn(app: &mut App, team: usize, at: Coordinate) -> usize {
@@ -1327,6 +1354,83 @@ mod tests {
                 .iter()
                 .any(|m| m.contains("reaches level")),
             "the level-up should be announced in the new encounter's log"
+        );
+    }
+
+    /// The board the player asked for is the board they keep.
+    ///
+    /// A dungeon run is a chain of encounters, and everything about the
+    /// *party* crosses the boundary between two of them because the
+    /// party is carried across as a list of `ActorInstance`s. The board
+    /// is built fresh each time, so anything about the board that the
+    /// player chose has to be put back — and for as long as there were
+    /// three such things, exactly one of them was.
+    ///
+    /// `start_next_encounter` read `ambient_light()` off the outgoing
+    /// encounter and set it on the incoming one, under a comment arguing
+    /// that the light "belongs to the *game* the player started, not to
+    /// one encounter of it". That argument is correct and it was never
+    /// about the light alone: `--rain` bought one wet room and calm for
+    /// the rest of the dungeon, and `--traps=8` bought one trapped room
+    /// and a clean floor forever after — the trap count worse off than
+    /// the weather, because it lived in `main`, was spent by
+    /// `scatter_traps`, and was not recorded anywhere at all.
+    ///
+    /// Neither had a symptom anybody would report as a bug. A second
+    /// room with no rain looks exactly like a second room, and the only
+    /// evidence was a flag that stopped mattering after the first
+    /// victory.
+    #[test]
+    fn the_sky_and_the_floor_follow_the_party_into_the_next_room() {
+        use crate::engine::lighting::AmbientLight;
+        use crate::engine::weather::Weather;
+
+        let mut app = app_with_empty_board();
+        app.board = BoardSettings {
+            ambient: AmbientLight::Darkness,
+            weather: Weather::HeavyPrecipitation,
+            traps: 4,
+        };
+        app.board.apply(&mut app.encounter);
+        app.encounter
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .expect("the party fits");
+
+        assert_eq!(app.encounter.ambient_light(), AmbientLight::Darkness);
+        assert_eq!(app.encounter.weather(), Weather::HeavyPrecipitation);
+        // Counted by name against the trap roster rather than by any
+        // predicate on `Zone`: what is on the board after
+        // `scatter_traps` is four of SRD 5.2's four traps, and the
+        // roster is the only thing that knows which names those are.
+        let traps_on_board = |app: &App| {
+            app.encounter
+                .zones()
+                .iter()
+                .filter(|z| {
+                    crate::engine::traps::ALL_TRAPS
+                        .iter()
+                        .any(|t| t.name == z.name)
+                })
+                .count()
+        };
+        assert_eq!(traps_on_board(&app), 4, "the fixture's own premise");
+
+        assert!(app.start_next_encounter(), "the next room generates");
+
+        assert_eq!(
+            app.encounter.ambient_light(),
+            AmbientLight::Darkness,
+            "the lights came back on between rooms"
+        );
+        assert_eq!(
+            app.encounter.weather(),
+            Weather::HeavyPrecipitation,
+            "the rain stopped at the door"
+        );
+        assert_eq!(
+            traps_on_board(&app),
+            4,
+            "the second room's floor was swept clean"
         );
     }
 
@@ -1450,7 +1554,7 @@ mod tests {
         solo.n_teams = 1;
         let encounter = EncounterInstance::from_params(&terrain_params, &solo, Some(3))
             .expect("one fighter fits on any board");
-        let mut app = App::new(encounter, terrain_params, actor_params);
+        let mut app = App::new(encounter, terrain_params, actor_params, BoardSettings::default());
         assert!(app.encounter.is_complete(), "one team left is a win");
         assert!(app.player_may_continue());
 

@@ -4,6 +4,7 @@ pub mod areas;
 pub mod attachment;
 pub mod attack;
 pub mod banishment;
+pub mod board;
 pub mod breath;
 pub mod conjured_terrain;
 pub mod criticals;
