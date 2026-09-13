@@ -9161,3 +9161,634 @@ pub static DRAW_ON_ROD_OF_ABSORPTION: AbsorbedEnergyItem = AbsorbedEnergyItem {
     item_name: "Rod of Absorption",
     max_slot_level: 5,
 };
+
+// ---------------------------------------------------------------------
+// Wand of Wonder — the one item in the book whose rule is a table.
+// ---------------------------------------------------------------------
+
+/// What one wave of the Wand of Wonder does, once the d100 has picked a
+/// row.
+///
+/// Seven arms for a hundred rows, which is the whole reason the table is
+/// data rather than a `match` with eighteen branches in it: RAW's list
+/// says the same handful of things over and over with different nouns in
+/// them, and once the arms exist a row is one line. Fourteen of the
+/// eighteen rows below are *"you cast X"* in RAW's own words, and those
+/// forward the real spell every caster in the game uses — see
+/// [`crate::actions::staves::StaffSpell`], which is the same trick at
+/// a fixed price.
+pub enum WonderEffect {
+    /// *"You cast a spell originating from the chosen point."* One of
+    /// the listed spells, picked by a second roll — RAW's *"roll 1d10 to
+    /// determine the spell"* — and aimed at the chosen tile. A
+    /// single-entry slice is a row with no second roll.
+    CastAtPoint(&'static [fn() -> &'static (dyn Action + Send + Sync)]),
+    /// The same spell, aimed at *"the creature closest to the chosen
+    /// point of origin"* — which is how RAW writes the rows that need a
+    /// body rather than a tile.
+    CastAtNearest(fn() -> &'static (dyn Action + Send + Sync)),
+    /// *"Nothing happens at the chosen point of origin. Instead, you
+    /// cast Invisibility on yourself."*
+    CastOnSelf(fn() -> &'static (dyn Action + Send + Sync)),
+    /// The rows that go off in the waver's hand — a condition, a few
+    /// points of damage, or both. RAW's *"Instead, you have the Stunned
+    /// condition"* and *"Instead, you take 1d6 Psychic damage"*.
+    Backfire {
+        condition: Option<(Condition, ConditionTimer)>,
+        damage: Option<(Dice, DamageType)>,
+    },
+    /// *"A magically formed creature appears … The creature isn't under
+    /// your control, acts as it normally would."* One of the listed
+    /// bodies, picked by a second roll.
+    Interloper(&'static [(&'static std::sync::LazyLock<crate::actors::actor_template::CreatureTemplate>, crate::engine::types::Size)]),
+    /// *"A burst of colourful, shimmering light extends from you in a
+    /// 30-foot Emanation."* A save-or-condition sweep centred on the
+    /// waver, catching everybody but them.
+    Emanation {
+        radius: isize,
+        save: AbilityScoreType,
+        dc: i32,
+        condition: Condition,
+        timer: ConditionTimer,
+    },
+    /// *"A stream of 1d4 × 10 gems … shoots from the wand's tip in a
+    /// Line … the total damage of the gems is divided equally among all
+    /// creatures in the Line."* The only row in the table whose damage
+    /// gets *smaller* the more it hits.
+    GemVolley {
+        length: isize,
+        half_width: isize,
+        count: Dice,
+        per_gem: u32,
+        damage_type: DamageType,
+    },
+    /// A row the board cannot show. RAW's own sentence is logged and
+    /// nothing else happens — which is a real outcome of waving this
+    /// wand, and four of the eighteen rows are already that in the book.
+    /// See [`WAND_OF_WONDER_TABLE`] for which ones are the engine's
+    /// doing and why.
+    Flavour,
+}
+
+/// One row of the d100.
+pub struct WonderRow {
+    /// The top of this row's range. Rows are in ascending order and the
+    /// first whose `upto` the roll does not exceed wins, so the ranges
+    /// are implicit and cannot overlap or leave a gap — which the
+    /// invariant test checks by walking the list rather than by reading
+    /// the numbers off RAW's table twice.
+    pub upto: u32,
+    /// What the player is told happened, before anything resolves.
+    pub log: &'static str,
+    pub effect: WonderEffect,
+}
+
+/// SRD 5.2's **Wand of Wonder Effects**, all eighteen rows, in order.
+///
+/// Fourteen of them forward a real spell. The four that do not are here
+/// for two different reasons, and the difference is worth keeping
+/// straight:
+///
+///   - **RAW's own nothings.** The object into the Ethereal Plane
+///     (65–68) and the leaves on somebody's head (73–77) are cosmetic in
+///     the book too. Nothing is lost.
+///   - **The engine's.** Heavy rain (36–40) is *"Lightly Obscured"* over
+///     a 60-foot cylinder for a minute, and this engine's rain is
+///     `Weather`, which is a fact about the whole sky and has no timer —
+///     see that module's docstring on why weather is not a zone. A row
+///     that turned the board's weather on permanently would be a bigger
+///     thing than the wand. The butterflies (41–45) go the other way and
+///     *are* modelled: *"the area of effect is Heavily Obscured"* is
+///     exactly a Fog Cloud, so that row casts one.
+///
+/// Two more rows are honest approximations rather than nothings:
+///
+///   - **56–60** puts the creature on the *opposing* team rather than on
+///     a third one of its own. RAW's *"isn't under your control"* is
+///     most naturally a neutral party, and the engine would take one —
+///     `living_teams` is general — but an encounter ends when one team
+///     is left standing, so a 1-hit-point rat on its own side would keep
+///     every fight it appeared in open until the stalemate detector gave
+///     up four hundred rounds later. Hostile is the reading that costs
+///     the waver something, which is the point of the row.
+///   - **98–00** forwards Flesh to Stone, which is RAW's own staging —
+///     Restrained, then Petrified on a second failure — at the caster's
+///     save DC rather than the wand's flat 15.
+pub static WAND_OF_WONDER_TABLE: &[WonderRow] = &[
+    WonderRow {
+        upto: 20,
+        log: "the wand spits a spell at the point it was aimed at",
+        effect: WonderEffect::CastAtPoint(&[
+            || &*crate::actions::spells::DARKNESS,
+            || &*crate::actions::spells::FAERIE_FIRE,
+            || &*crate::actions::spells::FIREBALL,
+            || &*crate::actions::spells::SLOW,
+            || &*crate::actions::spells::STINKING_CLOUD,
+        ]),
+    },
+    WonderRow {
+        upto: 25,
+        log: "nothing happens — but {actor} is certain something awesome just did",
+        effect: WonderEffect::Backfire {
+            condition: Some((Condition::Stunned, ConditionTimer::UntilStartOfNextTurn)),
+            damage: None,
+        },
+    },
+    WonderRow {
+        upto: 30,
+        log: "a gale tears out of the wand toward the point",
+        effect: WonderEffect::CastAtPoint(&[|| &*crate::actions::spells::GUST_OF_WIND]),
+    },
+    WonderRow {
+        upto: 35,
+        log: "nothing happens at the point — the wand bites {actor} instead",
+        effect: WonderEffect::Backfire {
+            condition: None,
+            damage: Some((Dice::new(1, 6), DamageType::Psychic)),
+        },
+    },
+    WonderRow {
+        upto: 40,
+        log: "heavy rain falls over the point for a minute and troubles nobody",
+        effect: WonderEffect::Flavour,
+    },
+    WonderRow {
+        upto: 45,
+        log: "six hundred oversized butterflies boil up around the point",
+        effect: WonderEffect::CastAtPoint(&[|| &*crate::actions::spells::FOG_CLOUD]),
+    },
+    WonderRow {
+        upto: 50,
+        log: "lightning leaps from the wand toward the point",
+        effect: WonderEffect::CastAtPoint(&[|| &*crate::actions::spells::LIGHTNING_BOLT]),
+    },
+    WonderRow {
+        upto: 55,
+        log: "whatever is nearest the point swells",
+        effect: WonderEffect::CastAtNearest(|| &*crate::actions::spells::ENLARGE_REDUCE),
+    },
+    WonderRow {
+        upto: 60,
+        log: "something wanders out of nowhere, and it is nobody's friend",
+        effect: WonderEffect::Interloper(&[
+            (
+                &crate::actors::creatures::rhinoceroses::RHINOCEROS_TEMPLATE,
+                crate::engine::types::Size::Large,
+            ),
+            (
+                &crate::actors::creatures::elephants::ELEPHANT_TEMPLATE,
+                crate::engine::types::Size::Huge,
+            ),
+            (
+                &crate::actors::creatures::rats::RAT_TEMPLATE,
+                crate::engine::types::Size::Tiny,
+            ),
+            (
+                &crate::actors::creatures::rats::RAT_TEMPLATE,
+                crate::engine::types::Size::Tiny,
+            ),
+        ]),
+    },
+    WonderRow {
+        upto: 64,
+        log: "the ground around the point erupts into waist-high grass",
+        effect: WonderEffect::CastAtPoint(&[|| &*crate::actions::spells::PLANT_GROWTH]),
+    },
+    WonderRow {
+        upto: 68,
+        log: "something nobody was holding quietly stops existing",
+        effect: WonderEffect::Flavour,
+    },
+    WonderRow {
+        upto: 72,
+        log: "nothing happens at the point — {actor} shrinks instead",
+        effect: WonderEffect::CastOnSelf(|| &*crate::actions::spells::REDUCE),
+    },
+    WonderRow {
+        upto: 77,
+        log: "leaves sprout from whatever is nearest the point",
+        effect: WonderEffect::Flavour,
+    },
+    WonderRow {
+        upto: 82,
+        log: "nothing happens at the point — shimmering light bursts out of {actor}",
+        effect: WonderEffect::Emanation {
+            // RAW's 30-foot Emanation: twelve tiles.
+            radius: 12,
+            save: AbilityScoreType::Constitution,
+            dc: 15,
+            condition: Condition::Blinded,
+            timer: ConditionTimer::Rounds(10),
+        },
+    },
+    WonderRow {
+        upto: 87,
+        log: "nothing happens at the point — {actor} fades from sight instead",
+        effect: WonderEffect::CastOnSelf(|| &*crate::actions::spells::INVISIBILITY),
+    },
+    WonderRow {
+        upto: 92,
+        log: "the wand's tip sprays a stream of worthless gems toward the point",
+        effect: WonderEffect::GemVolley {
+            // RAW's 30-foot, 5-foot-wide Line.
+            length: 12,
+            half_width: 1,
+            count: Dice::new(1, 4),
+            per_gem: 10,
+            damage_type: DamageType::Bludgeoning,
+        },
+    },
+    WonderRow {
+        upto: 97,
+        log: "whatever is nearest the point is something else now",
+        effect: WonderEffect::CastAtNearest(|| &*crate::actions::spells::POLYMORPH),
+    },
+    WonderRow {
+        upto: 100,
+        log: "whatever is nearest the point begins, slowly, to turn to stone",
+        effect: WonderEffect::CastAtNearest(|| &*crate::actions::spells::FLESH_TO_STONE),
+    },
+];
+
+/// **Wand of Wonder** — *"you can take a Magic action to expend 1 charge
+/// while choosing a point within 120 feet of yourself. That location
+/// becomes the point of origin of a spell or other magical effect
+/// determined by rolling on the Wand of Wonder Effects table."*
+///
+/// The only item in the SRD whose rule is a hundred-row table, and the
+/// only one where *what the holder wanted* is not an input. Every other
+/// wand in the file is a spell with a charge price; this one is a
+/// decision to find out.
+///
+/// **It is not aimed at an enemy, it is aimed at a tile**, and that is
+/// the whole of how it plays: a fifth of the table backfires onto the
+/// waver, a fifth casts something genuinely good at the point, and the
+/// rest is somewhere in between. Nothing in this engine's action list
+/// behaves like it, which is why it is worth the chassis.
+///
+/// **It declares that it holds concentration**, which is true of four of
+/// the eighteen rows and of none of the others. `Action::execute`
+/// asserts that anything queueing a `StartConcentration` says so, and
+/// this cannot know which row it is going to roll before it rolls it —
+/// so the declaration is the conservative one. What it costs is that the
+/// AI's summon and area-control rungs price a wave as though it will
+/// always take the waver's concentration. Which, once every five waves,
+/// it does.
+pub struct WandOfWonderItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    /// What one wave costs the object — see [`ItemUseBilling`].
+    pub billing: ItemUseBilling,
+    /// The table this wand rolls on. A field rather than a hardcoded
+    /// reference to [`WAND_OF_WONDER_TABLE`] for the reason every other
+    /// chassis in this module parameterises what it could have inlined:
+    /// the chassis is *"roll, find the row, resolve it"*, and the rows
+    /// are the item. A second wand with a different table is one static,
+    /// and the sweep that walks all eighteen rows reads this rather than
+    /// a list it keeps in step by hand.
+    pub table: &'static [WonderRow],
+}
+
+impl WandOfWonderItem {
+    /// The row a 1–100 roll lands on. The first row whose `upto` the
+    /// roll does not exceed, which is what makes the ranges implicit.
+    pub(crate) fn row(&self, roll: u32) -> &'static WonderRow {
+        self.table
+            .iter()
+            .find(|r| roll <= r.upto)
+            .unwrap_or_else(|| self.table.last().expect("the table is never empty"))
+    }
+}
+
+/// The combat-active actor whose footprint sits closest to `point`,
+/// lowest id breaking a tie.
+///
+/// RAW's *"the creature closest to the chosen point of origin"*, and the
+/// tiebreak every other board scan in the engine uses — hash order is
+/// not reproducible from the seed.
+fn nearest_creature_to(encounter: &EncounterInstance, point: Coordinate) -> Option<usize> {
+    encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let a = encounter.actors.get(&id)?;
+            if !a.is_combat_active() {
+                return None;
+            }
+            let gap = crate::engine::util::footprint_chebyshev(
+                a.location(),
+                crate::engine::util::get_tiles_from_size(a.size()),
+                point,
+                1,
+            );
+            Some((gap, id))
+        })
+        .min()
+        .map(|(_, id)| id)
+}
+
+impl Action for WandOfWonderItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW's 120 feet, and RAW's own widening of it: "if a spell's
+        // maximum range is normally less than 120 feet, it becomes 120
+        // feet when cast from the wand." The forwarded spells are
+        // resolved through `side_effects` rather than re-validated, so
+        // the widening is what already happens.
+        Some(48)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    /// True, and mostly false — see the struct docstring. Four rows of
+    /// eighteen forward a concentration spell and the roll happens after
+    /// this question is asked.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        true
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        costs.extend(self.billing.costs(self.item_name));
+        costs
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        if !self.billing.take(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let waver = encounter.actor_name(caster_id);
+        let roll = encounter.roll(&Dice::new(1, 100));
+        let row = self.row(roll);
+        encounter.log(format!(
+            "{} waves the {} at {} — {:02} on the table: {}.",
+            waver,
+            self.item_name.to_lowercase(),
+            point,
+            roll % 100,
+            row.log.replace("{actor}", &waver)
+        ));
+        self.resolve(encounter, caster_id, point, row)
+    }
+}
+
+impl WandOfWonderItem {
+    /// One row of the table, resolved.
+    ///
+    /// Split from `side_effects` — which rolls the d100, bills the
+    /// charge and writes the log line — so the sweep in
+    /// `every_row_of_the_wonder_table_resolves` can walk all eighteen
+    /// rows on purpose rather than waving the wand until the dice have
+    /// been kind enough to show each one. A table whose rarest row is
+    /// four faces wide is a table a random test will not finish
+    /// covering.
+    ///
+    /// The forwarded rows call the real spell's own resolver, exactly as
+    /// a staff row does — same dice, same DC off the waver's
+    /// spellcasting ability, same evasion, same everything. What they do
+    /// *not* do is go back through `Action::execute`: the wand has
+    /// already paid its Action and its charge, and a second trip would
+    /// open a second cast frame and bill the spell's slot on top.
+    pub(crate) fn resolve(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        point: Coordinate,
+        row: &'static WonderRow,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let one = |id: usize| vec![id];
+        match &row.effect {
+            WonderEffect::Flavour => Vec::new(),
+            WonderEffect::CastAtPoint(choices) => {
+                let spell = self.pick(encounter, choices);
+                spell().side_effects(encounter, caster_id, None, Some(&vec![point]), None)
+            }
+            WonderEffect::CastAtNearest(spell) => match nearest_creature_to(encounter, point) {
+                Some(target) => {
+                    spell().side_effects(encounter, caster_id, Some(&one(target)), None, None)
+                }
+                None => Vec::new(),
+            },
+            WonderEffect::CastOnSelf(spell) => {
+                spell().side_effects(encounter, caster_id, Some(&one(caster_id)), None, None)
+            }
+            WonderEffect::Backfire { condition, damage } => {
+                let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+                if let Some((condition, timer)) = condition {
+                    effects.push(Box::new(ApplyCondition {
+                        actor_id: caster_id,
+                        condition: *condition,
+                        timer: *timer,
+                    }));
+                }
+                if let Some((dice, damage_type)) = damage {
+                    let amount = encounter.roll(dice);
+                    effects.push(Box::new(DealDamage {
+                        actor_id: caster_id,
+                        amount,
+                        damage_type: *damage_type,
+                    }));
+                }
+                effects
+            }
+            WonderEffect::Interloper(bodies) => {
+                let (template, size) = self.pick(encounter, bodies);
+                self.summon_interloper(encounter, caster_id, point, template, *size);
+                Vec::new()
+            }
+            WonderEffect::Emanation {
+                radius,
+                save,
+                dc,
+                condition,
+                timer,
+            } => {
+                let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+                let shape = AreaShape::Burst { radius: *radius };
+                let caught = encounter.neutral_area_targets(caster_id, shape, point);
+                for tid in caught {
+                    if encounter.actor_immune_to_condition(tid, *condition) {
+                        continue;
+                    }
+                    if encounter
+                        .roll_save_against_caster(tid, *save, *dc, caster_id)
+                        .passed()
+                    {
+                        continue;
+                    }
+                    effects.extend(crate::engine::side_effects::install_condition_with_link(
+                        *condition,
+                        tid,
+                        caster_id,
+                        *timer,
+                    ));
+                }
+                effects
+            }
+            WonderEffect::GemVolley {
+                length,
+                half_width,
+                count,
+                per_gem,
+                damage_type,
+            } => {
+                let gems = encounter.roll(count) * per_gem;
+                let shape = AreaShape::Line {
+                    length: *length,
+                    half_width: *half_width,
+                };
+                let caught = encounter.neutral_area_targets(caster_id, shape, point);
+                if caught.is_empty() {
+                    encounter.log(format!(
+                        "  {} gems rattle away down an empty line.",
+                        gems
+                    ));
+                    return Vec::new();
+                }
+                // RAW divides the *total* equally, so the volley is worth
+                // less the more it catches — the only row on the table
+                // that gets weaker as it hits more.
+                let each = gems / caught.len() as u32;
+                caught
+                    .into_iter()
+                    .map(|tid| {
+                        Box::new(DealDamage {
+                            actor_id: tid,
+                            amount: each,
+                            damage_type: *damage_type,
+                        }) as Box<dyn ApplicableSideEffect>
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    /// RAW's second roll — *"roll 1d10 to determine the spell"*, *"roll
+    /// 1d4 to determine which creature appears"* — off the encounter's
+    /// own seeded roller, so a wave is reproducible from the seed like
+    /// everything else.
+    ///
+    /// The slice is the weighting: RAW's 1d10 over five spells is two
+    /// faces each, which is one entry each here, and its 1d4 over three
+    /// creatures with the rat on 3–4 is the rat written twice.
+    fn pick<'a, T>(&self, encounter: &mut EncounterInstance, choices: &'a [T]) -> &'a T {
+        let n = choices.len().max(1) as u32;
+        let idx = (encounter.roll(&Dice::new(1, n)) - 1) as usize;
+        &choices[idx.min(choices.len() - 1)]
+    }
+
+    /// Drop a creature that is on nobody's side but its own — as close
+    /// to nobody's side as this engine has, which is the waver's
+    /// enemies. See [`WAND_OF_WONDER_TABLE`] on why a third team was
+    /// rejected.
+    ///
+    /// It appears *"in an unoccupied space as close to the chosen point
+    /// of origin as possible"*, so the search is anchored on the point
+    /// rather than on the waver — which is the opposite of every other
+    /// summon in the engine and the reason this does not go through
+    /// `spawn_adjacent_summons`.
+    fn summon_interloper(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        point: Coordinate,
+        template: &'static std::sync::LazyLock<crate::actors::actor_template::CreatureTemplate>,
+        size: crate::engine::types::Size,
+    ) {
+        let Some(waver_team) = encounter.actors.get(&caster_id).map(|a| a.team()) else {
+            return;
+        };
+        // Whoever the waver is already fighting, or the next team along
+        // when they are not fighting anybody yet.
+        let team = encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter_map(|id| encounter.actors.get(&id))
+            .map(|a| a.team())
+            .find(|t| *t != waver_team)
+            .unwrap_or(waver_team + 1);
+        let Some(anchor) = encounter.find_spawn_near(point, size, Self::INTERLOPER_SEARCH) else {
+            encounter.log("  …and finds nowhere to stand.".to_string());
+            return;
+        };
+        match encounter.instantiate_creature(template, anchor, team, Self::INTERLOPER_BAND) {
+            Ok(new_id) => encounter.log(format!(
+                "  a {} appears at {} (actor #{}), on nobody's side but its own.",
+                template.name.to_lowercase(),
+                anchor,
+                new_id
+            )),
+            Err(e) => encounter.log(format!("  …and fails to arrive: {}", e)),
+        }
+    }
+
+    /// How far from the chosen point to look for room. Wider than the
+    /// summon lane's 3–4 because the point is wherever the waver aimed,
+    /// which may be the middle of a wall.
+    const INTERLOPER_SEARCH: isize = 6;
+    /// First instance id of the wand's band. The summon items claim 200
+    /// and up; this sits clear of them.
+    const INTERLOPER_BAND: usize = 300;
+}
+
+pub const WAND_OF_WONDER_NAME: &str = "Wand of Wonder";
+
+/// Wave the Wand of Wonder at a point and find out. See
+/// [`WandOfWonderItem`].
+pub static WAVE_WAND_OF_WONDER: WandOfWonderItem = WandOfWonderItem {
+    action_name: "wave wand of wonder",
+    action_aliases: &["wonder", "wand of wonder"],
+    item_name: WAND_OF_WONDER_NAME,
+    billing: ItemUseBilling::Charges(1),
+    table: WAND_OF_WONDER_TABLE,
+};

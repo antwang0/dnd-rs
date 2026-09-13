@@ -19065,6 +19065,29 @@ impl EncounterInstance {
             .or_else(|| self.closest_spawn_facing(loc, size, radius, threat, true))
     }
 
+    /// The closest legal anchor for a `size` footprint within `radius`
+    /// of a **tile** — RAW's *"appears in an unoccupied space as close
+    /// to the chosen point of origin as possible"*.
+    ///
+    /// The sibling of `find_adjacent_spawn` one method up, and the
+    /// difference is what the search is anchored on. Every summon in the
+    /// engine until now came out of the summoner, so that one starts at
+    /// a creature and leans the tie toward whatever it is fighting. A
+    /// Wand of Wonder's interloper comes out of the *point the wand was
+    /// aimed at*, which is a tile with no team and nothing to face —
+    /// hence no `threat` to break ties with, and the same
+    /// hazard-tolerating second pass, because a body that can only fit
+    /// in a fire is still better than no body.
+    pub fn find_spawn_near(
+        &self,
+        origin: Coordinate,
+        size: Size,
+        radius: isize,
+    ) -> Option<Coordinate> {
+        self.closest_spawn_facing(origin, size, radius, None, false)
+            .or_else(|| self.closest_spawn_facing(origin, size, radius, None, true))
+    }
+
     /// The half of `find_adjacent_spawn` that actually walks: the
     /// closest legal anchor for a `size` footprint within `radius` of
     /// `origin`, ties broken toward `threat`.

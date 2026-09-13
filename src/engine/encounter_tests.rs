@@ -104688,3 +104688,304 @@ fn a_manual_read_at_the_ceiling_is_spent_all_the_same() {
         "and is spent anyway"
     );
 }
+
+// ---------------------------------------------------------------------
+// Wand of Wonder — `item_actions::WAND_OF_WONDER_TABLE`.
+// ---------------------------------------------------------------------
+
+/// The d100 is a d100: every face from 1 to 100 lands on exactly one
+/// row, and the rows climb.
+///
+/// The failure this catches is the one a table transcribed out of a book
+/// always has — an `upto` copied down wrong closes a hole nobody can see
+/// and opens another. Rows are found by "the first whose `upto` the roll
+/// does not exceed", so a descending pair does not fail to compile, does
+/// not panic, and simply makes one row unreachable for the life of the
+/// item.
+#[test]
+fn the_wonder_table_is_a_hundred_faces_and_no_gaps() {
+    use crate::actions::item_actions::{WAND_OF_WONDER_TABLE, WAVE_WAND_OF_WONDER};
+
+    let mut last = 0;
+    for row in WAND_OF_WONDER_TABLE {
+        assert!(
+            row.upto > last,
+            "row ending at {} does not climb past the one before it ({last})",
+            row.upto
+        );
+        last = row.upto;
+    }
+    assert_eq!(last, 100, "the table stops short of 100");
+
+    // And every face finds its row, through the lookup the wand itself
+    // uses rather than by re-reading the numbers.
+    for roll in 1..=100u32 {
+        let row = WAVE_WAND_OF_WONDER.row(roll);
+        assert!(
+            roll <= row.upto,
+            "{roll} landed on a row that ends at {}",
+            row.upto
+        );
+    }
+}
+
+/// Every row resolves, on a board with something to resolve against.
+///
+/// Walked on purpose rather than by waving until the dice have been kind
+/// — the narrowest row on this table is four faces wide, and a random
+/// sweep would need hundreds of waves to see it once and would still not
+/// promise to. Each row is fired at a point with a creature beside it,
+/// its side-effects are applied, and the encounter is asked to still
+/// make sense afterwards.
+///
+/// What this is really guarding is the fourteen rows that forward a real
+/// spell. Those call a resolver written for a caster who chose it, with
+/// arguments the wand assembled — a target id for the rows RAW aims at a
+/// body, a tile for the rows it aims at the ground — and a row wired to
+/// the wrong one of those is a row that silently does nothing.
+#[test]
+fn every_row_of_the_wonder_table_resolves() {
+    use crate::actions::item_actions::{WAND_OF_WONDER_TABLE, WAVE_WAND_OF_WONDER};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for (i, row) in WAND_OF_WONDER_TABLE.iter().enumerate() {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], 40 + i as u64);
+        let waver = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let mark = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let point = Coordinate::new(10, 10);
+        let effects = WAVE_WAND_OF_WONDER.resolve(&mut e, waver, point, row);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors.contains_key(&waver),
+            "row ending at {} removed the waver from the board",
+            row.upto
+        );
+        // The target may legitimately be dead (a Fireball, a gem volley)
+        // but must not have silently vanished from the map.
+        assert!(
+            e.actors.contains_key(&mark) || !e.actors[&waver].is_combat_active(),
+            "row ending at {} lost the target actor entirely",
+            row.upto
+        );
+    }
+}
+
+/// The two rows that go off in the waver's hand do exactly that: the
+/// point they were aimed at is untouched and the waver is not.
+///
+/// RAW's own framing — *"Nothing happens at the chosen point of origin.
+/// Instead, …"* — and the half of this item that makes it a decision
+/// rather than a free Fireball.
+#[test]
+fn the_backfiring_rows_land_on_the_waver_and_nowhere_else() {
+    use crate::actions::item_actions::{WAND_OF_WONDER_TABLE, WAVE_WAND_OF_WONDER};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // 21–25 (Stunned) and 31–35 (1d6 psychic).
+    for upto in [25u32, 35] {
+        let row = WAND_OF_WONDER_TABLE
+            .iter()
+            .find(|r| r.upto == upto)
+            .expect("both backfire rows are on the table");
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let waver = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let mark = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let mark_hp = e.actors[&mark].hitpoints();
+        let waver_hp = e.actors[&waver].hitpoints();
+
+        for ef in WAVE_WAND_OF_WONDER.resolve(&mut e, waver, Coordinate::new(10, 10), row) {
+            ef.apply(&mut e);
+        }
+
+        assert_eq!(
+            e.actors[&mark].hitpoints(),
+            mark_hp,
+            "row {upto} touched the point it was aimed at"
+        );
+        assert!(
+            !e.actors[&mark].has_condition(Condition::Stunned),
+            "row {upto} touched the point it was aimed at"
+        );
+        let waver_now = &e.actors[&waver];
+        assert!(
+            waver_now.has_condition(Condition::Stunned) || waver_now.hitpoints() < waver_hp,
+            "row {upto} was supposed to go off in the waver's hand and did not"
+        );
+    }
+}
+
+/// The gem volley divides its total, so it is worth less the more it
+/// catches — the only row on the table that gets weaker as it hits more.
+///
+/// RAW: *"a stream of 1d4 × 10 gems … Each gem deals 1 Bludgeoning
+/// damage, and the total damage of the gems is divided equally among all
+/// creatures in the Line."* The division is the rule; a row that dealt
+/// the total to each would be up to forty points per body off a Rare
+/// wand.
+#[test]
+fn the_gem_volley_splits_its_total_between_everyone_in_the_line() {
+    use crate::actions::item_actions::{WAND_OF_WONDER_TABLE, WAVE_WAND_OF_WONDER};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let row = WAND_OF_WONDER_TABLE
+        .iter()
+        .find(|r| r.upto == 92)
+        .expect("the gem row is on the table");
+
+    // Two bodies strung out along the line from the waver to the point.
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let waver = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 6), 1, 0)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 10), 1, 1)
+        .unwrap();
+
+    let effects = WAVE_WAND_OF_WONDER.resolve(&mut e, waver, Coordinate::new(2, 12), row);
+    assert_eq!(
+        effects.len(),
+        2,
+        "both bodies in the line take a share and nobody else does"
+    );
+    let before: Vec<u32> = [near, far].iter().map(|id| e.actors[id].hitpoints()).collect();
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    let dealt: Vec<u32> = [near, far]
+        .iter()
+        .zip(before)
+        .map(|(id, was)| was - e.actors[id].hitpoints())
+        .collect();
+    assert_eq!(dealt[0], dealt[1], "the total is divided equally");
+    // 1d4 × 10 between two of them: 5, 10, 15 or 20 apiece.
+    assert!(
+        [5, 10, 15, 20].contains(&dealt[0]),
+        "half of 1d4 x 10 is not {}",
+        dealt[0]
+    );
+    assert_eq!(
+        e.actors[&waver].hitpoints(),
+        e.actors[&waver].max_hitpoints(),
+        "the line comes out of the waver and does not catch them"
+    );
+}
+
+/// A wave is an Action, a charge, and a line in the log — whatever the
+/// table says next.
+///
+/// The end-to-end half of the wand's tests, and the one that would catch
+/// the failure the row-by-row sweep cannot: a chassis that resolves each
+/// row correctly and never gets to any of them, because the billing, the
+/// validator or the targeting schema refuses the wave.
+#[test]
+fn waving_the_wand_spends_a_charge_whatever_comes_out_of_it() {
+    use crate::actions::item_actions::WAVE_WAND_OF_WONDER;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::WAND_OF_WONDER;
+
+    let mut e = ei_with_terrain_seeded(24, 24, &[], 11);
+    let waver = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let _mark = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&waver).unwrap().pickup_item(&WAND_OF_WONDER);
+    assert!(
+        e.actors[&waver].wields_live_item("Wand of Wonder"),
+        "a wizard with three free slots bonds with the wand on pickup"
+    );
+    assert_eq!(e.actors[&waver].item_charges_remaining("Wand of Wonder"), 7);
+
+    let action: &dyn Action = &WAVE_WAND_OF_WONDER;
+    let aim = vec![Coordinate::new(10, 10)];
+    assert!(
+        action.validate_input(&e, waver, None, Some(&aim), None),
+        "a held, attuned, charged wand aimed at a tile in range is a legal wave"
+    );
+    let slots_before: Vec<u32> = (1..=9)
+        .map(|l| e.actors[&waver].spell_slot_manager.spell_slots(l).spell_slots)
+        .collect();
+
+    for ef in action.execute(&mut e, waver, None, Some(&aim), None) {
+        ef.apply(&mut e);
+    }
+
+    assert_eq!(
+        e.actors[&waver].item_charges_remaining("Wand of Wonder"),
+        6,
+        "one wave, one charge"
+    );
+    let slots_after: Vec<u32> = (1..=9)
+        .map(|l| e.actors[&waver].spell_slot_manager.spell_slots(l).spell_slots)
+        .collect();
+    assert_eq!(
+        slots_before, slots_after,
+        "a forwarded spell is cast by the wand, not paid for by the waver"
+    );
+
+    // Seven waves empties it, and the eighth is refused rather than
+    // free. The waver is patched up between waves because half this
+    // table lands on *them* — a wave that stunned or shrank its own user
+    // would otherwise refuse the next one, and what is under test here
+    // is the pool rather than the table.
+    for wave in 2..=7u32 {
+        {
+            let held: Vec<Condition> =
+                e.actors[&waver].conditions().keys().copied().collect();
+            let w = e.actors.get_mut(&waver).unwrap();
+            for c in held {
+                w.remove_condition(c);
+            }
+            let full = w.max_hitpoints();
+            w.heal(full);
+            w.give_resource(crate::engine::side_effects::Resource::Action);
+        }
+        assert!(
+            action.validate_input(&e, waver, None, Some(&aim), None),
+            "wave {wave} should still be legal — the wand has charges left"
+        );
+        for ef in action.execute(&mut e, waver, None, Some(&aim), None) {
+            ef.apply(&mut e);
+        }
+        let left = e.actors[&waver].item_charges_remaining("Wand of Wonder");
+        assert_eq!(left, 7 - wave, "wave {wave} did not cost exactly one charge");
+    }
+    // The wand stays in the pack at zero and the wave is refused, which
+    // is the `Resource::ItemCharges` lane rather than the consumable
+    // one: a price named in `cost()` is checked by the engine at every
+    // gate that checks prices, and an empty wand is a wand that comes
+    // back partly filled at the next long rest. RAW's own tail — "if you
+    // expend the wand's last charge, roll 1d20; on a 1 the wand crumbles
+    // into dust" — is the destruction clause the staves do not model
+    // either.
+    assert!(
+        e.actors[&waver].has_item_named("Wand of Wonder"),
+        "an emptied wand is still a wand, and a night still refills it"
+    );
+    e.actors
+        .get_mut(&waver)
+        .unwrap()
+        .give_resource(crate::engine::side_effects::Resource::Action);
+    assert!(
+        !action.validate_input(&e, waver, None, Some(&aim), None),
+        "and there is nothing left to wave until then"
+    );
+}

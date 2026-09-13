@@ -6453,6 +6453,36 @@ pub static ROD_OF_ALERTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Wand of Wonder** (Wand, Rare, requires attunement) — *"This wand
+/// has 7 charges. While holding it, you can take a Magic action to
+/// expend 1 charge while choosing a point within 120 feet of yourself.
+/// That location becomes the point of origin of a spell or other magical
+/// effect determined by rolling on the Wand of Wonder Effects table."*
+///
+/// The only item in the book whose rule is a hundred-row table, and the
+/// only thing on the loot shelf where *what the holder wanted* is not an
+/// input. Every other wand in the file is one spell at a charge price;
+/// this one is a decision to find out.
+///
+/// It is a Rare that a party will argue about, which is the point of
+/// having it: about a fifth of the table goes off in the waver's hand
+/// and about a fifth is a Fireball or a Lightning Bolt they did not have
+/// to pay a slot for. That makes it the item somebody reaches for when
+/// the fight is already lost, and the one nobody touches while it is
+/// going well — a texture nothing else in the pool has.
+///
+/// See [`crate::actions::item_actions::WAND_OF_WONDER_TABLE`] for the
+/// eighteen rows, which four are not modelled, and why.
+pub static WAND_OF_WONDER: Item = Item {
+    name: crate::actions::item_actions::WAND_OF_WONDER_NAME,
+    glyph: 'w',
+    charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
+    on_use: &[&crate::actions::item_actions::WAVE_WAND_OF_WONDER],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Rod of Absorption** (Rod, Very Rare) — *"While holding this rod,
 /// you can take a Reaction to absorb a spell that is targeting only you
 /// and doesn't create an area of effect. The absorbed spell's effect is
@@ -7712,6 +7742,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &IOUN_STONE_OF_ABSORPTION,
     &IOUN_STONE_OF_GREATER_ABSORPTION,
     &ROD_OF_ABSORPTION,
+    // And the wand that is the opposite of all three of them: a Rare
+    // nobody can aim. One entry, the same weight as the absorbing
+    // family, because a table this wide wants to be a thing that happens
+    // to a party once rather than a tool they learn to use.
+    &WAND_OF_WONDER,
     // The headband, beside the Ioun Stone of Intellect it is the other
     // reading of: a floor rather than a bonus, and Uncommon rather than
     // Very Rare, so it is the one a first-room party can actually find.
