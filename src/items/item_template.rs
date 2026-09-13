@@ -5089,8 +5089,13 @@ pub static NINE_LIVES_STEALER: Item = Item {
     },
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::NineLivesStealing],
-    // RAW's `1d8 + 1`, at its average. No `recharge`: the sword is the
-    // one charge-bearing item in the file that does not come back.
+    // RAW's `1d8 + 1`, at its average. No `recharge`: "when the weapon
+    // has no charges remaining, it loses this property" is the end of
+    // RAW's sentence, so the sword keeps its `+2` and stops stealing
+    // lives, for good. It was the only charge-bearing item in the file
+    // that did not come back when this comment was written; there are
+    // four now, and `every_pool_on_the_loot_table_says_whether_a_night_refills_it`
+    // is where the four are listed with their reasons.
     charges: 5,
     requires_attunement: true,
     ..Item::DEFAULTS
@@ -6239,14 +6244,18 @@ pub static DRAGON_SCALE_MAILS: &[&Item] = &[
 /// makes it worth a slot on a board with a ledge, a chokepoint, or a
 /// caster who has just walked into melee.
 ///
-/// **Charges with no `recharge`**, which nothing else in the file has,
-/// and it is RAW rather than an oversight. Every other pool here is a
-/// *"regains 1d6+1 expended charges daily at dawn"*; the fan's sentence
-/// is a fuse instead — a cumulative one-in-five chance of tearing, which
+/// **Charges with no `recharge`**, and it is RAW rather than an
+/// oversight. Almost every pool in the file is a *"regains 1d6+1
+/// expended charges daily at dawn"*; the fan's sentence is a fuse
+/// instead — a cumulative one-in-five chance of tearing, which
 /// integrates to about two and a half uses and then tatters. A pool that
 /// does not come back is exactly that ending, and the item is left in
-/// the pack as the rags RAW says it becomes. See
-/// `item_actions::WIND_FAN_GUST`.
+/// the pack as the rags RAW says it becomes.
+///
+/// Two items were already on that lane and neither is this shape: the
+/// Nine Lives Stealer stops working and stays a sword, and the Potion of
+/// Fire Breath is drunk to nothing in three breaths. Both run out
+/// because their holder spent them. See `item_actions::WIND_FAN_GUST`.
 pub static WIND_FAN: Item = Item {
     name: crate::actions::item_actions::WIND_FAN_NAME,
     glyph: 'v',
@@ -6318,9 +6327,9 @@ pub static TRIDENT_OF_FISH_COMMAND: Item = Item {
 /// attunement) — four spells, a resistance and a torch, off one pool of
 /// gems.
 ///
-/// The widest single item in the file, and the only non-staff with a
-/// four-row menu. What the helm sells is *choice at one price*: every
-/// gem costs the same and they buy completely different turns — a
+/// Three lanes and a menu on one hat, which is a shape nothing outside
+/// the staff shelf has. What the helm sells is *choice at one price*:
+/// every gem costs the same and they buy completely different turns — a
 /// Fireball, a 7th-level Prismatic Spray, a wall, or a lamp that burns
 /// magical darkness out of the room. A fighter wearing this makes
 /// exactly the decision a wizard makes with a slot, which is the thing
@@ -6356,10 +6365,12 @@ pub static TRIDENT_OF_FISH_COMMAND: Item = Item {
 /// one clause of one item is the wrong trade today, and the clause is
 /// written down here rather than lost.
 ///
-/// **No `recharge`**, which it shares with the Wind Fan and nothing
-/// else: RAW's gems are pried out and destroyed, and *"when all the gems
-/// are removed or destroyed, the helm loses its magic."* A spent helm is
-/// a hat.
+/// **No `recharge`**: RAW's gems are pried out and destroyed, and *"when
+/// all the gems are removed or destroyed, the helm loses its magic."* A
+/// spent helm is a hat. It is the fourth entry on that lane, after the
+/// Nine Lives Stealer, the Potion of Fire Breath and the Wind Fan, and
+/// the only one whose ending is spread across four different things to
+/// spend it on.
 pub static HELM_OF_BRILLIANCE: Item = Item {
     name: crate::actions::item_actions::HELM_OF_BRILLIANCE_NAME,
     glyph: 'h',
@@ -6384,12 +6395,12 @@ pub static HELM_OF_BRILLIANCE: Item = Item {
 /// **Oil of Slipperiness** (Potion, Uncommon) — a 10-foot square of
 /// Grease, poured out of a vial by somebody who cannot cast.
 ///
-/// The cheapest piece of *terrain* on the loot table. Everything else a
-/// party can throw at the floor is a damage area or a save-or-condition;
-/// this is ground that stays difficult, catches whoever walks into it,
-/// and does not care whose side they are on — which makes *where* it
-/// goes the whole decision, exactly as it is for the wizard who casts
-/// the spell.
+/// One of two Uncommons that put *ground* on the board rather than an
+/// effect on a creature — the Eversmoking Bottle is the other, and the
+/// two are opposites: smoke blinds everyone inside it and grease trips
+/// everyone who walks into it. Both are zones that do not care whose
+/// side anybody is on, which is what makes *where* they go the whole
+/// decision, exactly as it is for the wizard who casts them.
 ///
 /// See `item_actions::POUR_OIL_OF_SLIPPERINESS` for why this is the
 /// first consumable in the engine that casts the real spell instead of a
@@ -6402,15 +6413,16 @@ pub static OIL_OF_SLIPPERINESS: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Decanter of Endless Water** (Wondrous item, Uncommon) — the only
-/// at-will control effect on the loot table.
+/// **Decanter of Endless Water** (Wondrous item, Uncommon) — the at-will
+/// nobody has to attune to.
 ///
-/// Every other way an item knocks something down is a charge, a scroll
-/// or a one-shot. RAW writes no limit on the decanter at all, so this is
-/// a DC 13 Strength save *every round, forever*, out of a flask that
-/// wants no attunement slot and cannot run dry — which makes a common
-/// bottle the most repeatable thing a party can be carrying, and the
-/// closest a martial chassis gets to a control cantrip.
+/// The Ring of Telekinesis and the Rope of Entanglement are the file's
+/// other two at-will control items, and both are Rare and both want an
+/// attunement slot. This is an Uncommon that wants neither: a DC 13
+/// Strength save *every round, forever*, out of a flask that cannot run
+/// dry — which makes it the closest a martial chassis gets to a control
+/// cantrip, and the only one of the three a party can be holding in the
+/// first room.
 ///
 /// See `item_actions::AIM_DECANTER_GEYSER` for why the geyser is a
 /// single target rather than a line, and for the 1d4 that is dropped.
@@ -6460,10 +6472,11 @@ pub static CUBE_OF_FORCE: Item = Item {
 /// **Iron Flask** (Wondrous item, Legendary) — one save, and the
 /// creature is gone.
 ///
-/// The top of the engine's "off the board and not dead" ladder, above
-/// the Scroll of Banishment's DC 15 and the Wand of Binding beside it.
-/// Three points of DC is most of a monster's Wisdom save, and this is
-/// the only thing on the table that asks for them.
+/// The top of the engine's "off the board and not dead" ladder. There
+/// are exactly three items on it — this, the Scroll of Banishment and
+/// the Mirror of Life Trapping below — and this is the one that asks DC
+/// 17 where the other two ask 15. Two points of DC is a tenth of every
+/// Wisdom save a monster will ever roll against it.
 ///
 /// Deliberately **no attunement**, which RAW is explicit about and which
 /// is the whole reason a party would carry one: the flask is the answer
@@ -6506,7 +6519,7 @@ pub static MIRROR_OF_LIFE_TRAPPING: Item = Item {
 
 /// **Talisman of Ultimate Evil** (Wondrous item, Legendary, requires
 /// attunement) — the Talisman of Pure Good's opposite number, and the
-/// only item in the file whose headline clause is *death*.
+/// only item in the file whose *Action* is a save-or-die.
 ///
 /// The two talismans arrived a long batch apart and are deliberately not
 /// mirror images. Pure Good is a flat defensive stack — `+1` AC and `+2`
@@ -6659,9 +6672,10 @@ pub static QUARTERSTAFF_OF_THE_ACROBAT: Item = Item {
 /// feet. Invisible creatures and objects are visible as long as they are
 /// in the lantern's Bright Light."*
 ///
-/// The brightest thing a party can carry — three times the Torch's ring
-/// — and the only light on the table that answers a *concealment*
-/// question as well as a visibility one. On a dark board that is two
+/// The brightest thing a party can carry — half as far again as a Torch
+/// in every direction, twelve tiles of bright light against eight — and
+/// the only light on the table that answers a *concealment* question as
+/// well as a visibility one. On a dark board that is two
 /// problems solved by one pickup, and the lantern asks for no attunement
 /// slot to do it.
 ///

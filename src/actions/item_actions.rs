@@ -8177,16 +8177,25 @@ pub static CIRCLET_OF_BLASTING_RAY: crate::actions::staves::StaffSpell =
 /// works, the second fails one time in five, the third two in five, and
 /// the chance climbs until the sixth use cannot work. Integrate that and
 /// a fan is worth two and a half casts before it is rags, which is
-/// `Item::charges` of 3 and no `recharge` — the first item in the file
-/// with a pool and nothing to refill it, and the only honest way to
-/// spell "this object has an ending" in an engine whose clock is one
-/// dungeon long.
+/// `Item::charges` of 3 and no `recharge` — the honest way to spell
+/// "this object has an ending" in an engine whose clock is one dungeon
+/// long.
+///
+/// It is the third item on that lane rather than the first. The Nine
+/// Lives Stealer keeps existing and stops working, and the Potion of
+/// Fire Breath stops existing after three breaths; what the fan adds is
+/// an ending nobody chose — the other two run out when their holder
+/// spends them, and RAW's fan comes apart in your hands.
 ///
 /// What it throws is `spells::GUST_OF_WIND`: a 60-foot line, a Strength
-/// save, and fifteen feet of push on a failure. No damage, which makes
-/// the fan the only thing on the loot table that a chassis with no spell
-/// list can use to *move* an enemy — off a ledge, out of a chokepoint,
-/// or simply out of reach of the character it was about to bite.
+/// save, and fifteen feet of push on a failure — and **no damage at
+/// all**, which is what separates it from the two other things on the
+/// table that move a creature. The Ring of the Ram pushes five feet as a
+/// rider on 2d10 of force, and the Ring of Telekinesis lifts and holds;
+/// the fan is a shove with nothing attached, which is why it is the one
+/// a party reaches for when the point is the ledge rather than the
+/// hit — or the chokepoint, or simply getting something out of reach of
+/// the character it was about to bite.
 ///
 /// RAW's flat *"save DC 13"* is the chassis's standing divergence: the
 /// spell rolls the holder's own DC, so a wizard's fan blows harder than
@@ -8285,9 +8294,10 @@ pub static TRIDENT_OF_FISH_COMMAND_DOMINATE: crate::actions::staves::StaffSpell 
 /// like — and the helm is not a staff, which is the point of it being
 /// here. RAW's gems are the pool: `Item::charges` is the helmet's
 /// remaining stones, each spell costs one, and a helm whose gems are
-/// spent *"loses its magic"*, which is why it carries no `recharge`. The
-/// Wind Fan above is the other item in the file with an ending; this one
-/// has four different ways to spend it.
+/// spent *"loses its magic"*, which is why it carries no `recharge`. It
+/// joins the Wind Fan above and the two older entries on that lane;
+/// what is its own is that it has four different ways to spend the
+/// ending.
 ///
 /// The spread is the whole item. Daylight is a lamp and a counter to
 /// magical darkness, Fireball is the most efficient damage on the loot
@@ -8395,11 +8405,14 @@ pub static KINDLE_HELM_OF_BRILLIANCE: KindleWeapon = KindleWeapon {
 /// way, or if you are no longer in Dim Light or Darkness, you lose this
 /// Fly Speed."*
 ///
-/// The first action in the engine whose gate is **how bright it is where
-/// you are standing**. Every other flight on the loot table — the Broom,
-/// the Winged Boots, the Wings of Flying, the Carpet — is on the moment
-/// it is picked up or drunk, and this one asks the board a question
-/// first: `light_at` the wearer's own tile, and a refusal in the sun.
+/// The first thing in the engine gated on **how bright it is where its
+/// user is standing**. `spells::CONTINUAL_FLAME` already refuses a tile
+/// that is bright enough not to want a flame, but it asks about the
+/// place it is aimed at; this asks about the wearer's own square, which
+/// is a different question and the one RAW puts on the cloak. Every
+/// other flight on the loot table — the Broom, the Winged Boots, the
+/// Wings of Flying, the Carpet — is on the moment it is picked up or
+/// drunk, and this one asks the board first and refuses in the sun.
 ///
 /// That gate is the item. A Rare cloak that flew anywhere would be the
 /// Wings of Flying with an extra sentence of Stealth on top, strictly
@@ -8936,13 +8949,15 @@ pub static POUR_OIL_OF_SLIPPERINESS: crate::actions::staves::StaffSpell =
 /// your choice in the Line must succeed on a DC 13 Strength saving
 /// throw or take 1d4 Bludgeoning damage and have the Prone condition."*
 ///
-/// The only **at-will** control effect on the loot table. Every other
-/// way an item knocks something down or shuts it up is a charge, a
-/// scroll or a one-shot; RAW writes no limit on this at all — you
-/// unstopper the flask, you say the word, and you can say it again next
-/// turn and the turn after that. `ItemUseBilling::Free` is what that
-/// looks like, and it makes an Uncommon flask the most *repeatable*
-/// thing a party can be carrying.
+/// The **cheapest** at-will control effect on the loot table, and the
+/// first that is not Rare. The Ring of Telekinesis and the Rope of
+/// Entanglement got there first and are the other two: RAW writes no
+/// limit on any of the three, so all three are `ItemUseBilling::Free`
+/// and all three can be used again next turn and the turn after that.
+/// What the flask adds is the tier — an Uncommon that wants no
+/// attunement slot, against a ring and a rope that are both Rare and
+/// both want one — which makes it the at-will a first-room party can
+/// actually be holding.
 ///
 /// Prone is worth more than it sounds against this engine's bestiary. It
 /// costs the target half its movement to stand back up, hands every
