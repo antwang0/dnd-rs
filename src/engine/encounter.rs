@@ -10049,6 +10049,170 @@ impl EncounterInstance {
         true
     }
 
+    /// Offer the interrupt to every enemy caster who knows Counterspell
+    /// and can see this one casting, and report whether one of them
+    /// landed it.
+    ///
+    /// SRD 5.2: *"Reaction, which you take when you see a creature
+    /// within 60 feet of yourself casting a spell … The creature makes a
+    /// Constitution saving throw. On a failed save, the spell dissipates
+    /// with no effect, and the action, Bonus Action, or Reaction used to
+    /// cast it is wasted. If that spell was cast with a spell slot, the
+    /// slot isn't expended."*
+    ///
+    /// **This is the spell.** `spells::COUNTERSPELL` used to be an
+    /// Action a caster spent on their own turn to strip a buff off a
+    /// concentrating enemy, under a docstring saying exactly why: *"we
+    /// don't have spell-cast triggers wired into the reaction bus"*, so
+    /// the interrupt was collapsed into a *"rip the buff"* effect. Three
+    /// things were wrong with the result and only the first is the
+    /// obvious one:
+    ///
+    ///   1. It was not Counterspell. It was Dispel Magic, which the
+    ///      engine also has, under a name that means something else.
+    ///   2. **Nothing ever cast it.** No AI rung picks it — the closest
+    ///      thing is the Subtle Spell gate, which looks for an opposing
+    ///      counterspeller and then goes on to assume that counterspeller
+    ///      will do something. It never would have. Eight stat blocks
+    ///      list the spell and not one of them has ever used it.
+    ///   3. So the whole anti-caster axis of the fight was missing. A
+    ///      party wizard could open with Hypnotic Pattern into a room of
+    ///      archmages and nothing on the board could say no.
+    ///
+    /// The bus turned out not to be needed. `Action::execute` is the one
+    /// place every spell in the game passes through and it knows the
+    /// school, the level and the targets before it builds a single
+    /// side-effect — which is the same chokepoint `try_absorb_spell`
+    /// hangs off, one method up.
+    ///
+    /// **What it is worth answering.** RAW lets a counterspeller stop
+    /// anything, including a cantrip. One that fires *automatically* has
+    /// to be told when not to, because there is no reaction window to
+    /// ask a player in — and the price is a level-3 slot whichever way
+    /// the save falls, so the policy is really "is this worth three".
+    /// Three things are:
+    ///
+    ///   - **a cast of level 3 or higher** — at least as expensive as
+    ///     the answer;
+    ///   - **anything harmful** — it is aimed at this side of the board,
+    ///     which is reason enough at any level;
+    ///   - **anything holding concentration** — a Haste, a Hypnotic
+    ///     Pattern, a Wall of Force. These are the casts that decide
+    ///     fights, and stopping one costs the caster the whole minute
+    ///     they were going to get out of it.
+    ///
+    /// What that leaves out is the cheap self-buff, and leaving it out
+    /// matters more than it sounds: **Shield** is a level-1 Reaction
+    /// every mage on the roster casts, and without this a counterspeller
+    /// would spend a third-level slot on each one until there were none
+    /// left for the Fireball. A cantrip is out for the same reason and
+    /// the same arithmetic.
+    ///
+    /// **Subtle Spell still walks past it**, which is the point of the
+    /// metamagic and was already checked in the old action's validator:
+    /// RAW's trigger is *"a spell with Verbal, Somatic, or Material
+    /// components"*, and a Subtle cast has none for anybody to see.
+    ///
+    /// Lowest id among those who could, which is `try_feather_fall`'s
+    /// tiebreak and every other board scan's.
+    pub fn try_counterspell(
+        &mut self,
+        caster_id: usize,
+        spell_name: &str,
+        school: Option<crate::engine::types::SpellSchool>,
+        level: u32,
+        harmful: bool,
+        holds_concentration: bool,
+    ) -> bool {
+        use crate::engine::side_effects::Resource;
+        if school.is_none() || level == 0 {
+            return false;
+        }
+        if level < Self::COUNTERSPELL_LEVEL && !harmful && !holds_concentration {
+            return false;
+        }
+        let Some(caster) = self.actors.get(&caster_id) else {
+            return false;
+        };
+        // The metamagic that is *about* this reaction. Read before
+        // anything else, because a cast nobody can perceive is not a
+        // cast anybody declines to answer.
+        if caster.has_condition(Condition::SubtleSpelling) {
+            return false;
+        }
+        let (caster_team, caster_loc, caster_span) = (
+            caster.team(),
+            caster.location(),
+            get_tiles_from_size(caster.size()),
+        );
+        let mut counterspeller: Option<usize> = None;
+        for (id, other) in self.actors.iter() {
+            if other.team() == caster_team
+                || !other.is_combat_active()
+                || other.find_action(Self::COUNTERSPELL_NAME).is_none()
+                || !other.can_consume_resource(Resource::Reaction)
+                || !other.can_consume_resource(Resource::SpellSlot(Self::COUNTERSPELL_LEVEL))
+            {
+                continue;
+            }
+            if footprint_chebyshev(
+                other.location(),
+                get_tiles_from_size(other.size()),
+                caster_loc,
+                caster_span,
+            ) > Self::COUNTERSPELL_RANGE
+                || !self.viewer_can_see(*id, caster_id)
+            {
+                continue;
+            }
+            if counterspeller.is_none_or(|best| *id < best) {
+                counterspeller = Some(*id);
+            }
+        }
+        let Some(counterspeller_id) = counterspeller else {
+            return false;
+        };
+        // The Reaction and the slot are spent whether or not the save
+        // holds — RAW's counterspell is a cast, and a cast that failed
+        // is still a cast.
+        let Some(interrupter) = self.actors.get_mut(&counterspeller_id) else {
+            return false;
+        };
+        interrupter.consume_resource(Resource::Reaction);
+        interrupter.consume_resource(Resource::SpellSlot(Self::COUNTERSPELL_LEVEL));
+        let dc = interrupter.spellcasting_save_dc();
+        let interrupter_name = interrupter.name().to_string();
+        let caster_name = self.actor_name(caster_id);
+        self.log(format!(
+            "[reaction] counterspell: {} reaches for {}'s {}.",
+            interrupter_name, caster_name, spell_name
+        ));
+        let save = self.roll_save_against_caster(
+            caster_id,
+            AbilityScoreType::Constitution,
+            dc,
+            counterspeller_id,
+        );
+        if save.passed() {
+            self.log(format!("  {} pushes the spell through.", caster_name));
+            return false;
+        }
+        self.log(format!(
+            "  {} dissipates with no effect — the slot is not spent.",
+            spell_name
+        ));
+        true
+    }
+
+    /// The action name `try_counterspell` looks for on a stat block —
+    /// the engine's way of asking "does this creature know the spell".
+    const COUNTERSPELL_NAME: &'static str = "counterspell";
+    /// RAW's slot: *"Level 3 Abjuration"*. The counterspeller pays it
+    /// whether the save holds or not.
+    const COUNTERSPELL_LEVEL: u32 = 3;
+    /// RAW's *"within 60 feet"*, in tiles.
+    const COUNTERSPELL_RANGE: isize = 24;
+
     /// True if a straight Bresenham line from `from` to `to` passes through
     /// only non-wall tiles between (exclusive of endpoints). Endpoints are
     /// not checked so callers can target the tile they currently occupy or

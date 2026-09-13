@@ -27641,13 +27641,21 @@ fn polymorph_transforms_target() {
     assert!(transformed, "polymorph never transformed the target");
 }
 
-/// Counterspell: invalid against a non-concentrating target, valid
-/// against one and yanks their concentration on cast.
+/// Counterspell answers a cast, not a buff — and it is the engine that
+/// takes the Reaction, at the moment RAW says to.
+///
+/// Two halves in one test because they are the same claim from both
+/// ends: nobody can *choose* Counterspell, and it fires anyway. The
+/// action's entry on a stat block is now only the record that this
+/// creature knows the spell, so it is refused at the validator, kept off
+/// the picker's list, and spent by `try_counterspell` when somebody
+/// casts within sixty feet of it.
 #[test]
-fn counterspell_only_targets_concentrating_enemies() {
-    use crate::actions::spells::{BLESS, COUNTERSPELL};
-    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+fn counterspell_is_the_engine_reaching_for_somebody_elses_cast() {
+    use crate::actions::spells::{COUNTERSPELL, HOLD_PERSON};
     use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
     let mut e = ei_with_terrain(15, 15, &[]);
     let wiz = e
         .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
@@ -27655,66 +27663,240 @@ fn counterspell_only_targets_concentrating_enemies() {
     let cler = e
         .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
-    // No concentration yet → invalid target.
+
+    // Nobody chooses it: refused at the validator and absent from the
+    // list the picker is built from, though the stat block still knows
+    // the spell.
     let tv = vec![cler];
     assert!(!COUNTERSPELL.custom_validate_input(&e, wiz, Some(&tv), None, None));
-    // Cleric casts Bless on itself → concentrating.
-    let bless_target = vec![cler];
-    let effects = BLESS.side_effects(&mut e, cler, Some(&bless_target), None, None);
-    for ef in effects {
-        ef.apply(&mut e);
+    assert!(
+        e.actors[&wiz].find_action("counterspell").is_some(),
+        "the wizard still knows the spell"
+    );
+    assert!(
+        !e.actors[&wiz]
+            .available_actions()
+            .iter()
+            .any(|a| a.name() == "counterspell"),
+        "…and is never offered it as something to do with a turn"
+    );
+
+    // Now the cleric casts at the wizard's side of the board, and the
+    // wizard answers. Sweep seeds so the Constitution save lands both
+    // ways at least once — the spell that got through and the spell that
+    // did not are both outcomes this has to produce.
+    let mut countered = 0;
+    let mut through = 0;
+    for seed in 0..24u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let cler = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let slots_before = e.actors[&cler].spell_slot_manager.spell_slots(2).spell_slots;
+        let wiz_slots_before = e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots;
+        e.actors
+            .get_mut(&cler)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+
+        for ef in HOLD_PERSON.execute(&mut e, cler, Some(&vec![wiz]), None, None) {
+            ef.apply(&mut e);
+        }
+
+        let wiz_slots_after = e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots;
+        assert_eq!(
+            wiz_slots_after,
+            wiz_slots_before - 1,
+            "the counterspeller pays their slot whether or not the save holds"
+        );
+        assert!(
+            !e.actors[&wiz]
+                .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+            "…and their Reaction"
+        );
+        let cler_slots_after = e.actors[&cler].spell_slot_manager.spell_slots(2).spell_slots;
+        // Classified off the log rather than off whether the cleric's
+        // spell landed: a Hold Person can fail on its own target's
+        // Wisdom save, which is a spell that got through and did
+        // nothing — not a spell that was stopped.
+        let stopped = e
+            .messages()
+            .iter()
+            .any(|m| m.contains("dissipates with no effect"));
+        if stopped {
+            countered += 1;
+            assert_eq!(
+                cler_slots_after, slots_before,
+                "a countered spell keeps its slot — RAW's own clause"
+            );
+            assert!(
+                !e.actors[&wiz].has_condition(Condition::Stunned),
+                "a countered spell has no effect at all"
+            );
+        } else {
+            through += 1;
+            assert_eq!(
+                cler_slots_after,
+                slots_before - 1,
+                "a spell that got through was paid for"
+            );
+        }
     }
-    assert!(e.actors[&cler].is_concentrating());
-    assert!(COUNTERSPELL.custom_validate_input(&e, wiz, Some(&tv), None, None));
-    // Casting Counterspell strips the concentration.
-    let effects = COUNTERSPELL.side_effects(&mut e, wiz, Some(&tv), None, None);
-    for ef in effects {
-        ef.apply(&mut e);
-    }
-    assert!(!e.actors[&cler].is_concentrating());
+    assert!(countered > 0, "no seed produced a landed counterspell");
+    assert!(through > 0, "no seed produced a spell that got through");
 }
 
-/// Subtle Spell: a sorcerer with the SubtleSpelling prime up cannot
-/// be Counterspelled even when they're concentrating on a
-/// dispellable buff. Validates the Subtle Spell rider in
-/// `Counterspell::custom_validate_input`.
+/// A counterspeller with nothing left to spend does not answer, and a
+/// cantrip is never worth answering.
+///
+/// The policy half of the reaction, and the one that has to be a policy
+/// because there is no window to ask a player in: RAW would let a
+/// counterspeller stop a Fire Bolt, and one that fires automatically
+/// would spend a level-3 slot doing it until the slots were gone.
 #[test]
-fn subtle_spell_blocks_counterspell_against_concentrating_caster() {
-    use crate::actions::spells::{BLESS, COUNTERSPELL};
+fn the_counterspeller_keeps_its_slot_for_something_worth_it() {
+    use crate::actions::spells::{FIRE_BOLT, HOLD_PERSON};
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+    let cler = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&cler)
+        .unwrap()
+        .give_resource(crate::engine::side_effects::Resource::Action);
+
+    // A cantrip goes past untouched.
+    for ef in FIRE_BOLT.execute(&mut e, cler, Some(&vec![wiz]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&wiz].can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+        "a cantrip is not worth a level-3 slot and the wizard keeps its Reaction"
+    );
+
+    // Drain the wizard's level-3 slots; the leveled spell then lands.
+    {
+        let w = e.actors.get_mut(&wiz).unwrap();
+        while w.can_consume_resource(crate::engine::side_effects::Resource::SpellSlot(3)) {
+            w.spell_slot_manager.consume_spell_slot(3);
+        }
+        let c = e.actors.get_mut(&cler).unwrap();
+        c.give_resource(crate::engine::side_effects::Resource::Action);
+    }
+    let slots_before = e.actors[&cler].spell_slot_manager.spell_slots(2).spell_slots;
+    for ef in HOLD_PERSON.execute(&mut e, cler, Some(&vec![wiz]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&cler].spell_slot_manager.spell_slots(2).spell_slots,
+        slots_before - 1,
+        "an empty counterspeller cannot answer, so the cast is paid for and resolves"
+    );
+    assert!(
+        e.actors[&wiz].can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+        "and their Reaction is still there — nothing was spent on nothing"
+    );
+}
+
+/// The cheap self-buff goes unanswered, and Shield is why.
+///
+/// A counterspeller that fires automatically pays a level-3 slot
+/// whichever way the save falls, so it has to be told what is worth
+/// three. `spells::SHIELD` is a level-1 Reaction every mage on the
+/// roster casts; without the policy a counterspeller would spend a
+/// third-level slot on each one until there was nothing left for the
+/// Fireball.
+#[test]
+fn a_counterspeller_does_not_answer_a_level_one_self_buff() {
+    use crate::actions::spells::{MAGE_ARMOR, SHIELD};
+    use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for spell in [&*SHIELD as &dyn Action, &*MAGE_ARMOR as &dyn Action] {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let sorc = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        {
+            let s = e.actors.get_mut(&sorc).unwrap();
+            s.give_resource(crate::engine::side_effects::Resource::Action);
+            s.give_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+        let before = e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots;
+        let targets = vec![sorc];
+        for ef in spell.execute(&mut e, sorc, Some(&targets), None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots,
+            before,
+            "{} is not worth a level-3 slot and should have gone unanswered",
+            spell.name()
+        );
+    }
+}
+
+/// Subtle Spell walks past the reaction, which is what the metamagic is
+/// for — RAW's trigger is *"a spell with Verbal, Somatic, or Material
+/// components"* and a Subtle cast has none of them.
+///
+/// The AI has been gating Subtle Spell on the presence of an opposing
+/// counterspeller since before there was a counterspeller that did
+/// anything; this is the first test in which that gate is about a real
+/// threat.
+#[test]
+fn subtle_spell_walks_past_the_counterspeller() {
+    use crate::actions::spells::HOLD_PERSON;
     use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
-    let mut e = ei_with_terrain(15, 15, &[]);
-    let opposing_wizard = e
-        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
-        .unwrap();
-    let sorcerer = e
-        .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
-        .unwrap();
-    // Sorcerer concentrates on Bless (the dispellable buff).
-    let bless_target = vec![sorcerer];
-    let effects = BLESS.side_effects(&mut e, sorcerer, Some(&bless_target), None, None);
-    for ef in effects {
-        ef.apply(&mut e);
+
+    for subtle in [false, true] {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+            .unwrap();
+        let sorc = e
+            .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        {
+            let s = e.actors.get_mut(&sorc).unwrap();
+            s.give_resource(crate::engine::side_effects::Resource::Action);
+            if subtle {
+                s.add_condition(
+                    Condition::SubtleSpelling,
+                    ConditionTimer::UntilStartOfNextTurn,
+                );
+            }
+        }
+        let wiz_slots_before = e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots;
+        for ef in HOLD_PERSON.execute(&mut e, sorc, Some(&vec![wiz]), None, None) {
+            ef.apply(&mut e);
+        }
+        // Measured on the counterspeller's slot rather than on their
+        // Reaction: a Hold Person that lands leaves them Stunned, and a
+        // Stunned creature reports no Reaction whether it spent one or
+        // not.
+        let reached = e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots
+            < wiz_slots_before;
+        assert_eq!(
+            reached, !subtle,
+            "subtle={subtle}: the counterspeller should {}have reached for it",
+            if subtle { "not " } else { "" }
+        );
     }
-    assert!(e.actors[&sorcerer].is_concentrating());
-    // Without the Subtle Spell prime, Counterspell should validate.
-    let tv = vec![sorcerer];
-    assert!(
-        COUNTERSPELL.custom_validate_input(&e, opposing_wizard, Some(&tv), None, None),
-        "no subtle prime → counterspell is valid"
-    );
-    // Install the Subtle Spell prime and re-check — should fail-out.
-    e.actors
-        .get_mut(&sorcerer)
-        .unwrap()
-        .add_condition(Condition::SubtleSpelling, ConditionTimer::UntilStartOfNextTurn);
-    assert!(
-        !COUNTERSPELL.custom_validate_input(&e, opposing_wizard, Some(&tv), None, None),
-        "subtle prime up → counterspell fizzles"
-    );
-    // Sorcerer remains concentrating — the prime didn't strip the buff.
-    assert!(e.actors[&sorcerer].is_concentrating());
 }
 
 /// Tides of Chaos installs a `TidesOfChaos` condition with attack-roll

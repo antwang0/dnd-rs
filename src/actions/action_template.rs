@@ -1377,6 +1377,34 @@ pub trait Action {
         true
     }
 
+    /// True for an action nobody chooses — one the engine fires on its
+    /// holder's behalf, at a moment that is never their own turn.
+    ///
+    /// One member. SRD 5.2's Counterspell is *"a Reaction you take when
+    /// you see a creature casting a spell"*, and this engine has no
+    /// reaction window to offer a player: every window the dispatcher
+    /// opens is *after* the thing it would have answered. So the spell
+    /// resolves from `EncounterInstance::try_counterspell`, at the cast
+    /// itself, and the entry on the stat block is left doing the only
+    /// other job an action does here — recording that this creature
+    /// knows the spell, which `find_action` is what asks.
+    ///
+    /// Read by `ActorInstance::available_actions`, which is what builds
+    /// the player's list and what the AI's action walks read. An action
+    /// that can never be taken does not belong on either, and leaving it
+    /// there would mean a picker row whose only behaviour is to be
+    /// refused.
+    ///
+    /// Deliberately **not** a claim about RAW's casting time. Shield is
+    /// a Reaction too and is not this: its `+5 AC` lasts until the start
+    /// of its caster's next turn, so spending it in advance is a real
+    /// thing to do with a Reaction, and the engine lets them. This flag
+    /// is for the narrower case — an action whose whole content is the
+    /// trigger.
+    fn is_reaction_only(&self) -> bool {
+        false
+    }
+
     /// True when this action swings rather than shoots — a melee weapon
     /// attack or a touch spell, as opposed to a bow, a thrown rock or a
     /// Fire Bolt.
@@ -2406,6 +2434,33 @@ pub trait Action {
                 ),
                 self.hasted_action_eligible(),
             );
+        }
+        // Counterspell, the other Reaction that answers a cast — and
+        // second, deliberately. An absorbing item costs its holder
+        // nothing but a Reaction and a few levels off a pool that was
+        // going to burn out anyway; a counterspell costs a level-3 slot
+        // whether or not it lands. Asking the cheap ward first means a
+        // party holding both does not spend the expensive one on a spell
+        // the stone would have eaten.
+        //
+        // The bill is different too, and it is RAW's difference: an
+        // absorbed spell wastes everything, and a countered one wastes
+        // the action and keeps the slot — *"if that spell was cast with
+        // a spell slot, the slot isn't expended."*
+        if encounter.try_counterspell(
+            caster_id,
+            self.name(),
+            self.school(),
+            cast_level,
+            self.is_harmful(),
+            self.holds_concentration(),
+        ) {
+            let costs: Vec<Resource> = self
+                .resolved_cost(encounter, caster_id, target_ids, target_locations, overrides)
+                .into_iter()
+                .filter(|r| !matches!(r, Resource::SpellSlot(_)))
+                .collect();
+            return billing_side_effects(caster_id, &costs, self.hasted_action_eligible());
         }
         encounter.enter_cast(
             self.school(),

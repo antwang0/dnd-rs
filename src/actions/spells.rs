@@ -12808,17 +12808,30 @@ impl Action for GlobeOfInvulnerability {
 pub static GLOBE_OF_INVULNERABILITY: LazyLock<GlobeOfInvulnerability> =
     LazyLock::new(|| GlobeOfInvulnerability {});
 
-/// Counterspell — level-3 abjuration, reaction. When another creature
-/// casts a spell of level 3 or lower within 60 ft, the counterspeller
-/// interrupts the cast and the spell fails. We approximate the reaction
-/// timing by exposing Counterspell as an Action (not a Reaction trigger)
-/// that targets a *currently concentrating* enemy — on cast, the target
-/// loses their concentration (the most common "I'm running an active
-/// spell" handle in our model). This collapses Counterspell's
-/// interrupt-on-cast clause into a "rip the buff" effect since we don't
-/// have spell-cast triggers wired into the reaction bus. Slot cost is
-/// the level-3 default; targeting an unconcentrating enemy fizzles the
-/// cast (validation gate).
+/// Counterspell — level-3 abjuration, and the only spell in the file
+/// whose whole implementation lives somewhere else.
+///
+/// SRD 5.2 prints it as a Reaction *"you take when you see a creature
+/// within 60 feet of yourself casting a spell"*, and this engine has no
+/// reaction window to offer a player: the dispatcher's windows all open
+/// *after* the thing they would have answered. So the spell is resolved
+/// where the cast actually happens —
+/// `EncounterInstance::try_counterspell`, hung off `Action::execute`,
+/// which is the one place every spell in the game passes through. See
+/// there for the rest of it, and for what this used to be instead.
+///
+/// **What is left here is the knowing.** A creature knows Counterspell
+/// if it is on its action list, which is how the engine records knowing
+/// any spell — eight stat blocks say so, `find_action("counterspell")`
+/// is what asks, and the Subtle Spell AI gate has been asking since
+/// before there was anything to find. The entry has to stay for those
+/// three to keep working.
+///
+/// **It cannot be cast deliberately**, which is `is_reaction_only` and
+/// the refusal below. That is not a limitation dressed up as a rule: a
+/// deliberate Counterspell is a Reaction spent on nothing, because
+/// nobody is casting at the moment its holder's own turn comes round.
+/// The engine spends it for them at the moment RAW says to.
 pub struct Counterspell {}
 
 impl Action for Counterspell {
@@ -12832,10 +12845,12 @@ impl Action for Counterspell {
         vec!["cs", "counter"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
+        TargetingSchema::NoArgs
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 60 ft = 24 tiles.
+        // RAW's 60 ft. Read by nothing that aims this — the reaction
+        // measures its own range — but an action that reaches sixty feet
+        // should say sixty feet.
         Some(24)
     }
     fn requires_los(&self) -> bool {
@@ -12843,6 +12858,14 @@ impl Action for Counterspell {
     }
     fn deals_damage(&self) -> bool {
         false
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    /// The engine fires this one; nobody chooses it. See the struct
+    /// docstring.
+    fn is_reaction_only(&self) -> bool {
+        true
     }
     fn cost(
         &self,
@@ -12852,66 +12875,36 @@ impl Action for Counterspell {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        // Spell slot only — Counterspell is RAW a reaction, but we don't
-        // have a spell-cast trigger to fire from yet, so it gates on
-        // Action availability and the level-3 slot to keep the gating
-        // symmetric with other slotted spells.
-        action_and_slot(3)
+        // RAW's price, and the one `try_counterspell` debits by hand
+        // when it fires. Declared here anyway rather than left empty,
+        // because this is where every other part of the engine looks to
+        // find out what a spell costs — the picker's grey-out reason,
+        // the AI's affordability probes, and any future reader deciding
+        // whether a caster could still answer a cast.
+        vec![Resource::Reaction, Resource::SpellSlot(3)]
     }
+    /// Always refused. The Reaction is spent by
+    /// `EncounterInstance::try_counterspell` at the moment somebody
+    /// casts, which is the only moment there is anything to counter.
     fn custom_validate_input(
         &self,
-        encounter: &EncounterInstance,
+        _encounter: &EncounterInstance,
         _caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
+        _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // Valid against any target that is either concentrating or
-        // holding a dispellable buff — otherwise the cast does nothing
-        // useful and we'd be wasting the slot.
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        let Some(target) = encounter.actors.get(&target_id) else {
-            return false;
-        };
-        // 5e Sorcerer **Subtle Spell** rider: a sorcerer who's primed
-        // their next cast with Subtle Spell ignores Counterspell (RAW: no
-        // somatic or verbal components → nothing for the counterspeller
-        // to perceive). Block the cast at validate-time so the slot
-        // doesn't drain on a fizzle. We don't consume the prime here —
-        // the validator runs during the AI's target-picker probe loop,
-        // and consuming on probe would burn the prime against a target
-        // we never actually counterspell. The prime expires on the
-        // sorcerer's next turn via the `UntilStartOfNextTurn` tick-down,
-        // which gives the sorcerer one full round of counterspell
-        // immunity (sorcerer's turn N → opponent's reply turn → tick
-        // down at sorcerer's turn N+1) — the load-bearing window for
-        // the metamagic.
-        if target.has_condition(Condition::SubtleSpelling) {
-            return false;
-        }
-        target.is_concentrating()
-            || target
-                .conditions()
-                .keys()
-                .any(|c| c.is_dispellable_buff())
+        false
     }
     fn side_effects(
         &self,
         _encounter: &mut EncounterInstance,
         _caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
+        _target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::DispelMagicOn;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        vec![Box::new(DispelMagicOn {
-            target_id,
-        })]
+        Vec::new()
     }
 }
 

@@ -8025,7 +8025,17 @@ impl ActorInstance {
     /// (see `pickup_item`), so the second stick is more fuel behind the
     /// same three rows rather than three more rows.
     pub fn available_actions(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
-        let mut out = self.actions.clone();
+        // Everything on the stat block except the entries that exist
+        // only to record that this creature knows a spell the engine
+        // fires for it — see `Action::is_reaction_only`. A row the
+        // picker would offer and the validator would always refuse is
+        // worse than no row.
+        let mut out: Vec<&'static (dyn Action + Send + Sync)> = self
+            .actions
+            .iter()
+            .copied()
+            .filter(|a| !a.is_reaction_only())
+            .collect();
         let mut seen: HashSet<&'static str> = HashSet::new();
         for item in self.active_items() {
             if !item.on_use.is_empty() && seen.insert(item.name) {
