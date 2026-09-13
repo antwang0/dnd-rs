@@ -102121,6 +102121,18 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
 
     let mut wrong: Vec<String> = Vec::new();
     for item in LOOT_POOL {
+        // The absorbing family is exempt by rule rather than by name,
+        // which is the one shelf on the table where that is honest: a
+        // pool that never refills is not an exception to what those
+        // items are, it *is* what they are. RAW prints the same
+        // sentence on all three — *"once the stone has canceled 20
+        // levels of spells, it burns out"*, *"the rod can absorb and
+        // store up to 50 levels of energy over the course of its
+        // existence"* — and a fourth absorbing item would print it too.
+        // See `Item::absorbs_spells`.
+        if item.absorbs_spells.is_some() {
+            continue;
+        }
         match (item.charges, item.recharge) {
             (0, Some(expr)) => wrong.push(format!(
                 "{} recharges {} and has no charges to put them in",
@@ -104169,4 +104181,331 @@ fn the_cape_of_the_mountebank_steps_for_a_charge_and_gets_it_back() {
         .regain_item_charges(&mut roller);
     assert_eq!(regained, vec![(CAPE_OF_THE_MOUNTEBANK.name, 1)]);
     assert!(step.validate_input(&e, fighter, None, Some(&dest), None));
+}
+
+// ---------------------------------------------------------------------
+// The absorbing family — `Item::absorbs_spells`, and the one clause in
+// the file that fires on somebody else's turn against somebody else's
+// action. See `EncounterInstance::try_absorb_spell`.
+// ---------------------------------------------------------------------
+
+/// The rod eats a spell aimed at its bearer alone, banks the level, and
+/// leaves the caster out of pocket.
+///
+/// Four claims in one cast, because the item is all four of them at
+/// once: the spell does not land, the caster's slot is gone anyway
+/// (RAW's *"any resources used to cast it are wasted"*, which is what
+/// makes a Reaction worth spending), the lifetime pool is down by the
+/// cast's level, and the bearer is up by the same number.
+#[test]
+fn a_rod_of_absorption_drinks_a_spell_aimed_at_its_bearer_alone() {
+    use crate::actions::spells::HOLD_PERSON;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::ROD_OF_ABSORPTION;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let mark = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&mark).unwrap().pickup_item(&ROD_OF_ABSORPTION);
+    assert!(
+        e.actors[&mark].wields_live_item("Rod of Absorption"),
+        "a fighter with three free slots bonds with the rod on pickup"
+    );
+    let slots_before = e.actors[&wiz].spell_slot_manager.spell_slots(2).spell_slots;
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .give_resource(crate::engine::side_effects::Resource::Action);
+
+    for ef in HOLD_PERSON.execute(&mut e, wiz, Some(&vec![mark]), None, None) {
+        ef.apply(&mut e);
+    }
+
+    let target = &e.actors[&mark];
+    assert!(
+        !target.has_condition(Condition::Paralyzed),
+        "an absorbed spell has no effect at all"
+    );
+    assert_eq!(
+        target.absorbed_spell_levels(),
+        2,
+        "a level-2 spell banks two levels"
+    );
+    assert_eq!(
+        target.item_charges_remaining("Rod of Absorption"),
+        48,
+        "and costs two off the rod's fifty-level lifetime pool"
+    );
+    assert!(
+        !target.can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+        "the catch is a Reaction and it has been spent"
+    );
+    assert_eq!(
+        e.actors[&wiz].spell_slot_manager.spell_slots(2).spell_slots,
+        slots_before - 1,
+        "the slot is wasted, not refunded"
+    );
+}
+
+/// The rod's clause is *"targeting only you"*, and an area spell is not
+/// that. A Fireball dropped on the rod-bearer's tile goes through.
+///
+/// The negative half of the test above, and the one that keeps the rod
+/// from being a strictly better Ioun Stone of Greater Absorption: what
+/// it answers is narrow, and the thing enemy casters most want to do to
+/// a front line is exactly the thing it will not catch.
+#[test]
+fn a_rod_of_absorption_lets_an_area_spell_through() {
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::ROD_OF_ABSORPTION;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let mark = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&mark).unwrap().pickup_item(&ROD_OF_ABSORPTION);
+    let hp_before = e.actors[&mark].hitpoints();
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .give_resource(crate::engine::side_effects::Resource::Action);
+
+    for ef in FIREBALL.execute(
+        &mut e,
+        wiz,
+        None,
+        Some(&vec![Coordinate::new(8, 8)]),
+        None,
+    ) {
+        ef.apply(&mut e);
+    }
+
+    assert!(
+        e.actors[&mark].hitpoints() < hp_before,
+        "the rod does not answer an area spell — the fireball lands"
+    );
+    assert_eq!(
+        e.actors[&mark].item_charges_remaining("Rod of Absorption"),
+        50,
+        "and the pool is untouched"
+    );
+}
+
+/// The stone answers a spell aimed at somebody else entirely — RAW's
+/// *"cancel a spell of level 4 or lower cast by a creature you can
+/// see"*, which names the caster and never the target.
+///
+/// This is the difference between the two halves of the family, and the
+/// reason the stone is a board-wide veto where the rod is a personal
+/// ward: the bearer is not in the Fireball, and cancels it anyway.
+#[test]
+fn an_ioun_stone_of_absorption_cancels_a_spell_aimed_at_an_ally() {
+    use crate::actions::spells::FIREBALL;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::IOUN_STONE_OF_ABSORPTION;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let mark = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&bystander)
+        .unwrap()
+        .pickup_item(&IOUN_STONE_OF_ABSORPTION);
+    let hp_before = e.actors[&mark].hitpoints();
+    e.actors
+        .get_mut(&wiz)
+        .unwrap()
+        .give_resource(crate::engine::side_effects::Resource::Action);
+
+    for ef in FIREBALL.execute(
+        &mut e,
+        wiz,
+        None,
+        Some(&vec![Coordinate::new(10, 10)]),
+        None,
+    ) {
+        ef.apply(&mut e);
+    }
+
+    assert_eq!(
+        e.actors[&mark].hitpoints(), hp_before,
+        "the stone cancels a spell its bearer is not even in"
+    );
+    assert_eq!(
+        e.actors[&bystander].item_charges_remaining("Ioun Stone of Absorption"),
+        17,
+        "a level-3 spell costs three of the stone's twenty levels"
+    );
+    assert_eq!(
+        e.actors[&bystander].absorbed_spell_levels(),
+        0,
+        "a stone destroys what it takes — only the rod banks it"
+    );
+}
+
+/// A cast above the item's ceiling goes through untouched — RAW's *"if
+/// you are targeted by a spell that the rod can't store, the rod has no
+/// effect on that spell"*, and the whole of what separates the very-rare
+/// stone from the legendary one.
+#[test]
+fn the_stones_ceiling_is_what_separates_them() {
+    use crate::actions::spells::CONE_OF_COLD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::{
+        IOUN_STONE_OF_ABSORPTION, IOUN_STONE_OF_GREATER_ABSORPTION,
+    };
+
+    // The level-4 stone watches a level-5 spell go past.
+    for (stone, absorbed) in [
+        (&IOUN_STONE_OF_ABSORPTION, false),
+        (&IOUN_STONE_OF_GREATER_ABSORPTION, true),
+    ] {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let mark = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&mark).unwrap().pickup_item(stone);
+        let hp_before = e.actors[&mark].hitpoints();
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+
+        for ef in CONE_OF_COLD.execute(
+            &mut e,
+            wiz,
+            None,
+            Some(&vec![Coordinate::new(8, 8)]),
+            None,
+        ) {
+            ef.apply(&mut e);
+        }
+
+        let untouched = e.actors[&mark].hitpoints() == hp_before;
+        assert_eq!(
+            untouched, absorbed,
+            "{} against a level-5 spell: expected absorbed = {}",
+            stone.name, absorbed
+        );
+    }
+}
+
+/// The pool is a lifetime, and a long rest is not a dawn for it.
+///
+/// Every other charge-bearing item in the file comes back partly filled
+/// after a rest — `Item::recharge` is what says so, and the absorbing
+/// family is the only shelf that leaves it `None`. The Ioun stone
+/// cohort's docstring once named this as the reason the two absorbing
+/// stones could not exist, on the grounds that `regain_item_charges`
+/// *"tops every charge pool back up at dawn"*. It does not, and this is
+/// the test that says so out loud.
+#[test]
+fn an_absorbing_pool_never_comes_back() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::IOUN_STONE_OF_ABSORPTION;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let mark = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let holder = e.actors.get_mut(&mark).unwrap();
+    holder.pickup_item(&IOUN_STONE_OF_ABSORPTION);
+    assert_eq!(holder.spend_item_charges("Ioun Stone of Absorption", 6), 6);
+
+    let mut roller = FastRandRoller::with_seed(7);
+    holder.regain_item_charges(&mut roller);
+    holder.long_rest();
+    assert_eq!(
+        holder.item_charges_remaining("Ioun Stone of Absorption"),
+        14,
+        "a rest gives an absorbing pool nothing back"
+    );
+
+    // And it takes what is there when it is short, rather than refusing
+    // the purchase: RAW's twenty levels is a ceiling on the total.
+    assert_eq!(
+        holder.spend_item_charges("Ioun Stone of Absorption", 20),
+        14
+    );
+    assert_eq!(holder.item_charges_remaining("Ioun Stone of Absorption"), 0);
+    assert!(
+        holder.has_item_named("Ioun Stone of Absorption"),
+        "a burnt-out stone is dull gray, not gone — it stays in the pack"
+    );
+}
+
+/// The rod's second half: banked levels come back out as the biggest
+/// slot they will buy.
+#[test]
+fn the_rod_turns_banked_levels_into_the_biggest_slot_it_can_buy() {
+    use crate::actions::item_actions::DRAW_ON_ROD_OF_ABSORPTION;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::ROD_OF_ABSORPTION;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&wiz).unwrap().pickup_item(&ROD_OF_ABSORPTION);
+
+    let action: &dyn Action = &DRAW_ON_ROD_OF_ABSORPTION;
+    assert!(
+        !action.validate_input(&e, wiz, None, None, None),
+        "an empty bank has nothing to draw on"
+    );
+
+    {
+        let holder = e.actors.get_mut(&wiz).unwrap();
+        holder.bank_absorbed_levels(4);
+        // Empty the 1st- and 3rd-level rows so there is something for
+        // the draw to refill, and leave the 2nd alone: the rod should
+        // reach past the level it could also afford for the one it
+        // prefers.
+        holder.spell_slot_manager.consume_spell_slot(1);
+        holder.spell_slot_manager.consume_spell_slot(3);
+    }
+    let before_three = e.actors[&wiz].spell_slot_manager.spell_slots(3).spell_slots;
+
+    for ef in action.side_effects(&mut e, wiz, None, None, None) {
+        ef.apply(&mut e);
+    }
+
+    let holder = &e.actors[&wiz];
+    assert_eq!(
+        holder.spell_slot_manager.spell_slots(3).spell_slots,
+        before_three + 1,
+        "four banked levels buy the level-3 slot, not the level-1 one"
+    );
+    assert_eq!(
+        holder.absorbed_spell_levels(),
+        1,
+        "and cost three of the four"
+    );
+    assert!(
+        holder.has_item_named("Rod of Absorption"),
+        "the rod is not a consumable — drawing on it does not spend the object"
+    );
 }

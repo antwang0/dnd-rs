@@ -5216,6 +5216,23 @@ pub struct ActorInstance {
     /// the item" are the same event. A wand is the case where they come
     /// apart — see `Item::charges` and `spend_item_use`.
     item_charges: HashMap<&'static str, u32>,
+    /// Spell levels this actor has absorbed out of the air and not yet
+    /// spent — the Rod of Absorption's bank, and nothing else on the
+    /// roster.
+    ///
+    /// On the actor rather than in `item_charges` beside the rod's
+    /// lifetime pool, because the two are opposite ledgers that happen
+    /// to belong to the same object: the pool counts *down* from fifty
+    /// as the rod eats spells and never comes back, and this counts *up*
+    /// as it eats them and back down as the bearer cashes them in. One
+    /// map keyed by item name could hold one of those numbers, not both.
+    ///
+    /// It is also, in RAW's own words, *the spell's energy — not the
+    /// spell itself* — which the holder now has. It survives a long rest
+    /// for that reason: `long_rest` restores slots it does not touch
+    /// this, because banked energy is not a slot the holder failed to
+    /// use, it is somebody else's slot they took.
+    absorbed_spell_levels: u32,
     /// Names of the carried items this actor is **attuned** to, in the
     /// order the bond was formed.
     ///
@@ -5889,6 +5906,7 @@ impl ActorInstance {
             features_remaining: feature_charge_map(&ct.features),
             features_max: feature_charge_map(&ct.features),
             item_charges: HashMap::new(),
+            absorbed_spell_levels: 0,
             attunements: Vec::new(),
             attunement_refusals: HashSet::new(),
             attack_bonus_buff: 0,
@@ -7673,6 +7691,64 @@ impl ActorInstance {
             // one-shot and hand out a free cast per spare wand.
             while self.remove_item_by_name(name) {}
         }
+        true
+    }
+
+    /// Spend up to `wanted` charges off the carried item named `name` at
+    /// once, and report how many there were to spend.
+    ///
+    /// The multi-charge sibling of `spend_item_use` one method up, and
+    /// deliberately not a loop around it, because the two differ on both
+    /// of that method's decisions:
+    ///
+    ///   - **It takes what is there.** A level-4 spell cancelled by a
+    ///     stone with two levels left costs two, not nothing — RAW's
+    ///     *"once the stone has cancelled 20 levels"* is a ceiling on
+    ///     the total, not a price list that can refuse a purchase. The
+    ///     return value is what was actually paid.
+    ///   - **It leaves the object in the pack.** A burnt-out stone is
+    ///     *"dull gray"* and a spent rod is *"nonmagical"*; both are
+    ///     still objects their owner is carrying. `spend_item_use` drops
+    ///     an emptied wand because `has_item_named` is what every
+    ///     consumable action validates on, and an inert wand in the pack
+    ///     would read as a usable one. Nothing validates on the presence
+    ///     of these: the absorption gate asks this ledger, exactly as
+    ///     the staves ask `Resource::ItemCharges`.
+    ///
+    /// Returns `0` for an item that is not carried, has no charges, or
+    /// has run dry — all three of which mean the same thing to a caller
+    /// deciding whether the clause fires.
+    pub fn spend_item_charges(&mut self, name: &str, wanted: u32) -> u32 {
+        if !self.has_item_named(name) {
+            return 0;
+        }
+        let Some(remaining) = self.item_charges.get_mut(name) else {
+            return 0;
+        };
+        let paid = wanted.min(*remaining);
+        *remaining -= paid;
+        paid
+    }
+
+    /// Spell levels banked in a carried Rod of Absorption and not yet
+    /// converted into a slot.
+    pub fn absorbed_spell_levels(&self) -> u32 {
+        self.absorbed_spell_levels
+    }
+
+    /// Add `levels` to the bank — called once per spell the rod eats.
+    pub fn bank_absorbed_levels(&mut self, levels: u32) {
+        self.absorbed_spell_levels = self.absorbed_spell_levels.saturating_add(levels);
+    }
+
+    /// Draw `levels` out of the bank, all or nothing. `false` (and no
+    /// mutation) when the bank is short, so a caller that has already
+    /// decided which slot it wants cannot half-pay for it.
+    pub fn spend_absorbed_levels(&mut self, levels: u32) -> bool {
+        if self.absorbed_spell_levels < levels {
+            return false;
+        }
+        self.absorbed_spell_levels -= levels;
         true
     }
 

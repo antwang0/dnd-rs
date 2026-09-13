@@ -9893,6 +9893,162 @@ impl EncounterInstance {
         true
     }
 
+    /// Offer every eligible bystander the Reaction that eats a spell out
+    /// of the air, and report whether one of them took it.
+    ///
+    /// SRD 5.2's absorbing family — the Rod of Absorption and the two
+    /// Ioun Stones that share its clause — is the only thing in the
+    /// engine that cancels a cast *as* a cast rather than dispelling
+    /// what it left behind. Counterspell in this engine does the latter:
+    /// its own docstring says it *"collapses Counterspell's
+    /// interrupt-on-cast clause into a 'rip the buff' effect since we
+    /// don't have spell-cast triggers wired into the reaction bus."*
+    /// This is the interrupt that lane wanted, and it is possible here
+    /// and not there because it needs no bus: `Action::execute` is
+    /// already the one place every spell in the game passes through, and
+    /// it already knows the school, the level and the targets before it
+    /// builds a single side-effect.
+    ///
+    /// **What is offered, and to whom.** Only a leveled spell from an
+    /// opposing caster — a cantrip is level 0, which would cost the
+    /// stones nothing out of their lifetime pool and so would let one
+    /// veto Fire Bolts forever. Each candidate must be up, must have a
+    /// Reaction, and must hold a live item (the bond is what switches it
+    /// on) whose ceiling covers the cast and whose pool is not yet
+    /// spent. Then the two shapes part:
+    ///
+    ///   - a **rod** answers only a spell aimed at its bearer alone with
+    ///     no area to it — RAW's *"targeting only you and doesn't create
+    ///     an area of effect"*;
+    ///   - a **stone** answers anything its bearer can see the caster
+    ///     cast, whoever it was aimed at.
+    ///
+    /// **Who gets it when several could.** The spell's own target first,
+    /// then lowest id. The tiebreak is `try_feather_fall`'s and is there
+    /// for the same reason — hash order is not reproducible from the
+    /// seed — but the first key is not arbitrary: a bearer answering a
+    /// spell aimed at their own skin is spending their Reaction on their
+    /// own problem, and a bystander who goes first would be spending it
+    /// on somebody else's while the rod beside them stayed full.
+    ///
+    /// **Paying.** The pool is debited by the cast's level, taking what
+    /// is there when it is short: RAW's *"once the stone has canceled 20
+    /// levels"* is a ceiling on the total, not a price the stone can
+    /// refuse to pay. The rod banks the same number for its bearer to
+    /// spend later; the stones destroy it. The object stays in the pack
+    /// either way — a burnt-out stone is *"dull gray"*, which is an
+    /// object somebody is carrying and not one that vanished.
+    ///
+    /// The caster's slot is **not** refunded, here or by the caller:
+    /// *"any resources used to cast it are wasted"* is the sentence that
+    /// makes this worth a Reaction.
+    pub fn try_absorb_spell(
+        &mut self,
+        caster_id: usize,
+        spell_name: &str,
+        school: Option<crate::engine::types::SpellSchool>,
+        level: u32,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+    ) -> bool {
+        use crate::engine::side_effects::Resource;
+        // Not a spell, or a cantrip. Both answer "nothing to absorb" —
+        // see the docstring for why the cantrip is deliberate.
+        if school.is_none() || level == 0 {
+            return false;
+        }
+        let Some(caster_team) = self.actors.get(&caster_id).map(|a| a.team()) else {
+            return false;
+        };
+        // RAW's *"targeting only you and doesn't create an area of
+        // effect"*, read off the two argument slots every action is
+        // aimed with: one id and no point at all.
+        let sole_target = match (target_ids, target_locations) {
+            (Some(ids), locations)
+                if ids.len() == 1 && locations.is_none_or(|l| l.is_empty()) =>
+            {
+                Some(ids[0])
+            }
+            _ => None,
+        };
+        // `(is_the_target, id)` as the sort key — lower is better on
+        // both halves, so `false` sorting after `true` is what puts the
+        // spell's own target first.
+        let mut best: Option<((bool, usize), usize, &'static crate::items::item_template::Item)> =
+            None;
+        for (id, actor) in self.actors.iter() {
+            if actor.team() == caster_team
+                || !actor.is_combat_active()
+                || !actor.can_consume_resource(Resource::Reaction)
+            {
+                continue;
+            }
+            for item in actor.active_items() {
+                let Some(absorption) = item.absorbs_spells else {
+                    continue;
+                };
+                if level > absorption.max_level
+                    || actor.item_charges_remaining(item.name) == 0
+                {
+                    continue;
+                }
+                if absorption.sole_target_only {
+                    if sole_target != Some(*id) {
+                        continue;
+                    }
+                } else if !self.viewer_can_see(*id, caster_id) {
+                    continue;
+                }
+                let key = (sole_target != Some(*id), *id);
+                if best.is_none_or(|(seen, _, _)| key < seen) {
+                    best = Some((key, *id, item));
+                }
+            }
+        }
+        let Some((_, absorber_id, item)) = best else {
+            return false;
+        };
+        let absorption = item
+            .absorbs_spells
+            .expect("the chosen item is one that absorbs — it was chosen for that");
+        let Some(absorber) = self.actors.get_mut(&absorber_id) else {
+            return false;
+        };
+        absorber.consume_resource(Resource::Reaction);
+        absorber.spend_item_charges(item.name, level);
+        if absorption.banks_energy {
+            absorber.bank_absorbed_levels(level);
+        }
+        let absorber_name = absorber.name().to_string();
+        let left = absorber.item_charges_remaining(item.name);
+        let banked = absorber.absorbed_spell_levels();
+        let caster_name = self.actor_name(caster_id);
+        self.log(format!(
+            "[reaction] {}'s {} drinks {}'s {} ({} level{}).",
+            absorber_name,
+            item.name.to_lowercase(),
+            caster_name,
+            spell_name,
+            level,
+            if level == 1 { "" } else { "s" },
+        ));
+        if absorption.banks_energy {
+            self.log(format!(
+                "  {} holds {} level{} of stored energy.",
+                item.name.to_lowercase(),
+                banked,
+                if banked == 1 { "" } else { "s" },
+            ));
+        }
+        if left == 0 {
+            self.log(format!(
+                "  the {} burns out and loses its magic.",
+                item.name.to_lowercase()
+            ));
+        }
+        true
+    }
+
     /// True if a straight Bresenham line from `from` to `to` passes through
     /// only non-wall tiles between (exclusive of endpoints). Endpoints are
     /// not checked so callers can target the tile they currently occupy or

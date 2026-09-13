@@ -822,6 +822,44 @@ pub fn target_has_condition(
         .is_some_and(|a| a.has_condition(condition))
 }
 
+/// Turn a resolved cost list into the side-effects that actually debit
+/// it — the tail every action's `execute` ends with.
+///
+/// Extracted because there are two ways an action can finish now and
+/// both of them owe the same bill. The ordinary path builds the action's
+/// effects and appends this; the absorbed path (a Rod of Absorption
+/// eating the spell, see `Action::execute`) builds nothing and appends
+/// only this, because RAW's *"any resources used to cast it are
+/// wasted"* is the whole reason absorption costs the caster something.
+///
+/// An Action spend goes out through the typed `SpendActionSlot` rather
+/// than a plain `ConsumeResource` so Haste's restricted slot is cashed
+/// by the actions RAW lets it buy, instead of being left for last by a
+/// spender that does not know what it is paying for. `hasted_eligible`
+/// is the action's own answer to whether it is one of those.
+pub fn billing_side_effects(
+    caster_id: usize,
+    costs: &[Resource],
+    hasted_eligible: bool,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    costs
+        .iter()
+        .map(|cost| {
+            if *cost == Resource::Action {
+                Box::new(crate::engine::side_effects::SpendActionSlot {
+                    actor_id: caster_id,
+                    hasted_eligible,
+                }) as Box<dyn ApplicableSideEffect>
+            } else {
+                Box::new(ConsumeResource {
+                    actor_id: caster_id,
+                    resource: *cost,
+                }) as Box<dyn ApplicableSideEffect>
+            }
+        })
+        .collect()
+}
+
 /// Standard leveled-spell cost shape: one Action plus a level-`lvl` slot.
 /// Used by ~60 leveled-spell impls; the helper keeps the cost block to
 /// one line at the call site and gives us a single chokepoint for any
@@ -2336,6 +2374,39 @@ pub trait Action {
                 cast_level, printed, note
             ));
         }
+        // The absorbing family's Reaction — a Rod of Absorption or an
+        // Ioun Stone of Absorption eating this spell out of the air
+        // before any of it happens. Asked here rather than inside
+        // `side_effects` because RAW cancels the *spell*, not its
+        // effects: the cast frame never opens, no metamagic prime is
+        // burned, no concentration starts, and nothing downstream ever
+        // learns a Fireball was on its way.
+        //
+        // What still happens is the bill. RAW: *"a canceled spell
+        // dissipates with no effect, and any resources used to cast it
+        // are wasted"* — so the early return carries the same cost tail
+        // the ordinary path ends with, which is why that tail is a
+        // function and not eleven lines at the bottom of this one.
+        if encounter.try_absorb_spell(
+            caster_id,
+            self.name(),
+            self.school(),
+            cast_level,
+            target_ids,
+            target_locations,
+        ) {
+            return billing_side_effects(
+                caster_id,
+                &self.resolved_cost(
+                    encounter,
+                    caster_id,
+                    target_ids,
+                    target_locations,
+                    overrides,
+                ),
+                self.hasted_action_eligible(),
+            );
+        }
         encounter.enter_cast(
             self.school(),
             cast_level,
@@ -2578,24 +2649,11 @@ pub trait Action {
                 actor_id: caster_id,
             }));
         }
-        for cost in costs {
-            // An Action spend is billed through the typed path so
-            // Haste's restricted slot is cashed by the actions RAW lets
-            // it buy, rather than being left for last by a spender that
-            // does not know what it is paying for. Everything else goes
-            // out as a plain `ConsumeResource`.
-            side_effects.push(if cost == Resource::Action {
-                Box::new(crate::engine::side_effects::SpendActionSlot {
-                    actor_id: caster_id,
-                    hasted_eligible: self.hasted_action_eligible(),
-                }) as Box<dyn ApplicableSideEffect>
-            } else {
-                Box::new(ConsumeResource {
-                    actor_id: caster_id,
-                    resource: cost,
-                })
-            });
-        }
+        side_effects.append(&mut billing_side_effects(
+            caster_id,
+            &costs,
+            self.hasted_action_eligible(),
+        ));
         side_effects
     }
 }

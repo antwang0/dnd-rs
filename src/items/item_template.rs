@@ -632,6 +632,32 @@ pub struct Item {
     /// resistance, no condition, no action and no light. That is
     /// exactly RAW's *"you gain [its] benefits only if attuned"*.
     pub requires_attunement: bool,
+    /// The spell this item eats out of the air, or `None` for the rest
+    /// of the shelf — SRD 5.2's Rod of Absorption and the two Ioun
+    /// Stones that share its clause.
+    ///
+    /// The one effect on this struct that fires **on somebody else's
+    /// turn, against somebody else's action**. Every other lane here
+    /// answers a question about its holder — what is their AC, what do
+    /// they resist, what may they do — and is read when the holder's own
+    /// dice come up. This one is read while an enemy caster is halfway
+    /// through a Fireball, from `Action::execute`, and its answer is
+    /// whether that spell happens at all.
+    ///
+    /// The Ioun stone cohort's docstring used to name this as the reason
+    /// two of RAW's fourteen stones were absent, and gave a blocker that
+    /// had since stopped being true: *"'20 levels, cumulative, across
+    /// encounters and never recharging' is the one ledger in the file
+    /// that a long rest must not refill — and `regain_item_charges` tops
+    /// every charge pool back up at dawn."* It does not: that routine
+    /// skips any item whose `recharge` is `None`, which is the whole of
+    /// what a lifetime ledger needs. The pool rides `Item::charges` with
+    /// no recharge beside it, and the burn-out is the pool reaching
+    /// zero.
+    ///
+    /// See [`SpellAbsorption`] for what the three rows differ on, and
+    /// `EncounterInstance::try_absorb_spell` for where it is read.
+    pub absorbs_spells: Option<SpellAbsorption>,
     /// **Who** may form that bond — the rest of the clause, when the
     /// book prints one: *"(requires attunement by a Paladin)"*,
     /// *"(requires attunement by a Dwarf)"*, *"(requires attunement by
@@ -652,6 +678,49 @@ pub struct Item {
     /// restrictions on magic items, and the engine has never had any."*
     /// It has some now, and that feature is what ignores them.
     pub attunement_restriction: Option<AttunementRestriction>,
+}
+
+/// One item's answer to *"a spell is being cast — may I stop it?"*.
+///
+/// Three items in the SRD carry this clause and they differ on exactly
+/// three things, which is why it is a struct rather than a level and a
+/// flag:
+///
+///   - **Ioun Stone of Absorption** — *"cancel a spell of level 4 or
+///     lower cast by a creature you can see"*. Any cast in sight,
+///     whoever it is aimed at; the energy is destroyed.
+///   - **Ioun Stone of Greater Absorption** — the same sentence with
+///     level 8 in it.
+///   - **Rod of Absorption** — *"absorb a spell that is targeting only
+///     you and doesn't create an area of effect"*. Narrow in what it
+///     will answer and the only one of the three that keeps what it
+///     takes.
+///
+/// The lifetime pool is not here. It rides `Item::charges` with no
+/// `recharge` beside it, which is already the file's way of saying "this
+/// many, and then never again" — see `Item::absorbs_spells`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpellAbsorption {
+    /// The highest spell level this item will answer. A cast above it
+    /// goes through untouched, which is RAW's *"if you are targeted by a
+    /// spell that the rod can't store, the rod has no effect on that
+    /// spell."*
+    pub max_level: u32,
+    /// True when the cast must be aimed at the bearer **alone** — the
+    /// rod's clause. False for the stones, which answer anything their
+    /// holder can see.
+    ///
+    /// The difference is most of the price between them: a rod is a
+    /// personal ward and a stone is a veto over the whole board.
+    pub sole_target_only: bool,
+    /// True when the cancelled spell's levels are **banked** for the
+    /// bearer to spend later as a spell slot — the rod, and only the
+    /// rod. The stones destroy what they take.
+    ///
+    /// Read by `EncounterInstance::try_absorb_spell`, which pays the
+    /// bank through `ActorInstance::bank_absorbed_levels`; the spending
+    /// half is `item_actions::AbsorbedEnergyItem`.
+    pub banks_energy: bool,
 }
 
 /// One *"requires attunement by …"* clause: the words RAW prints, and
@@ -755,6 +824,7 @@ impl Item {
         charges: 0,
         recharge: None,
         requires_attunement: false,
+        absorbs_spells: None,
         attunement_restriction: None,
     };
 }
@@ -1869,6 +1939,67 @@ pub static IOUN_STONE_OF_AWARENESS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ioun Stone of Absorption** (Very Rare) — *"you can take a Reaction
+/// to cancel a spell of level 4 or lower cast by a creature you can
+/// see. A canceled spell has no effect, and any resources used to cast
+/// it are wasted. Once the stone has canceled 20 levels of spells, it
+/// burns out, turns dull gray, and loses its magic."*
+///
+/// The first item in the file whose effect fires on somebody else's
+/// turn against somebody else's action, and the widest veto on the
+/// shelf: it does not ask who the spell was aimed at, only whether its
+/// holder can see the mouth it came out of. A Fireball dropped on the
+/// party's back line is cancelled by the wizard standing at the front,
+/// and the slot that paid for it is gone.
+///
+/// Twenty levels is four Fireballs, or one Fireball and a Wall of Force,
+/// or twenty Shields — RAW prices the pool in levels rather than casts,
+/// so the stone is worth more against a caster who leans on their
+/// biggest slots and runs out faster against one who does not. It never
+/// comes back: the pool is `charges` with no `recharge`, which is the
+/// file's way of writing "and then never again".
+///
+/// A level-4 ceiling is what separates it from its legendary sibling and
+/// from the rod. Against a lich it is a stone that watches.
+pub static IOUN_STONE_OF_ABSORPTION: Item = Item {
+    name: "Ioun Stone of Absorption",
+    glyph: 'J',
+    charges: 20,
+    absorbs_spells: Some(SpellAbsorption {
+        max_level: 4,
+        sole_target_only: false,
+        banks_energy: false,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ioun Stone of Greater Absorption** (Legendary) — the same sentence
+/// with *"level 8 or lower"* in it, and the same twenty-level pool.
+///
+/// Worth reading beside [`IOUN_STONE_OF_ABSORPTION`], because the two
+/// differ by one number and that number is the whole rarity step: a
+/// level-4 ceiling answers the workaday half of an enemy caster's list
+/// and stands by for the cast that ends the fight, and a level-8 ceiling
+/// answers everything but a Wish or a Meteor Swarm.
+///
+/// The pool is *not* bigger, which is RAW's own asymmetry and is what
+/// keeps the legendary stone from being strictly four times the very
+/// rare one: it eats better spells out of the same twenty levels, so it
+/// burns out in as few as three Reactions.
+pub static IOUN_STONE_OF_GREATER_ABSORPTION: Item = Item {
+    name: "Ioun Stone of Greater Absorption",
+    glyph: 'J',
+    charges: 20,
+    absorbs_spells: Some(SpellAbsorption {
+        max_level: 8,
+        sole_target_only: false,
+        banks_energy: false,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// SRD 5.2's Ioun Stones, in the order its own entry lists the types it
 /// prints.
 ///
@@ -1879,17 +2010,9 @@ pub static IOUN_STONE_OF_AWARENESS: Item = Item {
 /// `20` and nothing else — and an invariant needs something to read
 /// that is not a hand-copied list.
 ///
-/// **Five of RAW's fourteen types are absent**, each waiting on
+/// **Three of RAW's fourteen types are absent**, each waiting on
 /// something the engine does not have rather than on somebody's time:
 ///
-///   - **Absorption** and **Greater Absorption** — a Reaction that
-///     cancels a spell of level 4 (or 8) or lower, until the stone has
-///     eaten 20 levels and burns out. The reaction is
-///     `spells::COUNTERSPELL`'s lane and the burn-out is `Item::charges`,
-///     but "20 levels, cumulative, across encounters and never
-///     recharging" is the one ledger in the file that a long rest must
-///     *not* refill — and `regain_item_charges` tops every charge pool
-///     back up at dawn, which is the opposite rule.
 ///   - **Regeneration** — *"You regain 15 Hit Points at the end of each
 ///     hour."* An hour is longer than any fight the engine runs and
 ///     shorter than its long rest, so the clause would fire either
@@ -1903,9 +2026,11 @@ pub static IOUN_STONE_OF_AWARENESS: Item = Item {
 ///   - **Sustenance** — *"You don't need to eat or drink."* There is no
 ///     hunger clock to answer.
 pub static IOUN_STONES: &[&Item] = &[
+    &IOUN_STONE_OF_ABSORPTION,
     &IOUN_STONE_OF_AGILITY,
     &IOUN_STONE_OF_AWARENESS,
     &IOUN_STONE_OF_FORTITUDE,
+    &IOUN_STONE_OF_GREATER_ABSORPTION,
     &IOUN_STONE_OF_INSIGHT,
     &IOUN_STONE_OF_INTELLECT,
     &IOUN_STONE_OF_LEADERSHIP,
@@ -6037,6 +6162,58 @@ pub static ROD_OF_ALERTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Rod of Absorption** (Rod, Very Rare) — *"While holding this rod,
+/// you can take a Reaction to absorb a spell that is targeting only you
+/// and doesn't create an area of effect. The absorbed spell's effect is
+/// canceled, and the spell's energy — not the spell itself — is stored
+/// in the rod. … If you are a spellcaster holding the rod, you can
+/// convert energy stored in it into spell slots … up to a maximum of
+/// level 5."*
+///
+/// The narrow half of the absorbing family and the only member that
+/// keeps what it takes. Where the two Ioun stones veto anything their
+/// bearer can see and destroy it, the rod answers one thing — a spell
+/// aimed at nobody but its holder — and turns it into a slot.
+///
+/// That makes it the wrong item for the front line and the right one for
+/// whoever the enemy caster keeps picking out: a Hold Person, a Finger
+/// of Death, a Disintegrate. Each of those is cancelled outright *and*
+/// pays its own level into the bank, so a wizard wearing this converts
+/// the thing that was going to kill them into a spell of their own —
+/// which is the most direct exchange rate on the shelf, and the reason
+/// RAW gives it fifty levels rather than the stones' twenty.
+///
+/// **The bank is not the pool.** `charges` is RAW's lifetime capacity —
+/// fifty levels absorbed over the rod's existence, with no `recharge`
+/// beside it, so a long rest never gives one back. The levels the
+/// bearer may spend are carried on the *actor*, in
+/// `ActorInstance::absorbed_spell_levels`, because they are energy the
+/// holder now has rather than a property of the object — and because
+/// the two run down at different rates and in opposite directions.
+///
+/// It is found **empty** rather than with RAW's *"1d10 levels of spell
+/// energy"*. An `Item` is a `&'static` value shared by every copy in
+/// every encounter, so a per-find roll has nowhere to live; starting at
+/// zero means the rod is worth exactly what its holder makes it worth,
+/// which is the reading that survives being copied.
+pub static ROD_OF_ABSORPTION: Item = Item {
+    name: "Rod of Absorption",
+    glyph: 'j',
+    charges: 50,
+    absorbs_spells: Some(SpellAbsorption {
+        // RAW names no ceiling on what the rod will absorb — the level
+        // cap it prints is on the *conversion* half, and that one lives
+        // on `AbsorbedEnergyItem` where the slot is made. Nine is the
+        // top of the spell list, so this is "anything".
+        max_level: 9,
+        sole_target_only: true,
+        banks_energy: true,
+    }),
+    on_use: &[&crate::actions::item_actions::DRAW_ON_ROD_OF_ABSORPTION],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Dwarven Plate** (Armor: Plate, Very Rare) — *"While wearing this
 /// armor, you gain a +2 bonus to Armor Class."*
 ///
@@ -7224,6 +7401,16 @@ pub static LOOT_POOL: &[&Item] = &[
     &IOUN_STONE_OF_LEADERSHIP,
     &IOUN_STONE_OF_PROTECTION,
     &IOUN_STONE_OF_AWARENESS,
+    // The absorbing family — the three items in the file whose effect
+    // fires on somebody else's turn against somebody else's action.
+    // Single entries, and deliberately the rarest rows in this stanza:
+    // a stone that vetoes any spell of level 8 or lower on the board is
+    // the strongest thing a party can be holding against the bestiary's
+    // casters, and finding one should be the fight it changes rather
+    // than the default loadout.
+    &IOUN_STONE_OF_ABSORPTION,
+    &IOUN_STONE_OF_GREATER_ABSORPTION,
+    &ROD_OF_ABSORPTION,
     // Sentinel Shield — low-tier defensive trinket. Same weight as the
     // generic Ring of Protection / Cloak of Protection siblings.
     &SENTINEL_SHIELD,
@@ -8773,7 +8960,8 @@ mod tests {
                 || item.ignores_half_cover_on_spells
                 || item.berserks_its_bearer
                 || item.grants_spell_save_advantage
-                || item.imposes_spell_attack_disadvantage;
+                || item.imposes_spell_attack_disadvantage
+                || item.absorbs_spells.is_some();
             assert!(
                 earns_it,
                 "{} asks for one of three attunement slots and does nothing with it",

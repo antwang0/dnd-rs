@@ -1066,6 +1066,18 @@ pub fn render_sideinfo(
                     "*"
                 };
                 match curr_actor.item_charges_remaining(i.name) {
+                    // An absorbing item at zero is the one thing on the
+                    // panel that a bare name would lie about. Every
+                    // other pool in the file empties by leaving the
+                    // pack — `spend_item_use` drops a spent wand — so
+                    // "no number beside it" has always meant "this was
+                    // never charge-bearing". A burnt-out Ioun Stone is
+                    // *"dull gray"* and stays where it is, so it would
+                    // read as a live trinket for the rest of the run.
+                    // See `ActorInstance::spend_item_charges`.
+                    0 if i.absorbs_spells.is_some() => {
+                        format!("{}{} (spent)", i.name, inert)
+                    }
                     0 => format!("{}{}", i.name, inert),
                     n => format!("{}{} ({})", i.name, inert, n),
                 }
@@ -1075,6 +1087,26 @@ pub fn render_sideinfo(
             format!("Items: {}", names.join(", ")),
             Style::default().fg(Color::Yellow),
         )));
+        // The Rod of Absorption's bank — spell levels this creature has
+        // taken off somebody else's cast and not yet turned back into a
+        // slot. Only when there is some, because it is zero for every
+        // creature in the game that is not holding the one item.
+        //
+        // It is not on the item's own line above, and could not be:
+        // that line shows `item_charges_remaining`, which for the rod is
+        // its *lifetime* pool counting down from fifty. The bank counts
+        // the other way. See `ActorInstance::absorbed_spell_levels`.
+        let banked = curr_actor.absorbed_spell_levels();
+        if banked > 0 {
+            stats_lines.push(Line::from(Span::styled(
+                format!(
+                    "Stored spell energy: {} level{}",
+                    banked,
+                    if banked == 1 { "" } else { "s" }
+                ),
+                Style::default().fg(Color::Yellow),
+            )));
+        }
         // The attunement ledger, and only when there is something to
         // say about it. A party three rooms in carrying nothing that
         // attunes should not be told it has three free slots it has no

@@ -8995,3 +8995,169 @@ pub static AIM_DECANTER_GEYSER: SingleSaveConditionItem = SingleSaveConditionIte
     timer: ConditionTimer::Permanent,
     billing: ItemUseBilling::Free,
 };
+
+/// **Rod of Absorption**, the spending half — *"If you are a spellcaster
+/// holding the rod, you can convert energy stored in it into spell slots
+/// to cast spells you have prepared or know. You can create spell slots
+/// only of a level equal to or lower than your own spell slots, up to a
+/// maximum of level 5. You use the stored levels in place of your slots
+/// … For example, you can use 3 levels stored in the rod as a level 3
+/// spell slot."*
+///
+/// The catching half is `EncounterInstance::try_absorb_spell`, which
+/// fires on somebody else's turn and pays into
+/// `ActorInstance::absorbed_spell_levels`. This is where that bank is
+/// drawn on, and the two together are the item: a rod that only
+/// cancelled would be a worse Ioun Stone of Absorption, and a rod that
+/// only paid out would have nothing to pay out with.
+///
+/// **It restores a slot rather than casting from the bank**, which is
+/// the closest this engine can come to RAW's *"you use the stored levels
+/// in place of your slots"*. Every cast in the engine is priced through
+/// `Resource::SpellSlot`, and a second currency that could stand in for
+/// one at every one of those sites would be a change to the cost lane of
+/// four hundred spells. Refunding the slot is the same exchange rate one
+/// step earlier, and it is the Pearl of Power's shape — see
+/// [`PearlOfPowerItem`], which is this action with a fixed price and no
+/// bank behind it.
+///
+/// **The highest slot it can afford**, not a level the holder picks.
+/// RAW lets the bearer choose; the engine's action list has no room to
+/// ask, and the choice is nearly always the same one — a wizard with
+/// five banked levels and an empty 3rd-level row wants the 3rd. The
+/// ceiling is the lowest of three numbers, each of which is one of RAW's
+/// own clauses: five, what the bank holds, and the highest level the
+/// holder has slots of at all.
+///
+/// **A Bonus Action**, which RAW does not say and the Pearl of Power
+/// does. The rod's sentence describes casting rather than an action of
+/// its own, and the two available readings — free, or an Action — are
+/// both worse: free would let a caster refill between every cast in the
+/// same turn, and an Action would mean the rod can never pay for a spell
+/// on the turn it is drawn on.
+pub struct AbsorbedEnergyItem {
+    /// Player-facing action name.
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+    /// Inventory item name the bank is drawn through — the rod must
+    /// still be held and attuned for its energy to be reachable.
+    pub item_name: &'static str,
+    /// RAW's *"up to a maximum of level 5"*.
+    pub max_slot_level: u32,
+}
+
+impl AbsorbedEnergyItem {
+    /// The best slot this holder could make right now, or `None` when
+    /// there is nothing worth making: no bank, no rod, no spellcasting,
+    /// or every slot they could pay for is already full.
+    ///
+    /// Shared by the validator and the side-effect builder so the two
+    /// cannot disagree about which slot is being bought — the failure
+    /// the Pearl of Power avoids by having no choice to make.
+    fn best_slot(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<u32> {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return None;
+        }
+        let actor = encounter.actors.get(&caster_id)?;
+        let banked = actor.absorbed_spell_levels();
+        if banked == 0 {
+            return None;
+        }
+        (1..=self.max_slot_level.min(banked))
+            .rev()
+            .find(|level| {
+                let info = actor.spell_slot_manager.spell_slots(*level);
+                info.max_spell_slots > 0 && info.spell_slots < info.max_spell_slots
+            })
+    }
+}
+
+impl Action for AbsorbedEnergyItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        self.best_slot(encounter, caster_id).is_some()
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(level) = self.best_slot(encounter, caster_id) else {
+            return Vec::new();
+        };
+        let Some(actor) = encounter.actors.get_mut(&caster_id) else {
+            return Vec::new();
+        };
+        // All or nothing, and checked again here rather than trusted
+        // from the validator: the bank is written by a Reaction on
+        // somebody else's turn, so the number this action was offered
+        // under is not promised to be the number it fires under.
+        if !actor.spend_absorbed_levels(level) {
+            return Vec::new();
+        }
+        let name = actor.name().to_string();
+        actor.spell_slot_manager.restore_spell_slot(level, 1);
+        let left = actor.absorbed_spell_levels();
+        encounter.log(format!(
+            "{} draws {} level{} out of the {}; a level-{} slot returns ({} left stored).",
+            name,
+            level,
+            if level == 1 { "" } else { "s" },
+            self.item_name.to_lowercase(),
+            level,
+            left,
+        ));
+        Vec::new()
+    }
+}
+
+/// Rod of Absorption — Bonus Action; turn banked spell energy back into
+/// the biggest slot it will buy. See [`AbsorbedEnergyItem`].
+pub static DRAW_ON_ROD_OF_ABSORPTION: AbsorbedEnergyItem = AbsorbedEnergyItem {
+    action_name: "draw on rod of absorption",
+    action_aliases: &["rod", "absorb", "draw rod"],
+    item_name: "Rod of Absorption",
+    max_slot_level: 5,
+};

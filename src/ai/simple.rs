@@ -5542,6 +5542,13 @@ const SLOT_RESTORING_ITEMS: &[&str] = &[
     "use greater pearl of power",
     "use supreme pearl of power",
     "use archmage pearl of power",
+    // Last, and the only row here whose level is not printed on the
+    // object: the Rod of Absorption gives back the deepest slot its
+    // bank will buy, so there is no shallow use of it to prefer. It
+    // also costs nothing to leave for last — its own validator refuses
+    // while the bank is empty, which is every turn until something has
+    // been absorbed.
+    "draw on rod of absorption",
 ];
 
 /// Pop the shallowest bead that has a spent slot to give back.
