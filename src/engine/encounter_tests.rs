@@ -102406,6 +102406,10 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     //   - The **Talisman of Ultimate Evil** ends with its sixth
     //     fissure — "when you expend the last charge, the talisman
     //     becomes a nonmagical item".
+    //   - The **Ring of Three Wishes** ends with its third — "the ring
+    //     becomes nonmagical when you use the last charge" — and every
+    //     charge spent is one of exactly three that will ever exist,
+    //     which is the whole tension of the item.
     const NO_REFILL: &[&str] = &[
         crate::items::item_template::NINE_LIVES_STEALER.name,
         crate::items::item_template::POTION_OF_FIRE_BREATH.name,
@@ -102414,6 +102418,7 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
         crate::items::item_template::IRON_FLASK.name,
         crate::items::item_template::MIRROR_OF_LIFE_TRAPPING.name,
         crate::items::item_template::TALISMAN_OF_ULTIMATE_EVIL.name,
+        crate::items::item_template::RING_OF_THREE_WISHES.name,
     ];
 
     let mut wrong: Vec<String> = Vec::new();
@@ -105723,4 +105728,63 @@ fn a_giant_strength_potion_lifts_the_weak_and_leaves_the_strong_alone() {
         29,
         "the potion has no effect on somebody already at the score"
     );
+}
+
+/// A fighter with a Cape of the Mountebank walks out of a bad melee, and
+/// so does one with a Helm of Teleportation.
+///
+/// The rung had been asking `find_action`, which reads the stat block
+/// and not the pack — so the two items in the file whose whole content
+/// is an escape were reachable by nobody. A fighter does not know
+/// Dimension Door; that is the point of owning the cape.
+#[test]
+fn an_item_teleport_is_one_the_escape_lane_can_reach() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{CAPE_OF_THE_MOUNTEBANK, HELM_OF_TELEPORTATION};
+
+    for item in [&CAPE_OF_THE_MOUNTEBANK, &HELM_OF_TELEPORTATION] {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&pc].find_action("dimension door").is_none(),
+            "a fighter does not know the spell — the item is the point"
+        );
+        e.actors.get_mut(&pc).unwrap().pickup_item(item);
+        let found = e.actors[&pc]
+            .find_printing_of("dimension door")
+            .unwrap_or_else(|| panic!("{} should be a way to cast it", item.name));
+        assert_eq!(
+            found.printed_spell_name(),
+            Some("dimension door"),
+            "{} forwards the real spell rather than a re-statement of it",
+            item.name
+        );
+    }
+
+    // And the stat block still wins a tie, which is what keeps the
+    // widening additive: a wizard reaches for its own slot first.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wiz = e
+        .instantiate_creature(
+            &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
+            Coordinate::new(8, 8),
+            0,
+            0,
+        )
+        .unwrap();
+    if e.actors[&wiz].find_action("dimension door").is_some() {
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&CAPE_OF_THE_MOUNTEBANK);
+        assert_eq!(
+            e.actors[&wiz]
+                .find_printing_of("dimension door")
+                .map(crate::actions::action_template::Action::name),
+            Some("dimension door"),
+            "a caster who knows the spell reaches for it the way it always did"
+        );
+    }
 }

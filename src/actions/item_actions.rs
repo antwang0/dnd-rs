@@ -10064,3 +10064,106 @@ pub static DRINK_POTION_OF_STORM_GIANT_STRENGTH: SelfConditionItem = SelfConditi
     ward: TypedWard::None,
     billing: ItemUseBilling::Consumed,
 };
+
+// ---------------------------------------------------------------------
+// Three items that cast a real spell for a charge — the same trick
+// `staves::StaffSpell` plays for the Staff of Fire, and the Cape of the
+// Mountebank before them.
+// ---------------------------------------------------------------------
+
+pub const ROD_OF_RESURRECTION_NAME: &str = "Rod of Resurrection";
+
+/// **Rod of Resurrection**, the cheap half — *"you can expend 1 charge
+/// as a Magic action … to cast Heal."*
+///
+/// The healing rod is the only item on the loot table that can put a
+/// party member back on their feet at full hit points, twice, without a
+/// cleric — and RAW gives it five charges and one back a day, so a party
+/// that finds one is a party that can lose a fight and keep going.
+pub static ROD_OF_RESURRECTION_HEAL: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "rod of resurrection: heal",
+        action_aliases: &["rod-heal", "resurrection rod"],
+        item_name: ROD_OF_RESURRECTION_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 6,
+        spell: || &*crate::actions::spells::HEAL_SPELL_HIGH,
+        only_targets: None,
+    };
+
+/// **Rod of Resurrection**, the expensive half — *"you can expend 5
+/// charges to cast Resurrection."*
+///
+/// Five of five, which is the whole rod for a day and most of a week.
+/// RAW's price is the point: a rod that raised the dead for one charge
+/// would make dying a bookkeeping step.
+pub static ROD_OF_RESURRECTION_RAISE: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "rod of resurrection: resurrection",
+        action_aliases: &["rod-raise", "rod-resurrect"],
+        item_name: ROD_OF_RESURRECTION_NAME,
+        billing: ItemUseBilling::Charges(5),
+        spell_level: 7,
+        spell: || &*crate::actions::spells::RESURRECTION,
+        only_targets: None,
+    };
+
+pub const HELM_OF_TELEPORTATION_NAME: &str = "Helm of Teleportation";
+
+/// **Helm of Teleportation** — *"This helm has 3 charges … you can
+/// expend 1 charge to cast Teleport from it. It regains 1d3 expended
+/// charges daily at dawn."*
+///
+/// **Dimension Door stands in for Teleport**, which is the same
+/// narrowing `spells::DIMENSION_DOOR` already is for every other
+/// teleport in the engine: RAW's Teleport crosses a continent and picks
+/// a destination off a table of mishaps, and a board thirty tiles wide
+/// has nowhere for either clause to happen. What is left of both spells
+/// on a battle map is the same thing — the wearer is somewhere else now
+/// — and the helm's version costs a charge rather than a level-7 slot.
+///
+/// It is the martial half of the escape lane. The Cape of the
+/// Mountebank is the other one and they are deliberately different
+/// items: the cape is a cloak slot and this is a head slot, so a rogue
+/// can wear both and a party that finds both can give one to somebody
+/// who is not the rogue.
+pub static HELM_OF_TELEPORTATION_STEP: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "helm of teleportation: step",
+        action_aliases: &["helm-step", "helm teleport"],
+        item_name: HELM_OF_TELEPORTATION_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 7,
+        spell: || &*crate::actions::spells::DIMENSION_DOOR,
+        only_targets: None,
+    };
+
+pub const RING_OF_THREE_WISHES_NAME: &str = "Ring of Three Wishes";
+
+/// **Ring of Three Wishes** — *"While wearing this ring, you can expend
+/// 1 of its 3 charges to cast Wish from it. The ring becomes nonmagical
+/// when you use the last charge."*
+///
+/// Three casts of a ninth-level spell on an item nobody has to be a
+/// caster to wear, and then a ring. The engine's Wish is the *"restore
+/// up to twenty creatures to full hit points"* reading — see
+/// `spells::Wish` — which is the one of RAW's canonical wishes a battle
+/// map can show, and it is enough to reverse a fight that was already
+/// lost. Three times.
+///
+/// **It never recharges**, which is RAW and the whole of the item's
+/// tension: every charge spent is one of exactly three that will ever
+/// exist, so the question is never *whether* the wish would help but
+/// whether this is the fight worth spending a third of the ring on.
+/// `Item::recharge` is `None` for it, which is the same lane the
+/// absorbing family's lifetime pools ride.
+pub static RING_OF_THREE_WISHES_CAST: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "ring of three wishes: wish",
+        action_aliases: &["three wishes", "wish ring"],
+        item_name: RING_OF_THREE_WISHES_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 9,
+        spell: || &*crate::actions::spells::WISH,
+        only_targets: None,
+    };

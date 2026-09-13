@@ -6516,6 +6516,81 @@ pub static ROD_OF_ALERTNESS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Rod of Resurrection** (Rod, Legendary, requires attunement by a
+/// cleric, druid or paladin) — *"This rod has 5 charges … you can expend
+/// 1 charge to cast Heal or 5 charges to cast Resurrection. The rod
+/// regains 1 expended charge daily at dawn."*
+///
+/// The only thing on the loot table that can put a party member back on
+/// their feet at full hit points without a cleric, and the only one that
+/// can bring one back at all. One charge a day is the whole of RAW's
+/// pricing: a party that finds this can lose a fight and keep going, and
+/// cannot lose two.
+///
+/// **Attunement is by a spellcaster** rather than RAW's
+/// cleric-druid-paladin, because that is the closest question this
+/// engine can ask — see [`AttunementRestriction::SPELLCASTER`], which
+/// every other class-gated item on the table already narrows to.
+pub static ROD_OF_RESURRECTION: Item = Item {
+    name: crate::actions::item_actions::ROD_OF_RESURRECTION_NAME,
+    glyph: 'j',
+    charges: 5,
+    // RAW's "regains 1 expended charge daily at dawn" — the stingiest
+    // recharge line in the book, and the reason the rod is a decision
+    // rather than a routine.
+    recharge: Some(DiceExpr { dice: None, constant: 1 }),
+    on_use: &[
+        &crate::actions::item_actions::ROD_OF_RESURRECTION_HEAL,
+        &crate::actions::item_actions::ROD_OF_RESURRECTION_RAISE,
+    ],
+    requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
+    ..Item::DEFAULTS
+};
+
+/// **Helm of Teleportation** (Wondrous item, Rare, requires attunement)
+/// — *"This helm has 3 charges … you can expend 1 charge to cast
+/// Teleport from it. It regains 1d3 expended charges daily at dawn."*
+///
+/// The escape hatch for somebody who is not the rogue. See
+/// [`crate::actions::item_actions::HELM_OF_TELEPORTATION_STEP`] for why
+/// Dimension Door stands in for Teleport, and for why this and the Cape
+/// of the Mountebank are two items rather than one.
+pub static HELM_OF_TELEPORTATION: Item = Item {
+    name: crate::actions::item_actions::HELM_OF_TELEPORTATION_NAME,
+    glyph: 'h',
+    charges: 3,
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    on_use: &[&crate::actions::item_actions::HELM_OF_TELEPORTATION_STEP],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Three Wishes** (Ring, Legendary) — *"you can expend 1 of
+/// its 3 charges to cast Wish from it. The ring becomes nonmagical when
+/// you use the last charge."*
+///
+/// Three casts of a ninth-level spell on an item nobody has to be a
+/// caster to wear, and then a ring. It needs no attunement, which is RAW
+/// and is what makes it the one Legendary a party can hand to whoever
+/// happens to have a finger free.
+///
+/// **It never recharges**, which is the item: every charge spent is one
+/// of exactly three that will ever exist. That puts it on the same
+/// `recharge: None` lane as the absorbing family's lifetime pools, and
+/// on the same exception list in the sweep that checks every other pool
+/// gets a night back.
+pub static RING_OF_THREE_WISHES: Item = Item {
+    name: crate::actions::item_actions::RING_OF_THREE_WISHES_NAME,
+    glyph: '=',
+    charges: 3,
+    on_use: &[&crate::actions::item_actions::RING_OF_THREE_WISHES_CAST],
+    ..Item::DEFAULTS
+};
+
 /// **Animated Shield** (Armor: Shield, Very Rare, requires attunement)
 /// — *"While holding this Shield, you can take a Bonus Action to cause
 /// it to animate. The Shield leaps into the air and hovers in your space
@@ -7917,6 +7992,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // family, because a table this wide wants to be a thing that happens
     // to a party once rather than a tool they learn to use.
     &WAND_OF_WONDER,
+    // The three that cast a real spell for a charge. Single entries and
+    // the rarest rows in the pool — two Legendaries and a Rare — because
+    // each of them answers a question the party otherwise cannot: a
+    // death, a bad corner, and a fight already lost.
+    &ROD_OF_RESURRECTION,
+    &HELM_OF_TELEPORTATION,
+    &RING_OF_THREE_WISHES,
     // The shield that is off until somebody turns it on, and the vial
     // that puts the biggest number in the file on a swing. Single
     // entries: both are Very Rare, and the oil in particular is a

@@ -8962,7 +8962,13 @@ fn try_teleport_escape(
             .collect()
     };
     for name in &escapes {
-        let Some(action) = actor.find_action(name) else {
+        // `find_printing_of`, not `find_action`: two items in the file
+        // are nothing but an escape — the Cape of the Mountebank and the
+        // Helm of Teleportation — and both grant their Dimension Door
+        // under the item's own name, off the pack rather than the stat
+        // block. This rung had been asking the stat block alone, so
+        // neither had ever been reachable by it.
+        let Some(action) = actor.find_printing_of(name) else {
             continue;
         };
         let Some(reach) = action.reach_tiles() else {
@@ -20461,11 +20467,6 @@ mod tests {
 
         /// Actions no rung chooses, and why. Each line is a decision.
         const NOT_FOR_THE_AI: &[(&str, &str)] = &[
-            // The escape lane fires on the AI deciding it is losing,
-            // which is a judgement this sweep has no business asserting
-            // — see `the_ai_reaches_the_at_will_shelf`, which makes the
-            // weaker claim for the same reason.
-            ("cape of the mountebank: dimension door", "the escape lane's own judgement"),
             // Gaseous Form hands its drinker every defence in the game
             // and takes away the reason they were standing there. RAW's
             // potion is an escape, and no rung should spend a turn on
@@ -20549,6 +20550,12 @@ mod tests {
             .chain(KINDLED_WEAPONS.iter().map(|(name, _)| *name))
             .chain(SLOT_RESTORING_ITEMS.iter().copied())
             .chain(ITEM_PRIMES.iter().copied())
+            // The escape rung, which is matched on the *spell* a row is
+            // a printing of rather than on the row's own name — see
+            // `find_printing_of`. Both item escapes on the table answer
+            // "dimension door".
+            .chain(SELF_TELEPORT_ESCAPES.iter().copied())
+            .chain(std::iter::once(SUSTAINED_TELEPORT_ESCAPE))
             // The two rungs that name one item apiece inline rather than
             // through a table.
             .chain([
