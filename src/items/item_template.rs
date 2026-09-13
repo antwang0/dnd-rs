@@ -6381,6 +6381,46 @@ pub static HELM_OF_BRILLIANCE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Oil of Slipperiness** (Potion, Uncommon) — a 10-foot square of
+/// Grease, poured out of a vial by somebody who cannot cast.
+///
+/// The cheapest piece of *terrain* on the loot table. Everything else a
+/// party can throw at the floor is a damage area or a save-or-condition;
+/// this is ground that stays difficult, catches whoever walks into it,
+/// and does not care whose side they are on — which makes *where* it
+/// goes the whole decision, exactly as it is for the wizard who casts
+/// the spell.
+///
+/// See `item_actions::POUR_OIL_OF_SLIPPERINESS` for why this is the
+/// first consumable in the engine that casts the real spell instead of a
+/// copy of it, and for RAW's ten-minute half that the encounter clock
+/// has no room for.
+pub static OIL_OF_SLIPPERINESS: Item = Item {
+    name: crate::actions::item_actions::OIL_OF_SLIPPERINESS_NAME,
+    glyph: 'i',
+    on_use: &[&crate::actions::item_actions::POUR_OIL_OF_SLIPPERINESS],
+    ..Item::DEFAULTS
+};
+
+/// **Decanter of Endless Water** (Wondrous item, Uncommon) — the only
+/// at-will control effect on the loot table.
+///
+/// Every other way an item knocks something down is a charge, a scroll
+/// or a one-shot. RAW writes no limit on the decanter at all, so this is
+/// a DC 13 Strength save *every round, forever*, out of a flask that
+/// wants no attunement slot and cannot run dry — which makes a common
+/// bottle the most repeatable thing a party can be carrying, and the
+/// closest a martial chassis gets to a control cantrip.
+///
+/// See `item_actions::AIM_DECANTER_GEYSER` for why the geyser is a
+/// single target rather than a line, and for the 1d4 that is dropped.
+pub static DECANTER_OF_ENDLESS_WATER: Item = Item {
+    name: crate::actions::item_actions::DECANTER_OF_ENDLESS_WATER_NAME,
+    glyph: 'd',
+    on_use: &[&crate::actions::item_actions::AIM_DECANTER_GEYSER],
+    ..Item::DEFAULTS
+};
+
 /// **Cube of Force** (Wondrous item, Rare, requires attunement) — the
 /// one item in the SRD that ships as a menu already written.
 ///
@@ -7982,6 +8022,16 @@ pub static LOOT_POOL: &[&Item] = &[
     &IRON_FLASK,
     &MIRROR_OF_LIFE_TRAPPING,
     &TALISMAN_OF_ULTIMATE_EVIL,
+    // The two commonest things in this batch, and the two the chassis
+    // had to grow an arm apiece for: an oil that is spent by being
+    // poured and a flask that is never spent at all. Both doubled, like
+    // the other Uncommons on the consumable half of the table — the
+    // decanter because an at-will trinket is what a martial party is
+    // short of, and the oil because a square of grease is worth
+    // finding twice.
+    &OIL_OF_SLIPPERINESS,
+    &OIL_OF_SLIPPERINESS,
+    &DECANTER_OF_ENDLESS_WATER,
 ];
 
 #[cfg(test)]

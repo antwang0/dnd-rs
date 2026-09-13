@@ -2571,6 +2571,22 @@ const ITEM_ATTRITION_CONDITIONS: &[Condition] = &[
     Condition::Baned,
     Condition::HeatMetaled,
     Condition::Poisoned,
+    // And last, which is where it belongs: the only condition on this
+    // table the target can take off by itself, for half its movement, on
+    // the turn after it lands. Prone is genuinely worth something —
+    // advantage to every melee attacker, disadvantage to every archer,
+    // and half a turn to undo — but it is the one row here that buys a
+    // single round rather than a fight, so it should be reached only
+    // when nothing above it is available.
+    //
+    // It arrived with SRD 5.2's **Decanter of Endless Water**, whose
+    // geyser is the loot table's only *at-will* control effect: no
+    // pool, no consumption, a DC 13 Strength save every round out of a
+    // common flask. That is exactly the item this seam was drawn for —
+    // cheap enough that the bottom of the ladder is the right place for
+    // it, and repeatable enough that the bottom of the ladder is worth
+    // reaching.
+    Condition::Prone,
 ];
 
 /// The walk both **item** control rungs share: offer every control

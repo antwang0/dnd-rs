@@ -7698,7 +7698,7 @@ pub static CAPE_OF_THE_MOUNTEBANK_STEP: crate::actions::staves::StaffSpell =
         action_name: "cape of the mountebank: dimension door",
         action_aliases: &["cape", "mountebank", "cape-step"],
         item_name: CAPE_OF_THE_MOUNTEBANK_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 4,
         spell: || &*crate::actions::spells::DIMENSION_DOOR,
         only_targets: None,
@@ -8143,7 +8143,7 @@ pub static CIRCLET_OF_BLASTING_RAY: crate::actions::staves::StaffSpell =
         action_name: "circlet of blasting: scorching ray",
         action_aliases: &["circlet", "blasting", "scorch"],
         item_name: CIRCLET_OF_BLASTING_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 2,
         spell: || &*crate::actions::spells::SCORCHING_RAY,
         only_targets: None,
@@ -8198,7 +8198,7 @@ pub static WIND_FAN_GUST: crate::actions::staves::StaffSpell = crate::actions::s
     action_name: "wind fan: gust of wind",
     action_aliases: &["wind fan", "fan", "wind-gust"],
     item_name: WIND_FAN_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 2,
     spell: || &*crate::actions::spells::GUST_OF_WIND,
     only_targets: None,
@@ -8232,7 +8232,7 @@ pub static EVERSMOKING_BOTTLE_SMOKE: crate::actions::staves::StaffSpell =
         action_name: "eversmoking bottle: smoke",
         action_aliases: &["eversmoking", "smoke bottle", "unstopper smoke"],
         item_name: EVERSMOKING_BOTTLE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 1,
         spell: || &*crate::actions::spells::FOG_CLOUD,
         only_targets: None,
@@ -8269,7 +8269,7 @@ pub static TRIDENT_OF_FISH_COMMAND_DOMINATE: crate::actions::staves::StaffSpell 
         action_name: "trident of fish command: dominate beast",
         action_aliases: &["trident", "fish command", "command fish"],
         item_name: TRIDENT_OF_FISH_COMMAND_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 4,
         spell: || &*crate::actions::spells::DOMINATE_BEAST,
         only_targets: Some(|target| target.has_swim_speed()),
@@ -8308,7 +8308,7 @@ pub static HELM_OF_BRILLIANCE_DAYLIGHT: crate::actions::staves::StaffSpell =
         action_name: "helm of brilliance: daylight",
         action_aliases: &["helm-daylight", "opal"],
         item_name: HELM_OF_BRILLIANCE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 3,
         spell: || &*crate::actions::spells::DAYLIGHT,
         only_targets: None,
@@ -8319,7 +8319,7 @@ pub static HELM_OF_BRILLIANCE_FIREBALL: crate::actions::staves::StaffSpell =
         action_name: "helm of brilliance: fireball",
         action_aliases: &["helm-fireball", "fire opal"],
         item_name: HELM_OF_BRILLIANCE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 3,
         spell: || &*crate::actions::spells::FIREBALL,
         only_targets: None,
@@ -8330,7 +8330,7 @@ pub static HELM_OF_BRILLIANCE_PRISMATIC_SPRAY: crate::actions::staves::StaffSpel
         action_name: "helm of brilliance: prismatic spray",
         action_aliases: &["helm-prismatic", "diamond"],
         item_name: HELM_OF_BRILLIANCE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 7,
         spell: || &*crate::actions::spells::PRISMATIC_SPRAY,
         only_targets: None,
@@ -8341,7 +8341,7 @@ pub static HELM_OF_BRILLIANCE_WALL_OF_FIRE: crate::actions::staves::StaffSpell =
         action_name: "helm of brilliance: wall of fire",
         action_aliases: &["helm-wall-of-fire", "ruby"],
         item_name: HELM_OF_BRILLIANCE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 4,
         spell: || &*crate::actions::spells::WALL_OF_FIRE,
         only_targets: None,
@@ -8566,7 +8566,7 @@ pub static CUBE_OF_FORCE_MAGE_ARMOR: crate::actions::staves::StaffSpell =
         action_name: "cube of force: mage armor",
         action_aliases: &["cube-mage-armor", "cube armor"],
         item_name: CUBE_OF_FORCE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 1,
         spell: || &*crate::actions::spells::MAGE_ARMOR,
         only_targets: None,
@@ -8577,7 +8577,7 @@ pub static CUBE_OF_FORCE_SHIELD: crate::actions::staves::StaffSpell =
         action_name: "cube of force: shield",
         action_aliases: &["cube-shield", "cube face shield"],
         item_name: CUBE_OF_FORCE_NAME,
-        charges: 1,
+        billing: ItemUseBilling::Charges(1),
         spell_level: 1,
         spell: || &*crate::actions::spells::SHIELD,
         only_targets: None,
@@ -8588,7 +8588,7 @@ pub static CUBE_OF_FORCE_RESILIENT_SPHERE: crate::actions::staves::StaffSpell =
         action_name: "cube of force: resilient sphere",
         action_aliases: &["cube-sphere", "cube face sphere"],
         item_name: CUBE_OF_FORCE_NAME,
-        charges: 4,
+        billing: ItemUseBilling::Charges(4),
         spell_level: 4,
         spell: || &*crate::actions::spells::OTILUKES_RESILIENT_SPHERE,
         only_targets: None,
@@ -8599,7 +8599,7 @@ pub static CUBE_OF_FORCE_WALL_OF_FORCE: crate::actions::staves::StaffSpell =
         action_name: "cube of force: wall of force",
         action_aliases: &["cube-wall", "cube face wall"],
         item_name: CUBE_OF_FORCE_NAME,
-        charges: 5,
+        billing: ItemUseBilling::Charges(5),
         spell_level: 5,
         spell: || &*crate::actions::spells::WALL_OF_FORCE,
         only_targets: None,
@@ -8890,3 +8890,93 @@ impl Action for OpenTalismanFissure {
 }
 
 pub static OPEN_TALISMAN_FISSURE: OpenTalismanFissure = OpenTalismanFissure {};
+
+/// **Oil of Slipperiness** — *"the oil can be poured on the ground as a
+/// Magic action, where it covers a 10-foot square, duplicating the
+/// effect of the Grease spell in that area for 8 hours."*
+///
+/// The first consumable in the engine that casts the **real spell**
+/// rather than a hand-copied restatement of one, and the reason
+/// `StaffSpell` had to learn `ItemUseBilling::Consumed`. RAW says
+/// *"duplicating the effect of the Grease spell"* in so many words, so
+/// anything less than `spells::GREASE` — the same 10-foot square, the
+/// same Dexterity save, the same difficult terrain, the same
+/// friend-or-foe ground that catches whoever walks into it — would be a
+/// worse answer than the one the book gives.
+///
+/// That matters more here than it would on a scroll. A scroll's fixed
+/// DC is RAW's own (*"the spell's saving throw DC is 13"*), so the
+/// re-statement chassis in this module is the right shape for the whole
+/// scroll shelf. An oil prints no DC at all: it *is* the spell, at
+/// whoever poured it's numbers, which is exactly what forwarding buys.
+///
+/// **RAW's other half is not here.** *"One vial of this oil can cover
+/// one Medium or smaller creature… Applying the oil takes 10 minutes.
+/// The affected creature then gains the effect of the Freedom of
+/// Movement spell for 8 hours."* Ten minutes is not an action, and the
+/// engine's clock runs from initiative to the last body on the floor.
+/// It is the same reason the Manuals and Tomes are absent from the loot
+/// table entirely: a thing you do for ten minutes is a thing you do
+/// between rooms, and there is no lane for that.
+pub const OIL_OF_SLIPPERINESS_NAME: &str = "Oil of Slipperiness";
+
+pub static POUR_OIL_OF_SLIPPERINESS: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "pour oil of slipperiness",
+        action_aliases: &["slipperiness", "slick oil", "pour oil"],
+        item_name: OIL_OF_SLIPPERINESS_NAME,
+        billing: ItemUseBilling::Consumed,
+        spell_level: 1,
+        spell: || &*crate::actions::spells::GREASE,
+        only_targets: None,
+    };
+
+/// **Decanter of Endless Water**, Geyser — *"30 gallons of water that
+/// gushes forth in a Line 30 feet long and 1 foot wide… One creature of
+/// your choice in the Line must succeed on a DC 13 Strength saving
+/// throw or take 1d4 Bludgeoning damage and have the Prone condition."*
+///
+/// The only **at-will** control effect on the loot table. Every other
+/// way an item knocks something down or shuts it up is a charge, a
+/// scroll or a one-shot; RAW writes no limit on this at all — you
+/// unstopper the flask, you say the word, and you can say it again next
+/// turn and the turn after that. `ItemUseBilling::Free` is what that
+/// looks like, and it makes an Uncommon flask the most *repeatable*
+/// thing a party can be carrying.
+///
+/// Prone is worth more than it sounds against this engine's bestiary. It
+/// costs the target half its movement to stand back up, hands every
+/// melee attacker advantage for as long as it is down, and taxes every
+/// archer on the other side — so a DC 13 Strength save every round, from
+/// a flask anybody can hold, is a real answer to a caster who wants to
+/// stay at range.
+///
+/// **The 1d4 is dropped**, and it is the right thing to drop: a single
+/// bludgeoning die is noise beside the condition, and the chassis that
+/// installs a condition on a failed save is the one whose validator,
+/// targeting and AI rungs all already exist. A second chassis carrying a
+/// d4 would be a new code path for two and a half points of damage.
+///
+/// **"One creature of your choice in the Line"** is RAW's own
+/// narrowing, and it is why this is a single-target row rather than a
+/// line area: the geyser is thirty feet long and only ever catches the
+/// one creature the holder aims it at. Twelve tiles of reach is that
+/// thirty feet.
+pub const DECANTER_OF_ENDLESS_WATER_NAME: &str = "Decanter of Endless Water";
+
+pub static AIM_DECANTER_GEYSER: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "aim decanter geyser",
+    action_aliases: &["decanter", "geyser", "endless water"],
+    item_name: DECANTER_OF_ENDLESS_WATER_NAME,
+    log_text: "{actor} unstoppers the decanter and calls up the geyser.",
+    save: AbilityScoreType::Strength,
+    dc: 13,
+    // RAW's "Line 30 feet long" — twelve tiles.
+    reach: 12,
+    condition: Condition::Prone,
+    // Prone is not a timer, it is a posture: you lie there until you
+    // spend the movement to stand. Same `Permanent` the Grease zone
+    // installs it with, and for the same reason.
+    timer: ConditionTimer::Permanent,
+    billing: ItemUseBilling::Free,
+};

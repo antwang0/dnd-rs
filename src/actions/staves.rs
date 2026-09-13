@@ -76,6 +76,7 @@
 use std::collections::HashSet;
 
 use crate::actions::action_template::{Action, TargetingSchema};
+use crate::actions::item_actions::ItemUseBilling;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::action_overrides::ActionOverride;
 use crate::engine::encounter::EncounterInstance;
@@ -114,8 +115,33 @@ pub struct StaffSpell {
     pub action_aliases: &'static [&'static str],
     /// The staff, by the name the charge ledger is keyed on.
     pub item_name: &'static str,
-    /// Charges this row costs. RAW's per-spell price.
-    pub charges: u32,
+    /// What one cast of this row costs the **object** — see
+    /// [`ItemUseBilling`].
+    ///
+    /// This field was `charges: u32` for as long as every row on the
+    /// chassis was a staff, which is the right shape for a staff and
+    /// the wrong question: *how many charges* assumes the answer is
+    /// charges. `ItemUseBilling` is the question itself — is the use
+    /// the object, a draw on a pool the object outlives, or free — and
+    /// every other item chassis in the engine already asks it. This one
+    /// was the holdout, hardcoding one of the three arms.
+    ///
+    /// What it buys is the arm a staff can never want. SRD 5.2's **Oil
+    /// of Slipperiness** is poured out and gone, and what it does is
+    /// *"duplicating the effect of the Grease spell"* — the real spell,
+    /// in RAW's own words, on an object that is spent by saying so. On
+    /// the old field that item could only be written as a hand-copied
+    /// re-statement of Grease in an `AreaSaveConditionItem`, which is
+    /// exactly the duplication this module's docstring exists to
+    /// complain about.
+    ///
+    /// The `Consumed` arm is also the one the chassis has to *ask* for
+    /// rather than inherit: a charge price is an entry in `cost()`, so
+    /// the engine checks it at every gate that checks prices, and a
+    /// consumed object is spent inside `side_effects` and has to be
+    /// re-validated by hand. See `custom_validate_input` below, which
+    /// does.
+    pub billing: ItemUseBilling,
     /// The level the spell is cast at, for the cast frame. RAW's printed
     /// level for the row — a staff never casts anything at a level the
     /// item did not choose.
@@ -164,13 +190,27 @@ impl StaffSpell {
         self.only_targets.is_none_or(|gate| gate(target))
     }
 
-    /// The charge price as a resource — the one thing every staff row
-    /// adds to its spell's cost.
+    /// What this row adds to its spell's action-economy cost — a charge
+    /// draw for the two arms that price in the ledger, and nothing for
+    /// the two that do not.
+    ///
+    /// `Consumed` bills inside `side_effects` and `Free` bills nothing,
+    /// which is why both answer with an empty list here rather than with
+    /// a zero-count charge: a zero charge is a pool that happens to be
+    /// free, and neither of those is a pool.
+    pub fn charge_costs(&self) -> Vec<Resource> {
+        self.billing.costs(self.item_name)
+    }
+
+    /// The charge price as a single resource, for the two arms that have
+    /// one. Panics for the arms that do not, which is deliberate: it is
+    /// a convenience for tests and for the picker's "why is this row
+    /// greyed out" line, both of which are asking about a pool.
     pub fn charge_cost(&self) -> Resource {
-        Resource::ItemCharges {
-            item: self.item_name,
-            count: self.charges,
-        }
+        self.charge_costs()
+            .into_iter()
+            .next()
+            .expect("charge_cost is only meaningful for a row priced in charges")
     }
 }
 
@@ -360,7 +400,7 @@ impl Action for StaffSpell {
         }) {
             costs.push(Resource::Action);
         }
-        costs.push(self.charge_cost());
+        costs.extend(self.charge_costs());
         costs
     }
 
@@ -383,18 +423,25 @@ impl Action for StaffSpell {
         false
     }
 
-    /// The spell's own gate, and the row's own restriction on top of it.
+    /// The spell's own gate, the row's own restriction, and — for the
+    /// one billing arm whose price is not in the cost list — whether the
+    /// caster is still holding the thing.
     ///
-    /// "And you are still holding a staff with the charges on it" is
-    /// deliberately **not** re-checked here, though every other item
-    /// action in the engine re-checks its own item at this hook. It does
-    /// not need to be: `validate_input` walks every entry of `cost()`
-    /// through `can_consume_resource` before it reaches this method, and
-    /// the charge price is an entry of `cost()`. That is the whole
-    /// difference a first-class resource makes — a price named in the
-    /// cost list is checked by the engine at every gate that checks
-    /// prices, and a price paid inside `side_effects` is checked only
-    /// where its author remembered to ask.
+    /// For a row priced in charges, "and you are still holding it" is
+    /// deliberately **not** re-checked, though every other item action in
+    /// the engine re-checks its own item at this hook. It does not need
+    /// to be: `validate_input` walks every entry of `cost()` through
+    /// `can_consume_resource` before it reaches this method, and the
+    /// charge price is an entry of `cost()`. That is the whole difference
+    /// a first-class resource makes — a price named in the cost list is
+    /// checked by the engine at every gate that checks prices, and a
+    /// price paid inside `side_effects` is checked only where its author
+    /// remembered to ask.
+    ///
+    /// `ItemUseBilling::Consumed` and `::Free` are the arms that name no
+    /// price in the cost list, so for those this is where the asking
+    /// happens — through `wields_live_item`, which is "carried *and*
+    /// attuned if it wants to be" rather than merely carried.
     ///
     /// `only_targets` is re-asked here rather than left to
     /// `affects_creature` for the reason the two gates exist separately:
@@ -412,6 +459,14 @@ impl Action for StaffSpell {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
+        if self.charge_costs().is_empty()
+            && !encounter
+                .actors
+                .get(&caster_id)
+                .is_some_and(|a| a.wields_live_item(self.item_name))
+        {
+            return false;
+        }
         if self.only_targets.is_some() {
             let admitted = target_ids
                 .and_then(|ids| ids.first())
@@ -430,6 +485,17 @@ impl Action for StaffSpell {
         )
     }
 
+    /// The spell's own effects, after the object has paid whatever the
+    /// cost list could not charge it.
+    ///
+    /// `ItemUseBilling::Consumed` is spent here and **before** the spell
+    /// resolves, which is the order every consumable chassis in
+    /// `item_actions` uses: a vial that is emptied by the pouring should
+    /// be gone whether or not the grease caught anybody, and billing
+    /// first is what stops a queued duplicate use slipping past the
+    /// validator and pouring the same vial twice. A refusal here — the
+    /// caster has left the board, or something else already spent the
+    /// object — returns no effects rather than casting for free.
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
@@ -438,6 +504,9 @@ impl Action for StaffSpell {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
         self.spell()
             .side_effects(encounter, caster_id, target_ids, target_locations, None)
     }
@@ -485,7 +554,7 @@ pub static STAFF_OF_FIRE_BURNING_HANDS: StaffSpell = StaffSpell {
     action_name: "staff of fire: burning hands",
     action_aliases: &["staff-burning-hands"],
     item_name: STAFF_OF_FIRE_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 1,
     spell: || &*crate::actions::spells::BURNING_HANDS,
     only_targets: None,
@@ -495,7 +564,7 @@ pub static STAFF_OF_FIRE_FIREBALL: StaffSpell = StaffSpell {
     action_name: "staff of fire: fireball",
     action_aliases: &["staff-fireball"],
     item_name: STAFF_OF_FIRE_NAME,
-    charges: 3,
+    billing: ItemUseBilling::Charges(3),
     spell_level: 3,
     spell: || &*crate::actions::spells::FIREBALL,
     only_targets: None,
@@ -505,7 +574,7 @@ pub static STAFF_OF_FIRE_WALL_OF_FIRE: StaffSpell = StaffSpell {
     action_name: "staff of fire: wall of fire",
     action_aliases: &["staff-wall-of-fire"],
     item_name: STAFF_OF_FIRE_NAME,
-    charges: 4,
+    billing: ItemUseBilling::Charges(4),
     spell_level: 4,
     spell: || &*crate::actions::spells::WALL_OF_FIRE,
     only_targets: None,
@@ -521,7 +590,7 @@ pub static STAFF_OF_FROST_FOG_CLOUD: StaffSpell = StaffSpell {
     action_name: "staff of frost: fog cloud",
     action_aliases: &["staff-fog-cloud"],
     item_name: STAFF_OF_FROST_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 1,
     spell: || &*crate::actions::spells::FOG_CLOUD,
     only_targets: None,
@@ -531,7 +600,7 @@ pub static STAFF_OF_FROST_ICE_STORM: StaffSpell = StaffSpell {
     action_name: "staff of frost: ice storm",
     action_aliases: &["staff-ice-storm"],
     item_name: STAFF_OF_FROST_NAME,
-    charges: 4,
+    billing: ItemUseBilling::Charges(4),
     spell_level: 4,
     spell: || &*crate::actions::spells::ICE_STORM,
     only_targets: None,
@@ -541,7 +610,7 @@ pub static STAFF_OF_FROST_WALL_OF_ICE: StaffSpell = StaffSpell {
     action_name: "staff of frost: wall of ice",
     action_aliases: &["staff-wall-of-ice"],
     item_name: STAFF_OF_FROST_NAME,
-    charges: 4,
+    billing: ItemUseBilling::Charges(4),
     spell_level: 6,
     spell: || &*crate::actions::spells::WALL_OF_ICE,
     only_targets: None,
@@ -551,7 +620,7 @@ pub static STAFF_OF_FROST_CONE_OF_COLD: StaffSpell = StaffSpell {
     action_name: "staff of frost: cone of cold",
     action_aliases: &["staff-cone-of-cold"],
     item_name: STAFF_OF_FROST_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::CONE_OF_COLD,
     only_targets: None,
@@ -571,7 +640,7 @@ pub static STAFF_OF_HEALING_CURE_WOUNDS: StaffSpell = StaffSpell {
     action_name: "staff of healing: cure wounds",
     action_aliases: &["staff-cure-wounds"],
     item_name: STAFF_OF_HEALING_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 1,
     spell: || &*crate::actions::spells::CURE_WOUNDS,
     only_targets: None,
@@ -581,7 +650,7 @@ pub static STAFF_OF_HEALING_LESSER_RESTORATION: StaffSpell = StaffSpell {
     action_name: "staff of healing: lesser restoration",
     action_aliases: &["staff-lesser-restoration"],
     item_name: STAFF_OF_HEALING_NAME,
-    charges: 2,
+    billing: ItemUseBilling::Charges(2),
     spell_level: 2,
     spell: || &*crate::actions::spells::LESSER_RESTORATION,
     only_targets: None,
@@ -591,7 +660,7 @@ pub static STAFF_OF_HEALING_MASS_CURE_WOUNDS: StaffSpell = StaffSpell {
     action_name: "staff of healing: mass cure wounds",
     action_aliases: &["staff-mass-cure-wounds"],
     item_name: STAFF_OF_HEALING_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::MASS_CURE_WOUNDS,
     only_targets: None,
@@ -607,7 +676,7 @@ pub static STAFF_OF_SWARMING_INSECTS_GIANT_INSECT: StaffSpell = StaffSpell {
     action_name: "staff of swarming insects: giant insect",
     action_aliases: &["staff-giant-insect"],
     item_name: STAFF_OF_SWARMING_INSECTS_NAME,
-    charges: 4,
+    billing: ItemUseBilling::Charges(4),
     spell_level: 4,
     spell: || &crate::actions::spells::GIANT_INSECT,
     only_targets: None,
@@ -617,7 +686,7 @@ pub static STAFF_OF_SWARMING_INSECTS_INSECT_PLAGUE: StaffSpell = StaffSpell {
     action_name: "staff of swarming insects: insect plague",
     action_aliases: &["staff-insect-plague"],
     item_name: STAFF_OF_SWARMING_INSECTS_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::INSECT_PLAGUE,
     only_targets: None,
@@ -633,7 +702,7 @@ pub static STAFF_OF_CHARMING_CHARM_PERSON: StaffSpell = StaffSpell {
     action_name: "staff of charming: charm person",
     action_aliases: &["staff-charm-person"],
     item_name: STAFF_OF_CHARMING_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 1,
     spell: || &*crate::actions::spells::CHARM_PERSON,
     only_targets: None,
@@ -643,7 +712,7 @@ pub static STAFF_OF_CHARMING_COMMAND: StaffSpell = StaffSpell {
     action_name: "staff of charming: command",
     action_aliases: &["staff-command"],
     item_name: STAFF_OF_CHARMING_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 1,
     spell: || &*crate::actions::spells::COMMAND,
     only_targets: None,
@@ -661,7 +730,7 @@ pub static STAFF_OF_THE_WOODLANDS_BARKSKIN: StaffSpell = StaffSpell {
     action_name: "staff of the woodlands: barkskin",
     action_aliases: &["staff-barkskin"],
     item_name: STAFF_OF_THE_WOODLANDS_NAME,
-    charges: 2,
+    billing: ItemUseBilling::Charges(2),
     spell_level: 2,
     spell: || &*crate::actions::spells::BARKSKIN,
     only_targets: None,
@@ -671,7 +740,7 @@ pub static STAFF_OF_THE_WOODLANDS_SPIKE_GROWTH: StaffSpell = StaffSpell {
     action_name: "staff of the woodlands: spike growth",
     action_aliases: &["staff-spike-growth"],
     item_name: STAFF_OF_THE_WOODLANDS_NAME,
-    charges: 2,
+    billing: ItemUseBilling::Charges(2),
     spell_level: 2,
     spell: || &*crate::actions::spells::SPIKE_GROWTH,
     only_targets: None,
@@ -681,7 +750,7 @@ pub static STAFF_OF_THE_WOODLANDS_WALL_OF_THORNS: StaffSpell = StaffSpell {
     action_name: "staff of the woodlands: wall of thorns",
     action_aliases: &["staff-wall-of-thorns"],
     item_name: STAFF_OF_THE_WOODLANDS_NAME,
-    charges: 6,
+    billing: ItemUseBilling::Charges(6),
     spell_level: 6,
     spell: || &*crate::actions::spells::WALL_OF_THORNS,
     only_targets: None,
@@ -697,7 +766,7 @@ pub static STAFF_OF_POWER_MAGIC_MISSILE: StaffSpell = StaffSpell {
     action_name: "staff of power: magic missile",
     action_aliases: &["staff-magic-missile"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 1,
     spell: || &*crate::actions::spells::MAGIC_MISSILE,
     only_targets: None,
@@ -707,7 +776,7 @@ pub static STAFF_OF_POWER_RAY_OF_ENFEEBLEMENT: StaffSpell = StaffSpell {
     action_name: "staff of power: ray of enfeeblement",
     action_aliases: &["staff-ray-of-enfeeblement"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 1,
+    billing: ItemUseBilling::Charges(1),
     spell_level: 2,
     spell: || &*crate::actions::spells::RAY_OF_ENFEEBLEMENT,
     only_targets: None,
@@ -717,7 +786,7 @@ pub static STAFF_OF_POWER_LEVITATE: StaffSpell = StaffSpell {
     action_name: "staff of power: levitate",
     action_aliases: &["staff-levitate"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 2,
+    billing: ItemUseBilling::Charges(2),
     spell_level: 2,
     spell: || &*crate::actions::spells::LEVITATE,
     only_targets: None,
@@ -727,7 +796,7 @@ pub static STAFF_OF_POWER_FIREBALL: StaffSpell = StaffSpell {
     action_name: "staff of power: fireball",
     action_aliases: &["staff-power-fireball"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     // RAW: "fireball (5th-level version, 5 charges)". The five charges
     // buy the upcast, not just the cast — which is why this row's level
     // is 5 where the Staff of Fire's is 3.
@@ -740,7 +809,7 @@ pub static STAFF_OF_POWER_LIGHTNING_BOLT: StaffSpell = StaffSpell {
     action_name: "staff of power: lightning bolt",
     action_aliases: &["staff-lightning-bolt"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::LIGHTNING_BOLT,
     only_targets: None,
@@ -750,7 +819,7 @@ pub static STAFF_OF_POWER_CONE_OF_COLD: StaffSpell = StaffSpell {
     action_name: "staff of power: cone of cold",
     action_aliases: &["staff-power-cone-of-cold"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::CONE_OF_COLD,
     only_targets: None,
@@ -760,7 +829,7 @@ pub static STAFF_OF_POWER_HOLD_MONSTER: StaffSpell = StaffSpell {
     action_name: "staff of power: hold monster",
     action_aliases: &["staff-hold-monster"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::HOLD_MONSTER,
     only_targets: None,
@@ -770,7 +839,7 @@ pub static STAFF_OF_POWER_WALL_OF_FORCE: StaffSpell = StaffSpell {
     action_name: "staff of power: wall of force",
     action_aliases: &["staff-wall-of-force"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 5,
+    billing: ItemUseBilling::Charges(5),
     spell_level: 5,
     spell: || &*crate::actions::spells::WALL_OF_FORCE,
     only_targets: None,
@@ -780,7 +849,7 @@ pub static STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY: StaffSpell = StaffSpell {
     action_name: "staff of power: globe of invulnerability",
     action_aliases: &["staff-globe-of-invulnerability"],
     item_name: STAFF_OF_POWER_NAME,
-    charges: 6,
+    billing: ItemUseBilling::Charges(6),
     spell_level: 6,
     spell: || &*crate::actions::spells::GLOBE_OF_INVULNERABILITY,
     only_targets: None,

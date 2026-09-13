@@ -99024,6 +99024,129 @@ fn the_talismans_fissure_is_a_save_or_die_with_a_consolation() {
         "the fissure swallowed something that was not standing on the ground"
     );
 }
+/// The two arms of `ItemUseBilling` a staff can never want, and the two
+/// items that needed them.
+///
+/// `StaffSpell` priced itself in a bare `charges: u32` for as long as
+/// every row on it was a staff, which is the right shape for a staff and
+/// the wrong question — *how many charges* assumes the answer is
+/// charges. `ItemUseBilling` is the question, and every other item
+/// chassis in the engine already asks it. These are the two answers the
+/// old field could not give:
+///
+///   - **`Consumed`** — the **Oil of Slipperiness**, which RAW spends by
+///     pouring and whose effect RAW names as *"the Grease spell"*. What
+///     this pins is the pair: the vial leaves the pack, and what lands
+///     on the floor is `spells::GREASE` itself (a zone, not a copy of
+///     one) — which is the whole reason the arm was worth adding rather
+///     than writing a thirtieth hand-copied re-statement.
+///   - **`Free`** — the **Decanter of Endless Water**, whose geyser RAW
+///     puts no limit on at all. The claim is the one that separates it
+///     from every other control item on the table: use it, and it is
+///     still there, at full strength, next turn.
+#[test]
+fn the_oil_is_spent_by_pouring_and_the_decanter_never_is() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::{DECANTER_OF_ENDLESS_WATER, OIL_OF_SLIPPERINESS};
+
+    // --- The oil: one pour, and it is gone. ---
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&OIL_OF_SLIPPERINESS);
+    let pour = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "pour oil of slipperiness")
+        .expect("carrying the oil offers the pouring");
+    // Priced in nothing but the Action — a vial has no pool to draw on,
+    // and `Consumed` bills the object inside the effect rather than in
+    // the cost list.
+    let costs = pour.cost(&e, pc, None, None, None);
+    assert!(
+        !costs
+            .iter()
+            .any(|c| matches!(c, Resource::ItemCharges { .. })),
+        "a consumed vial should name no charge price: {costs:?}"
+    );
+    assert!(costs.contains(&Resource::Action));
+
+    let at = vec![Coordinate::new(8, 8)];
+    let zones_before = e.zones().len();
+    assert!(pour.validate_input(&e, pc, None, Some(&at), None));
+    for ef in pour.execute(&mut e, pc, None, Some(&at), None) {
+        ef.apply(&mut e);
+    }
+    // What landed is the spell, not a re-statement of it: Grease is a
+    // zone, and nothing else on this chassis puts one down.
+    assert_eq!(
+        e.zones().len(),
+        zones_before + 1,
+        "the oil poured and no grease appeared"
+    );
+    assert!(
+        e.zones().iter().any(|z| z.name == "grease"),
+        "what landed is not `spells::GREASE`: {:?}",
+        e.zones().iter().map(|z| z.name).collect::<Vec<_>>()
+    );
+    assert!(
+        !e.actors[&pc].has_item_named(OIL_OF_SLIPPERINESS.name),
+        "the vial survived being poured out"
+    );
+    e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+    assert!(
+        !pour.validate_input(&e, pc, None, Some(&at), None),
+        "an empty hand poured a second vial"
+    );
+
+    // --- The decanter: use it and it is still there. ---
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&DECANTER_OF_ENDLESS_WATER);
+    assert_eq!(
+        DECANTER_OF_ENDLESS_WATER.charges, 0,
+        "a flask RAW puts no limit on should carry no pool"
+    );
+    let geyser = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "aim decanter geyser")
+        .expect("carrying the decanter offers the geyser");
+    assert_eq!(geyser.installs_condition(), Some(Condition::Prone));
+    let at = vec![goblin];
+    // Four rounds of it, which is three more than any charged item on
+    // the table manages and a strictly stronger claim than "it worked
+    // once".
+    for round in 1..=4 {
+        e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+        assert!(
+            geyser.validate_input(&e, pc, Some(&at), None, None),
+            "the decanter ran dry on round {round}"
+        );
+        for ef in geyser.execute(&mut e, pc, Some(&at), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors[&pc].has_item_named(DECANTER_OF_ENDLESS_WATER.name),
+            "round {round} took the flask with it"
+        );
+    }
+}
 
 /// The armour shelf's four new suits do what their one sentence says.
 ///
@@ -101351,15 +101474,32 @@ fn every_spell_that_prices_an_upcast_declares_it() {
 /// simply not very good.
 #[test]
 fn every_staff_row_is_wired_to_the_staff_it_names() {
+    use crate::actions::item_actions::ItemUseBilling;
     use crate::actions::staves::{STAFF_PRIMES, STAFF_SPELLS};
     use crate::items::item_template::STAVES;
 
     // Both chassis, as one list of `(row name, staff name, price)`: a
     // spell row and a prime row differ in what they do with the charges
     // and not at all in how they have to be wired.
+    //
+    // A staff row's price is an `ItemUseBilling` now rather than a bare
+    // count, because the chassis it shares with the loot table's
+    // non-staff casters had to learn the other two arms. **Every staff
+    // row is still a charge row**, and that is the first thing this
+    // sweep asserts: a staff whose spell was free, or that spent the
+    // stick, would be a different object.
     let rows: Vec<(&str, &str, u32)> = STAFF_SPELLS
         .iter()
-        .map(|r| (r.action_name, r.item_name, r.charges))
+        .map(|r| {
+            let ItemUseBilling::Charges(n) = r.billing else {
+                panic!(
+                    "{} is on a staff and is not priced in charges — a staff row \
+                     that is free or that consumes the staff is a different item",
+                    r.action_name
+                )
+            };
+            (r.action_name, r.item_name, n)
+        })
         .chain(
             STAFF_PRIMES
                 .iter()
