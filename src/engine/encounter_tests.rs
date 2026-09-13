@@ -104509,3 +104509,90 @@ fn the_rod_turns_banked_levels_into_the_biggest_slot_it_can_buy() {
         "the rod is not a consumable — drawing on it does not spend the object"
     );
 }
+
+/// The cursed suit does both halves of its sentence at the damage site:
+/// half from the type on its label, double from the other two.
+///
+/// Worth testing through `effective_damage` rather than off the item,
+/// because the item lane was the third to arrive on the vulnerability
+/// side and the value of putting it there is that it composes with the
+/// other two by rules nobody wrote twice. The last case is that: a
+/// creature that already resists slashing *and* wears the suit that
+/// doubles it takes full damage, which is 5e's "resistance and
+/// vulnerability cancel" falling out of a fold neither lane knows about.
+#[test]
+fn the_cursed_suit_halves_one_blow_and_doubles_the_other_two() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::{DamageModifier, DamageType};
+    use crate::items::item_template::ARMOR_OF_VULNERABILITY_BLUDGEONING;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let who = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+
+    // Bare: every physical type lands at face value.
+    for dt in [
+        DamageType::Bludgeoning,
+        DamageType::Piercing,
+        DamageType::Slashing,
+    ] {
+        assert_eq!(e.actors[&who].effective_damage(20, dt), 20, "{dt} unworn");
+    }
+
+    e.actors
+        .get_mut(&who)
+        .unwrap()
+        .pickup_item(&ARMOR_OF_VULNERABILITY_BLUDGEONING);
+    assert!(
+        e.actors[&who].wields_live_item("Armor of Vulnerability (bludgeoning)"),
+        "attuning is what curses you, and there is a slot free"
+    );
+
+    let worn = &e.actors[&who];
+    assert_eq!(
+        worn.effective_damage(20, DamageType::Bludgeoning),
+        10,
+        "the type on the label is halved"
+    );
+    assert_eq!(
+        worn.effective_damage(20, DamageType::Piercing),
+        40,
+        "and the other two are doubled"
+    );
+    assert_eq!(worn.effective_damage(20, DamageType::Slashing), 40);
+    assert_eq!(
+        worn.effective_damage(20, DamageType::Fire),
+        20,
+        "the curse says nothing about anything that is not a weapon"
+    );
+
+    // An unattuned suit is a suit in the pack: no halving and, more to
+    // the point, no doubling. A curse you have not taken on is not one.
+    e.actors
+        .get_mut(&who)
+        .unwrap()
+        .end_attunement("Armor of Vulnerability (bludgeoning)");
+    assert_eq!(
+        e.actors[&who].effective_damage(20, DamageType::Piercing),
+        20,
+        "an inert item cannot hurt its carrier either"
+    );
+
+    // And the cancellation, with the resistance coming from the sheet
+    // and the vulnerability from the pack.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let tough = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    {
+        let a = e.actors.get_mut(&tough).unwrap();
+        a.set_damage_modifier(DamageType::Slashing, DamageModifier::Resistance);
+        a.pickup_item(&ARMOR_OF_VULNERABILITY_BLUDGEONING);
+    }
+    assert_eq!(
+        e.actors[&tough].effective_damage(20, DamageType::Slashing),
+        20,
+        "resistance and vulnerability to one type cancel, whichever lanes they came from"
+    );
+}

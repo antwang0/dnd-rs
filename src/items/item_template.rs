@@ -385,6 +385,31 @@ pub struct Item {
     /// immunity short-circuits the damage pipeline before resistance /
     /// vulnerability rolls fire. Empty for items without typed immunity.
     pub damage_immunities: &'static [crate::engine::types::DamageType],
+    /// Damage types the wearer takes **double** of while carrying this
+    /// item — SRD 5.2's Armor of Vulnerability, *"while cursed, you have
+    /// Vulnerability to two of the three damage types associated with
+    /// the armor"*, and the only sentence on the whole magic-item table
+    /// that makes its holder worse.
+    ///
+    /// The mirror of `damage_resistances` two fields up, on the lane
+    /// `effective_damage` already resolves resistance and immunity
+    /// through — and a lane the item side did not have, because until
+    /// this armour nothing in the file wanted it. Vulnerability had two
+    /// sources, a creature's own template row and a held condition, and
+    /// both of those are things that happen *to* a creature rather than
+    /// things it puts on.
+    ///
+    /// Resistance and vulnerability to the same type cancel, which is
+    /// 5e's rule and not a special case here: `effective_damage` folds
+    /// every lane of each into one boolean before it decides, so an
+    /// armour that grants both — which is exactly what this armour is,
+    /// on different types — composes with a wearer who already resists
+    /// one of them without anybody writing that down twice.
+    ///
+    /// Empty for every other item, and expected to stay that way: RAW
+    /// files this one under Cursed Items, and a loot table where the
+    /// ordinary drops could hurt you would be a different game.
+    pub damage_vulnerabilities: &'static [crate::engine::types::DamageType],
     /// Conditions the wearer has installed (Permanent) for as long as the
     /// item is carried. Used by passive-buff trinkets like Slippers of
     /// Spider Climbing (SpiderClimbing) and Winged Boots (Flying) so the
@@ -811,6 +836,7 @@ impl Item {
         condition_immunities: &[],
         damage_resistances: &[],
         damage_immunities: &[],
+        damage_vulnerabilities: &[],
         passive_conditions: &[],
         grants_magical_attacks: false,
         grants_silvered_attacks: false,
@@ -1481,6 +1507,117 @@ pub static RING_OF_PSYCHIC_RESISTANCE: Item = Item {
     requires_attunement: true,
     ..Item::DEFAULTS
 };
+
+/// Ring of Force Resistance — passive trinket. Grants resistance to
+/// force damage while worn.
+///
+/// The tenth row of RAW's own table, and the one the family was missing.
+/// The Ring of Resistance prints a 1d10 of gemstones — pearl, tourmaline,
+/// garnet, sapphire, citrine, jet, amethyst, jade, topaz, spinel — and
+/// nine of the ten shipped. Sapphire is force, and force is the type the
+/// gap mattered most for: it is the one damage type almost nothing in
+/// the bestiary resists, which is why Magic Missile and Disintegrate and
+/// a Bigby's Hand are the spells a caster reaches for when everything
+/// else has bounced. A ring that answers them is worth the slot.
+///
+/// Sibling to the Brooch of Shielding, which is the same resistance one
+/// rarity down and on a different slot — a party that finds both can
+/// have two people answering the wizard.
+pub static RING_OF_FORCE_RESISTANCE: Item = Item {
+    name: "Ring of Force Resistance",
+    glyph: 'y',
+    damage_resistances: &[crate::engine::types::DamageType::Force],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Armor of Vulnerability (bludgeoning)** (Armor: any, Rare, cursed)
+/// — *"While wearing this armor, you have Resistance to one of the
+/// following damage types: Bludgeoning, Piercing, or Slashing. … While
+/// cursed, you have Vulnerability to two of the three damage types
+/// associated with the armor (not the one to which it grants
+/// Resistance)."*
+///
+/// The only item in the file that makes its wearer worse, and the reason
+/// `Item::damage_vulnerabilities` exists. Everything else on the table
+/// is a number going up or a clause firing in its holder's favour; this
+/// is a suit of plate that halves one kind of blow and doubles the other
+/// two, and RAW files it under Cursed Items for exactly that reason.
+///
+/// **It is a real decision rather than a trap**, which is what makes it
+/// worth having in the pool at all. Physical damage is most of what the
+/// bestiary deals, and it arrives in three flavours that are not evenly
+/// spread: a party fighting skeletons wants the bludgeoning rung and a
+/// party fighting a wall of archers wants the piercing one. Worn against
+/// the right room it is the best armour in the file. Worn against the
+/// wrong one it is how somebody dies.
+///
+/// **The curse is the engine's, not RAW's.** The book's is sticky —
+/// *"attuning to the armor curses you until you are targeted by a Remove
+/// Curse spell or similar magic; removing the armor fails to end the
+/// curse"* — and taking this off ends it. The Shield of Missile
+/// Attraction is the precedent and its docstring says the same thing:
+/// there is no "stuck to you" lane for an item to be stuck in, and a
+/// curse that survived dropping the object would need one. What that
+/// costs here is smaller than it sounds, because the engine's only
+/// window to swap armour is a rest between rooms — which is when a party
+/// would be reading the curse off the sheet anyway.
+pub static ARMOR_OF_VULNERABILITY_BLUDGEONING: Item = Item {
+    name: "Armor of Vulnerability (bludgeoning)",
+    glyph: 'k',
+    damage_resistances: &[crate::engine::types::DamageType::Bludgeoning],
+    damage_vulnerabilities: &[
+        crate::engine::types::DamageType::Piercing,
+        crate::engine::types::DamageType::Slashing,
+    ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Armor of Vulnerability (piercing)** — resists piercing, doubles
+/// bludgeoning and slashing. See
+/// [`ARMOR_OF_VULNERABILITY_BLUDGEONING`] for the family.
+pub static ARMOR_OF_VULNERABILITY_PIERCING: Item = Item {
+    name: "Armor of Vulnerability (piercing)",
+    glyph: 'k',
+    damage_resistances: &[crate::engine::types::DamageType::Piercing],
+    damage_vulnerabilities: &[
+        crate::engine::types::DamageType::Bludgeoning,
+        crate::engine::types::DamageType::Slashing,
+    ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Armor of Vulnerability (slashing)** — resists slashing, doubles
+/// bludgeoning and piercing. See
+/// [`ARMOR_OF_VULNERABILITY_BLUDGEONING`] for the family.
+pub static ARMOR_OF_VULNERABILITY_SLASHING: Item = Item {
+    name: "Armor of Vulnerability (slashing)",
+    glyph: 'k',
+    damage_resistances: &[crate::engine::types::DamageType::Slashing],
+    damage_vulnerabilities: &[
+        crate::engine::types::DamageType::Bludgeoning,
+        crate::engine::types::DamageType::Piercing,
+    ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's three Armors of Vulnerability — one per physical damage
+/// type, in the order RAW's own sentence lists them.
+///
+/// A cohort rather than three loose statics, for the reason
+/// [`DRAGON_SCALE_MAILS`] is one: the family has an invariant that a
+/// copy-paste can break silently. Each suit must resist exactly the type
+/// its name claims and double exactly the other two — a slashing suit
+/// that doubled slashing would compile, drop, be worn, and show up only
+/// as somebody taking a strange amount of damage from a longsword.
+pub static ARMORS_OF_VULNERABILITY: &[&Item] = &[
+    &ARMOR_OF_VULNERABILITY_BLUDGEONING,
+    &ARMOR_OF_VULNERABILITY_PIERCING,
+    &ARMOR_OF_VULNERABILITY_SLASHING,
+];
 
 /// Scroll of Cone of Cold — single-use 8d8 cold-damage burst. 60-foot
 /// cone in RAW; we model as a 6-tile-radius burst centered on the target
@@ -7326,6 +7463,16 @@ pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_NECROTIC_RESISTANCE,
     &RING_OF_THUNDER_RESISTANCE,
     &RING_OF_PSYCHIC_RESISTANCE,
+    // Sapphire — the tenth row of RAW's own 1d10, and the last of the
+    // family to be written.
+    &RING_OF_FORCE_RESISTANCE,
+    // The three cursed suits. One entry apiece and no weighting down for
+    // the curse, which is the same call the Shield of Missile Attraction
+    // and the Berserker Axe already got: whether it is a curse depends
+    // entirely on what the next room is made of.
+    &ARMOR_OF_VULNERABILITY_BLUDGEONING,
+    &ARMOR_OF_VULNERABILITY_PIERCING,
+    &ARMOR_OF_VULNERABILITY_SLASHING,
     // Single-use AoE scrolls / wands — same weight as the Fireball /
     // Lightning Bolt scrolls so casters have a roughly even shot at a
     // big burst regardless of element. Cone of Cold's 8d8 cold tier sits
@@ -8949,6 +9096,7 @@ mod tests {
                 || !item.condition_immunities.is_empty()
                 || !item.damage_resistances.is_empty()
                 || !item.damage_immunities.is_empty()
+                || !item.damage_vulnerabilities.is_empty()
                 || !item.passive_conditions.is_empty()
                 || item.sheds_light.is_some()
                 || item.sharpens_initiative
@@ -9068,5 +9216,133 @@ mod tests {
             DRAGON_SCALE_MAILS.len(),
             "two colours resist the same thing, so one of them is a copy-paste: {types:?}"
         );
+    }
+
+    /// Every Armor of Vulnerability resists the type on its label and
+    /// doubles the other two, and the three between them cover the three
+    /// physical types exactly once.
+    ///
+    /// The same failure `every_dragon_scale_mail_is_one_plus_one_and_one_resistance`
+    /// guards against, on a ladder where it would cost more: a suit that
+    /// doubled the type it claims to resist is a legal item, it compiles,
+    /// it drops, somebody wears it into a fight — and the only symptom is
+    /// a number four times too big on a longsword hit, at which point the
+    /// armour has already killed them.
+    #[test]
+    fn every_cursed_suit_resists_its_label_and_doubles_the_rest() {
+        use crate::engine::types::DamageType;
+        const PHYSICAL: [DamageType; 3] = [
+            DamageType::Bludgeoning,
+            DamageType::Piercing,
+            DamageType::Slashing,
+        ];
+        let mut resisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for suit in ARMORS_OF_VULNERABILITY {
+            assert!(
+                suit.requires_attunement,
+                "{} is attunement armour in the book, and attuning is what curses you",
+                suit.name
+            );
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == suit.name),
+                "{} cannot be found by anybody",
+                suit.name
+            );
+            assert_eq!(
+                suit.damage_resistances.len(),
+                1,
+                "{} resists exactly one of the three",
+                suit.name
+            );
+            // The label and the clause agree, read off the parenthesised
+            // type in the name rather than from a hand-kept mapping —
+            // the two diverge exactly where a copy-paste would.
+            let label = suit
+                .name
+                .split('(')
+                .nth(1)
+                .and_then(|s| s.strip_suffix(')'))
+                .expect("every suit names its type in parentheses");
+            let expected = PHYSICAL
+                .iter()
+                .copied()
+                .find(|t| t.to_string().eq_ignore_ascii_case(label))
+                .unwrap_or_else(|| panic!("{label} is not a physical damage type"));
+            assert_eq!(
+                suit.damage_resistances[0], expected,
+                "{} does not resist what its label says",
+                suit.name
+            );
+            let mut doubled: Vec<String> = suit
+                .damage_vulnerabilities
+                .iter()
+                .map(|t| t.to_string())
+                .collect();
+            doubled.sort();
+            let mut others: Vec<String> = PHYSICAL
+                .iter()
+                .filter(|t| **t != expected)
+                .map(|t| t.to_string())
+                .collect();
+            others.sort();
+            assert_eq!(
+                doubled, others,
+                "{} should double exactly the two types it does not resist",
+                suit.name
+            );
+            resisted.insert(expected.to_string());
+        }
+        assert_eq!(
+            resisted.len(),
+            ARMORS_OF_VULNERABILITY.len(),
+            "two suits resist the same thing, so one of them is a copy-paste: {resisted:?}"
+        );
+    }
+
+    /// The Ring of Resistance covers RAW's whole 1d10 table and each
+    /// ring answers one type.
+    ///
+    /// The book prints the family as a table of ten gemstones rather than
+    /// ten items, which is exactly the shape that goes nine-tenths done
+    /// and stays that way: nothing fails when a row is missing, the
+    /// party simply never finds the ring that would have answered the
+    /// Magic Missiles. Sapphire — force — was the row that was missing,
+    /// and this is what would have said so.
+    #[test]
+    fn the_ring_of_resistance_covers_its_whole_table() {
+        use crate::engine::types::DamageType;
+        // RAW's 1d10, in its printed order.
+        const TABLE: [DamageType; 10] = [
+            DamageType::Acid,
+            DamageType::Cold,
+            DamageType::Fire,
+            DamageType::Force,
+            DamageType::Lightning,
+            DamageType::Necrotic,
+            DamageType::Poison,
+            DamageType::Psychic,
+            DamageType::Radiant,
+            DamageType::Thunder,
+        ];
+        for expected in TABLE {
+            let name = format!("Ring of {} Resistance", expected);
+            let ring = LOOT_POOL
+                .iter()
+                .find(|i| i.name.eq_ignore_ascii_case(&name))
+                .unwrap_or_else(|| {
+                    panic!("the {expected} row of the Ring of Resistance table is missing")
+                });
+            assert_eq!(
+                ring.damage_resistances,
+                &[expected],
+                "{} resists something other than what it is named for",
+                ring.name
+            );
+            assert!(
+                ring.requires_attunement,
+                "{} is a Rare ring and the book asks for a bond",
+                ring.name
+            );
+        }
     }
 }

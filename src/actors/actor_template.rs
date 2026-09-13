@@ -8601,6 +8601,7 @@ impl ActorInstance {
             self.damage_modifiers.get(&dt),
             Some(DamageModifier::Vulnerability)
         ) || self.has_condition_vulnerability(dt)
+            || self.item_vulnerability_to(dt)
     }
 
     /// True iff `dt` damage arriving at this creature is actually
@@ -8864,6 +8865,12 @@ impl ActorInstance {
             || self.has_condition_resistance(dt)
             || self.item_resistance_to(dt)
             || self.has_passive_typed_resistance(dt)
+            // The item vulnerability lane, for the same reason the
+            // docstring gives for counting template vulnerability: the
+            // question is "does this actor already handle this type
+            // specially", and a halving laid on top of a doubling washes
+            // out to no change at all.
+            || self.item_vulnerability_to(dt)
             // Immunity (any source) short-circuits at the shared helper.
             || self.is_immune_to_damage_type(dt)
     }
@@ -9400,6 +9407,22 @@ impl ActorInstance {
     pub fn item_immunity_to_damage(&self, dt: DamageType) -> bool {
         self.active_items()
             .any(|i| i.damage_immunities.contains(&dt))
+    }
+
+    /// True if any item the actor is carrying makes them take **double**
+    /// `dt` damage — the Armor of Vulnerability's curse, and nothing
+    /// else on the loot table.
+    ///
+    /// The third lane `is_vulnerable_to_damage_type` folds together,
+    /// beside the template row and the held condition, and the last one
+    /// to arrive: the other two are things that happen to a creature,
+    /// and this is a thing it put on. It composes with them by the same
+    /// rules everything else does, because it is read at the same place
+    /// — see `effective_damage`, where resistance and vulnerability to
+    /// one type cancel whichever lanes they came from.
+    pub fn item_vulnerability_to(&self, dt: DamageType) -> bool {
+        self.active_items()
+            .any(|i| i.damage_vulnerabilities.contains(&dt))
     }
 
     /// Combines template-level (`is_immune_to_condition`), dynamic
