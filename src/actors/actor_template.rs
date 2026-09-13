@@ -1,7 +1,7 @@
 use crate::actions::action_template::Action;
 use crate::engine::attack::ChargeRider;
 use crate::conditions::{Condition, ConditionTimer};
-use crate::engine::dice::{Dice, DiceExpr, Roller};
+use crate::engine::dice::{Dice, DiceExpr, RollMode, RollModeTally, Roller};
 use crate::engine::side_effects::Resource;
 use crate::engine::types::{
     AbilityScoreType, Coordinate, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
@@ -2923,6 +2923,18 @@ const EXTRA_ATTUNEMENT_SLOTS: &[(ActorPredicate, usize)] = &[(
 const INITIATIVE_ADVANTAGE_SOURCES: &[fn(&ActorInstance) -> bool] = &[
     |a| a.has_feral_instinct,
     |a| a.has_passive_feature(crate::actions::class_features::VIGILANT_BLESSING_TAG),
+    // SRD 5.2 **Invisible**, the clause the condition prints first:
+    // *"Surprise. If you're Invisible when you roll Initiative, you have
+    // Advantage on the roll."*
+    //
+    // A row here rather than a branch at the roll for the reason the
+    // cohort exists — but worth noting that it is the only row that is
+    // not a class feature or an object. The other three are things a
+    // creature *is*; this is a state it can be put into and taken out
+    // of, and a Greater Invisibility cast in the surprise round is
+    // therefore worth a place in the order as well as a place out of
+    // sight.
+    |a| a.has_condition(Condition::Invisible),
     // …and the third, arriving from an object rather than from a
     // subclass: SRD 5.2's **Sentinel Shield**. The cohort's docstring
     // has been naming a hypothetical "Guardian Armor set bonus" as its
@@ -11839,6 +11851,34 @@ impl ActorInstance {
         INITIATIVE_ADVANTAGE_SOURCES.iter().any(|f| f(self))
     }
 
+    /// The shape of this creature's initiative die, both ways.
+    ///
+    /// The roll had an advantage cohort and no disadvantage at all,
+    /// which was fine for as long as every source was a class feature
+    /// or an object — nothing in the book takes initiative *away* from
+    /// a barbarian for having Feral Instinct. SRD 5.2's conditions do:
+    /// **Incapacitated** prints *"Surprised. If you're Incapacitated
+    /// when you roll Initiative, you have Disadvantage on the roll"*,
+    /// and **Invisible** prints the mirror of it one condition over.
+    ///
+    /// `is_incapacitated` rather than a check for the condition itself,
+    /// because RAW's Stunned, Paralyzed, Unconscious and Petrified all
+    /// read *"the creature has the Incapacitated condition"* as their
+    /// first clause, and this engine models them as separate flags with
+    /// that predicate as the shared answer. A creature that was stunned
+    /// before the fight began rolls badly for it either way.
+    ///
+    /// Resolved through `RollModeTally` rather than a pair of booleans,
+    /// so "both is neither" holds here as it does at every other d20 in
+    /// the engine: a creature that is Invisible *and* unconscious rolls
+    /// straight.
+    pub fn initiative_roll_mode(&self) -> RollMode {
+        let mut tally = RollModeTally::NONE;
+        tally.add_if(self.rolls_initiative_with_advantage(), RollMode::Advantage);
+        tally.add_if(self.is_incapacitated(), RollMode::Disadvantage);
+        tally.resolve()
+    }
+
     /// Flat bonus added to the initiative result *after* the d20 roll and
     /// DEX modifier. Read by `roll_initiative` alongside
     /// `rolls_initiative_with_advantage`. Composes two cohort lanes,
@@ -11915,12 +11955,18 @@ impl ActorInstance {
         // sums additively via `ABILITY_MOD_INITIATIVE_BONUSES`).
         // Adding a new source of any shape lands in the matching
         // helper as a one-line entry without touching this body.
-        let rolled = if self.rolls_initiative_with_advantage() {
-            let a = roller.roll_d20() as i32;
-            let b = roller.roll_d20() as i32;
-            a.max(b)
-        } else {
-            roller.roll_d20() as i32
+        let rolled = match self.initiative_roll_mode() {
+            RollMode::Advantage => {
+                let a = roller.roll_d20() as i32;
+                let b = roller.roll_d20() as i32;
+                a.max(b)
+            }
+            RollMode::Disadvantage => {
+                let a = roller.roll_d20() as i32;
+                let b = roller.roll_d20() as i32;
+                a.min(b)
+            }
+            RollMode::Normal => roller.roll_d20() as i32,
         };
         self.initiative = Some(rolled + self.initiative_mod() + self.initiative_flat_bonus());
     }

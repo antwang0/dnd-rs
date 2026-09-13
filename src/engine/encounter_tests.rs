@@ -105913,3 +105913,50 @@ fn nobody_blinks_out_of_a_forcecage() {
         "a seventh-level spell whose whole content is that you cannot leave"
     );
 }
+
+/// SRD 5.2 puts a clause about Initiative on two conditions, and the
+/// engine's roll had only ever been able to say one of them.
+///
+/// **Invisible**: *"Surprise. If you're Invisible when you roll
+/// Initiative, you have Advantage on the roll."* **Incapacitated**:
+/// *"Surprised. If you're Incapacitated when you roll Initiative, you
+/// have Disadvantage on the roll."* The roll had an advantage cohort
+/// with three class-feature rows on it and no disadvantage at all.
+#[test]
+fn the_initiative_die_answers_to_both_conditions_that_name_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+    use crate::engine::dice::RollMode;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let who = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert_eq!(e.actors[&who].initiative_roll_mode(), RollMode::Normal);
+
+    e.actors
+        .get_mut(&who)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    assert_eq!(e.actors[&who].initiative_roll_mode(), RollMode::Advantage);
+
+    // Stunned rather than Incapacitated itself, because RAW's Stunned
+    // opens with "the creature has the Incapacitated condition" and the
+    // engine spells that shared answer `is_incapacitated`.
+    e.actors
+        .get_mut(&who)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
+    assert_eq!(
+        e.actors[&who].initiative_roll_mode(),
+        RollMode::Normal,
+        "both is neither, here as at every other d20 in the engine"
+    );
+
+    e.actors.get_mut(&who).unwrap().remove_condition(Condition::Invisible);
+    assert_eq!(
+        e.actors[&who].initiative_roll_mode(),
+        RollMode::Disadvantage,
+        "a creature that was stunned before the fight began rolls badly for it"
+    );
+}
