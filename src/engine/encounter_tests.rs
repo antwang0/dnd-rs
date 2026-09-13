@@ -24367,7 +24367,7 @@ fn polar_bear_lion_fire_giant_cyclops_roc_templates_instantiate() {
 #[test]
 fn a_rider_falls_with_the_pegasus_they_are_sitting_on() {
     use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
-    use crate::actors::creatures::guardian_nagas::GUARDIAN_NAGA_TEMPLATE;
+    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
     use crate::engine::falling::{FLIGHT_ALTITUDE_FT, fall_damage_dice};
 
     let mut e = ei_with_terrain(20, 20, &[]);
@@ -24428,7 +24428,7 @@ fn a_rider_falls_with_the_pegasus_they_are_sitting_on() {
 #[test]
 fn new_dinos_celestials_winter_creatures_instantiate() {
     use crate::actors::creatures::carrion_crawlers::CARRION_CRAWLER_TEMPLATE;
-    use crate::actors::creatures::guardian_nagas::GUARDIAN_NAGA_TEMPLATE;
+    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
     use crate::actors::creatures::triceratopses::TRICERATOPS_TEMPLATE;
     use crate::actors::creatures::tyrannosauruses::T_REX_TEMPLATE;
     use crate::actors::creatures::winter_wolves::WINTER_WOLF_TEMPLATE;
