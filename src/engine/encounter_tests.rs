@@ -95982,8 +95982,16 @@ fn the_oathbow_pays_one_quarry_and_taxes_every_other_shot() {
         let quarry = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
             .unwrap();
+        // Ten squares apart, not three. Both goblins are Goblin
+        // Warriors and SRD 5.2 gives that stat block **Redirect
+        // Attack** — a shot at either one, with the other standing
+        // within 5 ft, lands on the other instead. Two goblins close
+        // enough to cover each other would make every arrow aimed at
+        // the bystander arrive at the quarry, and the oathbow die would
+        // fire on a shot this test had aimed elsewhere. See
+        // `attack::redirect_goblin_attack`.
         let bystander = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 5), 1, 1)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 12), 1, 1)
             .unwrap();
         e.actors.get_mut(&archer).unwrap().pickup_item(&OATHBOW);
         (e, archer, quarry, bystander)
@@ -106594,7 +106602,7 @@ fn a_knight_parries_the_swings_that_would_have_landed_by_a_point() {
         assert_eq!(e.actors[&knight].parry_bonus(), 2);
         let hp_before = e.actors[&knight].hitpoints();
 
-        let (_, dealt) = resolve_attack_outcome(
+        let (effects, dealt) = resolve_attack_outcome(
             &mut e,
             AttackParams {
                 caster_id: swinger,
@@ -106612,6 +106620,11 @@ fn a_knight_parries_the_swings_that_would_have_landed_by_a_point() {
                 is_spell: false,
             },
         );
+        // The chokepoint returns the damage rather than applying it;
+        // the hit-point assertions below are about what actually landed.
+        for ef in effects {
+            ef.apply(&mut e);
+        }
         let parried = e
             .messages()
             .iter()
@@ -106845,4 +106858,163 @@ fn a_parried_captain_answers_with_the_rapier() {
         ripostes > 0,
         "sixty swings and the captain never turned one"
     );
+}
+
+/// SRD 5.2 Goblin Warrior **Redirect Attack**: *"Trigger: A creature the
+/// goblin can see makes an attack roll against it. Response: The goblin
+/// chooses a Small or Medium ally within 5 feet of itself. The goblin
+/// and that ally swap places, and the ally becomes the target of the
+/// attack instead."*
+///
+/// Both halves of the sentence, because the swap is not decoration: the
+/// goblin ends the reaction standing where its friend was, which is
+/// what stops the trick from being free positioning as well as free
+/// cover. Asserted on the tiles as well as on the hit points.
+#[test]
+fn a_goblin_puts_its_friend_in_front_of_the_arrow_and_takes_their_square() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let archer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let aimed_at = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+        .unwrap();
+    let friend = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 2), 1, 1)
+        .unwrap();
+    let (aimed_tile, friend_tile) = (
+        e.actors[&aimed_at].location(),
+        e.actors[&friend].location(),
+    );
+    let friend_hp = e.actors[&friend].hitpoints();
+    let aimed_hp = e.actors[&aimed_at].hitpoints();
+
+    let (effects, dealt) = resolve_attack_outcome(
+        &mut e,
+        AttackParams {
+            caster_id: archer,
+            target_id: aimed_at,
+            action_name: "longbow",
+            // Lands on anything but a natural 1, so the arrow arrives.
+            attack_bonus: 40,
+            damage_dice: Dice::new(1, 4),
+            damage_bonus: 0,
+            damage_type: DamageType::Piercing,
+            is_melee: false,
+            long_range: None,
+            min_range: None,
+            is_spell: false,
+        },
+    );
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+
+    assert!(
+        e.messages().iter().any(|m| m.contains("swaps places with")),
+        "the goblin should have stepped aside:\n{}",
+        e.messages().join("\n")
+    );
+    assert!(dealt > 0, "the arrow still arrives somewhere");
+    assert_eq!(
+        e.actors[&aimed_at].hitpoints(),
+        aimed_hp,
+        "and not on the goblin it was aimed at"
+    );
+    assert!(
+        e.actors
+            .get(&friend)
+            .map(|a| a.hitpoints() < friend_hp)
+            .unwrap_or(true),
+        "the friend takes it"
+    );
+    assert!(
+        !e.actors[&aimed_at].can_consume_resource(Resource::Reaction),
+        "and it costs the goblin its reaction"
+    );
+    // The tiles traded, which is the half a target swap alone would not
+    // have done.
+    assert_eq!(e.actors[&aimed_at].location(), friend_tile);
+    assert_eq!(
+        e.actors.get(&friend).map(|a| a.location()),
+        Some(aimed_tile)
+    );
+}
+
+/// Three goblins who cannot pass the arrow on, in three different ways.
+///
+/// The reaction needs an ally of the goblin's own size band standing
+/// within 5 feet — RAW's *"chooses a Small or Medium ally within 5 feet
+/// of itself"* — so a goblin alone has nobody, a goblin standing beside
+/// an enemy has nobody it would hand the arrow to, and a goblin
+/// standing beside an ogre has somebody who does not fit in its square.
+/// All three take the arrow themselves, which is the assertion.
+#[test]
+fn a_goblin_with_nobody_to_hide_behind_takes_the_arrow() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::actor_template::CreatureTemplate;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    // (label, who stands next to the goblin, on which team). The three
+    // rows fail RAW's clause on a different word each: "ally", "Small
+    // or Medium", and the existence of anybody at all.
+    let cases: &[(&str, Option<(&CreatureTemplate, usize)>)] = &[
+        ("alone", None),
+        ("beside an enemy", Some((&FIGHTER_TEMPLATE, 0))),
+        ("beside an ogre", Some((&OGRE_TEMPLATE, 1))),
+    ];
+
+    for (label, neighbour) in cases {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let archer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        if let Some((template, team)) = neighbour {
+            e.instantiate_creature(template, Coordinate::new(12, 2), *team, 1)
+                .unwrap();
+        }
+        let hp_before = e.actors[&goblin].hitpoints();
+        let (effects, _) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: archer,
+                target_id: goblin,
+                action_name: "longbow",
+                attack_bonus: 40,
+                damage_dice: Dice::new(1, 4),
+                damage_bonus: 0,
+                damage_type: DamageType::Piercing,
+                is_melee: false,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.messages().iter().any(|m| m.contains("swaps places with")),
+            "{}: there is nobody for the goblin to hide behind",
+            label
+        );
+        assert!(
+            e.actors
+                .get(&goblin)
+                .map(|a| a.hitpoints() < hp_before)
+                .unwrap_or(true),
+            "{}: so the goblin takes it",
+            label
+        );
+    }
 }

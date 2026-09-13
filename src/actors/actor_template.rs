@@ -3699,6 +3699,21 @@ pub struct CreatureTemplate {
     /// could un-hit the swing has spoken — the parry is the defender's
     /// last word, and it fires only when it works.
     pub parry_bonus: i32,
+    /// SRD 5.2 Goblin Warrior **Redirect Attack** — *"Trigger: A
+    /// creature the goblin can see makes an attack roll against it.
+    /// Response: The goblin chooses a Small or Medium ally within 5 feet
+    /// of itself. The goblin and that ally swap places, and the ally
+    /// becomes the target of the attack instead."*
+    ///
+    /// One stat block in the book, and the Goblin Minion beside it
+    /// pointedly does not have it: the reaction is most of what the
+    /// extra quarter of a challenge rating buys.
+    ///
+    /// Read at `attack::redirect_goblin_attack`, at the head of the
+    /// weapon chokepoint beside the two magnet shields — all three swap
+    /// the creature a swing lands on before anything is rolled, and this
+    /// is the one that runs in the ungenerous direction.
+    pub redirects_attacks: bool,
     /// SRD 5.2 **Riposte**, the Pirate Captain's version of the reaction
     /// above: *"On a miss, the pirate makes one Rapier attack against
     /// the triggering creature if within range."*
@@ -4651,6 +4666,7 @@ impl CreatureTemplate {
             is_swarm: false,
             has_magic_resistance: false,
             parry_bonus: 0,
+            redirects_attacks: false,
             parry_ripostes: false,
             recharge_abilities: Vec::new(),
             legendary_actions_per_round: 0,
@@ -5812,6 +5828,7 @@ pub struct ActorInstance {
     /// print the reaction, which is most of the bestiary.
     parry_bonus: i32,
     parry_ripostes: bool,
+    redirects_attacks: bool,
     /// Recharge tracking: maps action name → (min_roll, is_available).
     /// At start-of-turn the engine rolls a d6 for each exhausted ability;
     /// if the roll >= min_roll the ability becomes available again.
@@ -6206,6 +6223,7 @@ impl ActorInstance {
             has_magic_resistance: ct.has_magic_resistance,
             parry_bonus: ct.parry_bonus,
             parry_ripostes: ct.parry_ripostes,
+            redirects_attacks: ct.redirects_attacks,
             recharge_abilities: ct
                 .recharge_abilities
                 .iter()
@@ -6692,6 +6710,13 @@ impl ActorInstance {
     /// Pirate Captain, and nothing else on the roster.
     pub fn parry_ripostes(&self) -> bool {
         self.parry_ripostes
+    }
+
+    /// True when this creature answers an incoming swing by putting a
+    /// friend in its place — SRD 5.2's Goblin Warrior, and nothing else
+    /// on the roster. See `CreatureTemplate::redirects_attacks`.
+    pub fn redirects_attacks(&self) -> bool {
+        self.redirects_attacks
     }
 
     /// True while the actor holds something that gives spell attack

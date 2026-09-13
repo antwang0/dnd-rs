@@ -19256,6 +19256,60 @@ impl EncounterInstance {
         self.relocate_actor(actor_id, coord, false)
     }
 
+    /// Exchange two creatures' positions in one step — SRD 5.2's Goblin
+    /// Warrior, *"the goblin and that ally swap places"*, and the only
+    /// thing on the board that moves two creatures at once.
+    ///
+    /// A primitive of its own rather than two `place_actor_at` calls,
+    /// and it has to be. Each of those clears the mover's old footprint
+    /// and stamps the new one, so whichever order they run in the second
+    /// call clears tiles the first has already claimed: the grid ends up
+    /// with one creature written twice and the other nowhere. The four
+    /// writes below are the same four the pair of calls would make, in
+    /// the only order that works — both creatures lifted off the grid
+    /// before either is set down.
+    ///
+    /// **Refuses a mismatched pair.** Two footprints of different sizes
+    /// cannot trade places without one of them landing on tiles the
+    /// other never held, and there is nothing here to check those tiles
+    /// against. RAW asks the same question from the other end — the
+    /// goblin *"chooses a Small or Medium ally"*, which is its own size
+    /// band — so the restriction is the rule rather than a limitation of
+    /// the grid.
+    ///
+    /// Goes through `set_location` rather than `walk_to`: a creature
+    /// yanked into its friend's place has not walked anywhere, and the
+    /// charge clauses that read the straight-line run all say *"if the
+    /// creature moves"*.
+    pub fn swap_actor_positions(
+        &mut self,
+        a_id: usize,
+        b_id: usize,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some((a_loc, a_size)) = self.actors.get(&a_id).map(|a| (a.location(), a.size()))
+        else {
+            return Err("Actor not found".into());
+        };
+        let Some((b_loc, b_size)) = self.actors.get(&b_id).map(|b| (b.location(), b.size()))
+        else {
+            return Err("Actor not found".into());
+        };
+        if a_size != b_size {
+            return Err("Only creatures of the same size can swap places".into());
+        }
+        self.write_footprint(None, a_loc, a_size);
+        self.write_footprint(None, b_loc, b_size);
+        self.write_footprint(Some(a_id), b_loc, a_size);
+        self.write_footprint(Some(b_id), a_loc, b_size);
+        if let Some(a) = self.actors.get_mut(&a_id) {
+            a.set_location(b_loc);
+        }
+        if let Some(b) = self.actors.get_mut(&b_id) {
+            b.set_location(a_loc);
+        }
+        Ok(())
+    }
+
     /// Move an actor one tile *under its own power*, extending whatever
     /// straight run it has going.
     ///

@@ -42,6 +42,21 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Humanoid,
         actions,
         skills: HashSet::from([Skill::Stealth]),
+        // SRD 5.2 **Redirect Attack** (Reaction): *"the goblin chooses a
+        // Small or Medium ally within 5 feet of itself. The goblin and
+        // that ally swap places, and the ally becomes the target of the
+        // attack instead."*
+        //
+        // The other half of what a goblin is. Nimble Escape above is
+        // how it leaves a fight it started; this is how it survives one
+        // it did not. A pack of these has to be taken apart from the
+        // edges, because every arrow aimed at the middle of it lands on
+        // whoever is standing next to the goblin you meant to shoot.
+        //
+        // Deliberately not on the Minion below: the book gives it no
+        // reactions at all, and the difference is most of what the
+        // extra quarter of a challenge rating is for.
+        redirects_attacks: true,
         ..CreatureTemplate::defaults()
     }
 });

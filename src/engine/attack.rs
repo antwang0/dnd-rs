@@ -2067,6 +2067,89 @@ fn attract_ranged_attack(encounter: &mut EncounterInstance, p: &mut AttackParams
     }
 }
 
+/// SRD 5.2 Goblin Warrior **Redirect Attack** — *"Trigger: A creature
+/// the goblin can see makes an attack roll against it. Response: The
+/// goblin chooses a Small or Medium ally within 5 feet of itself. The
+/// goblin and that ally swap places, and the ally becomes the target of
+/// the attack instead."*
+///
+/// The mirror image of the two shields directly above, and the reason
+/// it is written beside them: all three swap the creature a swing lands
+/// on before anything is rolled. The difference is which direction the
+/// swap runs. A shield-bearer steps *in front of* somebody; a goblin
+/// puts somebody in front of *itself*, and takes their square while it
+/// is at it.
+///
+/// **The second goblin never volunteered**, which is the whole
+/// character of the reaction and the reason there is no worth-it gate
+/// like `magnet_is_worth_it` next door. That helper exists because the
+/// Arrow-Catching Shield's bearer is doing somebody a favour and would
+/// not do one that made things worse. This goblin is not doing anybody
+/// a favour. It redirects whenever it can, at whoever is standing
+/// closest, because that is what the stat block says a goblin is.
+///
+/// **Same size band, and RAW says so.** The ally must be Small or
+/// Medium, which is the goblin's own band — the clause exists so that
+/// the swap is between two creatures that fit in each other's squares.
+/// The engine asks the narrower version of the same question (`size ==
+/// size`), which is what `swap_actor_positions` can actually carry out.
+///
+/// Costs the goblin's Reaction, so a pack that has been spending them
+/// on opportunity attacks cannot also hide behind each other — and a
+/// goblin cannot pass the same swing down a chain, because the ally it
+/// swaps with has not been attacked yet when the reaction fires.
+fn redirect_goblin_attack(encounter: &mut EncounterInstance, p: &mut AttackParams) {
+    let Some(goblin) = encounter.actors.get(&p.target_id) else {
+        return;
+    };
+    if !goblin.redirects_attacks() || !goblin.has_reaction() {
+        return;
+    }
+    let (team, size) = (goblin.team(), goblin.size());
+    // RAW's "a creature the goblin can see": a swing the goblin never
+    // saw coming is one it cannot step out of.
+    if !encounter.viewer_can_see(p.target_id, p.caster_id) {
+        return;
+    }
+    // 5 ft = 2 tiles on the 2.5-ft grid. Nearest first, ties broken on
+    // id so a seeded run reproduces.
+    let mut candidates: Vec<(isize, usize)> = encounter
+        .actors
+        .iter()
+        .filter(|(id, a)| {
+            **id != p.target_id
+                && **id != p.caster_id
+                && a.team() == team
+                && a.size() == size
+                && a.is_combat_active()
+        })
+        .filter_map(|(id, _)| {
+            let dist = encounter.footprint_distance(p.target_id, *id)?;
+            (dist <= 2).then_some((dist, *id))
+        })
+        .collect();
+    candidates.sort_unstable();
+    let Some((_, friend)) = candidates.first().copied() else {
+        return;
+    };
+    if encounter.swap_actor_positions(p.target_id, friend).is_err() {
+        return;
+    }
+    let (goblin_name, friend_name, attacker_name) = (
+        encounter.actor_name(p.target_id),
+        encounter.actor_name(friend),
+        encounter.actor_name(p.caster_id),
+    );
+    encounter.log(format!(
+        "[reaction] {} swaps places with {} — {}'s {} finds {} instead.",
+        goblin_name, friend_name, attacker_name, p.action_name, friend_name
+    ));
+    if let Some(g) = encounter.actors.get_mut(&p.target_id) {
+        g.consume_resource(crate::engine::side_effects::Resource::Reaction);
+    }
+    p.target_id = friend;
+}
+
 /// Resolve `row`'s bearer, or `None` when nobody nearby is holding that
 /// shield or the swap would not be worth making.
 fn pick_ranged_magnet(
@@ -2302,6 +2385,12 @@ pub fn resolve_attack_outcome_with_rider(
     // See `RANGED_ATTACK_MAGNETS`.
     let mut p = p;
     attract_ranged_attack(encounter, &mut p);
+    // SRD 5.2's Goblin Warrior does the same swap from the other side,
+    // and goes second for a reason: a goblin standing next to an
+    // Arrow-Catching Shield should find the shield has already taken
+    // the arrow, rather than shoving a friend in front of a shot that
+    // was never going to arrive. See `redirect_goblin_attack`.
+    redirect_goblin_attack(encounter, &mut p);
     let p = p;
     let Some(target_ac) = encounter
         .actors
