@@ -98207,6 +98207,489 @@ fn the_ring_bends_a_save_and_the_circlet_casts_a_spell() {
         "the pool ran dry and took the circlet with it"
     );
 }
+/// The trident commands what swims and nothing else.
+///
+/// `StaffSpell::only_targets` is the first clause on that chassis that
+/// is neither the spell's nor the price, and the three assertions here
+/// are the three ways it can be half-wired:
+///
+///   - the **spell's own** gate still refuses — Dominate Beast has
+///     always declined anything that is not a Beast, and a row that
+///     replaced that gate rather than adding to it would let the
+///     trident dominate an ogre;
+///   - the **row's** gate refuses a Beast with no swim speed, which is
+///     the sentence that had nowhere to live before;
+///   - and both gates answer at **both** sites. `affects_creature`
+///     shapes the list the picker and the AI walk, and
+///     `custom_validate_input` is the refusal somebody who aimed anyway
+///     gets. A restriction on one of them is half a rule: the first
+///     alone would let a typed command through, and the second alone
+///     would offer the wolf as a target and then decline it.
+#[test]
+fn the_trident_commands_only_what_swims() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::reef_sharks::REEF_SHARK_TEMPLATE;
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+    use crate::items::item_template::TRIDENT_OF_FISH_COMMAND;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let shark = e
+        .instantiate_creature(&REEF_SHARK_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    let wolf = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 6), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&TRIDENT_OF_FISH_COMMAND);
+    assert!(
+        e.actors[&pc].is_attuned_to(TRIDENT_OF_FISH_COMMAND.name),
+        "a fresh fighter has three slots and the trident wants one"
+    );
+
+    // The fixture's own premises, so a failure below is about the
+    // trident rather than about the bestiary having moved.
+    assert!(e.actors[&shark].has_swim_speed(), "a shark swims");
+    assert!(!e.actors[&wolf].has_swim_speed(), "a wolf does not");
+    assert_eq!(
+        e.actors[&wolf].creature_type(),
+        crate::engine::types::CreatureType::Beast,
+        "the wolf is the Beast that fails the trident's *own* gate"
+    );
+
+    let cast = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "trident of fish command: dominate beast")
+        .expect("carrying the trident offers the command");
+
+    for (target, admitted, what) in [
+        (shark, true, "a Beast with a swim speed"),
+        (wolf, false, "a Beast that cannot swim"),
+        (goblin, false, "something that is not a Beast at all"),
+    ] {
+        let at = vec![target];
+        assert_eq!(
+            cast.validate_input(&e, pc, Some(&at), None, None),
+            admitted,
+            "the trident's validator is wrong about {what}"
+        );
+        assert_eq!(
+            cast.affects_creature(&e.actors[&target]),
+            admitted,
+            "the trident's target list is wrong about {what}"
+        );
+    }
+}
+
+/// The Cloak of the Bat flies where it is dark and refuses where it is
+/// not.
+///
+/// The first action in the engine gated on the light level of the tile
+/// its user is standing on, and the gate is the whole item: a Rare cloak
+/// that flew anywhere would be the Wings of Flying plus a free sentence
+/// of Stealth, at the same rarity and the same attunement slot.
+///
+/// Three claims, in the order they can break:
+///
+///   - **it refuses in the light**, which is the clause;
+///   - **it flies in the dark**, which is the item;
+///   - **it costs nothing but the action** — `ItemUseBilling::Free`'s
+///     shape, so the cloak is still on the wearer's shoulders after the
+///     flight. A cloak that consumed itself would look exactly like one
+///     that worked, once.
+///
+/// The Stealth half rides `skill_check_advantages` and is swept by
+/// `the_elvenkind_shelf_bends_the_two_checks_the_engine_actually_rolls`'s
+/// lane; what is pinned here is only that the cloak claims the skill.
+#[test]
+fn the_cloak_of_the_bat_flies_only_where_it_is_dark() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::lighting::AmbientLight;
+    use crate::engine::types::Skill;
+    use crate::items::item_template::CLOAK_OF_THE_BAT;
+
+    assert!(
+        CLOAK_OF_THE_BAT
+            .skill_check_advantages
+            .contains(&Skill::Stealth),
+        "the cloak's other printed sentence went missing"
+    );
+
+    let spread = |ambient: AmbientLight| {
+        let mut e = ei_with_terrain(16, 16, &[]);
+        e.set_ambient_light(ambient);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&pc).unwrap().pickup_item(&CLOAK_OF_THE_BAT);
+        let action = *e.actors[&pc]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "spread cloak of the bat")
+            .expect("wearing the cloak offers the wings");
+        let ok = action.validate_input(&e, pc, None, None, None);
+        if ok {
+            for ef in action.execute(&mut e, pc, None, None, None) {
+                ef.apply(&mut e);
+            }
+        }
+        (ok, e, pc)
+    };
+
+    // Bright is bright whether it is a torchlit hall or an open sun,
+    // and the cloak declines both.
+    for lit in [AmbientLight::BrightLight, AmbientLight::Daylight] {
+        let (ok, e, pc) = spread(lit);
+        assert!(!ok, "the cloak spread its wings in {lit:?}");
+        assert!(
+            !e.actors[&pc].has_condition(Condition::Flying),
+            "and flew anyway"
+        );
+    }
+
+    for gloom in [AmbientLight::DimLight, AmbientLight::Darkness] {
+        let (ok, e, pc) = spread(gloom);
+        assert!(ok, "the cloak refused to fly in {gloom:?}");
+        assert!(
+            e.actors[&pc].has_condition(Condition::Flying),
+            "the wings were granted and nothing took off"
+        );
+        assert!(
+            e.actors[&pc].has_item_named(CLOAK_OF_THE_BAT.name),
+            "one flight ate the cloak — RAW's clause has no pool to spend"
+        );
+        // And a second grip buys nothing, which is the refusal that
+        // stops the AI's self-buff rung spending every turn re-flying.
+        let again = *e.actors[&pc]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "spread cloak of the bat")
+            .expect("the cloak is still offering");
+        assert!(
+            !again.validate_input(&e, pc, None, None, None),
+            "a creature already aloft was offered the wings again"
+        );
+    }
+}
+
+/// The Helm of Brilliance: four spells out of one pool of gems, a
+/// resistance, and a weapon that catches fire.
+///
+/// The widest item in the file, and the four clauses land on four
+/// different lanes — which is exactly why it is worth one test rather
+/// than four: the failure it is exposed to is a clause wired to the
+/// wrong lane, and that is only visible when all four are asked at once.
+///
+///   - the **menu** is four rows, all affordable, all at one gem;
+///   - the **pool** goes down by one per cast and the helm survives
+///     being emptied, because charges are `Resource::ItemCharges` and
+///     not `spend_item_use`;
+///   - **Ruby Resistance** reaches the damage pipeline;
+///   - **Fire Opal Flames** installs the marker `ON_HIT_RIDERS` reads,
+///     which is the half that is two files away from the item.
+#[test]
+fn the_helm_of_brilliance_spends_a_gem_a_spell() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::types::DamageType;
+    use crate::items::item_template::HELM_OF_BRILLIANCE;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 3), 1, 0)
+        .unwrap();
+    let bare_fire = e.actors[&pc].effective_damage(20, DamageType::Fire);
+    e.actors.get_mut(&pc).unwrap().pickup_item(&HELM_OF_BRILLIANCE);
+    assert!(
+        e.actors[&pc].is_attuned_to(HELM_OF_BRILLIANCE.name),
+        "a Very Rare helm wants a bond and a fresh fighter has three slots"
+    );
+
+    // Ruby Resistance — the clause that is a field rather than a row.
+    assert_eq!(
+        e.actors[&pc].effective_damage(20, DamageType::Fire),
+        bare_fire / 2,
+        "the rubies did not reach the damage pipeline"
+    );
+
+    // The menu. Named rather than counted, because the failure this
+    // catches is a row wired to the wrong helm or left off `on_use`.
+    const MENU: &[&str] = &[
+        "helm of brilliance: daylight",
+        "helm of brilliance: fireball",
+        "helm of brilliance: prismatic spray",
+        "helm of brilliance: wall of fire",
+    ];
+    let offered: Vec<&str> = e.actors[&pc]
+        .available_actions()
+        .iter()
+        .map(|a| a.name())
+        .filter(|n| n.starts_with("helm of brilliance:"))
+        .collect();
+    for row in MENU {
+        assert!(offered.contains(row), "the helm does not offer `{row}`");
+    }
+    assert_eq!(
+        offered.len(),
+        MENU.len(),
+        "the helm offers a row this sweep has not heard of: {offered:?}"
+    );
+
+    // Fire Opal Flames — a bonus action, and the marker the rider
+    // table reads. The helm is the first thing on that chassis that is
+    // not the weapon it lights.
+    let kindle = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "kindle helm of brilliance")
+        .expect("the helm offers its flames");
+    assert!(kindle.validate_input(&e, pc, None, None, None));
+    for ef in kindle.execute(&mut e, pc, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&pc].has_condition(Condition::BrilliantFlames),
+        "the weapon did not catch"
+    );
+    assert!(
+        crate::engine::attack::on_hit_rider_conditions()
+            .contains(&Condition::BrilliantFlames),
+        "the flames are lit and no rider row pays out for them"
+    );
+    // And the flames cost no gem — RAW's fire opal is a "as long as the
+    // helm has at least one" clause rather than a component.
+    assert_eq!(
+        e.actors[&pc].item_charges_remaining(HELM_OF_BRILLIANCE.name),
+        HELM_OF_BRILLIANCE.charges,
+        "kindling the helm spent a stone RAW does not charge"
+    );
+
+    // The pool: one gem a spell, and a helm that outlives the last one.
+    let fireball = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "helm of brilliance: fireball")
+        .expect("the helm throws fireballs");
+    let at = vec![e.actors[&goblin].location()];
+    for spent in 1..=HELM_OF_BRILLIANCE.charges {
+        e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+        assert!(
+            fireball.validate_input(&e, pc, None, Some(&at), None),
+            "gem {spent} of {} would not light",
+            HELM_OF_BRILLIANCE.charges
+        );
+        for ef in fireball.execute(&mut e, pc, None, Some(&at), None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&pc].item_charges_remaining(HELM_OF_BRILLIANCE.name),
+            HELM_OF_BRILLIANCE.charges - spent,
+            "a Fireball cost something other than one gem"
+        );
+    }
+    e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+    assert!(
+        !fireball.validate_input(&e, pc, None, Some(&at), None),
+        "a seventh Fireball out of six gems"
+    );
+    assert!(
+        e.actors[&pc].has_item_named(HELM_OF_BRILLIANCE.name),
+        "the last gem took the helm with it"
+    );
+}
+
+/// The Wind Fan blows three times and never again.
+///
+/// The only pool in the file with nothing to refill it, and the reason
+/// is RAW's: the fan has no charges at all, it has a cumulative
+/// one-in-five chance of tearing, and three uses is that fuse
+/// integrated. What is pinned is the half a reader would assume away —
+/// that a night in the dungeon does *not* give the gusts back, which is
+/// the difference between an item with an ending and every other
+/// charge-bearing thing on the table.
+#[test]
+fn the_wind_fan_tears_rather_than_refilling() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{POTION_OF_FIRE_BREATH, WIND_FAN};
+
+    let mut e = ei_with_terrain(16, 16, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&pc).unwrap().pickup_item(&WIND_FAN);
+    assert!(
+        !WIND_FAN.requires_attunement,
+        "an Uncommon fan should not be asking for one of three slots"
+    );
+    assert_eq!(e.actors[&pc].item_charges_remaining(WIND_FAN.name), 3);
+
+    // Spend the lot by hand — the point of this test is the refill, not
+    // the gust, and `spend_item_use` is not the lane a charge-priced
+    // row bills through.
+    {
+        let a = e.actors.get_mut(&pc).unwrap();
+        a.consume_resource(crate::engine::side_effects::Resource::ItemCharges {
+            item: WIND_FAN.name,
+            count: 3,
+        });
+    }
+    assert_eq!(e.actors[&pc].item_charges_remaining(WIND_FAN.name), 0);
+
+    // A long rest, through the same call the dungeon makes between
+    // rooms. The Potion of Fire Breath rides along as the control: it
+    // is the other pool on the table that does not come back, so a
+    // regression that refilled *everything* would have to get both
+    // wrong to pass.
+    {
+        let a = e.actors.get_mut(&pc).unwrap();
+        a.pickup_item(&POTION_OF_FIRE_BREATH);
+        a.consume_resource(crate::engine::side_effects::Resource::ItemCharges {
+            item: POTION_OF_FIRE_BREATH.name,
+            count: 1,
+        });
+        a.long_rest();
+        let mut rng = crate::engine::dice::FastRandRoller::with_seed(7);
+        let back = a.regain_item_charges(&mut rng);
+        assert!(
+            !back.iter().any(|(n, _)| *n == WIND_FAN.name),
+            "the fan was mended overnight: {back:?}"
+        );
+    }
+    assert_eq!(
+        e.actors[&pc].item_charges_remaining(WIND_FAN.name),
+        0,
+        "a torn fan blew again"
+    );
+}
+
+/// The three passive newcomers, each on the field it is written for.
+///
+/// Declarative items have no code of their own, which is exactly why
+/// they are worth a sweep: the only failure available to one is landing
+/// on the wrong field, and that failure is silent in every direction —
+/// it compiles, the item is findable, and it simply does nothing.
+///
+///   - the **Quarterstaff of the Acrobat** is a `+2`, a lamp, and
+///     Advantage on the check a grappled creature escapes on;
+///   - the **Gloves of Swimming and Climbing** are the only item in the
+///     file that grants two movement modes at once;
+///   - the **Lantern of Revealing** is light *and* a concealment
+///     answer, which nothing else on the shelf is.
+#[test]
+fn the_new_passives_land_on_the_fields_they_are_written_for() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::encounter::ConcealmentPiercing;
+    use crate::engine::lighting::{AmbientLight, LightLevel};
+    use crate::engine::types::Skill;
+    use crate::items::item_template::{
+        GLOVES_OF_SWIMMING_AND_CLIMBING, LANTERN_OF_REVEALING, QUARTERSTAFF_OF_THE_ACROBAT,
+    };
+
+    // --- The quarterstaff. ---
+    let mut e = ei_with_terrain(16, 16, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(!e.actors[&pc].has_skill_check_advantage(Skill::Acrobatics));
+    assert_eq!(
+        e.light_at(Coordinate::new(4, 4)),
+        LightLevel::Dark,
+        "the fixture's own premise: an unlit room"
+    );
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&QUARTERSTAFF_OF_THE_ACROBAT);
+    e.light_carried_items(pc);
+    assert!(
+        e.actors[&pc].has_skill_check_advantage(Skill::Acrobatics),
+        "Acrobatic Assist did not reach the die a grapple is escaped on"
+    );
+    assert!(
+        !e.actors[&pc].has_skill_check_advantage(Skill::Athletics),
+        "the staff bent a skill it does not name"
+    );
+    assert_eq!(
+        e.light_at(Coordinate::new(4, 4)),
+        LightLevel::Dim,
+        "the staff's green glow is dim light and only dim light"
+    );
+    assert!(
+        e.actors[&pc].wields_enchanted_weapon(),
+        "a magic quarterstaff should answer a skeleton's resistance"
+    );
+
+    // --- The gloves. ---
+    let mut e = ei_with_terrain(16, 16, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    assert!(!e.actors[&pc].has_swim_speed(), "a bare fighter sinks");
+    let dry_speed = e.actors[&pc].speed();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&GLOVES_OF_SWIMMING_AND_CLIMBING);
+    assert!(
+        e.actors[&pc].has_swim_speed(),
+        "the wet half of the gloves went missing"
+    );
+    assert!(
+        e.actors[&pc].speed() > dry_speed,
+        "the climbing half went missing — Spider Climb surfaces as speed"
+    );
+
+    // --- The lantern. ---
+    let mut e = ei_with_terrain(16, 16, &[]);
+    e.set_ambient_light(AmbientLight::Darkness);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let sneak = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&sneak).unwrap().add_condition(
+        Condition::Invisible,
+        ConditionTimer::Rounds(10),
+    );
+    assert_eq!(
+        e.concealment_piercing_of(pc, sneak),
+        ConcealmentPiercing::None,
+        "the fixture's own premise: a fighter who cannot see the unseen"
+    );
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&LANTERN_OF_REVEALING);
+    e.light_carried_items(pc);
+    assert_eq!(
+        e.concealment_piercing_of(pc, sneak),
+        ConcealmentPiercing::Invisibility,
+        "the lantern lit the room and revealed nothing in it"
+    );
+    assert_eq!(
+        e.light_at(Coordinate::new(4, 4)),
+        LightLevel::Bright,
+        "the brightest thing on the loot table is not bright"
+    );
+}
 
 /// The armour shelf's four new suits do what their one sentence says.
 ///
@@ -101005,10 +101488,10 @@ fn a_second_copy_deepens_the_pool_a_rest_fills() {
 fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     use crate::items::item_template::LOOT_POOL;
 
-    // The two items RAW says do *not* come back, for two different
-    // reasons. Named one by one rather than exempted by a rule, because
-    // "has charges and no refill" is otherwise exactly the silent
-    // failure this sweep exists to catch.
+    // The items RAW says do *not* come back, each for its own reason.
+    // Named one by one rather than exempted by a rule, because "has
+    // charges and no refill" is otherwise exactly the silent failure
+    // this sweep exists to catch.
     //
     //   - The **Nine Lives Stealer** keeps existing and stops working:
     //     "when the weapon has no charges remaining, it loses this
@@ -101021,9 +101504,20 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     //     refill. It is the first consumable on the table whose pool is
     //     larger than one, which is the only reason it reaches this
     //     sweep at all.
+    //   - The **Wind Fan** tears. RAW gives it no charges at all and a
+    //     cumulative one-in-five chance of coming apart on each use
+    //     after the first; the pool of three *is* that fuse, integrated,
+    //     and a fan that refilled at dawn would be a fan that never
+    //     tears.
+    //   - The **Helm of Brilliance** is spent stone by stone — "the gem
+    //     is destroyed when the spell is cast and disappears from the
+    //     helm", and "when all the gems are removed or destroyed, the
+    //     helm loses its magic". Nothing grows a new diamond overnight.
     const NO_REFILL: &[&str] = &[
         crate::items::item_template::NINE_LIVES_STEALER.name,
         crate::items::item_template::POTION_OF_FIRE_BREATH.name,
+        crate::items::item_template::WIND_FAN.name,
+        crate::items::item_template::HELM_OF_BRILLIANCE.name,
     ];
 
     let mut wrong: Vec<String> = Vec::new();

@@ -7545,6 +7545,31 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             attacker_link: None,
             spends_item_charge: None,
         },
+        // SRD 5.2 **Helm of Brilliance**, Fire Opal Flames: "When you
+        // hit with an attack using the blazing weapon, the target takes
+        // an extra 1d6 Fire damage."
+        //
+        // The Flame Tongue's row with a smaller die and a different
+        // object holding the match — see `Condition::BrilliantFlames`.
+        // `AnyWeapon` rather than the Tongue's `MeleeWeapon`, and that
+        // is RAW rather than a slip: the helm sets fire to "one weapon
+        // you are holding" without naming melee, where the Flame Tongue
+        // is itself a melee weapon and can only be one.
+        OnHitRider {
+            condition: Condition::BrilliantFlames,
+            dice: Dice::new(1, 6),
+            label: "blazing weapon",
+            damage_type: RiderDamage::Fixed(DamageType::Fire),
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: false,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+            attacker_gate: None,
+            attacker_link: None,
+            spends_item_charge: None,
+        },
         // 5e **Frost Brand** (Weapon, one of six blades; Very Rare):
         // "When you hit with an attack roll using this magic weapon, the
         // target takes an extra 1d6 Cold damage."

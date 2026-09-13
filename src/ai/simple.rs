@@ -1955,6 +1955,12 @@ const KINDLED_WEAPONS: &[(&str, Condition)] = &[
     // and keeps re-arming it all fight. That is RAW's own cadence and
     // the whole cost of the item.
     ("coat dagger of venom", Condition::Envenomed),
+    // The fourth row is not a weapon at all: SRD 5.2's **Helm of
+    // Brilliance** sets fire to whatever its wearer happens to be
+    // holding. It sits here because this table's real subject is the
+    // marker rather than the object — and the helm's marker is armed,
+    // gated and collected exactly as the Flame Tongue's is.
+    ("kindle helm of brilliance", Condition::BrilliantFlames),
 ];
 
 /// Light a Flame Tongue or draw a Sun Blade, when there is anything
@@ -23777,14 +23783,23 @@ mod tests {
         }
         // And the other direction: a row naming an action nothing ships
         // is a rung that can never fire.
+        //
+        // Both shelves, not just the armoury. The forward sweep above
+        // asks a question *about* the armoury — "every weapon that has
+        // to be drawn is one the AI knows to draw" — and only weapons
+        // are on that shelf. This direction asks the opposite and wider
+        // one, and the thing that arms a marker need not be a weapon at
+        // all: SRD 5.2's **Helm of Brilliance** sets fire to whatever
+        // its wearer is holding, and a hat is not in the armoury.
         for (name, marker) in KINDLED_WEAPONS {
             let backing = MAGIC_ARMOURY
                 .iter()
+                .chain(LOOT_POOL.iter())
                 .flat_map(|item| item.on_use.iter())
                 .any(|action| action.name() == *name);
             assert!(
                 backing,
-                "{name} is on the AI's list and no item in the armoury offers it"
+                "{name} is on the AI's list and nothing on either shelf offers it"
             );
             assert!(
                 LOOT_POOL

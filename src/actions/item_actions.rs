@@ -7701,6 +7701,7 @@ pub static CAPE_OF_THE_MOUNTEBANK_STEP: crate::actions::staves::StaffSpell =
         charges: 1,
         spell_level: 4,
         spell: || &*crate::actions::spells::DIMENSION_DOOR,
+        only_targets: None,
     };
 
 const CAPE_OF_THE_MOUNTEBANK_NAME: &str = "Cape of the Mountebank";
@@ -8145,4 +8146,384 @@ pub static CIRCLET_OF_BLASTING_RAY: crate::actions::staves::StaffSpell =
         charges: 1,
         spell_level: 2,
         spell: || &*crate::actions::spells::SCORCHING_RAY,
+        only_targets: None,
     };
+
+// =====================================================================
+// The rest of the shelf that casts.
+//
+// `StaffSpell` started as the staves' chassis and turned out to be the
+// answer to a sentence RAW prints all over the magic-item table and
+// almost never on a staff: *"While holding this, you can cast X from
+// it."* The Cape of the Mountebank and the Circlet of Blasting were the
+// first two rows on it that are not staves; the four below are the rest
+// of the SRD's A–Z that says the same thing about a spell this engine
+// already has.
+//
+// Each is the real spell — same dice, same resolver, same save DC off
+// the holder's own sheet — at the item's price. What each row is worth
+// saying about is the one clause the chassis had to be asked for: the
+// fan's pool that does not come back, the bottle's cloud, the trident's
+// restriction on *who*, and the helm's four gems.
+// =====================================================================
+
+/// **Wind Fan** — *"While holding this fan, you can cast Gust of Wind
+/// (save DC 13) from it. Each subsequent time the fan is used before the
+/// next dawn, it has a cumulative 20 percent chance of not working; if
+/// the fan fails to work, it tears into useless, nonmagical tatters."*
+///
+/// The tear is the pool, and that is the whole design of the item here.
+/// RAW's fan has no charges at all — it has a fuse: the first use always
+/// works, the second fails one time in five, the third two in five, and
+/// the chance climbs until the sixth use cannot work. Integrate that and
+/// a fan is worth two and a half casts before it is rags, which is
+/// `Item::charges` of 3 and no `recharge` — the first item in the file
+/// with a pool and nothing to refill it, and the only honest way to
+/// spell "this object has an ending" in an engine whose clock is one
+/// dungeon long.
+///
+/// What it throws is `spells::GUST_OF_WIND`: a 60-foot line, a Strength
+/// save, and fifteen feet of push on a failure. No damage, which makes
+/// the fan the only thing on the loot table that a chassis with no spell
+/// list can use to *move* an enemy — off a ledge, out of a chokepoint,
+/// or simply out of reach of the character it was about to bite.
+///
+/// RAW's flat *"save DC 13"* is the chassis's standing divergence: the
+/// spell rolls the holder's own DC, so a wizard's fan blows harder than
+/// a fighter's. See `CIRCLET_OF_BLASTING_RAY` for why that trade is the
+/// right one on this lane.
+pub const WIND_FAN_NAME: &str = "Wind Fan";
+
+pub static WIND_FAN_GUST: crate::actions::staves::StaffSpell = crate::actions::staves::StaffSpell {
+    action_name: "wind fan: gust of wind",
+    action_aliases: &["wind fan", "fan", "wind-gust"],
+    item_name: WIND_FAN_NAME,
+    charges: 1,
+    spell_level: 2,
+    spell: || &*crate::actions::spells::GUST_OF_WIND,
+    only_targets: None,
+};
+
+/// **Eversmoking Bottle** — *"Opening the bottle causes thick smoke to
+/// billow out, forming a cloud that fills a 60-foot Emanation
+/// originating from the bottle. The area within the smoke is Heavily
+/// Obscured."*
+///
+/// Heavy obscurement is `spells::FOG_CLOUD`'s zone, and the bottle is
+/// that spell out of a jar anybody can open: the smoke blinds everything
+/// inside it in both directions, which is the cheapest answer on the
+/// loot table to a line of archers and the cheapest cover for a retreat.
+///
+/// **Two divergences, and they pull opposite ways.** The cloud is Fog
+/// Cloud's 20-foot sphere rather than RAW's 60-foot emanation, because
+/// the chassis forwards the spell whole and a bottle that re-implemented
+/// the zone would be a copy of it. And RAW prints no limit at all — you
+/// open the bottle, you close the bottle — where this has three charges
+/// and a full refill at every rest. The pool is not the fiction; the
+/// fiction's own limiter is that there is one bottle and one cloud, and
+/// what actually enforces that here is concentration: Fog Cloud holds
+/// it, so a second cloud drops the first however many charges are left.
+/// The pool is what stops an uncommon trinket from tiling the board in
+/// smoke on a turn when it has nothing better to do.
+pub const EVERSMOKING_BOTTLE_NAME: &str = "Eversmoking Bottle";
+
+pub static EVERSMOKING_BOTTLE_SMOKE: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "eversmoking bottle: smoke",
+        action_aliases: &["eversmoking", "smoke bottle", "unstopper smoke"],
+        item_name: EVERSMOKING_BOTTLE_NAME,
+        charges: 1,
+        spell_level: 1,
+        spell: || &*crate::actions::spells::FOG_CLOUD,
+        only_targets: None,
+    };
+
+/// **Trident of Fish Command** — *"This magic weapon has 3 charges… you
+/// can expend 1 charge to cast Dominate Beast (save DC 15) from it on a
+/// Beast that has a Swim Speed."*
+///
+/// The first row on this chassis whose clause is about **who**, and the
+/// reason `StaffSpell::only_targets` exists. Dominate Beast already
+/// refuses anything that is not a Beast — that gate is the spell's, and
+/// the trident inherits it like it inherits the dice. *"That has a Swim
+/// Speed"* is the trident's own, it is not a sentence any spell in the
+/// engine says, and without somewhere to put it the trident would have
+/// been a Dominate Beast wand with a fish on the label.
+///
+/// It is also a genuinely different item once the restriction is real.
+/// A wand that dominates any beast is a general-purpose lockdown; a
+/// trident that dominates only what swims is worth an attunement slot
+/// on exactly the boards `engine::underwater` was written for, and
+/// worth nothing in a dry room — which is what an Uncommon should look
+/// like, and what makes finding a lake interesting.
+///
+/// `has_swim_speed` is the predicate rather than a creature-type list,
+/// because it is the same question RAW asks and the engine already
+/// answers it in one place: a shark's stat block line, a Scout Rogue's
+/// Superior Mobility, a drinker of the Ring of Swimming's clause. The
+/// trident does not care which of those it is.
+pub const TRIDENT_OF_FISH_COMMAND_NAME: &str = "Trident of Fish Command";
+
+pub static TRIDENT_OF_FISH_COMMAND_DOMINATE: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "trident of fish command: dominate beast",
+        action_aliases: &["trident", "fish command", "command fish"],
+        item_name: TRIDENT_OF_FISH_COMMAND_NAME,
+        charges: 1,
+        spell_level: 4,
+        spell: || &*crate::actions::spells::DOMINATE_BEAST,
+        only_targets: Some(|target| target.has_swim_speed()),
+    };
+
+/// **Helm of Brilliance** — *"You can cast one of the following spells
+/// (save DC 18), using one of the helm's gems of the specified type as a
+/// component: Daylight (opal), Fireball (fire opal), Prismatic Spray
+/// (diamond), or Wall of Fire (ruby). The gem is destroyed when the
+/// spell is cast and disappears from the helm."*
+///
+/// Four rows off one pool, which is what every staff in the book looks
+/// like — and the helm is not a staff, which is the point of it being
+/// here. RAW's gems are the pool: `Item::charges` is the helmet's
+/// remaining stones, each spell costs one, and a helm whose gems are
+/// spent *"loses its magic"*, which is why it carries no `recharge`. The
+/// Wind Fan above is the other item in the file with an ending; this one
+/// has four different ways to spend it.
+///
+/// The spread is the whole item. Daylight is a lamp and a counter to
+/// magical darkness, Fireball is the most efficient damage on the loot
+/// table, Prismatic Spray is a 7th-level cone that nothing short of a
+/// Staff of Power otherwise offers, and Wall of Fire is terrain. One
+/// gem apiece, because the helm's own currency is stones rather than
+/// levels — a fighter wearing this makes exactly the choice a wizard
+/// makes with a slot, and that is the trade a Very Rare should buy.
+///
+/// The other three clauses land elsewhere: **Ruby Resistance** is the
+/// item's own `damage_resistances`, **Fire Opal Flames** is
+/// [`KINDLE_HELM_OF_BRILLIANCE`] on the Flame Tongue's lane, and
+/// **Diamond Light** is named as absent in the item's docstring.
+pub const HELM_OF_BRILLIANCE_NAME: &str = "Helm of Brilliance";
+
+pub static HELM_OF_BRILLIANCE_DAYLIGHT: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "helm of brilliance: daylight",
+        action_aliases: &["helm-daylight", "opal"],
+        item_name: HELM_OF_BRILLIANCE_NAME,
+        charges: 1,
+        spell_level: 3,
+        spell: || &*crate::actions::spells::DAYLIGHT,
+        only_targets: None,
+    };
+
+pub static HELM_OF_BRILLIANCE_FIREBALL: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "helm of brilliance: fireball",
+        action_aliases: &["helm-fireball", "fire opal"],
+        item_name: HELM_OF_BRILLIANCE_NAME,
+        charges: 1,
+        spell_level: 3,
+        spell: || &*crate::actions::spells::FIREBALL,
+        only_targets: None,
+    };
+
+pub static HELM_OF_BRILLIANCE_PRISMATIC_SPRAY: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "helm of brilliance: prismatic spray",
+        action_aliases: &["helm-prismatic", "diamond"],
+        item_name: HELM_OF_BRILLIANCE_NAME,
+        charges: 1,
+        spell_level: 7,
+        spell: || &*crate::actions::spells::PRISMATIC_SPRAY,
+        only_targets: None,
+    };
+
+pub static HELM_OF_BRILLIANCE_WALL_OF_FIRE: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "helm of brilliance: wall of fire",
+        action_aliases: &["helm-wall-of-fire", "ruby"],
+        item_name: HELM_OF_BRILLIANCE_NAME,
+        charges: 1,
+        spell_level: 4,
+        spell: || &*crate::actions::spells::WALL_OF_FIRE,
+        only_targets: None,
+    };
+
+/// **Fire Opal Flames** — *"you can take a Magic action to cause one
+/// weapon you are holding to burst into flames… When you hit with an
+/// attack using the blazing weapon, the target takes an extra 1d6 Fire
+/// damage."*
+///
+/// The Flame Tongue's clause with a smaller die and a different object
+/// setting it alight, which is exactly what `KindleWeapon` is: a marker
+/// on the wielder, a light that goes where they go, and a row in
+/// `ON_HIT_RIDERS` that pays out on every swing while the marker is up.
+/// The helm is the first thing on that chassis that is **not the weapon
+/// it kindles** — RAW's flames land on "one weapon you are holding",
+/// whatever it is — and nothing about the lane had to change for that,
+/// because the marker was always on the wielder rather than on the
+/// blade.
+///
+/// Spends no gem, and RAW is explicit about why: the fire opal is a
+/// *"as long as the helm has at least one"* clause rather than a
+/// component, so the flames are free for as long as the helm has a
+/// stone to its name. That makes the helm's Action-priced kindle the
+/// one thing on it a player can do after the gems are gone — except
+/// that a helm with no gems has lost its magic, which is the pool
+/// running dry, which is what `caster_holds` already refuses on.
+///
+/// A **bonus action**, like the other three rows on this chassis, rather
+/// than RAW's Magic action. The chassis prices the command word at a
+/// bonus action for anyone already holding the thing, and a helm is
+/// already on your head.
+pub static KINDLE_HELM_OF_BRILLIANCE: KindleWeapon = KindleWeapon {
+    action_name: "kindle helm of brilliance",
+    action_aliases: &["helm flames", "fire opal flames", "blazing weapon"],
+    item_name: HELM_OF_BRILLIANCE_NAME,
+    condition: Condition::BrilliantFlames,
+    light: Some(crate::engine::lighting::LightProfile {
+        name: "blazing weapon",
+        // RAW's "Bright Light in a 10-foot radius and Dim Light for an
+        // additional 10 feet" — four tiles of each on the 2.5 ft grid.
+        bright_tiles: 4,
+        dim_tiles: 4,
+    }),
+    log_text: "{actor}'s weapon bursts into fire-opal flame.",
+};
+
+/// **Cloak of the Bat** — *"In an area of Dim Light or Darkness, you can
+/// grip the edges of the cloak and use it to gain a Fly Speed of 40
+/// feet. If you ever fail to grip the cloak's edges while flying in this
+/// way, or if you are no longer in Dim Light or Darkness, you lose this
+/// Fly Speed."*
+///
+/// The first action in the engine whose gate is **how bright it is where
+/// you are standing**. Every other flight on the loot table — the Broom,
+/// the Winged Boots, the Wings of Flying, the Carpet — is on the moment
+/// it is picked up or drunk, and this one asks the board a question
+/// first: `light_at` the wearer's own tile, and a refusal in the sun.
+///
+/// That gate is the item. A Rare cloak that flew anywhere would be the
+/// Wings of Flying with an extra sentence of Stealth on top, strictly
+/// better for the same rarity and the same attunement slot; one that
+/// flies only where it is dark is a different item entirely, and the one
+/// RAW printed. It is also the loot table's first reason to *want* the
+/// torch out — which is a choice the lighting layer has been able to
+/// model since it was written and nothing had ever asked the player to
+/// make.
+///
+/// The flight is installed as a plain `Rounds` timer rather than
+/// re-checked every step, which is the one place this parts company with
+/// RAW's *"or if you are no longer in Dim Light or Darkness, you lose
+/// this Fly Speed"*. A wearer who takes off in the dark and flies into a
+/// Daylight sphere keeps the wings until the timer runs out. Re-asking
+/// per tile is the movement layer's business and there is no hook in it
+/// for a condition that expires on where you are; the gate at the moment
+/// of use is the half of the sentence that decides whether the cloak is
+/// worth carrying.
+///
+/// Costs nothing but the action: RAW's clause has no pool, and
+/// `ItemUseBilling::Free` is what a worn item with no expenditure looks
+/// like. The once-a-day Polymorph-into-a-bat clause is not modelled —
+/// the engine's Polymorph is a `UseWandOfPolymorph`-shaped cast on a
+/// *target*, and a self-shapechange into a Tiny flier with the wearer's
+/// own mental scores is a different lane from either that or Wild Shape.
+pub const CLOAK_OF_THE_BAT_NAME: &str = "Cloak of the Bat";
+
+pub struct SpreadCloakOfTheBat {}
+
+impl Action for SpreadCloakOfTheBat {
+    fn name(&self) -> &str {
+        "spread cloak of the bat"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["bat cloak", "bat wings", "grip cloak"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    /// What this puts on the wearer — read by the AI's self-buff rung,
+    /// which tiers a carried buff by what it installs.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Flying)
+    }
+
+    fn cost(
+        &self,
+        e: &EncounterInstance,
+        c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // Free at the item's end — nothing is spent and the cloak stays
+        // on — so the whole price is the action economy.
+        item_use_cost(e, c, false)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, CLOAK_OF_THE_BAT_NAME) {
+            return false;
+        }
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        // Already aloft — a second grip buys nothing but the turn it
+        // costs. Same refusal `SelfConditionItem::reject_when_active`
+        // makes, for the same reason.
+        if actor.has_condition(Condition::Flying) {
+            return false;
+        }
+        // RAW's gate, and the whole of what separates this cloak from
+        // the Wings of Flying. `light_at` rather than `perceived_light`
+        // on purpose: the question is how dark the *room* is, not how
+        // well this particular wearer sees in it, and a creature with
+        // darkvision standing in a pitch-black corridor is standing
+        // somewhere dark whatever its eyes make of it.
+        !matches!(
+            encounter.light_at(actor.location()),
+            crate::engine::lighting::LightLevel::Bright
+        )
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !caster_holds(encounter, caster_id, CLOAK_OF_THE_BAT_NAME) {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!("{} grips the cloak's edges and rises.", name));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::Flying,
+            // RAW's hour, at the engine's standing stand-in for "longer
+            // than the fight" — the same ten rounds every other flight
+            // on the loot table installs.
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static SPREAD_CLOAK_OF_THE_BAT: SpreadCloakOfTheBat = SpreadCloakOfTheBat {};

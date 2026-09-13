@@ -6231,6 +6231,307 @@ pub static DRAGON_SCALE_MAILS: &[&Item] = &[
     &BLACK_DRAGON_SCALE_MAIL,
 ];
 
+/// **Wind Fan** (Wondrous item, Uncommon) — three gusts and then rags.
+///
+/// The only item on the loot table whose whole clause is *moving*
+/// somebody: a 60-foot line, a Strength save, and fifteen feet of push
+/// away from the holder on a failure. No damage at all, which is what
+/// makes it worth a slot on a board with a ledge, a chokepoint, or a
+/// caster who has just walked into melee.
+///
+/// **Charges with no `recharge`**, which nothing else in the file has,
+/// and it is RAW rather than an oversight. Every other pool here is a
+/// *"regains 1d6+1 expended charges daily at dawn"*; the fan's sentence
+/// is a fuse instead — a cumulative one-in-five chance of tearing, which
+/// integrates to about two and a half uses and then tatters. A pool that
+/// does not come back is exactly that ending, and the item is left in
+/// the pack as the rags RAW says it becomes. See
+/// `item_actions::WIND_FAN_GUST`.
+pub static WIND_FAN: Item = Item {
+    name: crate::actions::item_actions::WIND_FAN_NAME,
+    glyph: 'v',
+    on_use: &[&crate::actions::item_actions::WIND_FAN_GUST],
+    charges: 3,
+    ..Item::DEFAULTS
+};
+
+/// **Eversmoking Bottle** (Wondrous item, Uncommon) — heavy obscurement
+/// out of a jar, for a party with no caster to conjure it.
+///
+/// Fog Cloud is the cheapest tactical answer in the game to being shot
+/// at, and until this bottle the only road to it was a spell list. What
+/// it buys a fighter is the ability to *break line of sight on demand* —
+/// cover a retreat, blank a sniper, walk a wounded ally out through the
+/// smoke — which is a kind of turn the loot table could not previously
+/// sell to anybody who could not cast.
+///
+/// See `item_actions::EVERSMOKING_BOTTLE_SMOKE` for the two places this
+/// parts company with RAW: the cloud is the spell's twenty feet rather
+/// than the bottle's sixty, and the bottle has a pool where RAW has
+/// none.
+pub static EVERSMOKING_BOTTLE: Item = Item {
+    name: crate::actions::item_actions::EVERSMOKING_BOTTLE_NAME,
+    glyph: 'u',
+    on_use: &[&crate::actions::item_actions::EVERSMOKING_BOTTLE_SMOKE],
+    charges: 3,
+    // RAW prints no limit at all, so the refill is the most generous one
+    // on the table: 1d6+1 against a pool of three tops it up at every
+    // rest, which is "the bottle still works tomorrow" said in the only
+    // vocabulary the charge ledger has.
+    recharge: Some(DAILY_1D6_PLUS_1),
+    ..Item::DEFAULTS
+};
+
+/// **Trident of Fish Command** (Weapon (trident), Uncommon, requires
+/// attunement) — the first item on the table that is worth an attunement
+/// slot only on a particular *board*.
+///
+/// Three charges of Dominate Beast, and a restriction that is the whole
+/// item: *"on a Beast that has a Swim Speed"*. In a dry room it is a
+/// trident. In the water — where `engine::underwater` is already taxing
+/// everybody's attack rolls and holding their breath — it turns the
+/// shark that was about to eat the rogue into the party's shark, for one
+/// charge and no slot.
+///
+/// That is a deliberately narrow item and the loot table is better for
+/// having one. Every other control item in the file answers any enemy at
+/// a fixed price; this one answers a specific enemy for almost nothing,
+/// and finding it makes the next lake interesting rather than merely
+/// wet. See `item_actions::TRIDENT_OF_FISH_COMMAND_DOMINATE` for the
+/// restriction's own lane, which the trident is the first user of.
+pub static TRIDENT_OF_FISH_COMMAND: Item = Item {
+    name: crate::actions::item_actions::TRIDENT_OF_FISH_COMMAND_NAME,
+    glyph: 'Y',
+    on_use: &[&crate::actions::item_actions::TRIDENT_OF_FISH_COMMAND_DOMINATE],
+    charges: 3,
+    // RAW's "regains 1d3 expended charges daily at dawn" — the Ring of
+    // the Ram's refill, for a pool the same size.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Helm of Brilliance** (Wondrous item, Very Rare, requires
+/// attunement) — four spells, a resistance and a torch, off one pool of
+/// gems.
+///
+/// The widest single item in the file, and the only non-staff with a
+/// four-row menu. What the helm sells is *choice at one price*: every
+/// gem costs the same and they buy completely different turns — a
+/// Fireball, a 7th-level Prismatic Spray, a wall, or a lamp that burns
+/// magical darkness out of the room. A fighter wearing this makes
+/// exactly the decision a wizard makes with a slot, which is the thing
+/// the loot table has otherwise never been able to hand a chassis with
+/// no spell list.
+///
+/// Three of RAW's clauses land on three different lanes and are worth
+/// naming separately:
+///
+///   - **Ruby Resistance**, *"as long as the helm has at least one
+///     ruby, you have Resistance to Fire damage"* — the item's own
+///     `damage_resistances`, which is where every other worn resistance
+///     in the file lives. RAW's gate on having a ruby left is not
+///     modelled: the pool is undifferentiated here, and a helm that
+///     stopped resisting fire when its *last red* stone went would need
+///     four pools rather than one.
+///   - **Fire Opal Flames** — `item_actions::KINDLE_HELM_OF_BRILLIANCE`,
+///     on the Flame Tongue's chassis, and the first thing on that lane
+///     that is not the weapon it lights.
+///   - **Spells** — four `StaffSpell` rows, one gem apiece. See
+///     `item_actions::HELM_OF_BRILLIANCE_NAME`.
+///
+/// **Diamond Light is absent**, and it is the one clause here with
+/// nowhere to go. *"The helm emits a 30-foot Emanation… any Undead that
+/// starts its turn in that area takes 1d6 Radiant damage"* is an
+/// emanation on an **item** rather than on a stat block, and an
+/// emanation that deals **damage** rather than installing a condition —
+/// and `engine::emanations` has neither. Its module docstring names the
+/// second gap by name (*"none of the four SRD start-of-turn emanations
+/// deals any"*) and says the fix is a field there rather than a second
+/// chassis; the first gap is a lane from `Item` into
+/// `CreatureTemplate::emanations` that does not exist. Two widenings for
+/// one clause of one item is the wrong trade today, and the clause is
+/// written down here rather than lost.
+///
+/// **No `recharge`**, which it shares with the Wind Fan and nothing
+/// else: RAW's gems are pried out and destroyed, and *"when all the gems
+/// are removed or destroyed, the helm loses its magic."* A spent helm is
+/// a hat.
+pub static HELM_OF_BRILLIANCE: Item = Item {
+    name: crate::actions::item_actions::HELM_OF_BRILLIANCE_NAME,
+    glyph: 'h',
+    on_use: &[
+        &crate::actions::item_actions::HELM_OF_BRILLIANCE_DAYLIGHT,
+        &crate::actions::item_actions::HELM_OF_BRILLIANCE_FIREBALL,
+        &crate::actions::item_actions::HELM_OF_BRILLIANCE_PRISMATIC_SPRAY,
+        &crate::actions::item_actions::HELM_OF_BRILLIANCE_WALL_OF_FIRE,
+        &crate::actions::item_actions::KINDLE_HELM_OF_BRILLIANCE,
+    ],
+    damage_resistances: &[crate::engine::types::DamageType::Fire],
+    // RAW rolls 1d10 diamonds, 2d10 rubies, 3d10 fire opals and 4d10
+    // opals, which is fifty-five stones on average and a Fireball every
+    // round for the rest of the dungeon. Six is the pool an item of this
+    // rarity should hand a party across a run — two spells a room and an
+    // ending — and the ending is the half RAW is actually about.
+    charges: 6,
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Cloak of the Bat** (Wondrous item, Rare, requires attunement) — the
+/// first item in the file that asks how dark it is.
+///
+/// Two printed sentences, both of them live. Advantage on Stealth checks
+/// rides `skill_check_advantages`, beside the two Elvenkind entries, and
+/// it is genuinely worth having: the engine's Hide is a real Stealth
+/// check whose total becomes the DC a Searcher has to beat. The flight is
+/// `item_actions::SPREAD_CLOAK_OF_THE_BAT`, gated on the light level of
+/// the tile the wearer is standing on.
+///
+/// That gate is the whole reason this is not a strictly better Wings of
+/// Flying. Both are Rare, both want an attunement slot, and the cloak
+/// prints a second sentence on top — so if it flew in the sun it would
+/// dominate. It does not, and what that buys the game is the loot
+/// table's first argument *against* carrying a torch.
+///
+/// The Polymorph-into-a-bat clause is not modelled; see the action's
+/// docstring for why a self-shapechange is a different lane from either
+/// of the two the engine has.
+pub static CLOAK_OF_THE_BAT: Item = Item {
+    name: crate::actions::item_actions::CLOAK_OF_THE_BAT_NAME,
+    glyph: 'c',
+    on_use: &[&crate::actions::item_actions::SPREAD_CLOAK_OF_THE_BAT],
+    skill_check_advantages: &[crate::engine::types::Skill::Stealth],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Gloves of Swimming and Climbing** (Wondrous item, Uncommon,
+/// requires attunement) — *"you have a Climb Speed and a Swim Speed
+/// equal to your Speed."*
+///
+/// One item, two of the three speeds the engine tracks, and the only
+/// place in the file where both arrive at once. The Ring of Swimming
+/// carries the wet half and the Slippers of Spider Climbing the dry one;
+/// these are both, which is what an attunement slot buys over the two
+/// Uncommons that do not ask for one.
+///
+/// The pairing matters more than the sum on the boards these are for. A
+/// party crossing water is paying `engine::underwater`'s tax on every
+/// attack roll and counting its breath, and a party on a `terrain_gen`
+/// map with a chasm is paying for the long way round; a character
+/// wearing these is exempt from both, on the same turn, for one slot.
+///
+/// RAW's *"+5 bonus to Strength (Athletics) checks made to climb or
+/// swim"* is not modelled and is the one clause dropped.
+/// `skill_check_advantages` is scoped to a **skill**, and the engine's
+/// Athletics checks are grapples, shoves and escapes — a row there would
+/// hand the wearer advantage on every contest on the board, which is a
+/// different and much better item than the one RAW printed.
+pub static GLOVES_OF_SWIMMING_AND_CLIMBING: Item = Item {
+    name: "Gloves of Swimming and Climbing",
+    glyph: 'g',
+    passive_conditions: &[
+        crate::conditions::Condition::Swimming,
+        crate::conditions::Condition::SpiderClimbing,
+    ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Quarterstaff of the Acrobat** (Weapon (quarterstaff), Very Rare,
+/// requires attunement) — *"You have a +2 bonus to attack rolls and
+/// damage rolls made with this magic weapon."*
+///
+/// A `+2` weapon that is also a lamp and also an escape artist, which is
+/// three lanes on one stick and the reason it is worth a separate entry
+/// beside the plain `+2 Weapon` it otherwise duplicates:
+///
+///   - the bonus and `grants_magical_attacks`, which is the `+2` tier;
+///   - **Acrobatic Assist**, *"you have Advantage on Dexterity
+///     (Acrobatics) checks"* — and Acrobatics is one of the four skills
+///     this engine actually rolls, because it is the contest a grappled
+///     creature escapes on. A wielder of this staff walks out of a
+///     roper's tentacle, a giant octopus's arm and a purple worm's
+///     swallow at a notch, all fight;
+///   - the green dim light, which is `sheds_light` — a lamp with no
+///     command word and no off switch, the lane the Mace of Disruption
+///     established.
+///
+/// **Attack Deflection is absent.** *"When you are hit by an attack…
+/// you can take a Reaction to twirl the weapon around you, gaining a +5
+/// bonus to your Armor Class against the triggering attack"* is the
+/// Shield spell's shape, and the engine's reaction windows that open on
+/// an incoming attack open on the *damage* rather than on the roll —
+/// `REACTIVE_DAMAGE_CLAMPS`, the lane the Gloves of Missile Snaring
+/// ride. A +5 that could retroactively turn a hit into a miss needs the
+/// window `spells::SHIELD` uses, and that one is keyed to a spell slot
+/// rather than to an item.
+pub static QUARTERSTAFF_OF_THE_ACROBAT: Item = Item {
+    name: "Quarterstaff of the Acrobat",
+    glyph: '\\',
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    skill_check_advantages: &[crate::engine::types::Skill::Acrobatics],
+    sheds_light: Some(crate::engine::lighting::LightProfile {
+        name: "quarterstaff of the acrobat",
+        // RAW's "green Dim Light out to 10 feet" — no bright radius at
+        // all, and four tiles of dim on the 2.5 ft grid. The only entry
+        // on this lane with a zero bright ring, which is what "dim light
+        // out to" says as opposed to the mace's "bright … and dim for an
+        // additional".
+        bright_tiles: 0,
+        dim_tiles: 4,
+    }),
+    grants_magical_attacks: true,
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Lantern of Revealing** (Wondrous item, Uncommon) — *"shedding
+/// Bright Light in a 30-foot radius and Dim Light for an additional 30
+/// feet. Invisible creatures and objects are visible as long as they are
+/// in the lantern's Bright Light."*
+///
+/// The brightest thing a party can carry — three times the Torch's ring
+/// — and the only light on the table that answers a *concealment*
+/// question as well as a visibility one. On a dark board that is two
+/// problems solved by one pickup, and the lantern asks for no attunement
+/// slot to do it.
+///
+/// **The range of the reveal is the divergence, and it runs in the
+/// wearer's favour.** RAW scopes it to creatures standing inside the
+/// lantern's bright ring; `Condition::SeeingInvisible` is unbounded, so
+/// a carrier sees an invisible stalker across the room. Narrowing it
+/// would mean a range-scoped variant of the concealment-piercing lane,
+/// which `concealment_piercing_of` has no argument for — and the error
+/// is small in practice, because twelve tiles of bright light is most
+/// of a BSP room anyway.
+///
+/// Carried rather than switched on, which is what separates it from the
+/// Torch beside it on the shelf: `sheds_light` comes on at pickup and
+/// goes where the object goes, including onto the floor when its bearer
+/// drops. RAW's hooded shutter is the clause not modelled, and it is the
+/// same one the Mace of Disruption's docstring declines.
+pub static LANTERN_OF_REVEALING: Item = Item {
+    name: "Lantern of Revealing",
+    glyph: 'l',
+    sheds_light: Some(crate::engine::lighting::LightProfile {
+        name: "lantern of revealing",
+        // RAW's 30 ft and an additional 30 ft — twelve tiles of each.
+        bright_tiles: 12,
+        dim_tiles: 12,
+    }),
+    passive_conditions: &[crate::conditions::Condition::SeeingInvisible],
+    ..Item::DEFAULTS
+};
+
 // =====================================================================
 // Staves — SRD 5.2's charge-priced spell menus.
 //
@@ -6579,6 +6880,7 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &BERSERKER_AXE,
     &SCIMITAR_OF_SPEED,
     &ADAMANTINE_ARMOR,
+    &QUARTERSTAFF_OF_THE_ACROBAT,
 ];
 
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
@@ -7527,6 +7829,29 @@ pub static LOOT_POOL: &[&Item] = &[
     &CAPE_OF_THE_MOUNTEBANK,
     &POTION_OF_FIRE_BREATH,
     &POTION_OF_FIRE_BREATH,
+    // The rest of the SRD's A–Z that says "you can cast X from it" on
+    // something that is not a staff. Four items and seven rows between
+    // them, all on the `StaffSpell` chassis the Cape and the Circlet
+    // opened — and the reason they arrive as a batch is that every one
+    // of them hands a spell to a chassis that has no spell list. A
+    // fighter who finds the fan can push; one who finds the bottle can
+    // blind a firing line; one who finds the helm chooses between a
+    // Fireball and a Prismatic Spray the way a wizard chooses between
+    // slots.
+    &WIND_FAN,
+    &EVERSMOKING_BOTTLE,
+    &TRIDENT_OF_FISH_COMMAND,
+    &HELM_OF_BRILLIANCE,
+    // And four passives, each on a lane the file had a field for and
+    // almost nothing on. Two of them shed light for being carried,
+    // which the Mace of Disruption was alone in doing; one hands out
+    // two movement modes at once, which nothing did; and the
+    // quarterstaff is the first thing on the skill lane to name
+    // Acrobatics, which is the check a grappled creature escapes on.
+    &CLOAK_OF_THE_BAT,
+    &QUARTERSTAFF_OF_THE_ACROBAT,
+    &GLOVES_OF_SWIMMING_AND_CLIMBING,
+    &LANTERN_OF_REVEALING,
 ];
 
 #[cfg(test)]
@@ -7704,11 +8029,19 @@ mod tests {
         //   - the **Scimitar of Speed**'s whole clause is an extra
         //     swing, granted through `on_use`. There is nothing to add
         //     to a hit because the clause *is* the hit.
+        //   - the **Quarterstaff of the Acrobat** is the `+N` tier
+        //     wearing a name. Its three clauses are a bonus, a skill
+        //     and a lamp — `ItemBonuses`, `skill_check_advantages` and
+        //     `sheds_light` — and not one of them is a die added to a
+        //     hit. It is on this shelf rather than off it because
+        //     `exactly_the_weapons_carry_the_magic` asks who is allowed
+        //     to sharpen a swing, and a magic quarterstaff is.
         let no_rider: &[&Item] = &[
             &ADAMANTINE_ARMOR,
             &MACE_OF_TERROR,
             &BERSERKER_AXE,
             &SCIMITAR_OF_SPEED,
+            &QUARTERSTAFF_OF_THE_ACROBAT,
         ];
         for item in no_rider {
             assert!(

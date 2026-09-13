@@ -3176,6 +3176,26 @@ pub enum Condition {
     /// item action on that module does *not* consume the item it fires
     /// from.
     FlameTongued,
+    /// Wielding a weapon the **Helm of Brilliance** has set alight —
+    /// *"you can take a Magic action to cause one weapon you are holding
+    /// to burst into flames… When you hit with an attack using the
+    /// blazing weapon, the target takes an extra 1d6 Fire damage."*
+    ///
+    /// The Flame Tongue's marker one die smaller, and the first on this
+    /// cohort whose **source is not the weapon it burns**. Every other
+    /// rider in `ON_HIT_RIDERS` is a property of the thing being swung:
+    /// a Frost Brand freezes because it is a Frost Brand. This one is a
+    /// property of the wearer's *hat*, and whatever is in their hand
+    /// catches. Nothing about the lane had to change to say that,
+    /// because the marker has always lived on the wielder rather than
+    /// on the blade — which is the quiet reason `KindleWeapon` is a
+    /// chassis and not a Flame Tongue special case.
+    ///
+    /// Deliberately not folded onto `FlameTongued`. The two dice
+    /// differ (1d6 against 2d6), and a single marker would mean a
+    /// fighter who lit a Flame Tongue could not also light the helm,
+    /// or — worse — would light one and collect the other's die.
+    BrilliantFlames,
     /// Holding a 5e **Frost Brand** — *"When you hit with an attack roll
     /// using this magic weapon, the target takes an extra 1d6 Cold
     /// damage."*
@@ -3820,6 +3840,7 @@ impl Condition {
             Condition::SunBladed => "wielding a sun blade",
             Condition::Disrupting => "wielding a mace of disruption",
             Condition::FlameTongued => "wielding a lit flame tongue",
+            Condition::BrilliantFlames => "wielding a blazing weapon",
             Condition::FrostBranded => "wielding a frost brand",
             Condition::Vicious => "wielding a vicious weapon",
             Condition::Wounding => "wielding a sword of wounding",

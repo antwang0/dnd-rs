@@ -124,11 +124,44 @@ pub struct StaffSpell {
     /// in `actions::spells` is a `LazyLock` and a `static` initializer
     /// cannot deref one.
     pub spell: fn() -> &'static (dyn Action + Send + Sync),
+    /// The row's own narrowing of *who* the spell may be cast at, on top
+    /// of whatever the spell already refuses — SRD 5.2's Trident of Fish
+    /// Command, *"cast Dominate Beast … on a Beast that has a Swim
+    /// Speed"*, and the first clause on this chassis that is neither the
+    /// spell's nor the price.
+    ///
+    /// `None` — every staff row in the book, and the default — is the
+    /// spell's own target list, unmodified. That is what "the staff *is*
+    /// the spell" means everywhere else on this struct, and the reason
+    /// this field is an `Option` rather than a predicate that defaults
+    /// to `true`: a row with no restriction should forward nothing, not
+    /// forward a tautology.
+    ///
+    /// Applied at **both** target gates, because they answer different
+    /// questions and a restriction that landed on one of them would be
+    /// half a rule. [`Action::affects_creature`] is what the picker and
+    /// the AI's candidate walks read, so a predicate there keeps an
+    /// ineligible creature off the list in the first place;
+    /// [`Action::custom_validate_input`] is what refuses a cast that was
+    /// aimed anyway, which is the gate a typed command comes through.
+    ///
+    /// Deliberately a predicate over the *target* alone. Every
+    /// restriction the book prints on this lane is a fact about the
+    /// creature being pointed at — its type, its speed, its size — and
+    /// nothing about the caster, the board or the distance, all three of
+    /// which the spell and the cost list already answer for.
+    pub only_targets: Option<fn(&crate::actors::actor_template::ActorInstance) -> bool>,
 }
 
 impl StaffSpell {
     fn spell(&self) -> &'static (dyn Action + Send + Sync) {
         (self.spell)()
+    }
+
+    /// Whether this row's own restriction admits `target`. `true` for
+    /// every row that has none — see [`StaffSpell::only_targets`].
+    fn admits(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        self.only_targets.is_none_or(|gate| gate(target))
     }
 
     /// The charge price as a resource — the one thing every staff row
@@ -165,7 +198,7 @@ impl Action for StaffSpell {
     }
 
     fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
-        self.spell().affects_creature(target)
+        self.spell().affects_creature(target) && self.admits(target)
     }
 
     fn installs_condition(&self) -> Option<crate::conditions::Condition> {
@@ -339,7 +372,7 @@ impl Action for StaffSpell {
         false
     }
 
-    /// The spell's own gate, and only that.
+    /// The spell's own gate, and the row's own restriction on top of it.
     ///
     /// "And you are still holding a staff with the charges on it" is
     /// deliberately **not** re-checked here, though every other item
@@ -351,6 +384,15 @@ impl Action for StaffSpell {
     /// cost list is checked by the engine at every gate that checks
     /// prices, and a price paid inside `side_effects` is checked only
     /// where its author remembered to ask.
+    ///
+    /// `only_targets` is re-asked here rather than left to
+    /// `affects_creature` for the reason the two gates exist separately:
+    /// that one shapes the list a chooser is offered, and this one is
+    /// the refusal a chooser who aimed anyway gets. **Fails closed** on a
+    /// restricted row aimed at nothing and on a target that has left the
+    /// board, which is the convention every targeted gate in the engine
+    /// already follows — a row with a restriction has something specific
+    /// to point at, and "no target" is not it.
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -359,6 +401,15 @@ impl Action for StaffSpell {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
+        if self.only_targets.is_some() {
+            let admitted = target_ids
+                .and_then(|ids| ids.first())
+                .and_then(|id| encounter.actors.get(id))
+                .is_some_and(|t| self.admits(t));
+            if !admitted {
+                return false;
+            }
+        }
         self.spell().custom_validate_input(
             encounter,
             caster_id,
@@ -426,6 +477,7 @@ pub static STAFF_OF_FIRE_BURNING_HANDS: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 1,
     spell: || &*crate::actions::spells::BURNING_HANDS,
+    only_targets: None,
 };
 
 pub static STAFF_OF_FIRE_FIREBALL: StaffSpell = StaffSpell {
@@ -435,6 +487,7 @@ pub static STAFF_OF_FIRE_FIREBALL: StaffSpell = StaffSpell {
     charges: 3,
     spell_level: 3,
     spell: || &*crate::actions::spells::FIREBALL,
+    only_targets: None,
 };
 
 pub static STAFF_OF_FIRE_WALL_OF_FIRE: StaffSpell = StaffSpell {
@@ -444,6 +497,7 @@ pub static STAFF_OF_FIRE_WALL_OF_FIRE: StaffSpell = StaffSpell {
     charges: 4,
     spell_level: 4,
     spell: || &*crate::actions::spells::WALL_OF_FIRE,
+    only_targets: None,
 };
 
 // ---------------------------------------------------------------------
@@ -459,6 +513,7 @@ pub static STAFF_OF_FROST_FOG_CLOUD: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 1,
     spell: || &*crate::actions::spells::FOG_CLOUD,
+    only_targets: None,
 };
 
 pub static STAFF_OF_FROST_ICE_STORM: StaffSpell = StaffSpell {
@@ -468,6 +523,7 @@ pub static STAFF_OF_FROST_ICE_STORM: StaffSpell = StaffSpell {
     charges: 4,
     spell_level: 4,
     spell: || &*crate::actions::spells::ICE_STORM,
+    only_targets: None,
 };
 
 pub static STAFF_OF_FROST_WALL_OF_ICE: StaffSpell = StaffSpell {
@@ -477,6 +533,7 @@ pub static STAFF_OF_FROST_WALL_OF_ICE: StaffSpell = StaffSpell {
     charges: 4,
     spell_level: 6,
     spell: || &*crate::actions::spells::WALL_OF_ICE,
+    only_targets: None,
 };
 
 pub static STAFF_OF_FROST_CONE_OF_COLD: StaffSpell = StaffSpell {
@@ -486,6 +543,7 @@ pub static STAFF_OF_FROST_CONE_OF_COLD: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::CONE_OF_COLD,
+    only_targets: None,
 };
 
 // ---------------------------------------------------------------------
@@ -505,6 +563,7 @@ pub static STAFF_OF_HEALING_CURE_WOUNDS: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 1,
     spell: || &*crate::actions::spells::CURE_WOUNDS,
+    only_targets: None,
 };
 
 pub static STAFF_OF_HEALING_LESSER_RESTORATION: StaffSpell = StaffSpell {
@@ -514,6 +573,7 @@ pub static STAFF_OF_HEALING_LESSER_RESTORATION: StaffSpell = StaffSpell {
     charges: 2,
     spell_level: 2,
     spell: || &*crate::actions::spells::LESSER_RESTORATION,
+    only_targets: None,
 };
 
 pub static STAFF_OF_HEALING_MASS_CURE_WOUNDS: StaffSpell = StaffSpell {
@@ -523,6 +583,7 @@ pub static STAFF_OF_HEALING_MASS_CURE_WOUNDS: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::MASS_CURE_WOUNDS,
+    only_targets: None,
 };
 
 // ---------------------------------------------------------------------
@@ -538,6 +599,7 @@ pub static STAFF_OF_SWARMING_INSECTS_GIANT_INSECT: StaffSpell = StaffSpell {
     charges: 4,
     spell_level: 4,
     spell: || &crate::actions::spells::GIANT_INSECT,
+    only_targets: None,
 };
 
 pub static STAFF_OF_SWARMING_INSECTS_INSECT_PLAGUE: StaffSpell = StaffSpell {
@@ -547,6 +609,7 @@ pub static STAFF_OF_SWARMING_INSECTS_INSECT_PLAGUE: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::INSECT_PLAGUE,
+    only_targets: None,
 };
 
 // ---------------------------------------------------------------------
@@ -562,6 +625,7 @@ pub static STAFF_OF_CHARMING_CHARM_PERSON: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 1,
     spell: || &*crate::actions::spells::CHARM_PERSON,
+    only_targets: None,
 };
 
 pub static STAFF_OF_CHARMING_COMMAND: StaffSpell = StaffSpell {
@@ -571,6 +635,7 @@ pub static STAFF_OF_CHARMING_COMMAND: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 1,
     spell: || &*crate::actions::spells::COMMAND,
+    only_targets: None,
 };
 
 // ---------------------------------------------------------------------
@@ -588,6 +653,7 @@ pub static STAFF_OF_THE_WOODLANDS_BARKSKIN: StaffSpell = StaffSpell {
     charges: 2,
     spell_level: 2,
     spell: || &*crate::actions::spells::BARKSKIN,
+    only_targets: None,
 };
 
 pub static STAFF_OF_THE_WOODLANDS_SPIKE_GROWTH: StaffSpell = StaffSpell {
@@ -597,6 +663,7 @@ pub static STAFF_OF_THE_WOODLANDS_SPIKE_GROWTH: StaffSpell = StaffSpell {
     charges: 2,
     spell_level: 2,
     spell: || &*crate::actions::spells::SPIKE_GROWTH,
+    only_targets: None,
 };
 
 pub static STAFF_OF_THE_WOODLANDS_WALL_OF_THORNS: StaffSpell = StaffSpell {
@@ -606,6 +673,7 @@ pub static STAFF_OF_THE_WOODLANDS_WALL_OF_THORNS: StaffSpell = StaffSpell {
     charges: 6,
     spell_level: 6,
     spell: || &*crate::actions::spells::WALL_OF_THORNS,
+    only_targets: None,
 };
 
 // ---------------------------------------------------------------------
@@ -621,6 +689,7 @@ pub static STAFF_OF_POWER_MAGIC_MISSILE: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 1,
     spell: || &*crate::actions::spells::MAGIC_MISSILE,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_RAY_OF_ENFEEBLEMENT: StaffSpell = StaffSpell {
@@ -630,6 +699,7 @@ pub static STAFF_OF_POWER_RAY_OF_ENFEEBLEMENT: StaffSpell = StaffSpell {
     charges: 1,
     spell_level: 2,
     spell: || &*crate::actions::spells::RAY_OF_ENFEEBLEMENT,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_LEVITATE: StaffSpell = StaffSpell {
@@ -639,6 +709,7 @@ pub static STAFF_OF_POWER_LEVITATE: StaffSpell = StaffSpell {
     charges: 2,
     spell_level: 2,
     spell: || &*crate::actions::spells::LEVITATE,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_FIREBALL: StaffSpell = StaffSpell {
@@ -651,6 +722,7 @@ pub static STAFF_OF_POWER_FIREBALL: StaffSpell = StaffSpell {
     // is 5 where the Staff of Fire's is 3.
     spell_level: 5,
     spell: || &*crate::actions::spells::FIREBALL,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_LIGHTNING_BOLT: StaffSpell = StaffSpell {
@@ -660,6 +732,7 @@ pub static STAFF_OF_POWER_LIGHTNING_BOLT: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::LIGHTNING_BOLT,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_CONE_OF_COLD: StaffSpell = StaffSpell {
@@ -669,6 +742,7 @@ pub static STAFF_OF_POWER_CONE_OF_COLD: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::CONE_OF_COLD,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_HOLD_MONSTER: StaffSpell = StaffSpell {
@@ -678,6 +752,7 @@ pub static STAFF_OF_POWER_HOLD_MONSTER: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::HOLD_MONSTER,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_WALL_OF_FORCE: StaffSpell = StaffSpell {
@@ -687,6 +762,7 @@ pub static STAFF_OF_POWER_WALL_OF_FORCE: StaffSpell = StaffSpell {
     charges: 5,
     spell_level: 5,
     spell: || &*crate::actions::spells::WALL_OF_FORCE,
+    only_targets: None,
 };
 
 pub static STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY: StaffSpell = StaffSpell {
@@ -696,6 +772,7 @@ pub static STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY: StaffSpell = StaffSpell {
     charges: 6,
     spell_level: 6,
     spell: || &*crate::actions::spells::GLOBE_OF_INVULNERABILITY,
+    only_targets: None,
 };
 
 // =====================================================================
