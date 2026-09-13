@@ -1266,6 +1266,18 @@ impl ApplicableSideEffect for DealDamage {
         // how the source is attributed without an attacker on the
         // payload.
         ei.note_damage_from_inside(self.actor_id, landed);
+        // SRD 5.2 **Multiple Heads**: "whenever the hydra takes 25
+        // damage or more on a single turn, one of its heads dies", and
+        // the regrowth clause's "unless it has taken Fire damage since
+        // its last turn". Both windows are tallied here for the same
+        // reason the swallow threshold one line up is: this is the one
+        // place that sees every point of damage after mitigation, which
+        // is the number RAW's thresholds are measured in. A no-op for
+        // every creature in the bestiary but one — see
+        // `ActorInstance::note_damage_this_turn`.
+        if let Some(target) = ei.actors.get_mut(&self.actor_id) {
+            target.note_damage_this_turn(landed, self.damage_type);
+        }
         // SRD 5.2 **Berserker Axe**: "Whenever another creature damages
         // you while the weapon is in your possession, you must succeed
         // on a DC 15 Wisdom saving throw or go berserk." Beside the

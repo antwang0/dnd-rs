@@ -35,17 +35,24 @@ use std::sync::LazyLock;
 /// unable to move AND eating attack-against advantage.
 ///
 /// Stat shape: AC 11, ~45 HP (7d10+7), STR 17, DEX 13, CON 13, INT 5,
-/// WIS 10, CHA 4. Speed 20 (RAW: 10ft walk + 60ft swim — we keep the
-/// swimming speed as a flag and collapse the magnitudes to
-/// a 20ft walking speed since the engine isn't aquatic-aware; the
-/// reach-3 tentacles already give the octopus a kiting advantage from
-/// outside normal melee range). Senses: Darkvision 60. Size Large.
-/// CR 1.
+/// WIS 10, CHA 4. Speed 20 (RAW: 10ft walk + 60ft swim — one number,
+/// because the engine prices a creature's movement off one speed and a
+/// swimming speed here is a *flag* rather than a second magnitude; see
+/// `SWIM_SPEED_TAG`). Senses: Darkvision 60. Size Large. CR 1.
 ///
-/// Hold Breath / Underwater Camouflage / Water Breathing (RAW) are
-/// omitted as deliberate scope cuts — the engine has no aquatic /
-/// holding-breath / underwater-only lighting model, and the load-bearing
-/// combat clause is the reach-3 grapple lock-down.
+/// **Water Breathing rides `UNDERWATER_BREATHING_TAG`** and Hold Breath
+/// with it — the two come out the same on a battle map, and both are on
+/// the template. This paragraph used to call them "deliberate scope
+/// cuts" on the grounds that the engine had no aquatic or holding-breath
+/// model. It has both: `engine::underwater` is the attack layer,
+/// `engine::breath` is the suffocation clock, and `is_immersed` is what
+/// tells them where the octopus is standing.
+///
+/// **Underwater Camouflage** is the one clause still absent, and for a
+/// reason that has not changed: RAW's advantage on Stealth checks while
+/// underwater needs a check-mode lane that asks about the *tile* a
+/// roller is standing on, and `compute_check_mode` is handed a creature
+/// and an ability.
 pub static GIANT_OCTOPUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&GIANT_OCTOPUS_TENTACLES);

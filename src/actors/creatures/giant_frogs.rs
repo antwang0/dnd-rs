@@ -47,9 +47,10 @@ use std::sync::LazyLock;
 /// target in melee for the rest of the swamp pack to pile on.
 ///
 /// Stat shape: AC 11, ~18 HP (4d8), STR 12, DEX 13, CON 11, INT 2,
-/// WIS 10, CHA 3. Speed 30 (RAW: 30 + swim 30 — we keep the swimming
-/// speed as a flag and collapse the magnitudes to the
-/// walking speed since the engine isn't aquatic-terrain-aware).
+/// WIS 10, CHA 3. Speed 30 (RAW: 30 + swim 30 — one number, because a
+/// swimming speed is a flag here rather than a second magnitude, and the
+/// two are equal on this chassis anyway; see `SWIM_SPEED_TAG`, which is
+/// what makes water free for the frog to cross).
 /// Senses: Darkvision 30. Size Medium. CR ¼. XP: 50 per RAW.
 pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();

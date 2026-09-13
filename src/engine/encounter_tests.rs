@@ -35794,29 +35794,135 @@ fn hydra_multiattack_lands_five_bites() {
     assert!(saw_hit, "hydra's 5-bite multi should hit at least once across seeds");
 }
 
-/// Hydra regenerates 10 HP per round-end while combat-active. We
-/// damage the hydra below max, run a single round_end pass, and
-/// verify HP recovers (capped at max).
+/// SRD 5.2 **Multiple Heads**, end to end: twenty-five in a turn takes
+/// a head, the hydra bites once per head it has left, fire stops the
+/// regrowth, and nothing else grows it back.
+///
+/// One test for four clauses because they are one mechanic, and the
+/// interesting claims are the ones about the seams between them — a head
+/// that came off on somebody else's turn is still off when the hydra's
+/// turn comes round, and a burn that landed two turns ago is not still
+/// smouldering.
 #[test]
-fn hydra_regenerates_each_round() {
+fn a_hydra_loses_a_head_to_twenty_five_in_one_turn() {
     use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+    use crate::engine::types::DamageType;
+
     let mut e = ei_with_terrain(15, 15, &[]);
     let hydra = e
         .instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(5, 5), 1, 0)
         .unwrap();
-    // Damage by 30 so the regen has room to land.
-    e.actors.get_mut(&hydra).unwrap().take_damage(30);
-    let after_dmg = e.actors[&hydra].hitpoints();
-    e.round_end();
-    let after_regen = e.actors[&hydra].hitpoints();
-    // 10 HP regen unless suppressed (no suppressors on hydra).
-    assert!(
-        after_regen > after_dmg,
-        "hydra should regenerate (saw {} → {})",
-        after_dmg,
-        after_regen
+    assert_eq!(e.actors[&hydra].heads(), 5, "the stat block ships with five");
+    assert_eq!(
+        e.attack_routine_swings(hydra, 5),
+        5,
+        "and bites once per head"
+    );
+
+    // Twenty-four in a turn is not twenty-five.
+    deal(&mut e, hydra, 24, DamageType::Slashing);
+    e.resolve_severed_heads(None);
+    assert_eq!(e.actors[&hydra].heads(), 5, "a near miss takes nothing");
+
+    // Twenty-five does, and only one head however far past it the total
+    // goes — RAW's threshold is a trigger, not a rate.
+    deal(&mut e, hydra, 80, DamageType::Slashing);
+    e.resolve_severed_heads(None);
+    assert_eq!(e.actors[&hydra].heads(), 4);
+    assert_eq!(
+        e.attack_routine_swings(hydra, 5),
+        4,
+        "and the routine is as many bites as it has heads"
+    );
+
+    // The window is one turn: the same eighty spread over two turns
+    // costs two heads, and the counter does not carry.
+    deal(&mut e, hydra, 10, DamageType::Slashing);
+    e.resolve_severed_heads(None);
+    assert_eq!(e.actors[&hydra].heads(), 4, "ten does not carry into the next turn");
+
+    // End of the hydra's own turn with a head down and no fire: two
+    // grow back, and twenty hit points with them.
+    let hp_before = e.actors[&hydra].hitpoints();
+    e.resolve_severed_heads(Some(hydra));
+    assert_eq!(e.actors[&hydra].heads(), 6, "two heads for the one that died");
+    assert_eq!(
+        e.actors[&hydra].hitpoints(),
+        hp_before + 20,
+        "and twenty hit points when it grows them"
+    );
+    assert_eq!(
+        e.attack_routine_swings(hydra, 5),
+        6,
+        "a hydra nobody burned bites more times than the stat block prints"
+    );
+
+    // Fire in the window stops the regrowth — and only for that window.
+    deal(&mut e, hydra, 30, DamageType::Slashing);
+    e.resolve_severed_heads(None);
+    assert_eq!(e.actors[&hydra].heads(), 5);
+    deal(&mut e, hydra, 1, DamageType::Fire);
+    e.resolve_severed_heads(None);
+    e.resolve_severed_heads(Some(hydra));
+    assert_eq!(e.actors[&hydra].heads(), 5, "fire cauterises the stump");
+
+    deal(&mut e, hydra, 30, DamageType::Slashing);
+    e.resolve_severed_heads(None);
+    assert_eq!(e.actors[&hydra].heads(), 4);
+    e.resolve_severed_heads(Some(hydra));
+    assert_eq!(
+        e.actors[&hydra].heads(),
+        6,
+        "the burn closed with the turn it landed in"
     );
 }
+
+/// A hydra with no heads left is dead, whoever's turn took the last one.
+#[test]
+fn a_hydra_with_no_heads_left_dies() {
+    use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let hydra = e
+        .instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let mut hp_at_the_last_head = 0;
+    for expected in (0..5).rev() {
+        assert!(e.actors[&hydra].is_combat_active());
+        deal(&mut e, hydra, 25, DamageType::Fire);
+        hp_at_the_last_head = e.actors[&hydra].hitpoints();
+        e.resolve_severed_heads(None);
+        assert_eq!(e.actors[&hydra].heads(), expected);
+    }
+    assert!(
+        !e.actors[&hydra].is_combat_active(),
+        "the hydra dies if all its heads are dead"
+    );
+    assert!(
+        hp_at_the_last_head > 0,
+        "and it was the heads that killed it — a hundred and twenty-five points is \
+         not enough to drop a hydra on its own"
+    );
+}
+
+/// Land `amount` of `dt` on `target` through the damage chokepoint, so
+/// the per-turn tallies the hydra reads are written the way a real blow
+/// writes them.
+fn deal(
+    e: &mut EncounterInstance,
+    target: usize,
+    amount: u32,
+    dt: crate::engine::types::DamageType,
+) {
+    crate::engine::side_effects::DealDamage {
+        actor_id: target,
+        amount,
+        damage_type: dt,
+    }
+    .apply(e);
+}
+
 
 /// Salamander envelope: fire-immune, cold-vulnerable, mundane B/P/S
 /// resistant. Validates the damage modifier table directly.
@@ -105169,5 +105275,67 @@ fn waving_the_wand_spends_a_charge_whatever_comes_out_of_it() {
     assert!(
         !action.validate_input(&e, waver, None, Some(&aim), None),
         "and there is nothing left to wave until then"
+    );
+}
+
+/// SRD 5.2 **Reactive Heads**: a hydra punishes one withdrawal per head,
+/// and the head's Reaction goes before its own.
+///
+/// The half of the head count that matters on the party's turn rather
+/// than the hydra's: a five-headed hydra is a thing five people cannot
+/// walk away from, and a party that has taken three heads off has bought
+/// itself three free withdrawals.
+#[test]
+fn a_hydra_opportunity_attacks_once_per_head() {
+    use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let hydra = e
+        .instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&hydra).unwrap().reset_for_new_round();
+    assert!(e.actors[&hydra].has_opportunity_reaction());
+
+    // Five heads: the ordinary Reaction plus four of the heads' own.
+    for spent in 0..5 {
+        assert!(
+            e.actors[&hydra].has_opportunity_reaction(),
+            "withdrawal {spent} should still be answered"
+        );
+        e.actors.get_mut(&hydra).unwrap().spend_opportunity_reaction();
+    }
+    assert!(
+        !e.actors[&hydra].has_opportunity_reaction(),
+        "five heads answer five withdrawals and no more"
+    );
+
+    // The extras go first, so the ordinary Reaction is still there for a
+    // lane that has no other source — which is every other reaction lane
+    // in the engine.
+    e.actors.get_mut(&hydra).unwrap().reset_for_new_round();
+    for _ in 0..4 {
+        e.actors.get_mut(&hydra).unwrap().spend_opportunity_reaction();
+    }
+    assert!(
+        e.actors[&hydra]
+            .can_consume_resource(crate::engine::side_effects::Resource::Reaction),
+        "the heads' reactions are spent before the hydra's own"
+    );
+
+    // And the pool follows the head count down.
+    for _ in 0..3 {
+        e.actors.get_mut(&hydra).unwrap().sever_head();
+    }
+    e.actors.get_mut(&hydra).unwrap().reset_for_new_round();
+    for spent in 0..2 {
+        assert!(
+            e.actors[&hydra].has_opportunity_reaction(),
+            "a two-headed hydra should still answer withdrawal {spent}"
+        );
+        e.actors.get_mut(&hydra).unwrap().spend_opportunity_reaction();
+    }
+    assert!(
+        !e.actors[&hydra].has_opportunity_reaction(),
+        "two heads answer two withdrawals"
     );
 }

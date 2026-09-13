@@ -32,14 +32,17 @@ use std::sync::LazyLock;
 /// and per-swing damage, not control or resistance.
 ///
 /// Stat shape: AC 13, ~68 HP (8d10+24), STR 18, DEX 15, CON 16, INT 2,
-/// WIS 12, CHA 5. Speed 20 (RAW: 20ft walk + 40ft swim — we keep the
-/// swimming speed as a flag and collapse the magnitudes
-/// to the walking speed since the engine isn't aquatic-aware). Size
-/// Large. CR 2.
+/// WIS 12, CHA 5. Speed 20 (RAW: 20ft walk + 40ft swim — one number,
+/// because a swimming speed is a flag here rather than a second
+/// magnitude; see `SWIM_SPEED_TAG`). Size Large. CR 2.
 ///
-/// Hold Breath (RAW: holds breath for 1 hour) is omitted as a
-/// deliberate scope cut — the engine has no aquatic / holding-breath
-/// model, and the load-bearing combat clause is the reach-2 heavy bite.
+/// **Hold Breath rides `UNDERWATER_BREATHING_TAG`**, which is where
+/// RAW's Amphibious, Water Breathing and Hold Breath all land — an hour
+/// is longer than any fight the engine runs, so on a battle map the four
+/// clauses are one clause. This paragraph used to call it a scope cut
+/// because the engine had no aquatic or holding-breath model; it has
+/// `engine::underwater` and `engine::breath`, and the tag is on the
+/// template below.
 pub static PLESIOSAURUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&PLESIOSAURUS_BITE);

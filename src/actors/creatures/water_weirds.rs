@@ -23,9 +23,13 @@ use std::sync::LazyLock;
 /// creature opens the fight on its own terms: the first constrict comes
 /// from something nobody could target. The condition is permanent here
 /// rather than water-gated, which is a deliberate over-reach in the
-/// weird's favour — the engine has no "is the creature in water"
-/// predicate on the invisibility lane, and a water weird is generated
-/// in the pool of things that guard water.
+/// weird's favour. `EncounterInstance::is_immersed` would answer the
+/// question — the engine knows perfectly well whether a creature is in
+/// water — but `innate_conditions` installs once at instantiation, and
+/// gating this one would mean a condition that comes and goes with the
+/// tile underfoot: a lane nothing else on the roster wants, to make a
+/// CR 3 creature strictly worse on the maps that have no lake on them.
+/// A water weird is generated in the pool of things that guard water.
 ///
 /// It also breaks the ordinary way: attacking does not reveal a water
 /// weird, because RAW's invisibility is a property of the medium rather

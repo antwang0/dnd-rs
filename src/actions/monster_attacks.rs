@@ -4659,7 +4659,8 @@ impl Action for Multiattack {
 
     forwards_to_sub_attack!(sub_attack);
 
-    /// `count` copies of the sub-attack's own estimate.
+    /// One copy of the sub-attack's own estimate per swing this routine
+    /// will actually get.
     ///
     /// Delegating this is not optional the way most trait defaults are.
     /// A monster's action list usually carries both the Multiattack and
@@ -4668,9 +4669,18 @@ impl Action for Multiattack {
     /// score 0.0 against its own sub-attack's positive number and lose
     /// every tie, which would quietly stop every Multiattack creature in
     /// the bestiary from using its Multiattack.
+    ///
+    /// Priced through `attack_routine_swings` rather than off the
+    /// printed `count`, so the estimate and the resolution agree about
+    /// how many swings there are. They did not have to before: the only
+    /// thing that moved the number was Slow, which halves the routine
+    /// and the estimate together in a way nothing was comparing. A
+    /// hydra's head count moves it in both directions, and a picker
+    /// told to expect five bites from a two-headed hydra would rank the
+    /// routine above the swing that is actually better.
     fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
         let per = self.sub_attack.expected_damage(encounter, caster_id)?;
-        Some(per * self.count as f32)
+        Some(per * encounter.attack_routine_swings(caster_id, self.count) as f32)
     }
 
     /// Inherited from the sub-attack, like the reach and the schema and
@@ -9088,9 +9098,14 @@ pub static HYDRA_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
     2,
 );
 
-/// Hydra Multiattack — 5 simultaneous bites (one per head). The number
-/// of heads is fixed at 5 RAW; the engine doesn't model head-severing
-/// dynamics so the multiattack count is constant.
+/// Hydra Multiattack — SRD 5.2's *"the hydra makes as many Bite attacks
+/// as it has heads"*.
+///
+/// The printed `count` is the five heads the stat block ships with, and
+/// it is not what gets swung: `EncounterInstance::attack_routine_swings`
+/// reads the hydra's *living* head count instead, which goes down when
+/// somebody takes twenty-five points off it in a turn and up when it
+/// grows two back for each one. See `CreatureTemplate::heads`.
 pub static HYDRA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "hydra multiattack",
     sub_attack: &HYDRA_BITE,

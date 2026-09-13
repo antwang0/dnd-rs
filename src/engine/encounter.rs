@@ -10204,6 +10204,111 @@ impl EncounterInstance {
         true
     }
 
+    /// SRD 5.2 **Multiple Heads**, resolved at the close of every turn.
+    ///
+    /// > The hydra has five heads. Whenever the hydra takes 25 damage or
+    /// > more on a single turn, one of its heads dies. The hydra dies if
+    /// > all its heads are dead. At the end of each of its turns when it
+    /// > has at least one living head, the hydra grows two heads for
+    /// > each of its heads that died since its last turn, unless it has
+    /// > taken Fire damage since its last turn. The hydra regains 20 Hit
+    /// > Points when it grows new heads.
+    ///
+    /// Four clauses and three different clocks, which is why this is one
+    /// function rather than three hooks:
+    ///
+    ///   - **The severing** is measured over *any* turn, so it is asked
+    ///     at the end of every one of them. One head per turn however
+    ///     far past twenty-five the total goes — RAW's threshold is a
+    ///     trigger, not a rate.
+    ///   - **The death** follows immediately, because a hydra with no
+    ///     heads is dead whoever's turn took the last one.
+    ///   - **The regrowth** is measured from *its own* last turn, so it
+    ///     is asked only when `ended` is the hydra itself, and reads two
+    ///     windows that close together — how many heads went, and
+    ///     whether any fire landed while they were going.
+    ///
+    /// What the trait buys is a fight with a tactic in it. A party that
+    /// concentrates twenty-five points into one turn takes a head off; a
+    /// party that spreads its damage evenly takes none off at all; and a
+    /// party that does the first without bringing fire is fighting a
+    /// creature that comes back with more heads than it lost, biting
+    /// more times a turn for it. The hydra used to carry
+    /// `regen_per_round: 10` in place of all of that, under a docstring
+    /// admitting the swap — which is the same fight every round with a
+    /// slightly longer health bar.
+    fn resolve_severed_heads(&mut self, ended: Option<usize>) {
+        // The severing, over every headed creature on the board rather
+        // than only the one whose turn closed: RAW's window is "a single
+        // turn" and says nothing about whose.
+        let bitten: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.heads() > 0 && a.damage_this_turn() >= Self::HEAD_SEVERING_DAMAGE)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in bitten {
+            let Some(hydra) = self.actors.get_mut(&id) else {
+                continue;
+            };
+            let taken = hydra.damage_this_turn();
+            let left = hydra.sever_head();
+            let name = hydra.name().to_string();
+            self.log(format!(
+                "{} has taken {} this turn — a head dies ({} left).",
+                name, taken, left
+            ));
+            if left == 0
+                && let Some(hydra) = self.actors.get_mut(&id)
+                && hydra.slay()
+            {
+                self.log(format!("{} has no heads left and dies.", name));
+            }
+        }
+        // The regrowth, at the close of the hydra's own turn only. Asked
+        // unconditionally for a headed creature rather than gated on
+        // having lost one, because `take_head_regrowth` is also what
+        // closes the fire window — a burn that bought nothing this turn
+        // must not still be smouldering next turn.
+        if let Some(ended_id) = ended
+            && self
+                .actors
+                .get(&ended_id)
+                .is_some_and(|a| a.heads() > 0 && a.is_combat_active())
+        {
+            let grown = self
+                .actors
+                .get_mut(&ended_id)
+                .map_or(0, ActorInstance::take_head_regrowth);
+            if grown > 0 {
+                let (name, now) = match self.actors.get_mut(&ended_id) {
+                    Some(hydra) => {
+                        hydra.grow_heads(grown);
+                        hydra.heal(Self::HEAD_REGROWTH_HEAL);
+                        (hydra.name().to_string(), hydra.heads())
+                    }
+                    None => return,
+                };
+                self.log(format!(
+                    "{} grows {} new heads ({} now) and knits itself back together.",
+                    name, grown, now
+                ));
+            }
+        }
+        // The window closes for everybody, whether or not anything read
+        // it — the same shape `resolve_regurgitation_checks` ends with,
+        // and for the same reason: a tally that survived its own turn
+        // would charge the next one for it.
+        for actor in self.actors.values_mut() {
+            actor.clear_damage_this_turn();
+        }
+    }
+
+    /// RAW's *"25 damage or more on a single turn"*.
+    const HEAD_SEVERING_DAMAGE: u32 = 25;
+    /// RAW's *"regains 20 Hit Points when it grows new heads"*.
+    const HEAD_REGROWTH_HEAL: u32 = 20;
+
     /// The action name `try_counterspell` looks for on a stat block —
     /// the engine's way of asking "does this creature know the spell".
     const COUNTERSPELL_NAME: &'static str = "counterspell";
@@ -10855,7 +10960,7 @@ impl EncounterInstance {
             if !self
                 .actors
                 .get(&reactor_id)
-                .is_some_and(|a| a.is_combat_active() && a.can_consume_resource(Resource::Reaction))
+                .is_some_and(|a| a.is_combat_active() && a.has_opportunity_reaction())
             {
                 continue;
             }
@@ -10963,7 +11068,11 @@ impl EncounterInstance {
                 if *id == mover_id || a.team() == mover_team || !a.is_combat_active() {
                     return None;
                 }
-                if !a.can_consume_resource(Resource::Reaction) {
+                // Not `can_consume_resource(Reaction)` directly: SRD
+                // 5.2's **Reactive Heads** gives a hydra an extra
+                // Reaction per head beyond one, spendable on nothing but
+                // this. See `ActorInstance::has_opportunity_reaction`.
+                if !a.has_opportunity_reaction() {
                     return None;
                 }
                 // 5e Charmed: the charmer can walk away from a creature
@@ -11049,7 +11158,7 @@ impl EncounterInstance {
                 e.apply(self);
             }
             if let Some(r) = self.actors.get_mut(&reactor_id) {
-                r.consume_resource(Resource::Reaction);
+                r.spend_opportunity_reaction();
             }
 
             self.cleanup_dead_actors();
@@ -12132,6 +12241,27 @@ impl EncounterInstance {
             .is_some_and(|a| a.has_condition(Condition::Slowed))
         {
             return declared.min(1);
+        }
+        // SRD 5.2 **Multiattack** on the hydra: *"the hydra makes as many
+        // Bite attacks as it has heads."* Read here rather than as a
+        // field on `Multiattack` because the printed `count` is already
+        // the head count the stat block ships with — five — and what
+        // changes during a fight is the creature, not the routine. A
+        // field would also have meant a line on all hundred and
+        // thirty-six multiattack literals in the bestiary to say "no,
+        // not me".
+        //
+        // It reaches up as well as down, which is the half that
+        // surprises: RAW's regrowth hands back two heads per head lost,
+        // so a hydra nobody has burned bites more times a turn than the
+        // stat block prints.
+        if let Some(heads) = self
+            .actors
+            .get(&caster_id)
+            .map(ActorInstance::heads)
+            .filter(|h| *h > 0)
+        {
+            return heads;
         }
         declared
     }
@@ -15308,6 +15438,12 @@ impl EncounterInstance {
         // board that leaves — and before the queue advances, because
         // the per-turn tally this reads is cleared by the same sweep.
         self.resolve_regurgitation_checks();
+        // SRD 5.2 **Multiple Heads**, both halves. Beside the
+        // regurgitation checks because it is the same kind of clause
+        // measured in the same kind of window — "on a single turn" —
+        // and read from the same `ended` slot, before the queue moves
+        // off it.
+        self.resolve_severed_heads(ended);
         // SRD 5.2 **Strong Wind**: "a flying creature in a strong wind
         // must land at the end of its turn or fall." Beside the
         // regurgitation checks because it is the same kind of clause —

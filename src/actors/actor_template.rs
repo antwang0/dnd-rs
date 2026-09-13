@@ -3360,6 +3360,34 @@ pub struct CreatureTemplate {
     /// default for ordinary monsters) disables the heal. Trolls set this
     /// to 3; future regenerators (e.g. vampires) plug in here.
     pub regen_per_round: u32,
+    /// How many heads this stat block starts the fight with, or `0` for
+    /// everything that is not a hydra — SRD 5.2's **Multiple Heads**,
+    /// *"the hydra has five heads."*
+    ///
+    /// The whole of what makes a hydra a hydra, and a number rather than
+    /// a flag because every clause of the trait counts it: the
+    /// Multiattack is *"as many Bite attacks as it has heads"*, the
+    /// Reactive Heads trait is *"for each head the hydra has beyond
+    /// one"*, the regrowth is *"two heads for each of its heads that
+    /// died"*, and the death clause is *"the hydra dies if all its heads
+    /// are dead."*
+    ///
+    /// It was `regen_per_round: 10` before this, under a docstring
+    /// saying so: *"the MM hydra's signature feature — 'as long as a
+    /// head remains alive, severed heads regrow' — is approximated as a
+    /// flat regen (we don't model head-counting / fire-cauterize
+    /// mechanics)."* What the flat regen could not say is the thing the
+    /// trait is *for*: a party that concentrates twenty-five points into
+    /// one turn takes a head off, a party that does not is fighting a
+    /// creature that grows two more, and fire is the answer that stops
+    /// the growing. That is a fight with a tactic in it, and ten hit
+    /// points a round is a fight with a slightly longer health bar.
+    ///
+    /// It is not capped at the printed five. RAW's regrowth hands back
+    /// two heads for each one lost, so a hydra that is chipped at rather
+    /// than burned genuinely ends up with more heads than it started
+    /// with — and more bites per turn with them.
+    pub heads: u32,
     /// Damage types that suppress this creature's regeneration for one
     /// round (5e troll: fire / acid). When damage of one of these types
     /// lands, `regen_suppressed` flips on the instance; `round_end`
@@ -4476,6 +4504,7 @@ impl CreatureTemplate {
             emanations: &[],
             features: HashSet::new(),
             regen_per_round: 0,
+            heads: 0,
             regen_suppressors: HashSet::new(),
             flinches: Vec::new(),
             legendary_resistances: 0,
@@ -5348,6 +5377,39 @@ pub struct ActorInstance {
     /// of a suppressor type lands and cleared by `round_end` after the
     /// heal is skipped.
     regen_per_round: u32,
+    /// Living heads. `0` for everything that is not a hydra; see
+    /// `CreatureTemplate::heads`.
+    heads: u32,
+    /// Heads lost since the end of this creature's own last turn, and
+    /// whether fire has landed on it in that window — RAW's regrowth
+    /// clause measures both from the same moment: *"at the end of each
+    /// of its turns … it grows two heads for each of its heads that died
+    /// since its last turn, unless it has taken Fire damage since its
+    /// last turn."*
+    ///
+    /// A pair of fields rather than one, because they answer the two
+    /// halves of that sentence and both are cleared together at the end
+    /// of the hydra's own turn — which is a different moment from the
+    /// end of *a* turn, where `damage_this_turn` below is cleared.
+    heads_lost_since_own_turn: u32,
+    fire_since_own_turn: bool,
+    /// Damage that has landed on this creature during the turn now in
+    /// progress, after mitigation — RAW's *"whenever the hydra takes 25
+    /// damage or more on a single turn"*.
+    ///
+    /// Sibling of `damage_from_inside` one lane over, and deliberately
+    /// not the same counter: that one asks *who* struck the blow (a
+    /// creature in the worm's stomach) and this one asks only *when*.
+    /// Both are tallied at the `DealDamage` chokepoint, which is the one
+    /// place that sees every point of damage after mitigation — the
+    /// number RAW's thresholds are measured in.
+    damage_this_turn: u32,
+    /// Extra opportunity-attack Reactions drawn on since this creature's
+    /// turn began — SRD 5.2's **Reactive Heads**. Cleared by
+    /// `reset_for_new_round`; the size of the pool is derived from
+    /// `heads` rather than stored beside it, because a hydra that grows
+    /// two heads back grows two reactions with them.
+    extra_opportunity_reactions_used: u32,
     regen_suppressors: HashSet<DamageType>,
     flinches: Vec<DamageFlinch>,
     regen_suppressed: bool,
@@ -5919,6 +5981,11 @@ impl ActorInstance {
             relentless_rage_dc: 10,
             help_grants: HashMap::new(),
             regen_per_round: ct.regen_per_round,
+            heads: ct.heads,
+            heads_lost_since_own_turn: 0,
+            fire_since_own_turn: false,
+            damage_this_turn: 0,
+            extra_opportunity_reactions_used: 0,
             regen_suppressors: ct.regen_suppressors.clone(),
             flinches: ct.flinches.clone(),
             regen_suppressed: false,
@@ -7197,6 +7264,118 @@ impl ActorInstance {
     /// actor unless `regen_suppressed` is set.
     pub fn regen_per_round(&self) -> u32 {
         self.regen_per_round
+    }
+
+    /// Living heads, or `0` for everything that is not a hydra — see
+    /// `CreatureTemplate::heads`.
+    pub fn heads(&self) -> u32 {
+        self.heads
+    }
+
+    /// True while this creature has a Reaction it may spend on an
+    /// **opportunity attack** specifically — its ordinary one, or one of
+    /// the extras SRD 5.2's **Reactive Heads** grants: *"for each head
+    /// the hydra has beyond one, it gets an extra Reaction that can be
+    /// used only for Opportunity Attacks."*
+    ///
+    /// A second predicate rather than a bigger `reaction_slots`, and the
+    /// "only" in RAW's clause is why: every other reaction lane in the
+    /// engine — Shield, Counterspell, Riposte, the absorbing family, the
+    /// paladin's interpositions — bills `Resource::Reaction` from one
+    /// slot, and four extra slots in that pool would be a hydra that
+    /// could Counterspell five times. Read by
+    /// `dispatch_opportunity_attacks`, which is the one lane allowed to
+    /// draw on it.
+    pub fn has_opportunity_reaction(&self) -> bool {
+        self.can_consume_resource(crate::engine::side_effects::Resource::Reaction)
+            || self.extra_opportunity_reactions_used < self.heads.saturating_sub(1)
+    }
+
+    /// Bill one opportunity attack, taking a head's Reaction before the
+    /// creature's own.
+    ///
+    /// That order is what makes the extras worth having: they may only
+    /// be spent here, so spending them first leaves the ordinary
+    /// Reaction free for a lane that has no other source. For everything
+    /// without heads — which is everything but the hydra — this is
+    /// exactly `consume_resource(Reaction)`.
+    pub fn spend_opportunity_reaction(&mut self) {
+        if self.extra_opportunity_reactions_used < self.heads.saturating_sub(1) {
+            self.extra_opportunity_reactions_used += 1;
+            return;
+        }
+        self.consume_resource(crate::engine::side_effects::Resource::Reaction);
+    }
+
+    /// Record a blow that has landed, for the two "on a single turn"
+    /// windows the hydra reads. Called from the `DealDamage`
+    /// chokepoint, after mitigation.
+    ///
+    /// A no-op for every creature without heads, which is all of them
+    /// but one — the counters exist on `ActorInstance` rather than in a
+    /// side table because a side table keyed by id would have to be
+    /// swept when a creature leaves the board, and this one leaves with
+    /// the body.
+    pub fn note_damage_this_turn(&mut self, amount: u32, damage_type: DamageType) {
+        if self.heads == 0 || amount == 0 {
+            return;
+        }
+        self.damage_this_turn = self.damage_this_turn.saturating_add(amount);
+        if damage_type == DamageType::Fire {
+            self.fire_since_own_turn = true;
+        }
+    }
+
+    /// Damage this creature has taken during the turn now in progress.
+    pub fn damage_this_turn(&self) -> u32 {
+        self.damage_this_turn
+    }
+
+    /// Close the one-turn damage window. Called for every actor at the
+    /// end of every turn, beside the swallow tally's own clear.
+    pub fn clear_damage_this_turn(&mut self) {
+        self.damage_this_turn = 0;
+    }
+
+    /// Take one head off. Returns the number left, which is `0` when the
+    /// last of them has gone — RAW's *"the hydra dies if all its heads
+    /// are dead."*
+    pub fn sever_head(&mut self) -> u32 {
+        if self.heads == 0 {
+            return 0;
+        }
+        self.heads -= 1;
+        self.heads_lost_since_own_turn = self.heads_lost_since_own_turn.saturating_add(1);
+        self.heads
+    }
+
+    /// What the regrowth clause owes at the end of this creature's own
+    /// turn, and close the window it was measured in.
+    ///
+    /// Returns the number of heads to grow — `2` per head lost, or `0`
+    /// when none were lost or when fire has landed since the last turn.
+    /// Both halves of RAW's sentence are read here and both windows are
+    /// cleared here, so the clause cannot fire twice off one severing or
+    /// carry a burn into the turn after next.
+    pub fn take_head_regrowth(&mut self) -> u32 {
+        let lost = self.heads_lost_since_own_turn;
+        let burned = self.fire_since_own_turn;
+        self.heads_lost_since_own_turn = 0;
+        self.fire_since_own_turn = false;
+        // "…at the end of each of its turns **when it has at least one
+        // living head**". A hydra with none is dead, and a dead hydra
+        // does not grow anything back.
+        if burned || lost == 0 || self.heads == 0 {
+            return 0;
+        }
+        lost * 2
+    }
+
+    /// Grow `count` heads back. RAW puts no ceiling on this: a hydra
+    /// that is chipped at rather than burned ends up with more heads
+    /// than it started with.
+    pub fn grow_heads(&mut self, count: u32) {
+        self.heads = self.heads.saturating_add(count);
     }
 
     pub fn regen_suppressed(&self) -> bool {
@@ -11673,6 +11852,13 @@ impl ActorInstance {
         }
         self.bonus_action_slots = 1;
         self.reaction_slots = 1;
+        // SRD 5.2 **Reactive Heads**: "for each head the hydra has
+        // beyond one, it gets an extra Reaction that can be used only
+        // for Opportunity Attacks." The pool is re-derived from the head
+        // count every turn rather than stored, because the head count
+        // moves — see `spend_opportunity_reaction`; what is cleared here
+        // is how much of it has been drawn on.
+        self.extra_opportunity_reactions_used = 0;
         self.legendary_action_slots = self.legendary_actions_per_round;
         // 5e Tasha's Mind Whip: on the holder's next turn, they lose one
         // of action / bonus action / reaction. We zero the action slot
