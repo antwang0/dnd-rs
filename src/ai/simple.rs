@@ -1084,6 +1084,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3l'. The same lane, over the pack — the potion, the scroll and
+        //      the boots. See `ITEM_SELF_BUFF_CONDITIONS` for why the
+        //      two cohorts above could not see one, and
+        //      `try_item_self_buff` for the two gates that keep a
+        //      creature with six bottles from spending six turns.
+        if let Some(aei) = try_item_self_buff(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3m. Warding Bond — cleric / paladin lv2 abjuration. Touch-
         //     range damage-share bond: bonded ally gets +1 AC, +1 saves,
         //     and damage resistance; the caster takes the mirrored
@@ -3681,6 +3690,151 @@ fn try_self_buff_pick(
             pick.engage_gap,
         )
     })
+}
+
+/// The conditions a **carried** self-buff is worth an Action for, best
+/// first.
+///
+/// The self-buff lane's version of [`ITEM_LOCKDOWN_CONDITIONS`], and it
+/// is here for the same reason that table is: the two spell cohorts
+/// above resolve their rows **by name** — "blur", "haste", "foresight"
+/// — and every buff an *item* grants is called something else. A Potion
+/// of Blur is `"drink potion of blur"`, so `SELF_BUFFS` cannot see it,
+/// and neither could anything else: thirty-four self-buff consumables
+/// are written in `item_actions`, and twenty-nine of them had never been
+/// used by an AI-driven creature.
+///
+/// Keyed on the condition rather than on the name for the same reason
+/// again — a table of conditions answers for the potion nobody has
+/// written yet — and ordered by what the buff is worth on a turn of
+/// fighting rather than by the item's rarity.
+///
+/// **Membership is narrower than the shelf**, and the omissions are the
+/// interesting half. Eight conditions the item lane can install are
+/// deliberately absent:
+///
+///   - `MageArmored` — AC 13 + Dexterity is a *floor*, and every
+///     chassis that would reach for a potion is already above it.
+///   - `Longstriding`, `SpiderClimbing`, `WaterBreathing`,
+///     `DangerSense` — each is worth a turn on the board that calls for
+///     it and nothing at all on the other ninety percent, and this rung
+///     has no way to ask which board it is standing on. The drowning
+///     lane has its own rung for the one of those that matters.
+///   - `Sanctuary` — its whole content is *not being attacked*, which
+///     ends the moment its holder attacks. A rung that fires on an
+///     engaged creature would spend the Action and then break the
+///     effect with the next one.
+///   - `MindBlanked` — psychic immunity and nothing else; too narrow
+///     to buy a turn against a bestiary that mostly bites.
+///   - `FlamingArrowed` — genuinely good, and for one chassis in ten.
+///
+/// That narrowness is also what makes the one-at-a-time gate in
+/// `try_item_self_buff` safe: a table containing `MageArmored` would
+/// have let a standing template buff lock the whole rung out.
+const ITEM_SELF_BUFF_CONDITIONS: &[Condition] = &[
+    // The apex. Advantage on everything the holder rolls and
+    // disadvantage on everything rolled at them, for the rest of the
+    // fight.
+    Condition::Foreseen,
+    // An extra Action, +2 AC and double speed.
+    Condition::Hasted,
+    // Resistance to *everything*, then to the three physical types.
+    Condition::DamageResistant,
+    Condition::Stoneskinned,
+    // The two miss-generators. Three decoys beats a flat disadvantage
+    // because the decoys also soak the hits that do land.
+    Condition::MirroredImages,
+    Condition::Blurred,
+    // Temporary hit points and immunity to Frightened.
+    Condition::Heroic,
+    // The two AC buffs that are worth taking on top of armour.
+    Condition::Barkskinned,
+    Condition::Enlarged,
+    // The two damage-riders-with-a-body.
+    Condition::OtherworldlyGuised,
+    Condition::AshardalonStriding,
+    // Advantage on every swing and disadvantage on every swing back —
+    // and it ends on the first attack, which is why it is below the
+    // buffs that last.
+    Condition::Invisible,
+    Condition::Displaced,
+    // Movement and sight, worth a turn and not worth much more.
+    Condition::Fleet,
+    Condition::TrueSighted,
+    // One damage type, chosen or printed.
+    Condition::EnergyWarded,
+];
+
+/// Drink the best thing in the pack, once, when a fight is on.
+///
+/// The item lane's `try_self_buff_pick`, and the third rung in this file
+/// to exist because a name-keyed cohort could not see the inventory.
+/// Before it, a fighter carrying a Potion of Speed, a Potion of
+/// Invulnerability and a Potion of Mirror Image walked into every fight
+/// and died holding all three.
+///
+/// Two gates, and the second is the one that makes the rung safe:
+///
+///   - **A fight is on.** The same 24-tile engagement window the summon
+///     and self-buff lanes use. A potion drunk in an empty room is a
+///     potion spent on the walk between rooms.
+///   - **Nothing from this table is already up.** The potion lane's
+///     concentration slot: the spell cohorts above are self-limiting
+///     because one caster holds one concentration, and nothing limits a
+///     creature with six bottles. One buff per fight is the honest
+///     analogue — the first potion is worth the turn and the fifth is
+///     a turn not spent swinging — and it needs no state the AI would
+///     have to write, which it cannot: `decide` is handed an
+///     `&EncounterInstance`.
+///
+/// Placed directly below the spell self-buff cohorts, which is where
+/// the item lockdown and attrition rungs sit relative to theirs, and for
+/// the same reason: the slot comes back tomorrow and the bottle does
+/// not.
+fn try_item_self_buff(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_combat_active() {
+        return None;
+    }
+    // 24 tiles — the same spell-window gap `try_self_action_when_enemy_within`
+    // and the summon rungs use for "a fight is on".
+    if !any_enemy_within(encounter, actor_id, 24) {
+        return None;
+    }
+    // The one-at-a-time gate. Asked of the whole table rather than of
+    // the row being considered, which is the difference between "do not
+    // re-drink this" (the action's own `reject_when_active` already
+    // says that) and "one of these is enough".
+    if ITEM_SELF_BUFF_CONDITIONS
+        .iter()
+        .any(|c| actor.has_condition(*c))
+    {
+        return None;
+    }
+    let mut best: Option<(usize, ActionExecutionInfo)> = None;
+    for action in actor.item_actions() {
+        if action.is_harmful() || !matches!(action.targeting_schema(), TargetingSchema::NoArgs) {
+            continue;
+        }
+        let Some(condition) = action.installs_condition() else {
+            continue;
+        };
+        let Some(tier) = ITEM_SELF_BUFF_CONDITIONS.iter().position(|c| *c == condition) else {
+            continue;
+        };
+        if best.as_ref().is_some_and(|(best_tier, _)| tier >= *best_tier) {
+            continue;
+        }
+        let aei = ActionExecutionInfo::new(action, actor_id, None, None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        best = Some((tier, aei));
+    }
+    best.map(|(_, aei)| aei)
 }
 
 /// Ordered roster of the "bonus action; spend a per-rest charge to
@@ -19807,6 +19961,117 @@ mod tests {
                 item.name
             );
         }
+    }
+
+    /// A buff in the pack is a buff the AI drinks — once.
+    ///
+    /// The self-buff half of the same hole `try_item_lockdown` closed on
+    /// the control lane, and the bigger of the two: thirty-four
+    /// self-buff consumables are written in `item_actions`, and the two
+    /// cohorts that would have chosen one resolve their rows by **spell
+    /// name**. A Potion of Blur is `"drink potion of blur"`, so
+    /// `SELF_BUFFS` could not see it and nothing else looked. Probed at
+    /// 0-of-20 fights apiece for eleven of them.
+    ///
+    /// Three claims:
+    ///
+    ///   - **It fires.** Four items across four tiers of the table, on a
+    ///     fighter — a chassis with no spell list, so a buff that lands
+    ///     can only have come out of the pack.
+    ///   - **It fires once.** The one-at-a-time gate is the potion
+    ///     lane's concentration slot, and without it a creature with
+    ///     three bottles spends three turns drinking. Asked of a fighter
+    ///     holding two: exactly one is gone at the end.
+    ///   - **It prefers the better one.** With a Potion of Blur and a
+    ///     Potion of Foresight in the same pack, the apex row wins.
+    #[test]
+    fn the_ai_drinks_one_buff_out_of_the_pack() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::items::item_template::{Item, LOOT_POOL};
+
+        let find = |name: &str| -> &'static Item {
+            LOOT_POOL
+                .iter()
+                .copied()
+                .find(|i| i.name == name)
+                .unwrap_or_else(|| panic!("{name} has left the loot pool"))
+        };
+        let run = |kit: &[&'static Item], seed: u64| {
+            let mut e = empty_arena_seeded(seed);
+            let pc = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 8), 0, 0)
+                .unwrap();
+            for (i, y) in [7isize, 9, 11].into_iter().enumerate() {
+                e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(11, y), 1, i)
+                    .unwrap();
+            }
+            for item in kit {
+                e.actors.get_mut(&pc).unwrap().pickup_item(item);
+            }
+            let ai = SimpleAi;
+            let mut steps = 0usize;
+            while steps < 4_000 && !e.is_complete() {
+                steps += 1;
+                e.process_stack();
+                let Some(prompt) = e.peek_prompt() else { break };
+                let actor_id = prompt.actor_id();
+                match ai.decide(&e, actor_id) {
+                    ControllerDecision::AwaitInput => break,
+                    ControllerDecision::Act(aei) => {
+                        e.pop_prompt();
+                        e.push_action(aei);
+                    }
+                }
+            }
+            (e, pc)
+        };
+
+        // It fires, one tier apiece from the top, the middle and the
+        // bottom of the table.
+        for name in [
+            "Potion of Foresight",
+            "Potion of Invulnerability",
+            "Potion of Mirror Image",
+            "Boots of Speed",
+        ] {
+            let item = find(name);
+            let (e, _) = run(&[item], 0);
+            assert!(
+                e.messages()
+                    .join("\n")
+                    .to_lowercase()
+                    .contains(&name.to_lowercase()),
+                "a fight went by and the AI never touched the {name}"
+            );
+        }
+
+        // It fires once. Two bottles in, one bottle out.
+        let blur = find("Potion of Blur");
+        let images = find("Potion of Mirror Image");
+        let (e, pc) = run(&[blur, images], 1);
+        let left = [blur, images]
+            .iter()
+            .filter(|i| e.actors[&pc].has_item_named(i.name))
+            .count();
+        assert_eq!(
+            left, 1,
+            "one buff at a time is the rung's whole limiter, and {} of two survived",
+            left
+        );
+
+        // And the better one wins. Foresight is the head of the table
+        // and Blur is eight rows down.
+        let foresight = find("Potion of Foresight");
+        let (e, pc) = run(&[blur, foresight], 2);
+        assert!(
+            !e.actors[&pc].has_item_named(foresight.name),
+            "the apex row lost to a row eight below it"
+        );
+        assert!(
+            e.actors[&pc].has_item_named(blur.name),
+            "and the cheaper one should still be in the pack"
+        );
     }
 
     /// A lock in the pack is a lock the AI can find.

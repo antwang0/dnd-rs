@@ -969,9 +969,13 @@ pub static ANTITOXIN: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// Potion of Speed — bonus action; gain an extra Action this turn plus
-/// a +1 attack/save buff (a simplified Haste). Single-use consumable;
-/// the buff clears on long rest with the rest of the buff state.
+/// **Potion of Speed** (Potion, Very Rare) — *"you gain the effect of
+/// the Haste spell for 1 minute."*
+///
+/// The whole spell, through `Condition::Hasted`. This used to be two
+/// items and neither of them was this one — see
+/// `item_actions::DRINK_POTION_OF_SPEED` for what the split cost and
+/// what merging it back gives the drinker.
 pub static POTION_OF_SPEED: Item = Item {
     name: "Potion of Speed",
     glyph: '!',
@@ -3068,19 +3072,6 @@ pub static SCROLL_OF_GREATER_CURE_WOUNDS: Item = Item {
     name: "Scroll of Greater Cure Wounds",
     glyph: 'g',
     on_use: &[&crate::actions::item_actions::READ_GREATER_CURE_WOUNDS_SCROLL],
-    ..Item::DEFAULTS
-};
-
-/// Potion of Haste — Bonus Action; installs `Hasted` on the holder for
-/// 10 rounds (+2 AC, advantage on DEX saves, doubled walking speed).
-/// Distinct from Potion of Speed (extra Action this turn plus a flat
-/// +1 attack/save): Haste rides the engine's `Hasted` condition for the
-/// AC / DEX-save / speed bundle. Fires through the shared
-/// `SelfConditionItem` impl. Rejects re-drink when already Hasted.
-pub static POTION_OF_HASTE: Item = Item {
-    name: "Potion of Haste",
-    glyph: 'H',
-    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_HASTE],
     ..Item::DEFAULTS
 };
 
@@ -6824,10 +6815,6 @@ pub static LOOT_POOL: &[&Item] = &[
     // Slots between the cheap Cure Wounds scroll and the Wand of
     // Greater Healing on the ally-heal ladder.
     &SCROLL_OF_GREATER_CURE_WOUNDS,
-    // Potion of Haste — Hasted install on a bonus action. Distinct from
-    // Potion of Speed (extra-action burst); same condition envelope as
-    // the Boots of Speed but bonus-action timing.
-    &POTION_OF_HASTE,
     // Scroll of Flesh to Stone — top-tier single-target Petrified
     // installer. Single entry alongside Wand of Polymorph on the
     // rare half of the single-target lockdown lane.

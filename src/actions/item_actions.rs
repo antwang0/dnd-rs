@@ -560,6 +560,25 @@ impl Action for SelfConditionItem {
         self.action_name
     }
 
+    /// What drinking this puts on the drinker.
+    ///
+    /// The same declaration the two save-condition chassis make, read on
+    /// a different lane: this one is `NoArgs` and self-aimed, so it
+    /// never reaches `burst_would_change`, and what asks is
+    /// `try_item_self_buff` — the rung that tiers a carried buff by what
+    /// it installs, because the name-keyed cohorts above it cannot see
+    /// an item at all.
+    ///
+    /// Strictly it is the *whole* effect only for the thirty-two rows
+    /// with no `temp_hp`; the Potion of Heroism and the Scroll of
+    /// Heroism also hand out a cushion. The over-claim is deliberate and
+    /// costs nothing: the one reader treats it as "the buff is already
+    /// up, do not spend a turn on it again", and re-drinking a Potion of
+    /// Heroism for ten temporary hit points is not a turn either.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(self.condition)
+    }
+
     fn aliases(&self) -> Vec<&str> {
         self.action_aliases.to_vec()
     }
@@ -1341,81 +1360,6 @@ impl Action for DrinkAntitoxin {
 
 pub static DRINK_ANTITOXIN: DrinkAntitoxin = DrinkAntitoxin {};
 
-/// Drink a Potion of Speed: bonus action; gain an extra Action this turn
-/// AND a one-shot AC/save bonus from the haste-style buff. We model the
-/// haste effect simply as: +1 to attack/save buff and an extra action
-/// slot. Single-use; consumes one Potion of Speed from inventory.
-pub struct DrinkPotionOfSpeed {}
-
-impl Action for DrinkPotionOfSpeed {
-    fn name(&self) -> &str {
-        "drink potion of speed"
-    }
-
-    fn aliases(&self) -> Vec<&str> {
-        vec!["speed", "haste"]
-    }
-
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::NoArgs
-    }
-
-    fn is_harmful(&self) -> bool {
-        false
-    }
-
-    fn cost(
-        &self,
-        _e: &EncounterInstance,
-        _c: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Resource> {
-        bonus_action_only()
-    }
-
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        caster_holds(encounter, caster_id, POTION_OF_SPEED_NAME)
-    }
-
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        _ti: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        if !consume_caster_item(encounter, caster_id, POTION_OF_SPEED_NAME) {
-            return Vec::new();
-        }
-        if let Some(actor) = encounter.actors.get_mut(&caster_id) {
-            let name = actor.name().to_string();
-            // Refund an Action and dump the haste buffs. Haste in 5e is
-            // a concentration spell, but a potion is fire-and-forget;
-            // we skip concentration tracking and just install the flat
-            // buffs which clear on long rest.
-            actor.give_resource(Resource::Action);
-            actor.add_attack_bonus_buff(1);
-            actor.add_save_bonus_buff(1);
-            encounter.log(format!(
-                "{} drinks a potion of speed (extra action, +1 attack/save).",
-                name
-            ));
-        }
-        Vec::new()
-    }
-}
-
-pub static DRINK_POTION_OF_SPEED: DrinkPotionOfSpeed = DrinkPotionOfSpeed {};
 
 /// Potion of Heroism — bonus action; gain 10 temp HP and install the
 /// `Heroic` condition for 10 rounds (immune to Frightened + a buff aura
@@ -4295,7 +4239,6 @@ pub static READ_MASS_CURE_WOUNDS_SCROLL: MultiTargetHealItem = MultiTargetHealIt
 const SCROLL_OF_CLOUDKILL_NAME: &str = "Scroll of Cloudkill";
 const SCROLL_OF_PRAYER_OF_HEALING_NAME: &str = "Scroll of Prayer of Healing";
 const SCROLL_OF_GREATER_CURE_WOUNDS_NAME: &str = "Scroll of Greater Cure Wounds";
-const POTION_OF_HASTE_NAME: &str = "Potion of Haste";
 const SCROLL_OF_FLESH_TO_STONE_NAME: &str = "Scroll of Flesh to Stone";
 const SCROLL_OF_SYNAPTIC_STATIC_NAME: &str = "Scroll of Synaptic Static";
 const SCROLL_OF_CIRCLE_OF_DEATH_NAME: &str = "Scroll of Circle of Death";
@@ -4354,17 +4297,33 @@ pub static READ_GREATER_CURE_WOUNDS_SCROLL: SingleTargetHealItem = SingleTargetH
     reach: 1,
 };
 
-/// Potion of Haste — Bonus Action; installs `Hasted` on the holder for
-/// 10 rounds (+2 AC, advantage on DEX saves, doubled walking speed).
-/// Distinct from Potion of Speed (extra-action burst) — Haste rides the
-/// engine's existing `Hasted` condition for the AC/DEX/speed bundle.
-/// Fires through the shared `SelfConditionItem` impl. Rejects re-drink
-/// when already Hasted.
-pub static DRINK_POTION_OF_HASTE: SelfConditionItem = SelfConditionItem {
-    action_name: "drink potion of haste",
-    action_aliases: &["haste potion", "hasten"],
-    item_name: POTION_OF_HASTE_NAME,
-    log_text: "{actor} drinks a potion of haste; their movements blur to a streak.",
+/// **Potion of Speed** (Potion, Very Rare) — *"When you drink this
+/// potion, you gain the effect of the Haste spell for 1 minute."*
+///
+/// One potion, and for a long time it was two. The table carried a
+/// *Potion of Speed* whose bespoke `Action` impl handed out an Action
+/// slot and a flat `+1` to attacks and saves, and a *Potion of Haste* —
+/// not an item in the book at all — that installed `Condition::Hasted`,
+/// each with a docstring explaining that it was "distinct from" the
+/// other. Neither was the potion. RAW's sentence is one word long: it is
+/// **the Haste spell**, and `Hasted` is the whole of that spell
+/// including the restricted extra Action the hand-rolled version was
+/// written to approximate before the condition carried one.
+///
+/// What the merge takes away is the invented `+1` to attack and save
+/// rolls, which RAW's Haste does not grant and which nothing else in
+/// the engine was reading. What it adds is everything the condition
+/// carries and the approximation did not: `+2` AC, advantage on
+/// Dexterity saves, doubled speed, and a *restricted* extra Action
+/// rather than a free one.
+///
+/// Bonus Action, which is this shelf's standing reading of a potion —
+/// see `item_use_cost`.
+pub static DRINK_POTION_OF_SPEED: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of speed",
+    action_aliases: &["speed", "haste", "haste potion", "hasten"],
+    item_name: POTION_OF_SPEED_NAME,
+    log_text: "{actor} drinks a potion of speed; their movements blur to a streak.",
     condition: Condition::Hasted,
     timer: ConditionTimer::Rounds(10),
     bonus_action: true,

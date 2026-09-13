@@ -12898,33 +12898,65 @@ fn ray_of_frost_can_hit_target_in_range() {
     );
 }
 
+/// The Potion of Speed is the Haste spell, and it is one potion.
+///
+/// Three claims, and the third is the one the merge is for:
+///
+///   - the drink costs a Bonus Action and empties the bottle;
+///   - it installs `Hasted`, which is the whole of RAW's *"you gain the
+///     effect of the Haste spell"* — `+2` AC, advantage on Dexterity
+///     saves, doubled speed, and a restricted extra Action at the top
+///     of the drinker's next turn;
+///   - it does **not** hand out a flat `+1` to attacks and saves. That
+///     was the old hand-rolled potion's approximation of a spell the
+///     condition now carries properly, RAW prints no such bonus, and
+///     nothing else in the engine ever read it.
+///
+/// The extra Action is asserted at the start of the *next* turn rather
+/// than on the drink, because that is where RAW grants it — *"an
+/// additional action on each of its turns"*, and the cast happens on
+/// somebody else's.
 #[test]
-fn potion_of_speed_grants_extra_action_and_buffs() {
-    // Drinking the potion costs a bonus action, grants +1 attack/
-    // save, and refunds an Action. Verify by giving the fighter the
-    // potion, draining their action slot, then drinking — they
-    // should be back at 1 Action with non-zero save buff.
+fn the_potion_of_speed_is_the_haste_spell() {
     use crate::actions::item_actions::DRINK_POTION_OF_SPEED;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::engine::side_effects::Resource;
     use crate::items::item_template::POTION_OF_SPEED;
+
     let mut e = ei_with_terrain(15, 15, &[]);
     let id = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     e.actors.get_mut(&id).unwrap().pickup_item(&POTION_OF_SPEED);
-    // Spend the action so we can prove the potion gives one back.
-    assert!(e.actors.get_mut(&id).unwrap().consume_resource(Resource::Action));
-    assert!(!e.actors[&id].can_consume_resource(Resource::Action));
+    let before = e.actors[&id].save_bonus_buff();
+
+    let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_SPEED, id, None, None, None);
+    assert!(
+        aei.validate(&e),
+        "the potion validates with a bottle and a bonus action"
+    );
     e.pop_prompt();
-    let aei =
-        ActionExecutionInfo::new(&DRINK_POTION_OF_SPEED, id, None, None, None);
-    assert!(aei.validate(&e), "speed potion validates with potion + bonus action");
     e.push_action(aei);
     e.process_stack();
-    assert!(e.actors[&id].can_consume_resource(Resource::Action));
-    assert!(e.actors[&id].save_bonus_buff() >= 1);
+
+    assert!(
+        e.actors[&id].has_condition(Condition::Hasted),
+        "the potion is the spell, and the spell is this condition"
+    );
     assert!(!e.actors[&id].has_item_named("Potion of Speed"));
+    assert_eq!(
+        e.actors[&id].save_bonus_buff(),
+        before,
+        "RAW's Haste grants no bonus to saving throws, and the old \
+         approximation's did"
+    );
+
+    // And the headline clause, where RAW puts it: the restricted Action
+    // slot arrives at the top of the drinker's own next turn.
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    assert!(
+        e.actors[&id].restricted_action_slots() > 0,
+        "the hasted action did not arrive on the drinker's next turn"
+    );
 }
 
 #[test]
@@ -53166,26 +53198,6 @@ fn scroll_of_mass_cure_wounds_heals_burst_of_allies() {
         e.actors[&ally].hitpoints() > wounded_hp,
         "burst-heal should heal the wounded ally"
     );
-}
-
-/// Potion of Haste: bonus-action consumable installs the Hasted
-/// condition. Verifies install, consume, and refresh rejection.
-#[test]
-fn potion_of_haste_installs_hasted_condition() {
-    use crate::actions::item_actions::DRINK_POTION_OF_HASTE;
-    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::items::item_template::POTION_OF_HASTE;
-    let mut e = ei_with_terrain(10, 10, &[]);
-    let f = e
-        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    e.actors.get_mut(&f).unwrap().pickup_item(&POTION_OF_HASTE);
-    let aei = ActionExecutionInfo::new(&DRINK_POTION_OF_HASTE, f, None, None, None);
-    assert!(aei.validate(&e));
-    e.push_action(aei);
-    e.process_stack();
-    assert!(e.actors[&f].has_condition(Condition::Hasted));
-    assert!(!e.actors[&f].has_item_named("Potion of Haste"));
 }
 
 /// Scroll of Flesh to Stone: single-target CON save vs DC 15.
