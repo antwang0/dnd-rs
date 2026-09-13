@@ -271,6 +271,38 @@ pub struct Item {
     /// "increases … to a maximum of" read as the increase it is rather
     /// than as an assignment.
     pub ability_score_bonuses: &'static [(crate::engine::types::AbilityScoreType, u32, u32)],
+    /// The score this item **hands over for good** once its holder has
+    /// read it — SRD 5.2's six manuals and tomes, *"if you spend 48
+    /// hours over a period of 6 days or fewer studying the book's
+    /// contents and practicing its guidelines, your Constitution
+    /// increases by 2, to a maximum of 30. The manual then loses its
+    /// magic."* `(ability, bonus, ceiling)`, the same triple
+    /// `ability_score_bonuses` one field up is written in.
+    ///
+    /// The third way an item moves an ability score, and the only one
+    /// that is not *"while you wear this"*. A floor is worth nothing to
+    /// somebody already above it and a bonus stops the moment the thing
+    /// comes off; a manual is worth two points to whoever opens it and
+    /// then is a book. Riding either of the other two lanes would have
+    /// made it a trinket that has to stay in the pack forever, which is
+    /// the opposite of the sentence.
+    ///
+    /// **The engine's 48 hours is the long rest**, and there is no
+    /// nearer clock: `rest_one` is the only place in the engine where
+    /// time passes without initiative running, and a party between two
+    /// rooms is exactly the party RAW is describing. The book is spent
+    /// there, by `ActorInstance::study_carried_writings`, and leaves the
+    /// pack — *"the manual then loses its magic"*.
+    ///
+    /// **Hit points do not follow a Constitution that moves.** The
+    /// engine rolls a chassis's pool once at instantiation, so the
+    /// Manual of Bodily Health buys the saves, the concentration checks
+    /// and the hit dice a short rest gives back, and not a larger
+    /// maximum. That is the same gap [`IOUN_STONE_OF_FORTITUDE`] names
+    /// and declines to paper over, for the same reason: one constant
+    /// standing in for every chassis's hit dice would be wrong for all
+    /// of them rather than silent about it.
+    pub studied_at_rest: Option<(crate::engine::types::AbilityScoreType, u32, u32)>,
     /// Skills whose checks this item's holder rolls with Advantage —
     /// SRD 5.2's Sentinel Shield, *"you have Advantage on Initiative
     /// rolls and Wisdom (Perception) checks"*, and its second half.
@@ -829,6 +861,7 @@ impl Item {
         on_use: &[],
         ability_score_floors: &[],
         ability_score_bonuses: &[],
+        studied_at_rest: None,
         skill_check_advantages: &[],
         save_advantages_against: &[],
         sheds_light: None,
@@ -2136,6 +2169,127 @@ pub static IOUN_STONE_OF_GREATER_ABSORPTION: Item = Item {
     requires_attunement: true,
     ..Item::DEFAULTS
 };
+
+/// **Headband of Intellect** (Wondrous item, Uncommon) — *"Your
+/// Intelligence is 19 while you wear this headband. It has no effect on
+/// you if your Intelligence is 19 or higher without it."*
+///
+/// The Gauntlets of Ogre Power's sentence on the other end of the sheet,
+/// and the cheapest thing in the file that says it — uncommon, against
+/// the Belts of Giant Strength's rare-to-legendary ladder, because an
+/// Intelligence of 19 buys less than a Strength of 21 for most of the
+/// bestiary. What it does buy is the saving throw nearly every chassis
+/// in the engine is worst at, and which the nastier psychic effects on
+/// the roster aim squarely at.
+///
+/// It is also, on a wizard or an artificer, the spell save DC and the
+/// spell attack bonus — which is why a floor of 19 is a different item
+/// from the Ioun Stone of Intellect's `+2` beside it. The stone is worth
+/// the same two points to everybody under its ceiling; this is worth
+/// everything to whoever has the worst Intelligence in the party and
+/// nothing to the wizard who is already at 20.
+pub static HEADBAND_OF_INTELLECT: Item = Item {
+    name: "Headband of Intellect",
+    glyph: 'h',
+    ability_score_floors: &[(crate::engine::types::AbilityScoreType::Intelligence, 19)],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Manual of Bodily Health** (Wondrous item, Very Rare) — *"If you
+/// spend 48 hours over a period of 6 days or fewer studying the book's
+/// contents and practicing its guidelines, your Constitution increases
+/// by 2, to a maximum of 30. The manual then loses its magic."*
+///
+/// The first of six, and the reason `Item::studied_at_rest` exists. A
+/// manual is neither of the two things an ability-score item had been
+/// able to be: it is not a floor, because it is worth the same two
+/// points to everybody under thirty, and it is not a worn bonus, because
+/// putting it down does not take the score away. It is a book you read
+/// once and then own a copy of, and the score is yours.
+///
+/// Very Rare, and priced at that for a reason the loot pool has to
+/// respect: this is the only permanent upgrade in the file. Every other
+/// drop is a thing the party is *carrying*, which can be lost, dropped,
+/// swapped out at the attunement ceiling or left behind; two points of
+/// Constitution read out of a book in the second room are still there in
+/// the twentieth.
+///
+/// Constitution is the widest of the six for a party that is losing:
+/// it is the concentration save, the poison save, and the hit dice an
+/// hour of sitting down buys back.
+pub static MANUAL_OF_BODILY_HEALTH: Item = Item {
+    name: "Manual of Bodily Health",
+    glyph: 'B',
+    studied_at_rest: Some((crate::engine::types::AbilityScoreType::Constitution, 2, 30)),
+    ..Item::DEFAULTS
+};
+
+/// **Manual of Gainful Exercise** (Very Rare) — Strength, +2 to a
+/// maximum of 30. See [`MANUAL_OF_BODILY_HEALTH`] for the family.
+pub static MANUAL_OF_GAINFUL_EXERCISE: Item = Item {
+    name: "Manual of Gainful Exercise",
+    glyph: 'B',
+    studied_at_rest: Some((crate::engine::types::AbilityScoreType::Strength, 2, 30)),
+    ..Item::DEFAULTS
+};
+
+/// **Manual of Quickness of Action** (Very Rare) — Dexterity, +2 to a
+/// maximum of 30. The widest of the six on any chassis that rolls a d20,
+/// for the reason [`IOUN_STONE_OF_AGILITY`] gives.
+pub static MANUAL_OF_QUICKNESS_OF_ACTION: Item = Item {
+    name: "Manual of Quickness of Action",
+    glyph: 'B',
+    studied_at_rest: Some((crate::engine::types::AbilityScoreType::Dexterity, 2, 30)),
+    ..Item::DEFAULTS
+};
+
+/// **Tome of Clear Thought** (Very Rare) — Intelligence, +2 to a maximum
+/// of 30. See [`MANUAL_OF_BODILY_HEALTH`] for the family.
+pub static TOME_OF_CLEAR_THOUGHT: Item = Item {
+    name: "Tome of Clear Thought",
+    glyph: 'B',
+    studied_at_rest: Some((crate::engine::types::AbilityScoreType::Intelligence, 2, 30)),
+    ..Item::DEFAULTS
+};
+
+/// **Tome of Leadership and Influence** (Very Rare) — Charisma, +2 to a
+/// maximum of 30. See [`MANUAL_OF_BODILY_HEALTH`] for the family.
+pub static TOME_OF_LEADERSHIP_AND_INFLUENCE: Item = Item {
+    name: "Tome of Leadership and Influence",
+    glyph: 'B',
+    studied_at_rest: Some((crate::engine::types::AbilityScoreType::Charisma, 2, 30)),
+    ..Item::DEFAULTS
+};
+
+/// **Tome of Understanding** (Very Rare) — Wisdom, +2 to a maximum of
+/// 30. See [`MANUAL_OF_BODILY_HEALTH`] for the family.
+pub static TOME_OF_UNDERSTANDING: Item = Item {
+    name: "Tome of Understanding",
+    glyph: 'B',
+    studied_at_rest: Some((crate::engine::types::AbilityScoreType::Wisdom, 2, 30)),
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's six manuals and tomes, one per ability score, in the order
+/// the book's A–Z prints them.
+///
+/// A cohort rather than six loose statics, and this family needs one
+/// more than most: the six differ by exactly one enum variant, which is
+/// the shape where a copy-paste is invisible. A Tome of Understanding
+/// that raised Intelligence would compile, drop, be read, and hand the
+/// party two points on the wrong line of the sheet — with nothing
+/// anywhere to say so, because both are legal scores for the creature
+/// that read it. The sweep asks the one question that catches it: six
+/// books, six different abilities.
+pub static THE_READING_SHELF: &[&Item] = &[
+    &MANUAL_OF_BODILY_HEALTH,
+    &MANUAL_OF_GAINFUL_EXERCISE,
+    &MANUAL_OF_QUICKNESS_OF_ACTION,
+    &TOME_OF_CLEAR_THOUGHT,
+    &TOME_OF_LEADERSHIP_AND_INFLUENCE,
+    &TOME_OF_UNDERSTANDING,
+];
 
 /// SRD 5.2's Ioun Stones, in the order its own entry lists the types it
 /// prints.
@@ -7558,6 +7712,21 @@ pub static LOOT_POOL: &[&Item] = &[
     &IOUN_STONE_OF_ABSORPTION,
     &IOUN_STONE_OF_GREATER_ABSORPTION,
     &ROD_OF_ABSORPTION,
+    // The headband, beside the Ioun Stone of Intellect it is the other
+    // reading of: a floor rather than a bonus, and Uncommon rather than
+    // Very Rare, so it is the one a first-room party can actually find.
+    &HEADBAND_OF_INTELLECT,
+    // The reading shelf. One entry each and the lowest weight in the
+    // pool, because these are the only permanent upgrades in the file —
+    // every other drop is a thing the party is carrying, and two points
+    // read out of a book in the second room are still there in the
+    // twentieth.
+    &MANUAL_OF_BODILY_HEALTH,
+    &MANUAL_OF_GAINFUL_EXERCISE,
+    &MANUAL_OF_QUICKNESS_OF_ACTION,
+    &TOME_OF_CLEAR_THOUGHT,
+    &TOME_OF_LEADERSHIP_AND_INFLUENCE,
+    &TOME_OF_UNDERSTANDING,
     // Sentinel Shield — low-tier defensive trinket. Same weight as the
     // generic Ring of Protection / Cloak of Protection siblings.
     &SENTINEL_SHIELD,
@@ -9297,6 +9466,53 @@ mod tests {
             ARMORS_OF_VULNERABILITY.len(),
             "two suits resist the same thing, so one of them is a copy-paste: {resisted:?}"
         );
+    }
+
+    /// Six books, six different abilities, and no two of them on the
+    /// same line of the sheet.
+    ///
+    /// The family differs by exactly one enum variant, which is the
+    /// shape where a copy-paste leaves no trace: a Tome of Understanding
+    /// that raised Intelligence is a legal item that drops, gets read,
+    /// and hands the party two points in the wrong place. Nothing
+    /// downstream can tell — both are scores that creature has — so this
+    /// is the only thing that ever could.
+    #[test]
+    fn the_reading_shelf_covers_each_ability_once() {
+        let mut abilities: std::collections::BTreeSet<String> =
+            std::collections::BTreeSet::new();
+        for book in THE_READING_SHELF {
+            let (ability, bonus, ceiling) = book
+                .studied_at_rest
+                .unwrap_or_else(|| panic!("{} is on the shelf and teaches nothing", book.name));
+            assert_eq!(bonus, 2, "{} does not grant RAW's two points", book.name);
+            assert_eq!(ceiling, 30, "{} caps somewhere RAW does not", book.name);
+            assert!(
+                !book.requires_attunement,
+                "{} is a book — you read it, you do not bond with it",
+                book.name
+            );
+            assert!(
+                book.bonuses == ItemBonuses::ZERO
+                    && book.ability_score_floors.is_empty()
+                    && book.ability_score_bonuses.is_empty(),
+                "{} should do nothing at all while it is merely carried",
+                book.name
+            );
+            assert!(
+                LOOT_POOL.iter().any(|l| l.name == book.name),
+                "{} cannot be found by anybody",
+                book.name
+            );
+            abilities.insert(ability.to_string());
+        }
+        assert_eq!(
+            abilities.len(),
+            THE_READING_SHELF.len(),
+            "two books teach the same score, so one of them is a copy-paste: {abilities:?}"
+        );
+        // And the shelf is the whole sheet: RAW prints one per ability.
+        assert_eq!(abilities.len(), 6, "six scores, six books");
     }
 
     /// The Ring of Resistance covers RAW's whole 1d10 table and each

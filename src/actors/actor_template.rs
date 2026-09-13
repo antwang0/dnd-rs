@@ -7730,6 +7730,65 @@ impl ActorInstance {
         paid
     }
 
+    /// Read every book in the pack, keep what it taught, and leave the
+    /// covers behind — SRD 5.2's six manuals and tomes, and RAW's *"the
+    /// manual then loses its magic"*.
+    ///
+    /// Called from `rest_one`, because the engine's 48 hours is a long
+    /// rest: it is the only place in the engine where time passes
+    /// without initiative running, and a party between two rooms is
+    /// exactly the party the clause describes.
+    ///
+    /// Returns `(book, ability, new score)` per book read, for the
+    /// caller to log, and in inventory order. A book whose score is
+    /// already at its ceiling is still read and still spent — RAW's
+    /// manual loses its magic for the reading, not for the two points —
+    /// and reports the number it could not move, which is the honest
+    /// thing to show somebody who just watched a Very Rare item go.
+    ///
+    /// **The base score, not a bonus.** Every other ability-score lane
+    /// on `Item` is read through `ability_score` while the object is
+    /// carried; this one writes the field that accessor starts from, so
+    /// the two points survive the book being gone. That makes it the
+    /// only permanent change anything in the loot model makes to a
+    /// creature.
+    pub fn study_carried_writings(&mut self) -> Vec<(&'static str, AbilityScoreType, u32)> {
+        let shelf: Vec<(&'static str, AbilityScoreType, u32, u32)> = self
+            .items
+            .iter()
+            .filter_map(|i| i.studied_at_rest.map(|(a, by, cap)| (i.name, a, by, cap)))
+            .collect();
+        let mut learned = Vec::new();
+        for (name, ability, by, ceiling) in shelf {
+            let score = self.base_ability_score_mut(ability);
+            *score = (*score + by).min(ceiling).max(*score);
+            let now = *score;
+            // Every copy, for the reason `spend_item_use` empties every
+            // copy of a spent wand: a second Tome of Clear Thought in
+            // the same pack is a second book, and reading one does not
+            // read the other — but leaving it would have the rest after
+            // this one read it too, which is a party that farms
+            // Intelligence out of one drop.
+            self.remove_item_by_name(name);
+            learned.push((name, ability, now));
+        }
+        learned
+    }
+
+    /// The stored score behind `ability_score`'s floors and bonuses —
+    /// the only thing in the engine that writes one, and the reason it
+    /// is private to this file.
+    fn base_ability_score_mut(&mut self, ast: AbilityScoreType) -> &mut u32 {
+        match ast {
+            AbilityScoreType::Strength => &mut self.strength,
+            AbilityScoreType::Dexterity => &mut self.dexterity,
+            AbilityScoreType::Constitution => &mut self.constitution,
+            AbilityScoreType::Intelligence => &mut self.intelligence,
+            AbilityScoreType::Wisdom => &mut self.wisdom,
+            AbilityScoreType::Charisma => &mut self.charisma,
+        }
+    }
+
     /// Spell levels banked in a carried Rod of Absorption and not yet
     /// converted into a slot.
     pub fn absorbed_spell_levels(&self) -> u32 {

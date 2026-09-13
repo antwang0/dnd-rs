@@ -104596,3 +104596,95 @@ fn the_cursed_suit_halves_one_blow_and_doubles_the_other_two() {
         "resistance and vulnerability to one type cancel, whichever lanes they came from"
     );
 }
+
+/// A manual is read at the rest, keeps what it taught, and is gone.
+///
+/// Three claims, and the third is the one that makes this lane exist:
+/// the score is still up after the book has left the pack. Every other
+/// ability-score item in the file is read through `active_items` while
+/// it is carried, so dropping one takes the points back with it.
+#[test]
+fn a_manual_is_read_between_rooms_and_the_points_stay() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::AbilityScoreType;
+    use crate::items::item_template::{MANUAL_OF_BODILY_HEALTH, TOME_OF_CLEAR_THOUGHT};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let who = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let reader = e.actors.get_mut(&who).unwrap();
+    let con = reader.ability_score(AbilityScoreType::Constitution);
+    let int = reader.ability_score(AbilityScoreType::Intelligence);
+    reader.pickup_item(&MANUAL_OF_BODILY_HEALTH);
+    reader.pickup_item(&TOME_OF_CLEAR_THOUGHT);
+
+    // Carried and unread, a book does nothing at all.
+    assert_eq!(reader.ability_score(AbilityScoreType::Constitution), con);
+
+    let learned = reader.study_carried_writings();
+    assert_eq!(learned.len(), 2, "both books are read in one night");
+    assert_eq!(
+        reader.ability_score(AbilityScoreType::Constitution),
+        con + 2
+    );
+    assert_eq!(
+        reader.ability_score(AbilityScoreType::Intelligence),
+        int + 2
+    );
+    assert!(
+        !reader.has_item_named("Manual of Bodily Health")
+            && !reader.has_item_named("Tome of Clear Thought"),
+        "the manual then loses its magic"
+    );
+
+    // A second night changes nothing — there is nothing left to read.
+    assert!(reader.study_carried_writings().is_empty());
+    assert_eq!(
+        reader.ability_score(AbilityScoreType::Constitution),
+        con + 2,
+        "and the points do not follow the book out of the pack"
+    );
+}
+
+/// The ceiling is RAW's thirty, and a book read at it is still spent.
+///
+/// The awkward half of the clause, and the one worth pinning: *"your
+/// Constitution increases by 2, to a maximum of 30. The manual then
+/// loses its magic"* — the losing is for the reading, not for the two
+/// points. A creature already at thirty reads a Very Rare item and gets
+/// nothing, which is the outcome the log line has to be honest about.
+#[test]
+fn a_manual_read_at_the_ceiling_is_spent_all_the_same() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::AbilityScoreType;
+    use crate::items::item_template::MANUAL_OF_GAINFUL_EXERCISE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let who = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let reader = e.actors.get_mut(&who).unwrap();
+    // Walk it up to the cap two points at a time, which is the only way
+    // anything in the engine moves a base score.
+    for _ in 0..20 {
+        reader.pickup_item(&MANUAL_OF_GAINFUL_EXERCISE);
+        reader.study_carried_writings();
+    }
+    assert_eq!(
+        reader.ability_score(AbilityScoreType::Strength),
+        30,
+        "the ceiling is thirty and the books stop moving it there"
+    );
+    reader.pickup_item(&MANUAL_OF_GAINFUL_EXERCISE);
+    let learned = reader.study_carried_writings();
+    assert_eq!(
+        learned,
+        vec![("Manual of Gainful Exercise", AbilityScoreType::Strength, 30)],
+        "a book read at the cap reports the number it could not move"
+    );
+    assert!(
+        !reader.has_item_named("Manual of Gainful Exercise"),
+        "and is spent anyway"
+    );
+}

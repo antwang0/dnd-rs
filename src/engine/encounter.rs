@@ -20345,6 +20345,19 @@ impl EncounterInstance {
 /// the new one rather than at the old.
 fn rest_one(actor: &mut ActorInstance, roller: &mut FastRandRoller) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
+    // Ahead of the rest proper, because a Manual of Bodily Health read
+    // tonight should be a Constitution the morning's saving throws are
+    // rolled at — and because `ActorInstance::long_rest` reconciles
+    // attunements against the pack, which is a pack a book has just left.
+    for (book, ability, now) in actor.study_carried_writings() {
+        lines.push(format!(
+            "{} finishes the {}; their {} is now {} (the book loses its magic).",
+            actor.name(),
+            book,
+            ability,
+            now
+        ));
+    }
     actor.long_rest();
     for (item, back) in actor.regain_item_charges(roller) {
         lines.push(format!(
