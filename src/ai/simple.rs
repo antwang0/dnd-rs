@@ -896,6 +896,13 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        //     …and the same decision out of the pack. See
+        //     `SLOT_RESTORING_ITEMS` for the four beads and for why
+        //     none of them had ever been popped.
+        if let Some(aei) = try_pearl_of_power(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g'''. Bard Cutting Words — bonus-action enemy debuff. Fire
         //        on the most threatening adjacent-to-an-ally enemy who
         //        isn't already Mocked, so the disadvantage lands before
@@ -2469,6 +2476,14 @@ const LOCKDOWNS: &[LockdownPick] = &[
     // shooting it is the party choosing to spend the charm on a round
     // of the wolf not biting anybody.
     LockdownPick { name: "animal friendship", condition: Some(Condition::Charmed) },
+    // The humanoid half of the same sentence, at the same level and
+    // with the same shape: Charm Person's own validator refuses
+    // anything that is not a Humanoid, so the walk steps past the ogre
+    // and lands on the bandit beside it. It arrives on the list because
+    // the sweep over the loot table found the Staff of Charming's
+    // printing of it with no cohort to belong to — and the spell itself
+    // ships on four chassis, none of which had ever cast it.
+    LockdownPick { name: "charm person", condition: Some(Condition::Charmed) },
     LockdownPick { name: "crown of madness", condition: Some(Condition::Charmed) },
     LockdownPick { name: "suggestion", condition: Some(Condition::Charmed) },
     LockdownPick { name: "charm monster", condition: Some(Condition::Charmed) },
@@ -2901,6 +2916,13 @@ const ATTRITION: &[LockdownPick] = &[
     //     advantage. Recharge-gated, so the row goes quiet on its own.
     //   - **Scare** (Quasit): `Frightened`, the mildest of the three
     //     and the last row for it.
+    // Levitate, and it belongs here rather than one cohort up for the
+    // reason the whole split exists: a target hanging twenty feet in
+    // the air still acts. What it cannot do is walk, which puts it
+    // beside the two stone-and-web rows below. Found by the sweep over
+    // the loot table, which turned up the Staff of Power's printing of
+    // it with nothing to belong to.
+    LockdownPick { name: "levitate", condition: Some(Condition::Lifted) },
     LockdownPick { name: "stone snare", condition: Some(Condition::EarthenGrasped) },
     LockdownPick { name: "ettercap web", condition: Some(Condition::Restrained) },
     LockdownPick { name: "scare", condition: Some(Condition::Frightened) },
@@ -3758,6 +3780,11 @@ const ITEM_SELF_BUFF_CONDITIONS: &[Condition] = &[
     // buffs that last.
     Condition::Invisible,
     Condition::Displaced,
+    // Off the floor entirely. Below the miss-generators because a
+    // flier is still hit by everything with a bow, and above the flat
+    // speed bump because it is the only row here that takes the holder
+    // out of a melee's reach rather than moving them faster inside it.
+    Condition::Flying,
     // Movement and sight, worth a turn and not worth much more.
     Condition::Fleet,
     Condition::TrueSighted,
@@ -5458,6 +5485,51 @@ fn try_natural_recovery(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     try_engaged_self_recovery(encounter, actor_id, "natural recovery")
+}
+
+/// The slot-restoring items, deepest pool last.
+///
+/// The cohort `try_engaged_self_recovery`'s docstring promised — *"a
+/// future short-rest slot-recovery feature drops in as a one-liner
+/// alongside these two"* — and the four items that had been sitting
+/// there waiting for it. A Pearl of Power is Arcane Recovery in a bead:
+/// an Action, no other cost, and a spent slot comes back.
+///
+/// None of the four had ever been used by an AI-driven caster. The two
+/// recovery *features* are reached by name, the pearls are not features,
+/// and nothing walked the pack asking "does this give a slot back" —
+/// which is the same three-way miss the summons, the item locks and the
+/// buff potions each had, found this time by the sweep in
+/// `every_item_action_belongs_to_a_rung` rather than by a fight going
+/// wrong.
+///
+/// **Cheapest first**, which here means the shallowest slot: each pearl
+/// restores one slot of one printed level, and its own validator refuses
+/// the use unless a slot at exactly that level is spent. So the order
+/// only ever decides between pearls a caster could legally pop, and
+/// spending the level-1 bead before the level-4 one is the same rule
+/// `try_cheapest_printing` states one resource over.
+const SLOT_RESTORING_ITEMS: &[&str] = &[
+    "use pearl of power",
+    "use greater pearl of power",
+    "use supreme pearl of power",
+    "use archmage pearl of power",
+];
+
+/// Pop the shallowest bead that has a spent slot to give back.
+///
+/// Beside `try_arcane_recovery` and `try_natural_recovery` in the ladder
+/// and behind the same gate, because it is the same decision: a slot
+/// recovered in an empty room is a slot recovered between rooms, and the
+/// Action it costs is only worth spending while there is something to
+/// spend the slot on.
+fn try_pearl_of_power(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    SLOT_RESTORING_ITEMS
+        .iter()
+        .find_map(|name| try_engaged_self_recovery(encounter, actor_id, name))
 }
 
 /// Shared "engaged in combat + fire a free-cost self-recovery action"
@@ -20222,6 +20294,307 @@ mod tests {
             cone > staff,
             "a blanket items-first reorder would have dragged the whole staff up"
         );
+    }
+
+    /// Every action an item on the loot table grants is one some rung
+    /// in this file can choose.
+    ///
+    /// The sweep this file has earned three times. The same failure has
+    /// now been found three times in three lanes — thirty control items,
+    /// twenty-nine buff consumables and twenty-eight staff rows, each
+    /// invisible to a name-keyed cohort, each producing no symptom at
+    /// all: an item nobody selects looks exactly like an item nobody
+    /// needed. Every one of them was correctly written, correctly
+    /// tested, correctly placed in `LOOT_POOL`, and dead.
+    ///
+    /// A behavioural sweep cannot close it — running every item through
+    /// eight fights apiece is minutes of runtime and answers "not on
+    /// this board" as readily as "not ever". This is the static half:
+    /// for every distinct action reachable from the loot table, is there
+    /// a **rung shaped like it**? The lanes are:
+    ///
+    ///   - damage, healing, curing, ally pulses and summons, all of
+    ///     which are chosen by rungs that *walk* the action list and so
+    ///     need no table entry;
+    ///   - a single-target control install, which must be on
+    ///     `ITEM_LOCKDOWN_CONDITIONS` or `ITEM_ATTRITION_CONDITIONS`;
+    ///   - a self-buff install, which must be on
+    ///     `ITEM_SELF_BUFF_CONDITIONS`;
+    ///   - an area, which the burst picker walks;
+    ///   - a printing of a spell a cohort already names, through
+    ///     `Action::printed_spell_name`.
+    ///
+    /// Anything else is named in `NOT_FOR_THE_AI` **with the reason**,
+    /// which is the half that makes the sweep worth having: a new item
+    /// that lands outside every lane fails here and its author has to
+    /// decide, in writing, whether that is a hole or a choice.
+    #[test]
+    fn every_item_action_belongs_to_a_rung() {
+        use crate::items::item_template::LOOT_POOL;
+        use std::collections::BTreeMap;
+
+        /// Actions no rung chooses, and why. Each line is a decision.
+        const NOT_FOR_THE_AI: &[(&str, &str)] = &[
+            // The escape lane fires on the AI deciding it is losing,
+            // which is a judgement this sweep has no business asserting
+            // — see `the_ai_reaches_the_at_will_shelf`, which makes the
+            // weaker claim for the same reason.
+            ("cape of the mountebank: dimension door", "the escape lane's own judgement"),
+            // Gaseous Form hands its drinker every defence in the game
+            // and takes away the reason they were standing there. RAW's
+            // potion is an escape, and no rung should spend a turn on
+            // becoming unable to fight. See
+            // `item_actions::DRINK_POTION_OF_GASEOUS_FORM`.
+            ("drink potion of gaseous form", "a buff that forbids attacking"),
+            // Sanctuary's whole content is not being attacked, and it
+            // ends the moment its holder attacks. A rung that fired on
+            // an engaged creature would spend the Action and then break
+            // the effect with the next one.
+            ("drink potion of sanctuary", "ends on the turn it would be used"),
+            // Four buffs worth a turn on the board that calls for them
+            // and nothing at all on the other ninety percent, and this
+            // file has no way to ask which board it is standing on. The
+            // drowning lane has its own rung for the one that matters.
+            ("drink potion of climbing", "situational: a board with a cliff"),
+            ("read spider climb scroll", "situational: a board with a cliff"),
+            ("drink potion of water breathing", "situational: the drowning lane's own"),
+            ("drink potion of longstrider", "ten feet, and a turn to buy it"),
+            ("drink potion of vigilance", "initiative, and the die is already rolled"),
+            // Psychic immunity and nothing else, against a bestiary that
+            // mostly bites.
+            ("drink potion of mind blank", "too narrow to buy a turn"),
+            ("read mind blank scroll", "too narrow to buy a turn"),
+            // Genuinely good, and for one chassis in ten: it rides the
+            // next *ranged weapon* attack, and nothing on this lane can
+            // ask whether the holder has a bow.
+            ("read flame arrows scroll", "an archer's buff, on a lane that cannot ask"),
+            // The light lane is its own rung (`try_make_light`) and is
+            // gated on the board being dark rather than on the item.
+            ("light torch", "the light rung's own gate"),
+            // Globe of Invulnerability's whole content is "spells of
+            // level 5 or lower fail against anything inside", which is
+            // worth a sixth-level slot and a fight's worth of
+            // concentration against a caster and is worth nothing at
+            // all against a bear. `SelfBuffPick` can gate a row on an
+            // enemy's *creature type* and cannot ask whether anything
+            // on the other side casts — so the row would fire against
+            // every ogre on the board and cost the wizard its Fireball
+            // and its Web to do it. A gate on "is anybody over there a
+            // caster" would earn the row; until there is one, this is
+            // the honest answer.
+            (
+                "staff of power: globe of invulnerability",
+                "no gate for the only fight it is worth a slot in",
+            ),
+            // Polymorph hands its target thirty temporary hit points to
+            // stand in for the beast form's pool, which on an enemy is a
+            // buff. `LOCKDOWNS` leaves the spell off for the same
+            // reason and says so.
+            ("use wand of polymorph", "a lockdown that heals its target"),
+        ];
+        let exempt: BTreeMap<&str, &str> = NOT_FOR_THE_AI.iter().copied().collect();
+
+        // Every name a name-keyed cohort in this file asks for — matched
+        // against the action's *own* name, which is how the item primes
+        // and the recovery beads get in, and against
+        // `Action::printed_spell_name`, which is how a staff's rows do.
+        let named: Vec<&str> = LOCKDOWNS
+            .iter()
+            .chain(ATTRITION)
+            .map(|r| r.name)
+            .chain(SELF_BUFFS_ABOVE_DUPLICITY.iter().map(|r| r.name))
+            .chain(SELF_BUFFS_BELOW_DUPLICITY.iter().map(|r| r.name))
+            .chain(CONCENTRATION_MARKS.iter().map(|r| r.name))
+            .chain(AREA_CONTROL_SPELLS.iter().copied())
+            .chain(WALL_SPELLS.iter().copied())
+            .chain(MELEE_ADJACENT_PRIMES.iter().copied())
+            .chain(KINDLED_WEAPONS.iter().map(|(name, _)| *name))
+            .chain(SLOT_RESTORING_ITEMS.iter().copied())
+            // The two rungs that name one item apiece inline rather than
+            // through a table.
+            .chain(["drink potion of mage armor", "swear oathbow"])
+            .collect();
+
+        let mut orphans: Vec<String> = Vec::new();
+        let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        for item in LOOT_POOL.iter() {
+            for action in item.on_use {
+                if !seen.insert(action.name()) {
+                    continue;
+                }
+                if exempt.contains_key(action.name()) {
+                    continue;
+                }
+                // The walking lanes: these rungs iterate the action list
+                // and need no table row.
+                //
+                //   - damage → `best_attack_against` / the burst picker;
+                //   - heals and cures → `try_self_heal`,
+                //     `try_support_heal`, `try_self_cleanse`;
+                //   - ally pulses → `try_ally_support_pulse`;
+                //   - summons → `try_summon_allies`;
+                //   - an area of any shape → `best_burst_placement`;
+                //   - a harmless single-target buff → `try_support_heal`,
+                //     which walks every `SingleActor` row that is not
+                //     harmful and hands it to the ally who needs it;
+                //   - a weapon that lights up → `try_kindle_weapon`, whose
+                //     own `KINDLED_WEAPONS` table is folded into `named`.
+                if action.deals_damage()
+                    || action.is_heal()
+                    || !action.cures_conditions().is_empty()
+                    || action.pulses_ally_buff()
+                    || action.summons_allies()
+                    || action.targeting_schema().area_shape().is_some()
+                    || action.self_burst_radius().is_some()
+                    || (!action.is_harmful()
+                        && matches!(action.targeting_schema(), TargetingSchema::SingleActor))
+
+                {
+                    continue;
+                }
+                // Named outright by a cohort or a rung — either under the
+                // action's own name, or under the spell it is a printing
+                // of.
+                if named.contains(&action.name())
+                    || action
+                        .printed_spell_name()
+                        .is_some_and(|n| named.contains(&n))
+                {
+                    continue;
+                }
+                // The three condition tables.
+                let installs = action.installs_condition();
+                let harmful = action.is_harmful();
+                let tiered = installs.is_some_and(|c| {
+                    if harmful {
+                        ITEM_LOCKDOWN_CONDITIONS.contains(&c)
+                            || ITEM_ATTRITION_CONDITIONS.contains(&c)
+                    } else {
+                        ITEM_SELF_BUFF_CONDITIONS.contains(&c)
+                    }
+                });
+                if tiered {
+                    continue;
+                }
+                orphans.push(format!(
+                    "{} (on the {}) — installs {:?}, harmful={}",
+                    action.name(),
+                    item.name,
+                    installs.map(|c| c.name()),
+                    harmful
+                ));
+            }
+        }
+        orphans.sort();
+        assert!(
+            orphans.is_empty(),
+            "these item actions are on the loot table and no rung can choose them — \
+             put each on a condition table, give it a rung, or name it in \
+             `NOT_FOR_THE_AI` with the reason:\n  {}",
+            orphans.join("\n  ")
+        );
+        // Vacuous-pass guard: the walk has to be finding the table.
+        assert!(
+            seen.len() > 150,
+            "only {} item actions swept — the loot-pool walk has stopped working",
+            seen.len()
+        );
+    }
+
+    /// The three items the sweep turned up are three things the AI now
+    /// reaches.
+    ///
+    /// `every_item_action_belongs_to_a_rung` is a static claim — is
+    /// there a rung *shaped like* this item — and this is the
+    /// behavioural half for the three it found:
+    ///
+    ///   - **A Pearl of Power** had no rung at all, on any of its four
+    ///     rungs of rarity. `try_engaged_self_recovery`'s own docstring
+    ///     had been promising one since it was written.
+    ///   - **An Antitoxin** removes `Poisoned` in its resolver and
+    ///     declared nothing, so the cure rung — which walks the pack
+    ///     asking each action what it lifts — stepped straight over it.
+    ///     A poisoned creature with one in its pack drank nothing.
+    ///   - **A Potion of Flying** installs a condition that was not on
+    ///     `ITEM_SELF_BUFF_CONDITIONS`, which is the one table that rung
+    ///     reads.
+    ///
+    /// Ten fights apiece, and the log has to show it.
+    #[test]
+    fn the_sweeps_three_findings_are_three_items_the_ai_uses() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::side_effects::Resource;
+        use crate::items::item_template::{Item, LOOT_POOL};
+
+        // (item, does it want a caster, what the fixture has to set up)
+        let rows: &[(&str, bool)] = &[
+            ("Pearl of Power", true),
+            ("Antitoxin", false),
+            ("Potion of Flying", false),
+        ];
+        for (name, wants_caster) in rows {
+            let item: &'static Item = LOOT_POOL
+                .iter()
+                .copied()
+                .find(|i| i.name == *name)
+                .unwrap_or_else(|| panic!("{name} has left the loot pool"));
+            let mut used_in = 0;
+            for seed in 0..10u64 {
+                let mut e = empty_arena_seeded(seed);
+                let chassis: &'static crate::actors::actor_template::CreatureTemplate =
+                    if *wants_caster { &WIZARD_TEMPLATE } else { &FIGHTER_TEMPLATE };
+                let pc = e
+                    .instantiate_creature(chassis, Coordinate::new(5, 8), 0, 0)
+                    .unwrap();
+                for (i, y) in [7isize, 9, 11].into_iter().enumerate() {
+                    e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, y), 1, i)
+                        .unwrap();
+                }
+                {
+                    let a = e.actors.get_mut(&pc).unwrap();
+                    a.pickup_item(item);
+                    // A cure with nothing to cure is correctly declined,
+                    // so the fixture gives it something.
+                    if *name == "Antitoxin" {
+                        a.add_condition(Condition::Poisoned, ConditionTimer::Rounds(10));
+                    }
+                    // …and a pearl with nothing to restore likewise.
+                    if *wants_caster {
+                        assert!(
+                            a.consume_resource(Resource::SpellSlot(1)),
+                            "the fixture wants a spent slot for the bead to give back"
+                        );
+                    }
+                }
+
+                let ai = SimpleAi;
+                let mut steps = 0usize;
+                while steps < 4_000 && !e.is_complete() {
+                    steps += 1;
+                    e.process_stack();
+                    let Some(prompt) = e.peek_prompt() else { break };
+                    let actor_id = prompt.actor_id();
+                    match ai.decide(&e, actor_id) {
+                        ControllerDecision::AwaitInput => break,
+                        ControllerDecision::Act(aei) => {
+                            e.pop_prompt();
+                            e.push_action(aei);
+                        }
+                    }
+                }
+                if e.messages()
+                    .join("\n")
+                    .to_lowercase()
+                    .contains(&name.to_lowercase())
+                {
+                    used_in += 1;
+                }
+            }
+            assert!(used_in > 0, "ten fights and the {name} was never used");
+        }
     }
 
     /// A lock in the pack is a lock the AI can find.

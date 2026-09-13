@@ -4463,6 +4463,15 @@ impl Action for LesserRestoration {
     fn deals_damage(&self) -> bool {
         false
     }
+    /// The four `CANDIDATES`, named for the lane that asks rather than
+    /// left to the validator that already knows. The gate below is what
+    /// stops the spell being *cast* on a clean ally; this is what lets
+    /// `try_self_cure` and the sweep over the loot table see that the
+    /// spell — and the Staff of Healing's printing of it — is a cure at
+    /// all.
+    fn cures_conditions(&self) -> &'static [Condition] {
+        &Self::CANDIDATES
+    }
     fn cost(
         &self,
         _e: &EncounterInstance,

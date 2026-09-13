@@ -1324,6 +1324,23 @@ impl Action for DrinkAntitoxin {
         false
     }
 
+    /// What the vial is *for* — and the declaration it shipped without.
+    ///
+    /// `side_effects` has removed `Poisoned` since the item was written
+    /// and nothing said so, which is the exact shape `try_self_cure`
+    /// exists to read: that rung walks the pack asking each action what
+    /// it lifts, and an action that lifts something and declines to say
+    /// is an action it steps over. So a creature standing there Poisoned
+    /// with an antitoxin in its pack drank nothing, for as long as both
+    /// have existed.
+    ///
+    /// The `+5` to saves the vial also grants is not a cure and is not
+    /// here. RAW's second clause is advantage on the next save against
+    /// poison, which is a buff the cure lane has no business ranking.
+    fn cures_conditions(&self) -> &'static [Condition] {
+        &[Condition::Poisoned]
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
