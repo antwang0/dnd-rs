@@ -2806,7 +2806,7 @@ fn pick_from_cohort(
     let candidates: Vec<(&'static (dyn Action + Send + Sync), Option<Condition>)> = cohort
         .iter()
         .filter_map(|row| {
-            let action = actor.find_action(row.name)?;
+            let action = find_printing(actor, row.name)?;
             (!concentrating || !action.holds_concentration()).then_some((action, row.condition))
         })
         .collect();
@@ -5857,6 +5857,59 @@ fn enemy_of_type_within(
     })
 }
 
+/// Find the action this creature would use when a cohort asks for
+/// `name` — preferring the printing that does not spend a spell slot.
+///
+/// The lookup every name-keyed cohort in this file should have been
+/// using, and the third repair in the same family as
+/// `ActorInstance::item_actions`. Two things go wrong with
+/// `find_action`, and this fixes both:
+///
+///   - **It reads the stat block.** `available_actions` is the list a
+///     creature can act from, and the difference is the pack.
+///   - **A staff does not answer to the spell's name.** SRD 5.2's Staff
+///     of Power prints Hold Monster; the engine calls that row `"staff
+///     of power: hold monster"` so a holder's menu groups, and every
+///     cohort asking for `"hold monster"` walked straight past it. All
+///     twenty-eight staff rows were invisible to the control, wall,
+///     area and self-buff lanes at once — which between them is most of
+///     what a caster does with a turn. See
+///     `Action::printed_spell_name`.
+///
+/// **The item printing wins the tie**, which is the sentence
+/// `try_cheapest_printing` writes about bonus actions applied one
+/// resource down: a wizard who knows Fireball and carries a Staff of
+/// Fire should burn the staff. Both cast the same spell through the same
+/// resolver; one spends a shared pool that refills at dawn and the other
+/// spends the caster's own slot, which is the resource that can still
+/// become something else. Preferring the stick is how the slot stays
+/// available for the spell the stick does not print.
+fn find_printing(
+    actor: &crate::actors::actor_template::ActorInstance,
+    name: &str,
+) -> Option<&'static (dyn Action + Send + Sync)> {
+    let mut own: Option<&'static (dyn Action + Send + Sync)> = None;
+    for action in actor.available_actions() {
+        if action.printed_spell_name() == Some(name) {
+            return Some(action);
+        }
+        if own.is_none() && action.name().eq_ignore_ascii_case(name) {
+            own = Some(action);
+        }
+    }
+    own
+}
+
+/// Whether `action` is what a cohort asking for one of `names` wants —
+/// the predicate half of [`find_printing`], for the lanes that filter a
+/// list rather than look one name up.
+fn is_printing_of_any(action: &(dyn Action + Send + Sync), names: &[&str]) -> bool {
+    let printed = action.printed_spell_name();
+    names
+        .iter()
+        .any(|n| *n == action.name() || printed == Some(*n))
+}
+
 /// Wrap "find action by name → ActionExecutionInfo if validates".
 /// Stays tight on the surface area for buff-style self-target actions
 /// that take no args.
@@ -5875,12 +5928,7 @@ fn try_self_action(
     actor_id: usize,
     action_name: &str,
 ) -> Option<ActionExecutionInfo> {
-    let action = encounter
-        .actors
-        .get(&actor_id)?
-        .available_actions()
-        .into_iter()
-        .find(|a| a.name() == action_name)?;
+    let action = find_printing(encounter.actors.get(&actor_id)?, action_name)?;
     // A buff that names a creature is aimed at the caster; a buff that
     // takes no arguments is already about them.
     //
@@ -9029,7 +9077,7 @@ fn try_self_heal(
     if (actor.hitpoints() as f32) / (max_hp as f32) >= 0.5 {
         return None;
     }
-    for action in actor.available_actions() {
+    for action in actor.actions_at_cheapest_printing() {
         if !action.is_heal() {
             continue;
         }
@@ -9131,7 +9179,7 @@ fn try_self_cleanse(
         let Some(sufferer) = encounter.actors.get(&patient) else {
             continue;
         };
-        for action in actor.available_actions() {
+        for action in actor.actions_at_cheapest_printing() {
             let cures = action.cures_conditions();
             if cures.is_empty() || !cures.iter().any(|&c| sufferer.has_condition(c)) {
                 continue;
@@ -9251,7 +9299,7 @@ fn try_support_heal(
     let my_team = actor.team();
 
     let support_actions: Vec<&'static (dyn Action + Send + Sync)> = actor
-        .available_actions()
+        .actions_at_cheapest_printing()
         .into_iter()
         .filter(|a| {
             !a.is_harmful()
@@ -9424,7 +9472,7 @@ fn try_wall_off_approach(
     let already_concentrating = actor.is_concentrating();
     let walls: Vec<&'static (dyn Action + Send + Sync)> = WALL_SPELLS
         .iter()
-        .filter_map(|name| actor.find_action(name))
+        .filter_map(|name| find_printing(actor, name))
         .filter(|wall| !already_concentrating || !wall.holds_concentration())
         .collect();
     if walls.is_empty() {
@@ -9748,7 +9796,7 @@ fn best_burst_placement(
 
     // Find area actions we own. Most actors have none — bail early.
     let burst_actions: Vec<(&'static (dyn Action + Send + Sync), AreaShape)> = actor
-        .available_actions()
+        .actions_at_cheapest_printing()
         .into_iter()
         .filter_map(|a| {
             if !a.is_harmful() || !accept(a) {
@@ -10105,7 +10153,7 @@ fn try_summon_allies(
     let busy = actor.is_concentrating();
     let already_called = actor.has_condition(Condition::Summoner);
     let mut candidates: Vec<(bool, u32, usize, ActionExecutionInfo)> = actor
-        .available_actions()
+        .actions_at_cheapest_printing()
         .into_iter()
         .enumerate()
         .filter(|(_, a)| a.summons_allies())
@@ -10289,7 +10337,7 @@ fn try_ally_support_pulse(
     if !actor.is_combat_active() {
         return None;
     }
-    for action in actor.available_actions() {
+    for action in actor.actions_at_cheapest_printing() {
         // `pulses_ally_buff`, not `is_heal`. The rung was written when
         // every member of the cohort restored hit points and the two
         // questions had the same answer; Countercharm restores nothing
@@ -10353,7 +10401,7 @@ fn try_area_control(
     let actor = encounter.actors.get(&actor_id)?;
     let busy = actor.is_concentrating();
     best_burst_placement(encounter, actor_id, |a| {
-        AREA_CONTROL_SPELLS.iter().any(|name| *name == a.name())
+        is_printing_of_any(a, AREA_CONTROL_SPELLS)
             && !(busy && a.holds_concentration())
     })
 }
@@ -10487,7 +10535,7 @@ fn try_self_centered_burst(
     // or an explicit non-damage flag, which together exclude utility
     // NoArgs (Dodge / Disengage) cleanly.
     let mut bursts: Vec<&'static (dyn Action + Send + Sync)> = actor
-        .available_actions()
+        .actions_at_cheapest_printing()
         .into_iter()
         .filter(|a| {
             a.is_harmful()
@@ -10994,7 +11042,7 @@ fn best_attack_against(
     // candidate they rank.
     type Ranked<'a> = (u8, u8, u8, isize, Option<f32>, &'a (dyn Action + Send + Sync));
     let mut best: Option<Ranked> = None;
-    for action in actor.available_actions() {
+    for action in actor.actions_at_cheapest_printing() {
         if !matches!(action.targeting_schema(), TargetingSchema::SingleActor) {
             continue;
         }
@@ -20071,6 +20119,108 @@ mod tests {
         assert!(
             e.actors[&pc].has_item_named(blur.name),
             "and the cheaper one should still be in the pack"
+        );
+    }
+
+    /// A staff answers to the spell's name, and answers first.
+    ///
+    /// The engine names a staff's rows `"staff of power: hold monster"`
+    /// so a holder's menu groups — and half the pickers in this file are
+    /// name-keyed cohorts that ask for `"hold monster"`. Twenty-eight
+    /// staff rows were therefore invisible to the control, wall,
+    /// area-control and self-buff lanes at once, which between them is
+    /// most of what a caster does with a turn.
+    ///
+    /// Three claims, one per repair:
+    ///
+    ///   - **A cohort finds it.** A cleric knows no Wall of Force; with
+    ///     a Staff of Power in hand, the wall rung does.
+    ///   - **It is preferred.** A wizard knows Hold Monster *and*
+    ///     carries the staff. The staff wins, because a charge off a
+    ///     shared stick is cheaper than the caster's own slot — see
+    ///     `find_printing`.
+    ///   - **The walking lanes see the same order.** The pickers that
+    ///     iterate the list rather than look a name up get the staff's
+    ///     Fireball ahead of the wizard's, and only ahead of *that
+    ///     spell* — a blanket "items first" would put the staff's
+    ///     Burning Hands in front of it too, and the burst picker has no
+    ///     damage term to notice.
+    #[test]
+    fn a_staff_answers_to_the_spell_it_prints() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::items::item_template::STAFF_OF_POWER;
+
+        // A cleric with no Wall of Force of its own.
+        let mut e = empty_arena_seeded(4);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(14, 8), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&cleric].find_action("wall of force").is_none(),
+            "the fixture wants a chassis that does not know the spell"
+        );
+        {
+            let a = e.actors.get_mut(&cleric).unwrap();
+            a.pickup_item(&STAFF_OF_POWER);
+            assert!(a.is_attuned_to(STAFF_OF_POWER.name), "a cleric is a spellcaster");
+        }
+        let found = find_printing(&e.actors[&cleric], "wall of force")
+            .expect("the staff prints the spell the cohort asks for");
+        assert_eq!(found.name(), "staff of power: wall of force");
+
+        // A wizard who knows it anyway: the staff still wins.
+        let mut e = empty_arena_seeded(4);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&wizard].find_action("hold monster").is_some(),
+            "the fixture wants a chassis that does know the spell"
+        );
+        e.actors
+            .get_mut(&wizard)
+            .unwrap()
+            .pickup_item(&STAFF_OF_POWER);
+        let found = find_printing(&e.actors[&wizard], "hold monster")
+            .expect("the wizard knows it with or without the stick");
+        assert_eq!(
+            found.name(),
+            "staff of power: hold monster",
+            "the slot should have been kept for something the staff does not print"
+        );
+
+        // And the walking lanes, where the order is the tie-break.
+        let order: Vec<&str> = e.actors[&wizard]
+            .actions_at_cheapest_printing()
+            .iter()
+            .map(|a| a.name())
+            .collect();
+        let staff = order
+            .iter()
+            .position(|n| *n == "staff of power: fireball")
+            .expect("the staff's fireball is on the list");
+        let own = order
+            .iter()
+            .position(|n| *n == "fireball")
+            .expect("and so is the wizard's");
+        assert!(
+            staff < own,
+            "the stick should be tried before the slot: {staff} vs {own}"
+        );
+        // Only ahead of the spell it prints. The staff's Cone of Cold
+        // has nothing to do with Fireball and must not have hopped the
+        // queue with it.
+        let cone = order
+            .iter()
+            .position(|n| *n == "staff of power: cone of cold")
+            .expect("the staff's cone is on the list too");
+        assert!(
+            cone > staff,
+            "a blanket items-first reorder would have dragged the whole staff up"
         );
     }
 

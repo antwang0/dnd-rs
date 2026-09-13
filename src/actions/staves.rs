@@ -172,6 +172,16 @@ impl Action for StaffSpell {
         self.spell().installs_condition()
     }
 
+    /// The staff *is* the spell, at a different price — which is the
+    /// whole of what this method is for. See
+    /// `Action::printed_spell_name`, and note that this is the one
+    /// chassis in the engine that can honestly answer it: every other
+    /// item that casts something casts an approximation of it, and this
+    /// one forwards the real resolver.
+    fn printed_spell_name(&self) -> Option<&str> {
+        Some(self.spell().name())
+    }
+
     fn recharge_key(&self) -> Option<&'static str> {
         self.spell().recharge_key()
     }

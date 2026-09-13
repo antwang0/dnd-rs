@@ -1253,6 +1253,48 @@ pub trait Action {
         None
     }
 
+    /// The **spell this action is a printing of**, when it is one, named
+    /// as the spell rather than as the object that casts it.
+    ///
+    /// `None` for everything that is simply itself, which is almost
+    /// everything. `Some` is the staves and the two non-staff rows on
+    /// their chassis: SRD 5.2's Staff of Fire *"can cast Burning Hands,
+    /// Fireball or Wall of Fire"*, and the engine writes those as three
+    /// actions called `"staff of fire: fireball"` and so on — the
+    /// convention `StaffSpell::action_name` documents, so a holder's
+    /// rows group in the picker.
+    ///
+    /// **The AI is what needs it, and the compound name is what broke
+    /// it.** Half the pickers in `ai::simple` are *name-keyed cohorts* —
+    /// hand-ordered lists of spell names, where the order is the
+    /// priority and the name is the lookup. `LOCKDOWNS` asks for
+    /// `"hold monster"`; a Staff of Power prints it as `"staff of power:
+    /// hold monster"`; the row does not match, and the staff's copy is
+    /// invisible to the lane. The same miss repeats across the wall
+    /// cohort, the area-control cohort and the self-buff cohorts, which
+    /// between them is most of what a caster does with a turn: all
+    /// twenty-eight staff rows in the engine were reachable only by a
+    /// human typing the name.
+    ///
+    /// Deliberately not the same question as "is this action from an
+    /// item". A Scroll of Banishment is also a printing of a spell in
+    /// the loose sense and answers `None` here, because what it prints
+    /// is an *approximation* — a fixed DC, a collapsed rider, an
+    /// envelope chosen to fit a shared chassis — and a cohort that
+    /// looked it up under the spell's name would be told it had the
+    /// spell. A `StaffSpell` forwards the real spell's own resolver, so
+    /// it is the spell, at a different price.
+    ///
+    /// That price is the second half of why the method exists. Where
+    /// both printings are on one creature's list — a wizard who knows
+    /// Fireball *and* carries a Staff of Fire — the item's is the one to
+    /// take: it spends a shared pool that refills at dawn instead of the
+    /// caster's own slot, which is the more flexible resource and the
+    /// one worth keeping. See `ai::simple::find_printing`.
+    fn printed_spell_name(&self) -> Option<&str> {
+        None
+    }
+
     /// The recharge pool this action is gated on, or `None` for the
     /// overwhelming majority that are gated on nothing.
     ///

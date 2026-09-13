@@ -7944,6 +7944,71 @@ impl ActorInstance {
         out
     }
 
+    /// `available_actions`, with every spell the pack *also* prints
+    /// moved in front of the stat block's copy of it.
+    ///
+    /// The list-walking half of `ai::simple::find_printing`, and it
+    /// exists because the two halves of that question are asked
+    /// differently. A name-keyed cohort *looks a spell up* and can
+    /// simply be handed the better printing; the burst picker, the two
+    /// heal lanes and the attack picker *walk the whole list* and keep
+    /// the first candidate that ties, which is whatever order this
+    /// method hands them. Unreordered, that order is the stat block
+    /// first — so a wizard who knows Fireball and carries a Staff of
+    /// Fire burned a spell slot every time, and the stick went home
+    /// full.
+    ///
+    /// **A reorder rather than a filter**, and that is the whole of why
+    /// this is safe. Dropping the caster's own copy would be a caster
+    /// who cannot cast Fireball at all once the staff runs dry —
+    /// affordability is not a question this method can ask, since it has
+    /// no encounter. Both printings stay on the list; the cheaper one is
+    /// simply tried first, and every picker in the file runs its
+    /// candidates through `validate` or `afford_cast`, so an empty staff
+    /// falls through to the slot exactly as it did before.
+    ///
+    /// **Moved to the spell, not to the front.** A blanket "items first"
+    /// would put a Staff of Fire's Burning Hands ahead of the wizard's
+    /// Fireball, and the burst picker has no damage term to notice —
+    /// three enemies is three enemies, and the weaker spell would win
+    /// every tie. Each printing hops exactly one place: in front of the
+    /// spell it is a printing *of*, where the choice between them is
+    /// only ever about the price.
+    pub fn actions_at_cheapest_printing(&self) -> Vec<&'static (dyn Action + Send + Sync)> {
+        let all = self.available_actions();
+        // Which spells the pack prints. Empty for almost every creature
+        // in the engine, which is why the fast path matters: this runs
+        // on the AI's hottest lanes.
+        let printed: HashSet<&str> = all
+            .iter()
+            .filter_map(|a| a.printed_spell_name())
+            .collect();
+        if printed.is_empty() {
+            return all;
+        }
+        let mut out: Vec<&'static (dyn Action + Send + Sync)> = Vec::with_capacity(all.len());
+        for action in all.iter().copied() {
+            // An item printing is placed by the loop below, beside the
+            // spell it prints — unless nothing on the list is that
+            // spell, in which case it keeps its own place.
+            if action
+                .printed_spell_name()
+                .is_some_and(|n| all.iter().any(|o| o.name() == n))
+            {
+                continue;
+            }
+            if printed.contains(action.name()) {
+                out.extend(
+                    all.iter()
+                        .copied()
+                        .filter(|o| o.printed_spell_name() == Some(action.name())),
+                );
+            }
+            out.push(action);
+        }
+        out
+    }
+
     /// Every action this actor can take **because of something in the
     /// pack** — `available_actions` minus the stat block.
     ///
