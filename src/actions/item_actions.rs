@@ -8527,3 +8527,350 @@ impl Action for SpreadCloakOfTheBat {
 }
 
 pub static SPREAD_CLOAK_OF_THE_BAT: SpreadCloakOfTheBat = SpreadCloakOfTheBat {};
+
+/// **Cube of Force** — *"You can press one of those faces, expend the
+/// number of charges required for it, and thereby cast the spell
+/// associated with it (save DC 17)."*
+///
+/// The one item in the SRD that ships as a `StaffSpell` menu already
+/// written: RAW prints a **table** of faces and charge costs, which is
+/// the shape this chassis exists for, on a thing that is an inch of
+/// carved stone rather than a stick. Four of RAW's six faces have a
+/// spell the engine has, and the pool is the cube's own ten charges:
+///
+///   - **Mage Armor** (1), which is the cheapest AC on the loot table
+///     and the only one a chassis with no spell list can put on itself;
+///   - **Shield** (1), a *Reaction* — see below;
+///   - **Resilient Sphere** (4), which takes one creature out of the
+///     fight, friend or enemy;
+///   - **Wall of Force** (5), which cuts the room in half.
+///
+/// Tiny Hut and Private Sanctum are the two faces with nothing to cast:
+/// both are out-of-combat wards over a stretch of ground, and neither
+/// spell exists in this engine because neither has anything to do inside
+/// an initiative order.
+///
+/// **The Shield face is what found a bug in the chassis.**
+/// `spells::SHIELD` prices itself at a Reaction and a level-1 slot,
+/// which is the only row on `StaffSpell` in the engine whose
+/// action-economy price is neither an Action nor a Bonus Action — and
+/// the guard that stops a slot-only spell arriving free read a bare
+/// `[Reaction]` as "free" and added an Action on top. A Shield that
+/// costs an Action as well as a Reaction is a Shield nobody can cast on
+/// the turn they are hit, which is every turn anybody would want it. See
+/// `StaffSpell::cost`.
+pub const CUBE_OF_FORCE_NAME: &str = "Cube of Force";
+
+pub static CUBE_OF_FORCE_MAGE_ARMOR: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "cube of force: mage armor",
+        action_aliases: &["cube-mage-armor", "cube armor"],
+        item_name: CUBE_OF_FORCE_NAME,
+        charges: 1,
+        spell_level: 1,
+        spell: || &*crate::actions::spells::MAGE_ARMOR,
+        only_targets: None,
+    };
+
+pub static CUBE_OF_FORCE_SHIELD: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "cube of force: shield",
+        action_aliases: &["cube-shield", "cube face shield"],
+        item_name: CUBE_OF_FORCE_NAME,
+        charges: 1,
+        spell_level: 1,
+        spell: || &*crate::actions::spells::SHIELD,
+        only_targets: None,
+    };
+
+pub static CUBE_OF_FORCE_RESILIENT_SPHERE: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "cube of force: resilient sphere",
+        action_aliases: &["cube-sphere", "cube face sphere"],
+        item_name: CUBE_OF_FORCE_NAME,
+        charges: 4,
+        spell_level: 4,
+        spell: || &*crate::actions::spells::OTILUKES_RESILIENT_SPHERE,
+        only_targets: None,
+    };
+
+pub static CUBE_OF_FORCE_WALL_OF_FORCE: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "cube of force: wall of force",
+        action_aliases: &["cube-wall", "cube face wall"],
+        item_name: CUBE_OF_FORCE_NAME,
+        charges: 5,
+        spell_level: 5,
+        spell: || &*crate::actions::spells::WALL_OF_FORCE,
+        only_targets: None,
+    };
+
+/// **Iron Flask** — *"you can take a Magic action to open the flask and
+/// target a creature you can see within 60 feet of yourself. If the
+/// target is native to a plane of existence other than the one you're
+/// on, the target must succeed on a DC 17 Wisdom saving throw or be
+/// trapped in the flask."*
+///
+/// One save, and the creature is gone. That is the same sentence the
+/// Scroll of Banishment says with a different noun, and it rides the
+/// same lane: `Condition::Mazed` is the engine's "off the board and not
+/// dead", the one effect that answers a boss without having to out-damage
+/// it. What the flask adds to that lane is the **Legendary tier** — DC
+/// 17 rather than 15, which is three points of a monster's Wisdom save.
+///
+/// **RAW's plane-of-origin gate is not modelled**, and it is the one
+/// clause worth naming. *"Native to a plane of existence other than the
+/// one you're on"* is a fact about a creature's home rather than about
+/// its stat block, and the engine has no cosmology: the closest proxies
+/// on `CreatureType` — Fiend, Celestial, Elemental, Fey — would leave
+/// out the aberrations and undead RAW's flask is most famously used on,
+/// and would turn a Legendary into an item that answers four rows of the
+/// bestiary. `StaffSpell::only_targets` is where such a gate would go if
+/// the engine ever grows the axis; see the Trident of Fish Command for
+/// what one looks like when the question is askable.
+///
+/// **And the release clause is absent.** RAW's flask can be uncorked to
+/// let the prisoner out *as your ally for 1 hour*, which is the half
+/// that makes it an artifact rather than a very good Banishment — and it
+/// needs a summon whose body is a creature the engine put away earlier
+/// in the same fight. Nothing in `SummonItem` can name a body that way;
+/// every row there names a `CreatureTemplate` at compile time.
+pub const IRON_FLASK_NAME: &str = "Iron Flask";
+
+pub static OPEN_IRON_FLASK: SingleSaveConditionItem = SingleSaveConditionItem {
+    action_name: "open iron flask",
+    action_aliases: &["iron flask", "flask", "uncork flask"],
+    item_name: IRON_FLASK_NAME,
+    log_text: "{actor} unstoppers the iron flask; smoke reaches for the target.",
+    save: AbilityScoreType::Wisdom,
+    dc: 17,
+    // 60 ft RAW; 24 tiles.
+    reach: 24,
+    condition: Condition::Mazed,
+    // The engine's standing stand-in for "longer than the fight". RAW's
+    // flask is forever, which is the same thing from inside an
+    // encounter and a lie the timer would have to tell for a thousand
+    // rounds to make good on.
+    timer: ConditionTimer::Rounds(10),
+    // One prisoner at a time — RAW's flask holds exactly one, and the
+    // pool is how the charge ledger says so. No `recharge`: the flask is
+    // full while it is empty and empty while it is full, and nothing
+    // about a night's sleep lets go of what is inside it.
+    billing: ItemUseBilling::Charges(1),
+};
+
+/// **Mirror of Life Trapping** — *"Any creature other than you that sees
+/// its reflection in the activated mirror while within 30 feet of the
+/// mirror must succeed on a DC 15 Charisma saving throw or be trapped."*
+///
+/// The Iron Flask's sentence aimed at a **room** instead of a creature,
+/// which is what makes it worth a second entry on the same lane: one
+/// save each, from everybody inside thirty feet, and the failures are
+/// simply gone. There is nothing else on the loot table that can take
+/// three bodies off the board at once without dealing a point of damage.
+///
+/// A Charisma save rather than the flask's Wisdom, and three points
+/// softer, which is RAW and is also the right shape: the mirror is a
+/// Very Rare that catches everything and the flask is a Legendary that
+/// catches one thing, so the wide one should be the one a strong-willed
+/// creature walks through.
+///
+/// **Aimed rather than hung.** RAW's mirror is a fixture — you put it on
+/// a wall, speak a word, and it works on whoever looks at it until you
+/// speak the word again — and the engine has no lane for an object that
+/// sits on the board doing something every round, short of a `Zone`,
+/// which is a place rather than a thing you can pick back up. What
+/// ships is the moment of activation: a burst centred on a tile within
+/// reach, resolved once. The clause it costs is the mirror's patience.
+///
+/// It catches **enemies only**, which is `AreaSaveConditionItem`'s own
+/// convention rather than a reading of RAW — the mirror's "any creature
+/// other than you" would take the party's own cleric. See that
+/// chassis's `spares_allies` for why every row on it is scoped that way.
+pub const MIRROR_OF_LIFE_TRAPPING_NAME: &str = "Mirror of Life Trapping";
+
+pub static ACTIVATE_MIRROR_OF_LIFE_TRAPPING: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "activate mirror of life trapping",
+    action_aliases: &["mirror", "life trapping", "trap mirror"],
+    item_name: MIRROR_OF_LIFE_TRAPPING_NAME,
+    log_text: "{actor} speaks the word, and the mirror's surface turns to depth.",
+    save: AbilityScoreType::Charisma,
+    dc: 15,
+    // RAW's 30 feet, as a burst: twelve tiles of radius would be most of
+    // a room, so the sphere is the reach of the *look* rather than of
+    // the mirror — 4 tiles, the standing radius for a thrown area on
+    // this chassis.
+    shape: AreaShape::Burst { radius: 4 },
+    // Placed within 30 ft of the user, which is where somebody could
+    // actually prop a four-foot mirror up.
+    reach: 12,
+    condition: Condition::Mazed,
+    timer: ConditionTimer::Rounds(10),
+    // RAW's mirror holds twelve extradimensional cells. Six is the pool
+    // an encounter can make use of, and — as on the flask — nothing
+    // gives a cell back at dawn: what is in the mirror stays there.
+    billing: ItemUseBilling::Charges(1),
+};
+
+/// **Talisman of Ultimate Evil**, Ultimate End — *"you can take a Magic
+/// action to expend 1 charge and target one creature you can see on the
+/// ground within 120 feet of yourself. A flaming fissure opens under the
+/// target, and the target makes a DC 20 Dexterity saving throw. If the
+/// target is a Celestial, it has Disadvantage on the save. On a failed
+/// save, the target falls into the fissure and is destroyed, leaving no
+/// remains. On a successful save, the target isn't cast into the fissure
+/// but takes 4d6 Psychic damage from the ordeal."*
+///
+/// The only clause on the loot table where **a failed save is the end of
+/// the creature**, full stop, and the save's two branches run the wrong
+/// way round for every chassis in this file: the `SaveDamagePolicy` lane
+/// pays *less* on a success and this pays *nothing at all* on a failure,
+/// because what a failure costs is not damage.
+///
+/// Which is why it is written out rather than configured. `SlayActor` is
+/// the engine's one "died of something that is not hit points" effect —
+/// the same one behind Power Word Kill, the Vorpal Sword and the Mace of
+/// Disruption — and it is a side effect rather than a payload, so it
+/// cannot be the failure branch of a damage row. The success branch is
+/// an ordinary `DealDamage`, which is what makes the asymmetry legible:
+/// one arm of this save queues a corpse and the other queues four dice.
+///
+/// **The Celestial clause is the notch**, passed as the spell-side
+/// `RollMode` the caster-aware save helper already takes. It is the only
+/// place in the file where *what the target is* changes how it rolls
+/// rather than whether it is eligible, and it is the right way round for
+/// an item that symbolises unrepentant evil.
+///
+/// **The touch clause is absent.** *"A creature that isn't a Fiend or an
+/// Undead that touches the talisman takes 8d6 Necrotic damage and takes
+/// the damage again each time it ends its turn holding or carrying it"*
+/// is a curse on the *bearer*, and its natural home is the lane the
+/// Berserker Axe rides — a flag on the item read at a damage hook. What
+/// stops it being one line there is that the axe's trigger fires on
+/// damage arriving and this one fires on the turn ending, which is a
+/// different hook with no item reading it yet.
+pub const TALISMAN_OF_ULTIMATE_EVIL_NAME: &str = "Talisman of Ultimate Evil";
+
+pub struct OpenTalismanFissure {}
+
+impl OpenTalismanFissure {
+    /// RAW's DC 20 — the highest fixed save DC on the loot table, and
+    /// the right number for a clause whose failure is death.
+    const DC: i32 = 20;
+    /// RAW's 120 feet, at four tiles to ten.
+    const REACH: isize = 48;
+    /// The consolation on a success.
+    const ORDEAL: Dice = Dice::new(4, 6);
+}
+
+impl Action for OpenTalismanFissure {
+    fn name(&self) -> &str {
+        "open the talisman's fissure"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["talisman", "fissure", "ultimate end"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(Self::REACH)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Psychic]
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        costs.extend(ItemUseBilling::Charges(1).costs(TALISMAN_OF_ULTIMATE_EVIL_NAME));
+        costs
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, TALISMAN_OF_ULTIMATE_EVIL_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::dice::RollMode;
+        use crate::engine::side_effects::SlayActor;
+
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // RAW's "if the target is a Celestial, it has Disadvantage on
+        // the save" — the item's own notch, supplied on the spell side
+        // of the save helper so the target's own advantages still
+        // compose with it rather than being overwritten.
+        let notch = match encounter.actors.get(&target_id) {
+            Some(t) if t.creature_type() == crate::engine::types::CreatureType::Celestial => {
+                RollMode::Disadvantage
+            }
+            Some(_) => RollMode::Normal,
+            None => return Vec::new(),
+        };
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!("  a flaming fissure opens under {}.", name));
+        let save = encounter.roll_save_against_caster_at(
+            target_id,
+            AbilityScoreType::Dexterity,
+            Self::DC,
+            caster_id,
+            notch,
+        );
+        if save.passed() {
+            let rolled = encounter.roll(&Self::ORDEAL);
+            encounter.log(format!(
+                "  talisman of ultimate evil: {} claws clear — 4d6({}) psychic",
+                name, rolled
+            ));
+            return vec![Box::new(DealDamage {
+                actor_id: target_id,
+                amount: rolled,
+                damage_type: DamageType::Psychic,
+            })];
+        }
+        vec![Box::new(SlayActor {
+            actor_id: target_id,
+            label: "talisman of ultimate evil",
+        })]
+    }
+}
+
+pub static OPEN_TALISMAN_FISSURE: OpenTalismanFissure = OpenTalismanFissure {};

@@ -343,10 +343,21 @@ impl Action for StaffSpell {
         // A cantrip on a staff would arrive here with an Action already
         // in the list; a leveled spell whose whole cost was the slot
         // would arrive empty. Neither is a row that should be free.
-        if !costs
-            .iter()
-            .any(|r| matches!(r, Resource::Action | Resource::BonusAction))
-        {
+        //
+        // A **Reaction** counts as a slot already spent, and the Cube of
+        // Force is what says so: RAW's cube casts Shield off one of its
+        // faces, and `spells::SHIELD` prices itself at a Reaction and a
+        // level-1 slot. Without this arm the strip above would leave
+        // `[Reaction]`, the guard would read that as "no action-economy
+        // price at all", and the cube's Shield would cost a Reaction
+        // *and* an Action — which is a Shield nobody can cast on the
+        // turn they are hit, and therefore not the spell.
+        if !costs.iter().any(|r| {
+            matches!(
+                r,
+                Resource::Action | Resource::BonusAction | Resource::Reaction
+            )
+        }) {
             costs.push(Resource::Action);
         }
         costs.push(self.charge_cost());

@@ -98690,6 +98690,296 @@ fn the_new_passives_land_on_the_fields_they_are_written_for() {
         "the brightest thing on the loot table is not bright"
     );
 }
+/// The Cube of Force's four faces, and the one that prices a Reaction as
+/// a Reaction.
+///
+/// RAW's cube ships as a *table* — six faces, six charge costs — which
+/// is the one item in the SRD that arrives already shaped like
+/// `StaffSpell`. Two claims:
+///
+///   - **the prices are RAW's**, which a four-row copy-paste is exactly
+///     the shape to get wrong, and getting it wrong is silent: a
+///     Resilient Sphere at one charge is a legal item that is not the
+///     one on the label;
+///   - **the Shield face costs a Reaction and nothing else.** That is
+///     the bug the cube found. `spells::SHIELD` is the only row on this
+///     chassis anywhere in the engine whose action-economy price is
+///     neither an Action nor a Bonus Action, and the guard that stops a
+///     slot-only spell arriving free used to read a bare `[Reaction]`
+///     as "free" and add an Action on top of it. A Shield that costs
+///     the caster's Action is a Shield they cannot cast on the turn
+///     they are hit, which is the only turn anybody wants one.
+#[test]
+fn the_cube_of_force_prices_a_reaction_as_a_reaction() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::CUBE_OF_FORCE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&pc).unwrap().pickup_item(&CUBE_OF_FORCE);
+
+    // RAW's own table, in RAW's own order.
+    const FACES: &[(&str, u32)] = &[
+        ("cube of force: mage armor", 1),
+        ("cube of force: shield", 1),
+        ("cube of force: resilient sphere", 4),
+        ("cube of force: wall of force", 5),
+    ];
+    for (row, price) in FACES {
+        let action = *e.actors[&pc]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == *row)
+            .unwrap_or_else(|| panic!("the cube does not offer `{row}`"));
+        let costs = action.cost(&e, pc, None, None, None);
+        assert!(
+            costs.contains(&Resource::ItemCharges {
+                item: CUBE_OF_FORCE.name,
+                count: *price,
+            }),
+            "`{row}` should cost {price} of the cube's charges; got {costs:?}"
+        );
+    }
+
+    // The face that found the bug.
+    let shield = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "cube of force: shield")
+        .expect("the cube has a Shield face");
+    let costs = shield.cost(&e, pc, None, None, None);
+    assert!(
+        costs.contains(&Resource::Reaction),
+        "the Shield face stopped being a Reaction: {costs:?}"
+    );
+    assert!(
+        !costs.contains(&Resource::Action),
+        "the Shield face costs an Action as well as a Reaction, which is a \
+         Shield nobody can cast when they are hit: {costs:?}"
+    );
+    // And the sibling claim that makes the guard worth keeping: a row
+    // whose spell's whole price *was* the slot still costs an Action.
+    let wall = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "cube of force: wall of force")
+        .expect("the cube has a Wall of Force face");
+    assert!(
+        wall.cost(&e, pc, None, None, None).contains(&Resource::Action),
+        "a slot-only spell on the chassis arrived free"
+    );
+}
+
+/// The two vessels take a creature off the board without hurting it.
+///
+/// The Iron Flask and the Mirror of Life Trapping are one sentence at
+/// two widths, and what they add to the engine is a **Legendary and a
+/// Very Rare on the Mazed lane** — the answer a party with no way to
+/// out-damage a boss has never been able to find on the loot table.
+///
+/// The claims are the ones a config-struct item can get wrong: the DC,
+/// the shape, and whether running the pool dry takes the object with
+/// it. The save itself is the shared chassis's and is tested where that
+/// chassis is.
+#[test]
+fn the_two_vessels_take_a_creature_off_the_board() {
+    use crate::actions::action_template::TargetingSchema;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::items::item_template::{IRON_FLASK, MIRROR_OF_LIFE_TRAPPING};
+
+    // The flask: one target, DC 17, and no attunement — which is the
+    // whole reason a party can afford to be carrying one.
+    assert!(
+        !IRON_FLASK.requires_attunement,
+        "an item kept for the fight nobody planned for cannot want a slot in advance"
+    );
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&pc).unwrap().pickup_item(&IRON_FLASK);
+    let open = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "open iron flask")
+        .expect("carrying the flask offers the uncorking");
+    assert!(matches!(
+        open.targeting_schema(),
+        TargetingSchema::SingleActor
+    ));
+    assert_eq!(open.installs_condition(), Some(Condition::Mazed));
+    let at = vec![goblin];
+    assert!(open.validate_input(&e, pc, Some(&at), None, None));
+    for ef in open.execute(&mut e, pc, Some(&at), None, None) {
+        ef.apply(&mut e);
+    }
+    e.actors.get_mut(&pc).unwrap().reset_for_new_round();
+    assert!(
+        !open.validate_input(&e, pc, Some(&at), None, None),
+        "the flask holds one prisoner and let go of it"
+    );
+    assert!(
+        e.actors[&pc].has_item_named(IRON_FLASK.name),
+        "an emptied flask is still a flask"
+    );
+
+    // The mirror: the same sentence aimed at a room, six cells deep.
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&pc)
+        .unwrap()
+        .pickup_item(&MIRROR_OF_LIFE_TRAPPING);
+    let mirror = *e.actors[&pc]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "activate mirror of life trapping")
+        .expect("carrying the mirror offers the word");
+    assert!(
+        mirror.targeting_schema().area_shape().is_some(),
+        "the mirror catches a room, not a creature"
+    );
+    assert_eq!(mirror.installs_condition(), Some(Condition::Mazed));
+    assert_eq!(
+        e.actors[&pc].item_charges_remaining(MIRROR_OF_LIFE_TRAPPING.name),
+        6,
+        "the mirror's cells went missing"
+    );
+}
+
+/// The talisman's fissure: a save, and two branches that are not the
+/// same kind of thing.
+///
+/// The only clause on the loot table where failing a save is the *end*
+/// of the creature, and the reason it is written out rather than
+/// configured: every save chassis in the file pays less on a success,
+/// and this one pays nothing at all on a failure because what a failure
+/// costs is not damage.
+///
+/// Swept across seeds rather than asserted on one, because the branch
+/// taken is a d20. What is pinned is that **both branches happen**, that
+/// **neither branch is nothing**, and that a Celestial rolls the die at
+/// a notch — which is the one place in the file where what the target
+/// *is* changes how it rolls rather than whether it is eligible.
+#[test]
+fn the_talismans_fissure_is_a_save_or_die_with_a_consolation() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::pegasi::PEGASUS_TEMPLATE;
+    use crate::items::item_template::TALISMAN_OF_ULTIMATE_EVIL;
+
+    // Holy Symbol, the half that is a field: +2 to spell attack rolls
+    // and to nothing else.
+    assert_eq!(
+        TALISMAN_OF_ULTIMATE_EVIL.bonuses.spell_attack_bonus, 2,
+        "the Holy Symbol clause went missing"
+    );
+    assert_eq!(
+        TALISMAN_OF_ULTIMATE_EVIL.bonuses.attack_bonus, 0,
+        "the talisman sharpened the sword in the wearer's other hand"
+    );
+
+    let mut destroyed = 0;
+    let mut ordealed = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], seed);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&pc)
+            .unwrap()
+            .pickup_item(&TALISMAN_OF_ULTIMATE_EVIL);
+        let fissure = *e.actors[&pc]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "open the talisman's fissure")
+            .expect("holding the talisman offers the fissure");
+        let hp_before = e.actors[&goblin].hitpoints();
+        let at = vec![goblin];
+        assert!(fissure.validate_input(&e, pc, Some(&at), None, None));
+        for ef in fissure.execute(&mut e, pc, Some(&at), None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&pc].item_charges_remaining(TALISMAN_OF_ULTIMATE_EVIL.name),
+            TALISMAN_OF_ULTIMATE_EVIL.charges - 1,
+            "the fissure cost something other than one charge"
+        );
+        let still_up = e
+            .actors
+            .get(&goblin)
+            .is_some_and(|g| g.is_combat_active());
+        if !still_up {
+            destroyed += 1;
+        } else {
+            let hp_after = e.actors[&goblin].hitpoints();
+            assert!(
+                hp_after < hp_before,
+                "seed {seed}: the goblin made the save and the ordeal cost it nothing"
+            );
+            ordealed += 1;
+        }
+    }
+    assert!(
+        destroyed > 0,
+        "a DC 20 Dexterity save never once killed a goblin in forty tries"
+    );
+    assert!(
+        ordealed > 0,
+        "nothing ever made the save, so the consolation branch is untested"
+    );
+
+    // The Celestial notch, read off the save's own log line.
+    let disadvantaged = |template| {
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(template, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&pc)
+            .unwrap()
+            .pickup_item(&TALISMAN_OF_ULTIMATE_EVIL);
+        let fissure = *e.actors[&pc]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "open the talisman's fissure")
+            .expect("holding the talisman offers the fissure");
+        let before = e.messages().len();
+        let at = vec![victim];
+        for ef in fissure.execute(&mut e, pc, Some(&at), None, None) {
+            ef.apply(&mut e);
+        }
+        e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("Dexterity save") && m.contains("(dis)"))
+    };
+    assert!(
+        disadvantaged(&PEGASUS_TEMPLATE),
+        "RAW's \"if the target is a Celestial, it has Disadvantage on the save\" \
+         did not reach the die"
+    );
+    assert!(
+        !disadvantaged(&GOBLIN_TEMPLATE),
+        "the notch landed on something that is not a Celestial"
+    );
+}
 
 /// The armour shelf's four new suits do what their one sentence says.
 ///
@@ -101079,6 +101369,122 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
     }
 }
 
+/// Every row on the whole loot table that is priced in charges is one
+/// its own item can pay for.
+///
+/// `every_staff_row_is_wired_to_the_staff_it_names` above makes three
+/// claims — the row names an item that exists, the item offers the row,
+/// and the price fits the pool — and makes all three about `STAVES`,
+/// out of two hand-maintained registries of rows. That was the whole
+/// world when it was written. It is not now: seven `StaffSpell` rows in
+/// the engine hang off things that are not staves (a cape, a circlet, a
+/// fan, a bottle, a trident and four gems in a helm), none of them is on
+/// `STAFF_SPELLS`, and none of them was swept by anything at all. A row
+/// among those naming a misspelled item, or costing four charges out of
+/// a pool of three, would compile, ship, sit on the picker greyed out
+/// forever, and look exactly like an item nobody happened to use.
+///
+/// So this asks the same question from the **other end** and without a
+/// registry: walk every item on every shelf, ask each of its `on_use`
+/// rows what it costs, and check any `Resource::ItemCharges` in the
+/// answer. That reaches every chassis rather than the two that have
+/// lists — `StaffSpell`, `StaffPrime`, and every config struct carrying
+/// an `ItemUseBilling::Charges` — and it keeps reaching new ones,
+/// because what it reads is the cost list the engine itself bills from
+/// rather than a table somebody has to remember to add a line to.
+///
+/// Three ways a charge price goes wrong, all silent:
+///
+///   - **the wrong item.** A row's `item_name` is a `&'static str`, and
+///     a typo'd one is a ledger key nothing ever holds, so
+///     `can_consume_resource` refuses forever.
+///   - **a price the pool cannot reach.** Four charges out of three is
+///     a spell printed on an object that cannot cast it.
+///   - **a pool that does not exist.** A row priced in charges on an
+///     item whose `Item::charges` is zero is the same refusal arriving
+///     by a different road — and it is the one an author gets by
+///     writing the row first and forgetting the field.
+#[test]
+fn every_charge_priced_row_is_one_its_own_item_can_pay_for() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::{LOOT_POOL, MAGIC_ARMOURY, STAVES};
+
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let mut wrong: Vec<String> = Vec::new();
+    let mut priced = 0usize;
+
+    for item in LOOT_POOL.iter().chain(STAVES).chain(MAGIC_ARMOURY) {
+        if !seen.insert(item.name) || item.on_use.is_empty() {
+            continue;
+        }
+        // A wizard, because `cost()` is allowed to ask the holder
+        // things — Fast Hands, a remaining bonus action — and a chassis
+        // with a spell list is the one every row in the file was
+        // written to be held by at least sometimes. A goblin stands
+        // across the room so the rows that price themselves against a
+        // target have one.
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let pc = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(9, 2), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&pc).unwrap().pickup_item(item);
+        let at_ids = vec![foe];
+        let at_locs = vec![e.actors[&foe].location()];
+
+        for action in item.on_use {
+            for cost in action.cost(&e, pc, Some(&at_ids), Some(&at_locs), None) {
+                let Resource::ItemCharges {
+                    item: named,
+                    count,
+                } = cost
+                else {
+                    continue;
+                };
+                priced += 1;
+                if named != item.name {
+                    wrong.push(format!(
+                        "the {}'s `{}` spends charges of the {named}, which is not the \
+                         object it is written on",
+                        item.name,
+                        action.name()
+                    ));
+                    continue;
+                }
+                if count == 0 {
+                    wrong.push(format!(
+                        "the {}'s `{}` is priced in charges and costs none — \
+                         `ItemUseBilling::Free` is how an unlimited clause is spelled",
+                        item.name,
+                        action.name()
+                    ));
+                } else if count > item.charges {
+                    wrong.push(format!(
+                        "the {}'s `{}` costs {count} charges and the object holds {}",
+                        item.name,
+                        action.name(),
+                        item.charges
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(wrong.is_empty(), "{}", wrong.join("\n  "));
+    // And the sweep bites. A refactor that stopped `cost()` naming the
+    // charge — the exact regression that would make every assertion
+    // above vacuously true — would leave this at zero.
+    assert!(
+        priced >= 30,
+        "only {priced} charge-priced rows found across three shelves; the sweep \
+         has stopped reading the cost list"
+    );
+}
+
 /// A staff casts the spell itself, and the slot stays in the book.
 ///
 /// The whole point of `StaffSpell` being an adapter rather than a copy:
@@ -101513,11 +101919,20 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
     //     is destroyed when the spell is cast and disappears from the
     //     helm", and "when all the gems are removed or destroyed, the
     //     helm loses its magic". Nothing grows a new diamond overnight.
+    //   - The **Iron Flask** and the **Mirror of Life Trapping** hold
+    //     what they caught. Their pools are cells rather than charges,
+    //     and a night's sleep does not let anything out of one.
+    //   - The **Talisman of Ultimate Evil** ends with its sixth
+    //     fissure — "when you expend the last charge, the talisman
+    //     becomes a nonmagical item".
     const NO_REFILL: &[&str] = &[
         crate::items::item_template::NINE_LIVES_STEALER.name,
         crate::items::item_template::POTION_OF_FIRE_BREATH.name,
         crate::items::item_template::WIND_FAN.name,
         crate::items::item_template::HELM_OF_BRILLIANCE.name,
+        crate::items::item_template::IRON_FLASK.name,
+        crate::items::item_template::MIRROR_OF_LIFE_TRAPPING.name,
+        crate::items::item_template::TALISMAN_OF_ULTIMATE_EVIL.name,
     ];
 
     let mut wrong: Vec<String> = Vec::new();

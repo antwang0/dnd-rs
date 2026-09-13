@@ -3267,8 +3267,14 @@ fn try_self_buff_mage_armor(
     // The three are ordered by what they cost, cheapest first, and the
     // shared `MageArmored` gate above means whichever lands first
     // silences the other two.
+    // The Cube of Force's cheapest face is the fourth source, and it
+    // goes last for the same reason the potion does: it is the only one
+    // of the four that costs an object something. A charge out of ten is
+    // cheaper than a potion out of one, which is why it goes *before*
+    // the bottle rather than after it.
     try_self_action(encounter, actor_id, "armor of shadows")
         .or_else(|| try_self_action(encounter, actor_id, "mage armor"))
+        .or_else(|| try_self_action(encounter, actor_id, "cube of force: mage armor"))
         .or_else(|| try_self_action(encounter, actor_id, "drink potion of mage armor"))
 }
 
@@ -20397,6 +20403,18 @@ mod tests {
             // buff. `LOCKDOWNS` leaves the spell off for the same
             // reason and says so.
             ("use wand of polymorph", "a lockdown that heals its target"),
+            // The Cube of Force's second face is `spells::SHIELD`, and
+            // the honest reason no rung picks it is that no rung picks
+            // the *spell* either: the AI has never cast Shield, from a
+            // slot or from anything else. It is a Reaction buff worth
+            // spending only against a swing that is about to land, and
+            // every reaction window the dispatcher opens fires *after*
+            // the damage — which is one tick too late for a +5 to Armor
+            // Class. A rung that fired it pre-emptively on the caster's
+            // own turn would spend the reaction that the opportunity
+            // attack wanted, every round, for five AC against an attack
+            // that may never come.
+            ("cube of force: shield", "no reaction window opens before the roll"),
         ];
         let exempt: BTreeMap<&str, &str> = NOT_FOR_THE_AI.iter().copied().collect();
 
@@ -20418,7 +20436,11 @@ mod tests {
             .chain(SLOT_RESTORING_ITEMS.iter().copied())
             // The two rungs that name one item apiece inline rather than
             // through a table.
-            .chain(["drink potion of mage armor", "swear oathbow"])
+            .chain([
+                "drink potion of mage armor",
+                "cube of force: mage armor",
+                "swear oathbow",
+            ])
             .collect();
 
         let mut orphans: Vec<String> = Vec::new();

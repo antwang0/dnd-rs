@@ -6381,6 +6381,126 @@ pub static HELM_OF_BRILLIANCE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Cube of Force** (Wondrous item, Rare, requires attunement) — the
+/// one item in the SRD that ships as a menu already written.
+///
+/// RAW prints a *table* of faces and charge costs, which is the shape
+/// `StaffSpell` exists for, on an inch of carved stone rather than a
+/// stick — so the cube is the closest thing to a staff the file has that
+/// is not one, and the only Rare with a four-row menu.
+///
+/// The spread is a defensive ladder at four prices out of ten charges:
+/// Mage Armor for one, Shield for one, Resilient Sphere for four, Wall
+/// of Force for five. A holder can spend the pool on eight rounds of
+/// Shield or on one wall, which is the trade an item with a big pool and
+/// an expensive top row should ask.
+///
+/// See `item_actions::CUBE_OF_FORCE_NAME` for RAW's two faces that cast
+/// nothing here, and for the chassis bug the Shield face turned up.
+pub static CUBE_OF_FORCE: Item = Item {
+    name: crate::actions::item_actions::CUBE_OF_FORCE_NAME,
+    glyph: 'q',
+    on_use: &[
+        &crate::actions::item_actions::CUBE_OF_FORCE_MAGE_ARMOR,
+        &crate::actions::item_actions::CUBE_OF_FORCE_SHIELD,
+        &crate::actions::item_actions::CUBE_OF_FORCE_RESILIENT_SPHERE,
+        &crate::actions::item_actions::CUBE_OF_FORCE_WALL_OF_FORCE,
+    ],
+    // RAW's ten, and RAW's "regains 1d6 expended charges daily at dawn"
+    // — the one item on this lane whose refill die has no `+1`.
+    charges: 10,
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 6)),
+        constant: 0,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Iron Flask** (Wondrous item, Legendary) — one save, and the
+/// creature is gone.
+///
+/// The top of the engine's "off the board and not dead" ladder, above
+/// the Scroll of Banishment's DC 15 and the Wand of Binding beside it.
+/// Three points of DC is most of a monster's Wisdom save, and this is
+/// the only thing on the table that asks for them.
+///
+/// Deliberately **no attunement**, which RAW is explicit about and which
+/// is the whole reason a party would carry one: the flask is the answer
+/// to a fight nobody's three bonded items can solve, and it is worth
+/// nothing until that fight arrives. An item that had to be bonded in
+/// advance would be one nobody could afford to be carrying.
+///
+/// See `item_actions::OPEN_IRON_FLASK` for RAW's plane-of-origin gate,
+/// which the engine has no cosmology to ask, and for the release clause
+/// that would need a summon naming a body the fight put away.
+pub static IRON_FLASK: Item = Item {
+    name: crate::actions::item_actions::IRON_FLASK_NAME,
+    glyph: 'j',
+    on_use: &[&crate::actions::item_actions::OPEN_IRON_FLASK],
+    // One prisoner, and nothing lets go of it at dawn.
+    charges: 1,
+    ..Item::DEFAULTS
+};
+
+/// **Mirror of Life Trapping** (Wondrous item, Very Rare) — the Iron
+/// Flask's sentence aimed at a room.
+///
+/// Nothing else on the loot table takes three bodies off the board at
+/// once without dealing a point of damage. A Charisma save rather than
+/// the flask's Wisdom, and three points softer — which is RAW and is
+/// also the right shape: the wide one should be the one a strong-willed
+/// creature walks through.
+///
+/// See `item_actions::ACTIVATE_MIRROR_OF_LIFE_TRAPPING` for why a
+/// fixture you hang on a wall ships as a moment of activation.
+pub static MIRROR_OF_LIFE_TRAPPING: Item = Item {
+    name: crate::actions::item_actions::MIRROR_OF_LIFE_TRAPPING_NAME,
+    glyph: 'm',
+    on_use: &[&crate::actions::item_actions::ACTIVATE_MIRROR_OF_LIFE_TRAPPING],
+    // RAW's twelve cells, at the six an encounter can make use of. No
+    // refill: what is in the mirror stays there.
+    charges: 6,
+    ..Item::DEFAULTS
+};
+
+/// **Talisman of Ultimate Evil** (Wondrous item, Legendary, requires
+/// attunement) — the Talisman of Pure Good's opposite number, and the
+/// only item in the file whose headline clause is *death*.
+///
+/// The two talismans arrived a long batch apart and are deliberately not
+/// mirror images. Pure Good is a flat defensive stack — `+1` AC and `+2`
+/// to every save — because RAW's per-day burst had no lane when it was
+/// written. This one is the burst: six charges of a DC 20 Dexterity save
+/// that destroys what fails it, which is the single most decisive thing
+/// a non-caster can do with an Action anywhere on the loot table.
+///
+/// **Holy Symbol** is the other half and lands on `spell_attack_bonus`:
+/// *"you gain a +2 bonus to spell attack rolls while you wear or hold
+/// it"*, which is the Robe of the Archmagi's clause without the save-DC
+/// twin. It makes the talisman the only item outside the wand shelf that
+/// sharpens a spell attack and nothing else — an Eldritch Knight's Fire
+/// Bolt, a warlock's Eldritch Blast, and not one point on the sword in
+/// their other hand.
+///
+/// See `item_actions::OPEN_TALISMAN_FISSURE` for why the fissure is
+/// written out rather than configured, for the Celestial clause, and for
+/// the curse-on-its-bearer sentence that is named rather than dropped.
+pub static TALISMAN_OF_ULTIMATE_EVIL: Item = Item {
+    name: crate::actions::item_actions::TALISMAN_OF_ULTIMATE_EVIL_NAME,
+    glyph: 'T',
+    on_use: &[&crate::actions::item_actions::OPEN_TALISMAN_FISSURE],
+    bonuses: ItemBonuses {
+        spell_attack_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    // RAW's six, and nothing gives them back: "when you expend the last
+    // charge, the talisman becomes a nonmagical item."
+    charges: 6,
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Cloak of the Bat** (Wondrous item, Rare, requires attunement) — the
 /// first item in the file that asks how dark it is.
 ///
@@ -7852,6 +7972,16 @@ pub static LOOT_POOL: &[&Item] = &[
     &QUARTERSTAFF_OF_THE_ACROBAT,
     &GLOVES_OF_SWIMMING_AND_CLIMBING,
     &LANTERN_OF_REVEALING,
+    // The cube is the fifth non-staff with a menu, and the only Rare
+    // with four rows; the two vessels and the talisman are the top of
+    // the table. A flask, a mirror and a fissure between them are three
+    // ways of ending a creature that are not hit points, which is the
+    // one thing a party with no answer to a boss has never been able to
+    // find.
+    &CUBE_OF_FORCE,
+    &IRON_FLASK,
+    &MIRROR_OF_LIFE_TRAPPING,
+    &TALISMAN_OF_ULTIMATE_EVIL,
 ];
 
 #[cfg(test)]
