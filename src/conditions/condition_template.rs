@@ -3031,6 +3031,45 @@ pub enum Condition {
     /// the save on the swing that landed the die — RAW's two clauses are
     /// one sentence and they resolve together.
     GiantSlaying,
+    /// Holding a 5e **Hammer of Thunderbolts** — *"Giants' Bane. When
+    /// you roll a 20 on the d20 for an attack roll made with this weapon
+    /// against a Giant, the creature must succeed on a DC 17
+    /// Constitution saving throw or die."*
+    ///
+    /// A weapon-borne condition like `GiantSlaying` above, and the only
+    /// one whose clause is about a **second item**. RAW gates the whole
+    /// of Giants' Bane on the wielder also wearing, and being attuned
+    /// to, a Belt of Giant Strength or Gauntlets of Ogre Power — which
+    /// is a question about the attacker's pack rather than about the
+    /// target, and the reason `OnHitRider::attacker_gate` exists.
+    ///
+    /// Distinct from `GiantSlaying` rather than folded into it because
+    /// the two sentences are different rules about the same kind of
+    /// creature: the slayer pays out extra damage on every hit and knocks
+    /// the giant down, and this pays out nothing at all except on a
+    /// natural 20, where it kills.
+    GiantsBane,
+    /// Carrying 5e **Ammunition of Slaying** — *"If a creature of that
+    /// type takes damage from the ammunition, the creature makes a DC 17
+    /// Constitution saving throw, taking an extra 6d10 Force damage on a
+    /// failed save or half as much extra damage on a successful one."*
+    ///
+    /// The weapon-borne family's first *consumable*. Every other row is
+    /// a clause that fires on every hit for as long as the item is
+    /// carried; RAW's arrow becomes nonmagical the moment it pays out,
+    /// which the rider table already has a column for
+    /// (`OnHitRider::consume_on_trigger`) and which no item row had ever
+    /// used.
+    ///
+    /// RAW rolls a d100 for the creature type the arrow was made to
+    /// kill. The engine fixes it at Aberration, on the same reasoning
+    /// that fixes the Bag of Tricks' draw at a panther: a random gate is
+    /// a random amount of item, and a player cannot make a decision
+    /// about a thing whose value was decided before they could see it.
+    /// Aberration is the choice because it is the one large branch of
+    /// the bestiary — aboleths, beholders, mind flayers, cloakers,
+    /// chuuls, nothics, otyughs — with no bane weapon pointed at it.
+    SlayingAmmunition,
     /// Holding a 5e **Oathbow** — *"When you nock an arrow on this bow,
     /// it whispers in Elvish, 'Swift defeat to my enemies.' When you use
     /// this weapon to make a ranged attack, you can, as a command
@@ -3775,6 +3814,8 @@ impl Condition {
             Condition::Braced => "braced",
             Condition::DragonSlaying => "wielding a dragon slayer",
             Condition::GiantSlaying => "wielding a giant slayer",
+            Condition::GiantsBane => "wielding a hammer of thunderbolts",
+            Condition::SlayingAmmunition => "carrying slaying ammunition",
             Condition::Oathbound => "wielding an oathbow",
             Condition::SunBladed => "wielding a sun blade",
             Condition::Disrupting => "wielding a mace of disruption",

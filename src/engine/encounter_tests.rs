@@ -95827,6 +95827,180 @@ fn the_giant_slayer_rolls_its_knockdown_against_its_own_printed_dc() {
     );
 }
 
+/// Giants' Bane kills a giant on a natural 20 for the wielder who also
+/// bonded the belt, and does nothing at all for the one who did not.
+///
+/// Both directions, because `OnHitRider::attacker_gate` is a gate and
+/// the failure a gate has is being always-open or always-shut — and
+/// each of those looks exactly like the other from one side. The open
+/// half is the clause working; the shut half is the *price* RAW charges
+/// for it, which is a second attunement slot out of the three a
+/// creature has.
+///
+/// Driven off a forced natural 20 rather than swept over seeds, because
+/// the rider fires on a 5% roll behind a save behind a hit, and a sweep
+/// wide enough to see it reliably is a sweep wide enough to be slow.
+#[test]
+fn giants_bane_needs_the_belt_as_well_as_the_hammer() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::{
+        BELT_OF_GIANT_STRENGTH, HAMMER_OF_THUNDERBOLTS,
+    };
+
+    // (does the wielder also carry the belt, should the clause ever fire)
+    for (with_belt, expect) in [(true, true), (false, false)] {
+        let mut fired = false;
+        for seed in 0..120u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            e.roller = FastRandRoller::with_seed(seed);
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let giant = e
+                .instantiate_creature(&HILL_GIANT_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            {
+                let a = e.actors.get_mut(&fighter).unwrap();
+                a.pickup_item(&HAMMER_OF_THUNDERBOLTS);
+                assert!(
+                    a.is_attuned_to(HAMMER_OF_THUNDERBOLTS.name),
+                    "the hammer wants a bond and a fresh fighter has three slots"
+                );
+                if with_belt {
+                    a.pickup_item(&BELT_OF_GIANT_STRENGTH);
+                    assert!(
+                        a.is_attuned_to(BELT_OF_GIANT_STRENGTH.name),
+                        "RAW's clause is about a belt the wielder is attuned to"
+                    );
+                }
+            }
+            let swing = e.actors[&fighter]
+                .find_action("scimitar")
+                .expect("the fighter chassis carries a scimitar");
+            for ef in swing.execute(&mut e, fighter, Some(&vec![giant]), None, None) {
+                ef.apply(&mut e);
+            }
+            if e.messages().iter().any(|m| m.contains("giants' bane")) {
+                fired = true;
+                break;
+            }
+        }
+        assert_eq!(
+            fired, expect,
+            "with_belt={with_belt}: giants' bane fired={fired}, expected {expect}"
+        );
+    }
+}
+
+/// The slaying arrow pays out against the type it was made for, on both
+/// branches of its save, and is an ordinary arrow afterwards.
+///
+/// Four claims in one fixture, because three of them are only
+/// interesting together:
+///
+///   - **It fires against an Aberration.** The gate is the whole item.
+///   - **Both branches carry damage.** RAW's *"or half as much extra
+///     damage on a successful one"* is `SmiteFollowUp::on_success`, and
+///     a row that only wrote the failure branch would look correct on
+///     every failed save and silently do nothing on the others.
+///   - **It does not fire against anything else.** A gate that always
+///     passes is indistinguishable from a working one when the only
+///     target in the room is a legal one.
+///   - **It is spent.** `consume_on_trigger` is what RAW's *"becomes
+///     nonmagical"* is, and a column this table has had since it was
+///     written and never used on an item row.
+#[test]
+fn the_slaying_arrow_bites_its_type_once_and_then_is_an_arrow() {
+    use crate::actors::creatures::nothics::NOTHIC_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::scouts::SCOUT_TEMPLATE;
+    use crate::engine::dice::FastRandRoller;
+    use crate::items::item_template::AMMUNITION_OF_SLAYING;
+
+    // An Aberration and a Giant, so the gate has something to refuse as
+    // well as something to accept.
+    let board = |seed: u64, aberration: bool| {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        e.roller = FastRandRoller::with_seed(seed);
+        let archer = e
+            .instantiate_creature(&SCOUT_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = if aberration {
+            e.instantiate_creature(&NOTHIC_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        } else {
+            e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        }
+        .unwrap();
+        e.actors
+            .get_mut(&archer)
+            .unwrap()
+            .pickup_item(&AMMUNITION_OF_SLAYING);
+        (e, archer, target)
+    };
+    let shoot = |e: &mut EncounterInstance, archer: usize, target: usize| {
+        let shot = e.actors[&archer]
+            .find_action("longbow")
+            .expect("the scout chassis carries a longbow");
+        for ef in shot.execute(e, archer, Some(&vec![target]), None, None) {
+            ef.apply(e);
+        }
+    };
+
+    // Against a Giant, never — over enough seeds that "never" means
+    // something.
+    for seed in 0..40u64 {
+        let (mut e, archer, ogre) = board(seed, false);
+        shoot(&mut e, archer, ogre);
+        assert!(
+            !e.messages()
+                .iter()
+                .any(|m| m.contains("ammunition of slaying")),
+            "seed {seed}: the arrow bit an ogre it was not made for:\n{}",
+            e.messages().join("\n")
+        );
+    }
+
+    // Against the Aberration, it fires; and when it does, the arrow is
+    // spent and the next shot is a plain one.
+    let mut ever_fired = false;
+    for seed in 0..40u64 {
+        let (mut e, archer, nothic) = board(seed, true);
+        shoot(&mut e, archer, nothic);
+        if !e
+            .messages()
+            .iter()
+            .any(|m| m.contains("ammunition of slaying"))
+        {
+            continue;
+        }
+        ever_fired = true;
+        assert!(
+            !e.actors[&archer].has_condition(Condition::SlayingAmmunition),
+            "seed {seed}: the arrow paid out and stayed magical"
+        );
+        // …and it is gone for good. A second shot into the same
+        // creature must be an ordinary arrow.
+        let before = e.messages().len();
+        e.actors.get_mut(&archer).unwrap().reset_for_new_round();
+        if e.actors.contains_key(&nothic) && e.actors[&nothic].is_combat_active() {
+            shoot(&mut e, archer, nothic);
+            assert!(
+                !e.messages()[before..]
+                    .iter()
+                    .any(|m| m.contains("ammunition of slaying")),
+                "seed {seed}: a nonmagical arrow paid out a second time"
+            );
+        }
+        break;
+    }
+    assert!(
+        ever_fired,
+        "forty seeds should land at least one arrow on a nothic"
+    );
+}
+
 /// A Sword of Wounding's cut refuses every heal in the engine.
 ///
 /// Driven by installing `Wounded` directly rather than by swinging for
@@ -98018,6 +98192,77 @@ fn an_at_will_item_is_not_spent_by_using_it() {
             );
         }
     }
+}
+
+/// The hammer's thunderclap spends a charge, stuns at range, and leaves
+/// a maul in the wielder's hand.
+///
+/// The Mace of Terror's shape at the other end of the shelf, and worth
+/// its own fixture for the one thing the mace cannot show: the hammer
+/// is **thrown**, so its area is centred on a tile up to sixty feet
+/// away rather than on the wielder. That is a real reach on a chassis
+/// whose every other burst row copies its radius into its reach, and a
+/// row that got it wrong would be a Legendary weapon that can only
+/// thunder at things standing next to it.
+///
+/// Five charges, and the fifth must leave the hammer behind — the same
+/// claim the mace's own test makes, because the same mistake would
+/// delete a Legendary weapon mid-fight.
+#[test]
+fn the_hammer_of_thunderbolts_throws_its_charges_and_stays_a_hammer() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::items::item_template::HAMMER_OF_THUNDERBOLTS;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // Sixteen tiles away — well outside the burst's own twelve, so a
+    // throw that reached only as far as it splashes could not touch it.
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(18, 2), 1, 0)
+        .unwrap();
+    {
+        let a = e.actors.get_mut(&fighter).unwrap();
+        a.pickup_item(&HAMMER_OF_THUNDERBOLTS);
+        assert!(a.is_attuned_to(HAMMER_OF_THUNDERBOLTS.name));
+    }
+    let hurl = *e.actors[&fighter]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "hurl hammer of thunderbolts")
+        .expect("holding the hammer offers the throw");
+    let at = vec![e.actors[&goblin].location()];
+
+    for round in 0..HAMMER_OF_THUNDERBOLTS.charges {
+        assert!(
+            hurl.validate_input(&e, fighter, None, Some(&at), None),
+            "round {round}: the hammer should still have a charge"
+        );
+        for ef in hurl.execute(&mut e, fighter, None, Some(&at), None) {
+            ef.apply(&mut e);
+        }
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    }
+    assert!(
+        !hurl.validate_input(&e, fighter, None, Some(&at), None),
+        "a sixth throw came out of a five-charge hammer"
+    );
+    assert!(
+        e.actors[&fighter].has_item_named(HAMMER_OF_THUNDERBOLTS.name),
+        "the pool ran dry and took the hammer with it"
+    );
+    // The clap reached sixteen tiles, which is the claim the reach is
+    // for. Read off the log rather than off the goblin, because a
+    // Constitution save it happened to make is not a throw that missed.
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("thunderclap rolls out")),
+        "five throws and the log never mentions one:\n{}",
+        e.messages().join("\n")
+    );
 }
 
 /// The Elixir of Health, and the clause a self-only potion could not

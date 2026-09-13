@@ -5750,6 +5750,7 @@ const BROOM_OF_FLYING_NAME: &str = "Broom of Flying";
 const ROD_OF_RULERSHIP_NAME: &str = "Rod of Rulership";
 const HELM_OF_TELEPATHY_NAME: &str = "Helm of Telepathy";
 const DUST_OF_SNEEZING_AND_CHOKING_NAME: &str = "Dust of Sneezing and Choking";
+const HAMMER_OF_THUNDERBOLTS_NAME: &str = "Hammer of Thunderbolts";
 const SCROLL_OF_LONGSTRIDER_NAME: &str = "Scroll of Longstrider";
 const SCROLL_OF_BARKSKIN_NAME: &str = "Scroll of Barkskin";
 const SCROLL_OF_MAGNIFY_GRAVITY_NAME: &str = "Scroll of Magnify Gravity";
@@ -7973,4 +7974,54 @@ pub static THROW_DUST_OF_SNEEZING_AND_CHOKING: AreaSaveConditionItem = AreaSaveC
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+};
+
+
+/// **Hammer of Thunderbolts** (Weapon, maul; Legendary, requires
+/// attunement) — *"You can expend 1 charge and make a ranged attack
+/// with the weapon, hurling it as if it had the Thrown property … If
+/// the attack hits, the weapon unleashes a thunderclap audible out to
+/// 300 feet. The target and every creature within 30 feet of it other
+/// than you must succeed on a DC 17 Constitution saving throw or have
+/// the Stunned condition until the end of your next turn."*
+///
+/// The throw, on the same chassis and with the same collapse the
+/// Javelin of Lightning takes: RAW's *"make a ranged attack … if the
+/// attack hits"* becomes the area's own saving throw, because
+/// `AreaSaveConditionItem` has no attack roll and because the two
+/// questions RAW asks (does it hit, then do they save) collapse to one
+/// without changing what the hammer is for. The javelin has made that
+/// trade since it was written; this row is the second.
+///
+/// **Stunned for one round**, which is RAW's *"until the end of your
+/// next turn"* and is also the strongest single-round effect in the
+/// engine — the Robe of Scintillating Colors' own docstring says so.
+/// Five charges of it, at a 30-foot radius, is why the hammer is
+/// Legendary and why the pool refills at `1d4+1` rather than at the
+/// wands' `1d6+1`.
+///
+/// RAW's *"other than you"* is the chassis's own enemy-only sweep,
+/// which is stricter than the sentence and in the same direction: the
+/// hammer does not stun the party either.
+///
+/// The half of the throw nothing models is the hammer **leaving the
+/// wielder's hand** — RAW's next sentence flies it back. The engine has
+/// no thrown-weapon lane and no round in which the maul is on the
+/// floor, so the clause is a round-trip with nothing in the middle.
+pub static HURL_HAMMER_OF_THUNDERBOLTS: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "hurl hammer of thunderbolts",
+    action_aliases: &["thunderbolts", "hurl hammer", "thunderclap"],
+    item_name: HAMMER_OF_THUNDERBOLTS_NAME,
+    log_text: "{actor} hurls the hammer; the thunderclap rolls out across the floor.",
+    save: AbilityScoreType::Constitution,
+    dc: 17,
+    // 30 ft radius around the target RAW; 12 tiles.
+    shape: AreaShape::Burst { radius: 12 },
+    // 60 ft long range RAW; 24 tiles. Unlike the self-centred bursts on
+    // this chassis the hammer is *thrown*, so the reach is a real
+    // number rather than a copy of the radius.
+    reach: 24,
+    condition: Condition::Stunned,
+    timer: ConditionTimer::Rounds(1),
+    billing: ItemUseBilling::Charges(1),
 };

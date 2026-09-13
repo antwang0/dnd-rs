@@ -3430,6 +3430,16 @@ pub fn push_on_hit_riders(
         {
             continue;
         }
+        // …and the one question about the creature that *swung* which
+        // carrying the weapon does not already answer. See
+        // `OnHitRider::attacker_gate`; the Hammer of Thunderbolts' RAW
+        // asks whether the same pack also holds a Belt of Giant
+        // Strength, and nothing else on the row can ask it.
+        if let Some(gate) = rider.attacker_gate
+            && !encounter.actors.get(&caster_id).is_some_and(gate)
+        {
+            continue;
+        }
         // …and the same question asked of the pair rather than of
         // either one: a mark the attacker placed on this creature and
         // no other. See `OnHitRider::attacker_link`. Asked here, beside
@@ -4832,6 +4842,34 @@ pub struct OnHitRider {
     /// for the reason `target_gate` is: a row that cannot fire should
     /// not spend a charge finding that out.
     pub requires_natural_twenty: bool,
+    /// Gate on the creature **holding the weapon**, or `None` for the
+    /// seventy-one rows whose RAW asks nothing about it.
+    ///
+    /// The last of the three questions a row can ask and the one the
+    /// table could not: `target_gate` asks what was hit, `attacker_link`
+    /// asks about the pair, and until this column there was no way to
+    /// ask anything at all about the swinger. Every other clause on the
+    /// row is *implicitly* about them — the rider only fires because
+    /// they carry `condition` — and that is exactly why the gap was
+    /// invisible: "does the attacker have the sword" was always the
+    /// whole question, so a clause that asks a *second* thing about them
+    /// had nowhere to go.
+    ///
+    /// SRD 5.2's Hammer of Thunderbolts is the row that needed it.
+    /// *"While you are attuned to the weapon and wearing either a Belt
+    /// of Giant Strength or Gauntlets of Ogre Power to which you are
+    /// also attuned"* — a clause about a **second item in the same
+    /// pack**, which nothing on this row could see. Shipping the hammer
+    /// without it would have been a Legendary maul that kills giants on
+    /// a natural 20 for anybody who picks it up, which is a strictly
+    /// stronger weapon than the one in the book.
+    ///
+    /// Asked beside the target gate rather than before the lane check,
+    /// so the cheap tests still run first, and asked before the
+    /// once-per-turn ledger and the charge pool for the same reason
+    /// those two are ordered as they are: a rider that cannot fire must
+    /// not spend anything discovering it.
+    pub attacker_gate: Option<fn(&ActorInstance) -> bool>,
     /// Gate on the *relationship* between the two creatures: fires only
     /// when the attacker carries this condition and its back-link points
     /// at the creature being hit.
@@ -5728,6 +5766,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5742,6 +5781,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5760,6 +5800,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5792,6 +5833,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5809,6 +5851,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5853,6 +5896,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: Some(crate::actions::class_features::FORM_OF_DREAD_TAG),
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5883,6 +5927,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5905,6 +5950,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5926,6 +5972,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5948,6 +5995,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5972,6 +6020,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -5986,6 +6035,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6036,6 +6086,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6071,6 +6122,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6100,6 +6152,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6131,6 +6184,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6159,6 +6213,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6190,6 +6245,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6209,6 +6265,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6233,6 +6290,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6251,6 +6309,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6270,6 +6329,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6295,6 +6355,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6319,6 +6380,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6353,6 +6415,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6383,6 +6446,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6423,6 +6487,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6444,6 +6509,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6478,6 +6544,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6501,6 +6568,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6528,6 +6596,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             ),
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6566,6 +6635,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6589,6 +6659,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6630,6 +6701,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6659,6 +6731,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6679,6 +6752,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6707,6 +6781,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6738,6 +6813,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6770,6 +6846,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6801,6 +6878,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6836,6 +6914,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6871,6 +6950,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6908,6 +6988,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6942,6 +7023,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -6993,6 +7075,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7022,6 +7105,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7055,6 +7139,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7083,6 +7168,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7112,6 +7198,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7139,6 +7226,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7177,6 +7265,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Dragon),
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7211,6 +7300,120 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
             requires_natural_twenty: false,
+            attacker_gate: None,
+            attacker_link: None,
+            spends_item_charge: None,
+        },
+        // 5e **Hammer of Thunderbolts** (Weapon, maul; Legendary):
+        // "Giants' Bane. When you roll a 20 on the d20 for an attack
+        // roll made with this weapon against a Giant, the creature must
+        // succeed on a DC 17 Constitution saving throw or die."
+        //
+        // Three of the row's columns in one clause, and the only row on
+        // the table that uses all three: `requires_natural_twenty` for
+        // RAW's "roll a 20 on the d20", `target_gate` for the Giant, and
+        // `attacker_gate` — new, and here because of this weapon — for
+        // the sentence RAW opens the whole property with: *"While you
+        // are attuned to the weapon **and wearing either a Belt of Giant
+        // Strength or Gauntlets of Ogre Power** to which you are also
+        // attuned."*
+        //
+        // That gate is not decoration. Without it the hammer is a
+        // Legendary maul that outright kills giants on a natural 20 for
+        // anybody who picks it up, where RAW's is one that does so for a
+        // wielder who has spent a *second* attunement slot on the pair
+        // — which is two of the three a creature has, for one clause
+        // that fires on a 5% roll against one kind of enemy. The slot
+        // is the price, and a rider table that cannot see the pack
+        // cannot charge it.
+        //
+        // No dice of its own: RAW's Giants' Bane pays out nothing on an
+        // ordinary hit, so the `0d1` idiom the table already uses for a
+        // save-only rider is the whole damage column. The `+1` the
+        // hammer prints is `ItemBonuses`, where every other weapon's is.
+        OnHitRider {
+            condition: Condition::GiantsBane,
+            dice: Dice::new(0, 1),
+            label: "giants' bane",
+            damage_type: RiderDamage::Weapon,
+            lane: RiderLane::AnyWeapon,
+            consume_on_trigger: false,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(17),
+                effect: FollowUpEffect::Slay,
+                label: "giants' bane",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            requires_natural_twenty: true,
+            attacker_gate: Some(|a| {
+                a.attunements().iter().any(|n| {
+                    n.starts_with("Belt of Giant Strength") || *n == "Gauntlets of Ogre Power"
+                })
+            }),
+            target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
+            attacker_link: None,
+            spends_item_charge: None,
+        },
+        // 5e **Ammunition of Slaying** (Weapon, any ammunition; Very
+        // Rare): "If a creature of that type takes damage from the
+        // ammunition, the creature makes a DC 17 Constitution saving
+        // throw, taking an extra 6d10 Force damage on a failed save or
+        // half as much extra damage on a successful one. After dealing
+        // its extra damage to a creature, the ammunition becomes
+        // nonmagical."
+        //
+        // The first *consumable* on the armoury's half of the table, and
+        // it is the column that has been sitting here unused since the
+        // table was written: `consume_on_trigger` strips the holder's
+        // condition the moment the rider pays out, which is exactly RAW's
+        // "becomes nonmagical" — the arrow is still in the quiver and it
+        // is an arrow now.
+        //
+        // Both branches of the save carry damage, which is what
+        // `on_success` is for and what "or half as much" means. Rolled as
+        // 3d10 rather than as half of the 6d10 the failure rolled: this
+        // table's two branches are two effects and neither can see the
+        // other's dice, and 3d10 has the same mean with a narrower
+        // spread — the honest rounding of a clause the row cannot phrase
+        // exactly.
+        //
+        // See `Condition::SlayingAmmunition` for why the creature type is
+        // fixed at Aberration rather than rolled on RAW's d100.
+        OnHitRider {
+            condition: Condition::SlayingAmmunition,
+            dice: Dice::new(0, 1),
+            label: "ammunition of slaying",
+            damage_type: RiderDamage::Fixed(DamageType::Force),
+            // Ammunition, so a bow or a sling and never a sword.
+            lane: RiderLane::RangedWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(17),
+                effect: FollowUpEffect::Damage {
+                    dice: Dice::new(6, 10),
+                    damage_type: DamageType::Force,
+                    condition: None,
+                },
+                label: "ammunition of slaying",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: Some(FollowUpEffect::Damage {
+                    dice: Dice::new(3, 10),
+                    damage_type: DamageType::Force,
+                    condition: None,
+                }),
+            }),
+            once_per_turn_tag: None,
+            requires_natural_twenty: false,
+            attacker_gate: None,
+            target_gate: Some(|t| t.creature_type() == CreatureType::Aberration),
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7242,6 +7445,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: Some(Condition::Oathbound),
             spends_item_charge: None,
         },
@@ -7265,6 +7469,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type().is_undead()),
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7313,6 +7518,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 )
             }),
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7335,6 +7541,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7356,6 +7563,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7374,6 +7582,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7401,6 +7610,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7445,6 +7655,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7475,6 +7686,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 )
             }),
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7503,6 +7715,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7517,6 +7730,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Giant),
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7561,6 +7775,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7593,6 +7808,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: true,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7626,6 +7842,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: true,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7676,6 +7893,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                     && !t.is_immune_to(DamageType::Slashing)
             }),
             requires_natural_twenty: true,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7700,6 +7918,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: true,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7729,6 +7948,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: Some(|t| t.creature_type() == CreatureType::Construct),
             requires_natural_twenty: true,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7794,6 +8014,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 )
             }),
             requires_natural_twenty: true,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: Some(
                 crate::items::item_template::NINE_LIVES_STEALER.name,
@@ -7826,6 +8047,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },
@@ -7864,6 +8086,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             once_per_turn_tag: None,
             target_gate: None,
             requires_natural_twenty: false,
+            attacker_gate: None,
             attacker_link: None,
             spends_item_charge: None,
         },

@@ -4482,6 +4482,78 @@ pub static OATHBOW: Item = Item {
 /// plus ettins, cyclopes, ogres and trolls — and the knockdown is worth
 /// more than the two dice against any of them: a prone giant is a giant
 /// every melee ally swings at with advantage.
+/// **Hammer of Thunderbolts** (Weapon, maul; Legendary, requires
+/// attunement) — the heaviest thing on the armoury's shelf, and the
+/// only item in the file whose headline clause asks what **else** is in
+/// the pack.
+///
+/// Three of RAW's four properties:
+///
+///   - The `+1`, which every magic weapon on this table carries.
+///   - **The throw** — five charges, a 30-foot thunderclap, DC 17 or
+///     Stunned. See `item_actions::HURL_HAMMER_OF_THUNDERBOLTS`.
+///   - **Giants' Bane** — a natural 20 against a Giant is DC 17 or
+///     death, and only for a wielder who has also bonded a Belt of
+///     Giant Strength or the Gauntlets of Ogre Power. That second
+///     attunement is RAW's price and it is now a price the engine can
+///     charge: see `engine::attack::OnHitRider::attacker_gate`, which
+///     exists because of this sentence.
+///
+/// The fourth, **Might of Giants** (*"the Strength score bestowed by
+/// your Belt of Giant Strength or Gauntlets of Ogre Power increases by
+/// 4, to a maximum of 30"*), is not modeled and could not be written on
+/// `ability_score_bonuses`: that field is a row about *this* item, and
+/// the clause modifies a number a **different** item set. Written there
+/// it would hand +4 Strength to everybody carrying a maul, which is a
+/// larger lie than the omission.
+pub static HAMMER_OF_THUNDERBOLTS: Item = Item {
+    name: "Hammer of Thunderbolts",
+    glyph: '{',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    on_use: &[&crate::actions::item_actions::HURL_HAMMER_OF_THUNDERBOLTS],
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::GiantsBane],
+    charges: 5,
+    // RAW's "regains 1d4 + 1 expended charges daily at dawn" — the only
+    // recharge line in the file that is neither the wands' 1d6+1 nor
+    // the Staff of Power's 2d8+4.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 4)),
+        constant: 1,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ammunition of Slaying** (Weapon, any ammunition; Very Rare) — one
+/// arrow, one kind of creature, and 6d10 Force behind a DC 17
+/// Constitution save.
+///
+/// The armoury's first consumable. Every other weapon on the shelf is a
+/// clause that fires for as long as it is carried; this one pays out
+/// once and is an arrow afterwards — `consume_on_trigger` on its rider
+/// row, a column the table has had since it was written and had never
+/// used.
+///
+/// See `Condition::SlayingAmmunition` for why the creature type is
+/// fixed at Aberration rather than rolled on RAW's d100, and
+/// `engine::attack::ON_HIT_RIDERS` for the two-branch save.
+///
+/// No attunement, which RAW prints and which is the right price: the
+/// arrow is worth one shot, and a slot spent on it would be a slot
+/// spent on nothing for the rest of the fight.
+pub static AMMUNITION_OF_SLAYING: Item = Item {
+    name: "Ammunition of Slaying",
+    glyph: '\'',
+    grants_magical_attacks: true,
+    passive_conditions: &[crate::conditions::Condition::SlayingAmmunition],
+    ..Item::DEFAULTS
+};
+
 pub static GIANT_SLAYER: Item = Item {
     name: "Giant Slayer",
     glyph: '}',
@@ -6290,6 +6362,8 @@ pub static STAVES: &[&Item] = &[
 /// which ones there are.
 pub static MAGIC_ARMOURY: &[&Item] = &[
     &DRAGON_SLAYER,
+    &HAMMER_OF_THUNDERBOLTS,
+    &AMMUNITION_OF_SLAYING,
     &OATHBOW,
     &GIANT_SLAYER,
     &SUN_BLADE,
@@ -7044,6 +7118,14 @@ pub static LOOT_POOL: &[&Item] = &[
     &VICIOUS_WEAPON,
     &SWORD_OF_WOUNDING,
     &ADAMANTINE_ARMOR,
+    // The two bane weapons the shelf was missing, at the same
+    // single-entry weight as the rest of the family. Both are gated on
+    // the draw in the way the slayers are — a Legendary maul is a `+1`
+    // until a giant walks in, and the arrow is a plain arrow until an
+    // aberration does — which is exactly the swing the paragraph above
+    // says even odds are there to keep.
+    &HAMMER_OF_THUNDERBOLTS,
+    &AMMUNITION_OF_SLAYING,
     // The second batch of the armoury, at the same single-entry weight
     // as the first for the same reason — and the spread across it is
     // wider than anything the file has carried before. The Holy
@@ -7361,6 +7443,15 @@ mod tests {
         let wiring: &[(&Item, Condition, bool)] = &[
             (&DRAGON_SLAYER, Condition::DragonSlaying, false),
             (&GIANT_SLAYER, Condition::GiantSlaying, false),
+            // The Hammer of Thunderbolts is on this column *and* has an
+            // `on_use`, which no other row manages: its marker is
+            // Giants' Bane, carried like a slayer's, and the throw
+            // beside it is a separate clause spending a separate pool.
+            // `false` is right for the same reason the Oathbow's is —
+            // the column asks how the marker arrives, and this one
+            // arrives on pickup.
+            (&HAMMER_OF_THUNDERBOLTS, Condition::GiantsBane, false),
+            (&AMMUNITION_OF_SLAYING, Condition::SlayingAmmunition, false),
             // The Oathbow's `false` is the interesting one on this
             // column. It is not "kindled" — nothing has to be lit and
             // the marker arrives on pickup like the slayers' — but the
