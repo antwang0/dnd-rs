@@ -34,6 +34,11 @@ pub static VETERAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         has_extra_attack: true,
         skills: HashSet::from([Skill::Athletics, Skill::Perception]),
+        // SRD 5.2 **Parry** (Reaction): *"the warrior adds 2 to its AC
+        // against that attack."* The rank-and-file entry on the
+        // parry list — what separates a veteran from the infantry
+        // standing next to them.
+        parry_bonus: 2,
         ..CreatureTemplate::defaults()
     }
 });

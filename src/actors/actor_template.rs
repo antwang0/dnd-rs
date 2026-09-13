@@ -3677,6 +3677,37 @@ pub struct CreatureTemplate {
     /// conservatively grant advantage on all saves, matching the most
     /// common interpretation for combat engines).
     pub has_magic_resistance: bool,
+    /// SRD 5.2 **Parry** — *"Trigger: The knight is hit by a melee
+    /// attack roll while holding a weapon. Response: The knight adds 2
+    /// to its AC against that attack, possibly causing it to miss."*
+    /// The size of that bump, and `0` for everything that does not
+    /// print the reaction.
+    ///
+    /// Eight stat blocks in SRD 5.2 carry it and the number is
+    /// different on nearly every one — the noble and the bandit captain
+    /// at `+2`, the gladiator and the pirate captain at `+3`, the
+    /// erinyes at `+4`, the marilith at `+5`. It is the martial answer
+    /// to Magic Resistance: a creature that is *hard to finish*, on a
+    /// budget the party can exhaust by swinging twice.
+    ///
+    /// A number rather than a flag, because the number is the whole
+    /// content of the reaction and the spread is what makes it read as
+    /// skill: a marilith turning a hit into a miss five points out is a
+    /// different creature from a noble scraping two.
+    ///
+    /// Read at `attack::try_fire_parry`, after every other clause that
+    /// could un-hit the swing has spoken — the parry is the defender's
+    /// last word, and it fires only when it works.
+    pub parry_bonus: i32,
+    /// SRD 5.2 **Riposte**, the Pirate Captain's version of the reaction
+    /// above: *"On a miss, the pirate makes one Rapier attack against
+    /// the triggering creature if within range."*
+    ///
+    /// One reaction buys both halves — the parry and the swing back —
+    /// which is why this is a flag on the parry rather than a second
+    /// reaction of its own. Meaningless without `parry_bonus`, since
+    /// there is no miss for it to answer.
+    pub parry_ripostes: bool,
     /// 5e Recharge ability: some creature abilities recharge on a d6 roll
     /// at the start of each turn (e.g. "Recharge 5-6" means the ability
     /// recharges if the d6 shows 5 or 6). Each entry is (action_name,
@@ -4619,6 +4650,8 @@ impl CreatureTemplate {
             sunlight_frailty: None,
             is_swarm: false,
             has_magic_resistance: false,
+            parry_bonus: 0,
+            parry_ripostes: false,
             recharge_abilities: Vec::new(),
             legendary_actions_per_round: 0,
             legendary_actions: &[],
@@ -5774,6 +5807,11 @@ pub struct ActorInstance {
     sunlight_frailty: Option<SunlightFrailty>,
     is_swarm: bool,
     has_magic_resistance: bool,
+    /// SRD 5.2's Parry / Riposte reaction, copied off the template — see
+    /// `CreatureTemplate::parry_bonus`. `0` for everything that does not
+    /// print the reaction, which is most of the bestiary.
+    parry_bonus: i32,
+    parry_ripostes: bool,
     /// Recharge tracking: maps action name → (min_roll, is_available).
     /// At start-of-turn the engine rolls a d6 for each exhausted ability;
     /// if the roll >= min_roll the ability becomes available again.
@@ -6166,6 +6204,8 @@ impl ActorInstance {
             sunlight_frailty: ct.sunlight_frailty,
             is_swarm: ct.is_swarm,
             has_magic_resistance: ct.has_magic_resistance,
+            parry_bonus: ct.parry_bonus,
+            parry_ripostes: ct.parry_ripostes,
             recharge_abilities: ct
                 .recharge_abilities
                 .iter()
@@ -6639,6 +6679,19 @@ impl ActorInstance {
     pub fn has_magic_resistance(&self) -> bool {
         self.has_magic_resistance
             || self.active_items().any(|i| i.grants_spell_save_advantage)
+    }
+
+    /// How many points of AC this creature's Parry reaction is worth
+    /// against one melee swing — `0` for anybody who does not print the
+    /// reaction. See `CreatureTemplate::parry_bonus`.
+    pub fn parry_bonus(&self) -> i32 {
+        self.parry_bonus
+    }
+
+    /// True when a successful parry also buys a swing back — SRD 5.2's
+    /// Pirate Captain, and nothing else on the roster.
+    pub fn parry_ripostes(&self) -> bool {
+        self.parry_ripostes
     }
 
     /// True while the actor holds something that gives spell attack

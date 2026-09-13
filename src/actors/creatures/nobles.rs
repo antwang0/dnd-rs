@@ -10,9 +10,15 @@ use std::sync::LazyLock;
 ///
 /// RAW: "Parry. The noble adds 2 to its AC against one melee attack
 /// that would hit it. To do so, the noble must see the attacker and be
-/// wielding a melee weapon." Carried on `has_parry`, the same flag the
-/// Battle Master and the Bandit Captain read, so the noble's reaction
-/// competes for the same slot everything else does.
+/// wielding a melee weapon." Carried on `parry_bonus`, the field the
+/// whole parry list reads, so the noble's reaction competes for the
+/// same slot everything else does — and the sight clause comes free
+/// with the shared `reactive_reducer_eligible` gate.
+///
+/// It used to ride `has_parry`, which is the Battle Master *maneuver*
+/// of that name: a damage clamp gated on a superiority die, not an AC
+/// bump, and gated on a die the noble does not have — so the one good
+/// trick on this stat block did nothing at all.
 ///
 /// The reaction is why a CR ⅛ body sits on AC 15 and does not simply
 /// die. Nine hit points is one hit from anything, and Parry is the
@@ -45,7 +51,10 @@ pub static NOBLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        has_parry: true,
+        // SRD 5.2 **Parry** (Reaction): *"the noble adds 2 to its AC
+        // against that attack."* A CR 1/8 stat block with one good
+        // trick, which is what fencing lessons buy.
+        parry_bonus: 2,
         ..CreatureTemplate::defaults()
     }
 });
@@ -83,7 +92,7 @@ mod tests {
     #[test]
     fn the_noble_parries_with_something_it_is_actually_holding() {
         let a = make();
-        assert!(a.has_parry());
+        assert_eq!(a.parry_bonus(), 2, "SRD 5.2 prints +2");
         assert!(a.find_action("noble rapier").is_some());
     }
 }

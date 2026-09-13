@@ -82,6 +82,12 @@ pub static MARILITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_extra_attack: true,
         // 5e **Magic Weapons**: "the marilith's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        // SRD 5.2 **Parry** (Reaction): *"the marilith adds 5 to its AC
+        // against that attack."* The largest parry in the book, and
+        // it is a six-armed swordfighter's stat block saying so: the
+        // creature that attacks seven times a round also has the most
+        // blades free to catch one.
+        parry_bonus: 5,
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

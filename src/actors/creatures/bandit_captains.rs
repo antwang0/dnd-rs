@@ -41,6 +41,12 @@ pub static BANDIT_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         ]),
         has_extra_attack: true,
         skills: HashSet::from([Skill::Athletics]),
+        // SRD 5.2 **Parry** (Reaction): *"the bandit adds 2 to its AC
+        // against that attack, possibly causing it to miss."* The
+        // captain's answer to being the one the party goes for first —
+        // and the reason a bandit captain outlives the four bandits
+        // standing behind them.
+        parry_bonus: 2,
         ..CreatureTemplate::defaults()
     }
 });

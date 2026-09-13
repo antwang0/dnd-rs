@@ -92,14 +92,18 @@ pub static PIRATE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// **Riposte** — RAW: "Trigger: The pirate is hit by a melee attack roll
 /// while holding a weapon. Response: The pirate adds 3 to its AC against
 /// that attack, possibly causing it to miss. On a miss, the pirate makes
-/// one Rapier attack against the triggering creature." The first half is
-/// the engine's `has_parry`, which is the gladiator's reaction and adds
-/// 2 rather than 3; the second half — a free swing off a reaction-forced
-/// miss — has no lane, because nothing in the reaction pipeline can hand
-/// a weapon back to the creature that just dodged. Shipping the parry
-/// half alone is the honest subset: it makes the captain harder to hit
-/// in melee, which is most of what the reaction is for, and it does not
-/// invent a counterattack the engine cannot resolve.
+/// one Rapier attack against the triggering creature." Both halves ship,
+/// and one reaction buys them: `parry_bonus: 3` turns the hit and
+/// `parry_ripostes` hands the rapier straight back. The captain is the
+/// only entry on the parry list that swings back, which is the whole
+/// reason the reaction has a different name on this stat block.
+///
+/// It used to carry `has_parry` — the Battle Master *maneuver*, a
+/// `1d8 + DEX` damage clamp gated on a superiority die the captain does
+/// not have — under a docstring calling the AC half "the honest
+/// subset". It was neither half: the flag modelled a different
+/// mechanic and the die it needed was never in the pool, so the
+/// reaction had never once fired.
 ///
 /// Stat shape: AC 17, 84 HP (13d8+26), STR 10 / DEX 18 / CON 14 / INT 10
 /// / WIS 14 / CHA 17. Speed 30. Skills: Acrobatics, Perception. Saves:
@@ -139,7 +143,14 @@ pub static PIRATE_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         creature_type: CreatureType::Humanoid,
         actions,
         // The first half of RAW's Riposte reaction — see the docstring.
-        has_parry: true,
+        // SRD 5.2 **Riposte** (Reaction): *"the pirate adds 3 to its AC
+        // against that attack, possibly causing it to miss. On a miss,
+        // the pirate makes one Rapier attack against the triggering
+        // creature if within range."* The only entry on the parry list
+        // that swings back, and one reaction buys both halves — see
+        // `CreatureTemplate::parry_ripostes`.
+        parry_bonus: 3,
+        parry_ripostes: true,
         ..CreatureTemplate::defaults()
     }
 });
@@ -180,7 +191,8 @@ mod tests {
         assert!(a.find_action("triple rapier").is_some());
         assert!(a.find_action("pistol").is_some());
         assert!(a.find_action("captain's charm").is_some());
-        assert!(a.has_parry());
+        assert_eq!(a.parry_bonus(), 3, "SRD 5.2 prints +3");
+        assert!(a.parry_ripostes(), "and the captain swings back");
     }
 
     /// The captain's rapier vexes, which is the RAW clause the stat

@@ -17,10 +17,14 @@ use std::sync::LazyLock;
 /// - **gladiator shield bash** (standalone) — 2d4+STR bludgeoning with
 ///   a DC 15 STR save vs Prone.
 ///
-/// Defensive identity is two reactions' worth of clause on one flag
-/// each. **Parry** (`has_parry`) adds 2 to AC against one melee attack
-/// that would otherwise hit, which on a body this size is worth several
-/// rounds over a fight. **Brave** (`has_brave`) is advantage on saves
+/// Defensive identity is two clauses. **Parry** (`parry_bonus: 3`) adds
+/// 3 to AC against one melee attack that would otherwise hit, which on
+/// a body this size is worth several rounds over a fight. It used to
+/// ride `has_parry`, which is the Battle Master *maneuver* of the same
+/// name — a `1d8 + DEX` damage clamp gated on a superiority die the
+/// gladiator has never had — so the reaction this docstring described
+/// had been inert since the day it was written, and it was two points
+/// rather than RAW's three besides. **Brave** (`has_brave`) is advantage on saves
 /// against being frightened — the clause that stops a CR 5 melee boss
 /// from being answered by a level-1 Cause Fear.
 ///
@@ -59,8 +63,12 @@ pub static GLADIATOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Dexterity,
             AbilityScoreType::Constitution,
         ]),
-        has_parry: true,
         has_brave: true,
+        // SRD 5.2 **Parry** (Reaction): *"the gladiator adds 3 to its AC
+        // against that attack."* The one thing a career of being
+        // watched teaches: three points of not being hit, once a
+        // round, in front of a crowd.
+        parry_bonus: 3,
         ..CreatureTemplate::defaults()
     }
 });
@@ -100,7 +108,7 @@ mod tests {
     #[test]
     fn the_gladiator_is_hard_to_answer_with_one_spell() {
         let a = make();
-        assert!(a.has_parry());
+        assert_eq!(a.parry_bonus(), 3, "SRD 5.2 prints +3");
         assert!(a.has_brave());
         assert!(a.is_save_proficient(AbilityScoreType::Strength));
         assert!(a.is_save_proficient(AbilityScoreType::Dexterity));

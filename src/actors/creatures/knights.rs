@@ -19,6 +19,12 @@ use std::sync::LazyLock;
 /// fear-immunity nuance"*, which was a claim about an engine that had
 /// a `condition_immunities` field the whole time.
 ///
+/// The **Parry** reaction ships too — *"the knight adds 2 to its AC
+/// against that attack, possibly causing it to miss"* — on
+/// `parry_bonus` below, which is the field the whole SRD parry list
+/// reads. It is the other half of what makes a knight the thing a party
+/// puts between itself and a dragon.
+///
 /// The **Leadership** reaction is still skipped: it needs a
 /// shouted-orders channel nothing in the engine has.
 pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -64,6 +70,12 @@ pub static KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // any warhorse that spawns beside it, and the feat is what
         // makes that worth doing. See `feats::MOUNTED_COMBATANT_TAG`.
         features: HashSet::from([crate::actions::feats::MOUNTED_COMBATANT_TAG]),
+        // SRD 5.2 **Parry** (Reaction): *"the knight adds 2 to its AC
+        // against that attack, possibly causing it to miss."* The
+        // other half of what makes a knight the thing a party puts
+        // between itself and a dragon — the Frightened immunity keeps
+        // them standing there and this keeps them standing.
+        parry_bonus: 2,
         ..CreatureTemplate::defaults()
     }
 });

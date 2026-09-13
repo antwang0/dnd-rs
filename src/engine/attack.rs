@@ -1571,6 +1571,146 @@ pub fn try_fire_riposte(
     encounter.cleanup_dead_actors();
 }
 
+/// SRD 5.2 **Parry** — *"Trigger: The knight is hit by a melee attack
+/// roll while holding a weapon. Response: The knight adds 2 to its AC
+/// against that attack, possibly causing it to miss."*
+///
+/// Eight stat blocks in the book carry it, at five different magnitudes,
+/// and between them they are most of the martial bestiary a party meets
+/// before the dragons: the noble and the bandit captain at `+2`, the
+/// knight and the warrior veteran at `+2`, the gladiator and the pirate
+/// captain at `+3`, the erinyes at `+4`, the marilith at `+5`. It is
+/// what Magic Resistance is for a caster: not more hit points, but a
+/// *tax on every swing*, and one the party can exhaust by swinging
+/// twice.
+///
+/// Returns `true` when the parry fired and the swing should be treated
+/// as a miss.
+///
+/// **It fires only when it works.** RAW's *"possibly causing it to
+/// miss"* leaves the choice to the defender, and a reaction spent on a
+/// swing that lands anyway is a reaction the creature does not have for
+/// the next one. So the gate is arithmetic: the parry goes up exactly
+/// when `attack_total` sits inside the bump. This is the same rule
+/// `magnet_is_worth_it` applies one lane over and for the same reason —
+/// a defender deciding whether a reaction buys anything.
+///
+/// **A natural 20 is not parried.** A critical hit lands whatever the
+/// AC is, so the clause has nothing to act on; the caller passes
+/// `nat_crit` and this returns early on it. A natural 1 never gets
+/// here, because the swing already missed.
+///
+/// **Melee only.** RAW's trigger names a melee attack roll on all eight
+/// stat blocks, and the reaction is the creature's weapon meeting the
+/// attacker's — there is nothing to parry an arrow with.
+///
+/// Riding the shared `reactive_reducer_eligible` gate gets the rest for
+/// free: combat-active, a reaction to spend, and — the one that matters
+/// here — the defender can *see* the attacker. An invisible swing is
+/// not parried, which is one of the things being invisible is for.
+fn try_fire_parry(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    attacker_id: usize,
+    is_melee: bool,
+    nat_crit: bool,
+    attack_total: i32,
+    target_ac: i32,
+) -> bool {
+    if !is_melee || nat_crit {
+        return false;
+    }
+    let bonus = encounter
+        .actors
+        .get(&target_id)
+        .map(|a| a.parry_bonus())
+        .unwrap_or(0);
+    if bonus <= 0 || attack_total >= target_ac + bonus {
+        return false;
+    }
+    if !reactive_reducer_eligible(
+        encounter,
+        target_id,
+        attacker_id,
+        |a| a.parry_bonus() > 0,
+        None,
+    ) {
+        return false;
+    }
+    let (defender, attacker) = (
+        encounter.actor_name(target_id),
+        encounter.actor_name(attacker_id),
+    );
+    encounter.log(format!(
+        "[reaction] {} parries {} (+{} AC against the swing)",
+        defender, attacker, bonus
+    ));
+    let ripostes = encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|a| a.parry_ripostes());
+    spend_reactive_reducer(encounter, target_id, None);
+    if ripostes {
+        swing_back_after_parry(encounter, target_id, attacker_id);
+    }
+    true
+}
+
+/// SRD 5.2 **Riposte**, the second half of the Pirate Captain's
+/// reaction: *"On a miss, the pirate makes one Rapier attack against
+/// the triggering creature if within range."*
+///
+/// Deliberately *not* routed through `try_fire_riposte` next door,
+/// which is the Battle Master maneuver of the same name: that one opens
+/// by spending a reaction and a superiority die, and this swing has
+/// already been paid for — RAW buys the parry and the counter with one
+/// reaction. What the two share is the swing itself, which is the same
+/// three steps either way: the defender's first melee weapon, a reach
+/// check, and the action's own `side_effects` fired directly rather
+/// than through the cost machinery.
+///
+/// Asks `hostility_blocked` for the same reason the maneuver does: a
+/// parry is something a charmed creature may do against anybody, and
+/// swinging back is not.
+fn swing_back_after_parry(
+    encounter: &mut EncounterInstance,
+    target_id: usize,
+    attacker_id: usize,
+) {
+    use crate::actions::action_template::MELEE_REACH;
+
+    if encounter.hostility_blocked(target_id, attacker_id) {
+        return;
+    }
+    let Some(attack) = encounter
+        .actors
+        .get(&target_id)
+        .and_then(|t| t.first_melee_weapon_action())
+    else {
+        return;
+    };
+    let reach = attack.reach_tiles().unwrap_or(MELEE_REACH);
+    if encounter
+        .footprint_distance(target_id, attacker_id)
+        .is_none_or(|d| d > reach)
+    {
+        return;
+    }
+    let (defender, attacker) = (
+        encounter.actor_name(target_id),
+        encounter.actor_name(attacker_id),
+    );
+    encounter.log(format!(
+        "[reaction] {} ripostes {} through the parry",
+        defender, attacker
+    ));
+    let target_vec = vec![attacker_id];
+    for e in attack.side_effects(encounter, target_id, Some(&target_vec), None, None) {
+        e.apply(encounter);
+    }
+    encounter.cleanup_dead_actors();
+}
+
 /// Which swing a row on `ATTACK_REDIRECTS` answers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RedirectLane {
@@ -2522,6 +2662,26 @@ pub fn resolve_attack_outcome_with_rider(
         && underwater != UnderwaterVerdict::AutoMiss
         && encounter.peerless_aim_rescues(p.caster_id);
     hit |= peerless_aim;
+    // SRD 5.2 **Parry** / **Riposte**, the defender's last word. Here
+    // rather than anywhere above because every clause that could still
+    // un-hit *or* re-hit the swing has now spoken — the nat-1, Bend
+    // Luck, the lake, and the boon that rescues a miss — and a knight
+    // who spent their reaction answering a swing somebody else was
+    // going to un-hit anyway has spent it for nothing. See
+    // `try_fire_parry`, which also declines a swing it cannot turn.
+    if hit
+        && try_fire_parry(
+            encounter,
+            p.target_id,
+            p.caster_id,
+            p.is_melee,
+            nat_crit,
+            attack_total,
+            target_ac,
+        )
+    {
+        hit = false;
+    }
     // 5e Paralyzed / Unconscious clause: any hit from within 5ft is a
     // crit. The promotion happens after we've decided the swing connected
     // so a flat miss still misses — the rider only upgrades a regular

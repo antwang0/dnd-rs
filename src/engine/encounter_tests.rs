@@ -106559,3 +106559,290 @@ fn every_patron_pact_comes_back_on_the_hour() {
         );
     }
 }
+
+/// SRD 5.2 **Parry**: *"Trigger: The knight is hit by a melee attack
+/// roll while holding a weapon. Response: The knight adds 2 to its AC
+/// against that attack, possibly causing it to miss."*
+///
+/// The swing is priced to hit on every face but a natural 1, which puts
+/// exactly two of those faces — the two lowest — inside what a `+2`
+/// parry can turn. Sixty seeds are enough to see both sides of that
+/// line, and the test asserts both: a parry does happen, an unparried
+/// hit does happen, and no seed produces one of them without the other
+/// half of its bookkeeping.
+///
+/// Written as a sweep rather than as one swing because the alternative
+/// is an `if parried { … } else { … }`, and a build where the reaction
+/// never fired at all would sail through the `else`.
+#[test]
+fn a_knight_parries_the_swings_that_would_have_landed_by_a_point() {
+    use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    let (mut parries, mut landed) = (0, 0);
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let swinger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let knight = e
+            .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let ac = e.actors[&knight].armor_class() as i32;
+        assert_eq!(e.actors[&knight].parry_bonus(), 2);
+        let hp_before = e.actors[&knight].hitpoints();
+
+        let (_, dealt) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: swinger,
+                target_id: knight,
+                action_name: "slam",
+                // Lands on every face but a natural 1; faces 2 and 3
+                // are the band two points of parry can reach.
+                attack_bonus: ac - 2,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        let parried = e
+            .messages()
+            .iter()
+            .any(|m| m.contains("parries") && m.contains("+2 AC"));
+        let reaction_left = e.actors[&knight].can_consume_resource(Resource::Reaction);
+        if parried {
+            parries += 1;
+            assert_eq!(dealt, 0, "seed {}: a parried swing deals nothing", seed);
+            assert_eq!(
+                e.actors[&knight].hitpoints(),
+                hp_before,
+                "seed {}: and the knight is untouched",
+                seed
+            );
+            assert!(
+                !reaction_left,
+                "seed {}: the reaction is what paid for it",
+                seed
+            );
+        } else {
+            assert!(
+                reaction_left,
+                "seed {}: a knight who did not parry still has their reaction",
+                seed
+            );
+            if dealt > 0 {
+                landed += 1;
+            }
+        }
+    }
+    assert!(parries > 0, "sixty swings and the knight never parried one");
+    assert!(
+        landed > 0,
+        "sixty swings and every one of them was turned — the band is wrong"
+    );
+}
+
+/// The parry fires only when it works, and only against a sword.
+///
+/// Three swings against one knight, each one a case the reaction must
+/// decline: a shot from across the room (RAW's trigger names a melee
+/// attack roll), a swing that misses on its own (nothing to answer),
+/// and a swing that lands so far inside the AC that two points cannot
+/// reach it (a reaction spent for nothing is a reaction the knight does
+/// not have next round). After all three the knight still has their
+/// reaction, which is the whole assertion.
+#[test]
+fn a_knight_keeps_the_reaction_for_a_swing_two_points_can_turn() {
+    use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let swinger = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let knight = e
+        .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    let ac = e.actors[&knight].armor_class() as i32;
+
+    let cases: &[(&str, i32, bool)] = &[
+        // An arrow. RAW's trigger is a melee attack roll.
+        ("longbow", ac + 20, false),
+        // A swing nothing could make land — no hit to answer.
+        ("feeble slam", -40, true),
+        // A swing so far inside the AC that +2 changes nothing.
+        ("crushing slam", ac + 20, true),
+    ];
+    for (name, bonus, melee) in cases {
+        resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: swinger,
+                target_id: knight,
+                action_name: name,
+                attack_bonus: *bonus,
+                damage_dice: Dice::new(1, 4),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: *melee,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+    }
+
+    assert!(
+        !e.messages().iter().any(|m| m.contains("parries")),
+        "none of the three is a swing a parry can turn:\n{}",
+        e.messages().join("\n")
+    );
+    assert!(
+        e.actors[&knight].can_consume_resource(Resource::Reaction),
+        "so the reaction is still there for one that is"
+    );
+}
+
+/// SRD 5.2's whole parry list, at the magnitudes the book prints.
+///
+/// Eight stat blocks and five different numbers, and the spread is the
+/// point — a marilith turning a hit five points out is a different
+/// creature from a noble scraping two. Three of these carried
+/// `has_parry` instead, which is the Battle Master maneuver of the same
+/// name: a damage clamp gated on a superiority die none of them has, so
+/// their printed reaction had never fired.
+#[test]
+fn the_parry_list_is_the_one_the_book_prints() {
+    use crate::actors::creatures::{
+        bandit_captains::BANDIT_CAPTAIN_TEMPLATE, erinyes::ERINYES_TEMPLATE,
+        gladiators::GLADIATOR_TEMPLATE, knights::KNIGHT_TEMPLATE, mariliths::MARILITH_TEMPLATE,
+        nobles::NOBLE_TEMPLATE, pirates::PIRATE_CAPTAIN_TEMPLATE, veterans::VETERAN_TEMPLATE,
+    };
+
+    let rows = [
+        (&*NOBLE_TEMPLATE, 2),
+        (&*BANDIT_CAPTAIN_TEMPLATE, 2),
+        (&*KNIGHT_TEMPLATE, 2),
+        (&*VETERAN_TEMPLATE, 2),
+        (&*GLADIATOR_TEMPLATE, 3),
+        (&*PIRATE_CAPTAIN_TEMPLATE, 3),
+        (&*ERINYES_TEMPLATE, 4),
+        (&*MARILITH_TEMPLATE, 5),
+    ];
+    for (t, want) in rows {
+        assert_eq!(t.parry_bonus, want, "{} parries for {}", t.name, want);
+    }
+    // The riposte is the pirate captain's alone — RAW gives the free
+    // swing to nobody else on the list, and a second creature quietly
+    // acquiring it would be a second reaction's worth of damage nobody
+    // priced.
+    for (t, _) in rows {
+        assert_eq!(
+            t.parry_ripostes,
+            t.name == PIRATE_CAPTAIN_TEMPLATE.name,
+            "{} disagrees with the book about swinging back",
+            t.name
+        );
+    }
+}
+
+/// SRD 5.2 **Riposte**, the Pirate Captain's parry: *"the pirate adds 3
+/// to its AC against that attack, possibly causing it to miss. On a
+/// miss, the pirate makes one Rapier attack against the triggering
+/// creature if within range."*
+///
+/// One reaction buys both halves, which is what separates this from
+/// every other row on the parry list — and from the Battle Master
+/// maneuver of the same name, which opens by spending a reaction this
+/// one has already spent.
+///
+/// Swept over seeds like the knight's, and for the same reason: the
+/// parry only fires on the low faces, so a single swing would prove
+/// nothing. What is asserted is the pairing — every seed that parries
+/// swings back, and the reaction is gone either way.
+#[test]
+fn a_parried_captain_answers_with_the_rapier() {
+    use crate::actors::creatures::pirates::PIRATE_CAPTAIN_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    let mut ripostes = 0;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let swinger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let captain = e
+            .instantiate_creature(&PIRATE_CAPTAIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let ac = e.actors[&captain].armor_class() as i32;
+        let swinger_hp = e.actors[&swinger].hitpoints();
+
+        resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: swinger,
+                target_id: captain,
+                action_name: "slam",
+                // Faces 2 and 3 land inside a +3 parry; the rest get
+                // through.
+                attack_bonus: ac - 2,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        if !e.messages().iter().any(|m| m.contains("parries")) {
+            assert!(
+                e.actors[&captain].can_consume_resource(Resource::Reaction),
+                "seed {}: no parry, no cost",
+                seed
+            );
+            continue;
+        }
+        ripostes += 1;
+        assert!(
+            e.messages()
+                .iter()
+                .any(|m| m.contains("ripostes") && m.contains("through the parry")),
+            "seed {}: the captain parried and did not swing back:\n{}",
+            seed,
+            e.messages().join("\n")
+        );
+        assert!(
+            !e.actors[&captain].can_consume_resource(Resource::Reaction),
+            "seed {}: one reaction pays for both halves — and it is spent",
+            seed
+        );
+        // The counter is a real attack roll, so it can miss; what it
+        // cannot do is leave the swinger better off than an unanswered
+        // parry would.
+        assert!(
+            e.actors
+                .get(&swinger)
+                .map(|a| a.hitpoints())
+                .unwrap_or(0)
+                <= swinger_hp,
+            "seed {}: the rapier healed somebody",
+            seed
+        );
+    }
+    assert!(
+        ripostes > 0,
+        "sixty swings and the captain never turned one"
+    );
+}

@@ -84,6 +84,11 @@ pub static ERINYES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // are magical."
             crate::actions::class_features::MAGICAL_ATTACKS_TAG,
         ]),
+        // SRD 5.2 **Parry** (Reaction): *"the erinyes adds 4 to its AC
+        // against that attack."* Four points, second only to the
+        // marilith on the whole roster — a devil that has been
+        // fighting since before the party's grandparents.
+        parry_bonus: 4,
         ..CreatureTemplate::defaults()
     }
 });
