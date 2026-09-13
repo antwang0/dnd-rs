@@ -2757,6 +2757,9 @@ impl Action for ShieldOfFaith {
     fn name(&self) -> &str {
         "shield of faith"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["sof", "shield-of-faith"]
     }
@@ -2827,6 +2830,9 @@ impl Action for CauseFear {
     }
     fn name(&self) -> &str {
         "cause fear"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
 
     fn deals_damage(&self) -> bool {
@@ -3122,6 +3128,9 @@ impl Action for FalseLife {
     fn name(&self) -> &str {
         "false life"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["fl", "false-life"]
     }
@@ -3172,6 +3181,9 @@ pub struct Blindness {}
 impl Action for Blindness {
     fn name(&self) -> &str {
         "blindness"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
 
     fn deals_damage(&self) -> bool {
@@ -3302,6 +3314,9 @@ impl Action for FaerieFire {
     }
     fn name(&self) -> &str {
         "faerie fire"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ff", "faerie"]
@@ -4287,6 +4302,9 @@ impl Action for InflictWounds {
     fn name(&self) -> &str {
         "inflict wounds"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["iw", "inflict"]
     }
@@ -4354,6 +4372,9 @@ pub struct RayOfSickness {}
 impl Action for RayOfSickness {
     fn name(&self) -> &str {
         "ray of sickness"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ros", "sickness"]
@@ -5362,6 +5383,9 @@ impl Action for MirrorImage {
     fn name(&self) -> &str {
         "mirror image"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["mi", "mirror"]
     }
@@ -6102,6 +6126,9 @@ impl Action for ColorSpray {
     fn name(&self) -> &str {
         "color spray"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["cs-spell", "color"]
     }
@@ -6372,6 +6399,9 @@ impl Action for MagicWeapon {
     }
     fn name(&self) -> &str {
         "magic weapon"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["mw", "magic-weapon"]
@@ -6648,6 +6678,9 @@ impl Action for VampiricTouch {
     fn name(&self) -> &str {
         "vampiric touch"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["vt", "vamp"]
     }
@@ -6867,6 +6900,9 @@ impl Action for DivineFavor {
     fn name(&self) -> &str {
         "divine favor"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["df", "favor"]
     }
@@ -7016,6 +7052,9 @@ impl Action for SpiritGuardians {
     fn name(&self) -> &str {
         "spirit guardians"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["sg", "spirit", "guards"]
     }
@@ -7136,6 +7175,9 @@ impl Action for Hex {
     }
     fn name(&self) -> &str {
         "hex"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["hex-mark"]
@@ -7303,6 +7345,9 @@ impl Action for Invisibility {
     fn name(&self) -> &str {
         "invisibility"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["invis"]
     }
@@ -7379,6 +7424,9 @@ impl Action for BestowCurse {
     }
     fn name(&self) -> &str {
         "bestow curse"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["bc", "curse"]
@@ -7530,6 +7578,9 @@ impl Action for Blur {
     fn name(&self) -> &str {
         "blur"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["blur-spell"]
     }
@@ -7599,6 +7650,9 @@ impl Action for Haste {
     }
     fn name(&self) -> &str {
         "haste"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ha"]
@@ -7687,6 +7741,9 @@ impl Action for Slow {
     }
     fn name(&self) -> &str {
         "slow"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["sl"]
@@ -8264,6 +8321,9 @@ impl Action for GreaterInvisibility {
     fn name(&self) -> &str {
         "greater invisibility"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ginv", "greater-invis"]
     }
@@ -8494,6 +8554,9 @@ pub struct Revivify {}
 impl Action for Revivify {
     fn name(&self) -> &str {
         "revivify"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["rev", "revive"]
@@ -8991,6 +9054,9 @@ impl Action for PhantasmalKiller {
     fn name(&self) -> &str {
         "phantasmal killer"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["pk", "phantasm"]
     }
@@ -9375,6 +9441,9 @@ impl Action for Disintegrate {
     fn name(&self) -> &str {
         "disintegrate"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["dsg", "disint"]
     }
@@ -9448,6 +9517,9 @@ pub struct FingerOfDeath {}
 impl Action for FingerOfDeath {
     fn name(&self) -> &str {
         "finger of death"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["fod", "fingerdeath"]
@@ -9588,6 +9660,9 @@ pub struct SynapticStatic {}
 impl Action for SynapticStatic {
     fn name(&self) -> &str {
         "synaptic static"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["synaptic", "static"]
@@ -10297,6 +10372,9 @@ impl Action for MassHeal {
     fn name(&self) -> &str {
         "mass heal"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["mh", "mass-heal"]
     }
@@ -10813,6 +10891,9 @@ impl Action for Resurrection {
     fn name(&self) -> &str {
         "resurrection"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["res", "resurrect"]
     }
@@ -10913,6 +10994,9 @@ pub struct PowerWordHeal {}
 impl Action for PowerWordHeal {
     fn name(&self) -> &str {
         "power word heal"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["pwh", "wordheal"]
@@ -12028,6 +12112,9 @@ impl Action for TrueResurrection {
     fn name(&self) -> &str {
         "true resurrection"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["trueres", "tres"]
     }
@@ -12230,6 +12317,9 @@ impl Action for AuraOfVitality {
     }
     fn name(&self) -> &str {
         "aura of vitality"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["aov", "vitality"]
@@ -12554,6 +12644,9 @@ impl Action for Telekinesis {
     fn name(&self) -> &str {
         "telekinesis"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["tk", "lift"]
     }
@@ -12655,6 +12748,9 @@ impl Action for Polymorph {
     }
     fn name(&self) -> &str {
         "polymorph"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
 
     fn deals_damage(&self) -> bool {
@@ -12999,6 +13095,9 @@ impl Action for MindWhip {
     fn name(&self) -> &str {
         "mind whip"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["mw", "whip"]
     }
@@ -13094,6 +13193,9 @@ impl Action for CrusadersMantle {
     }
     fn name(&self) -> &str {
         "crusader's mantle"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["cm", "mantle", "crusader"]
@@ -13253,6 +13355,9 @@ impl Action for TimeStop {
     fn name(&self) -> &str {
         "time stop"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ts", "timestop"]
     }
@@ -13314,6 +13419,9 @@ pub struct Wish {}
 impl Action for Wish {
     fn name(&self) -> &str {
         "wish"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec![]
@@ -13391,6 +13499,9 @@ impl Action for Forcecage {
     fn name(&self) -> &str {
         "forcecage"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["fc", "cage"]
     }
@@ -13458,6 +13569,9 @@ impl Action for CrownOfStarsSpell {
     fn name(&self) -> &str {
         "crown of stars"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["cos", "crown"]
     }
@@ -13523,6 +13637,9 @@ impl Action for Fear {
     }
     fn name(&self) -> &str {
         "fear"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["fr", "terror"]
@@ -13731,6 +13848,9 @@ impl Action for CompelledDuel {
     fn name(&self) -> &str {
         "compelled duel"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["cd-spell", "duel"]
     }
@@ -13837,6 +13957,21 @@ pub struct SmiteSpell {
     /// Spell name string used for concentration tracking. Matches the
     /// 5e RAW spell name so concentration logs read cleanly.
     pub concentration_name: &'static str,
+    /// The school its own book files it under.
+    ///
+    /// A field rather than one answer for the whole chassis, because the
+    /// ten rows do not agree: eight of the smites are Evocation,
+    /// Staggering Smite is Enchantment and Banishing Smite is
+    /// Abjuration, and the three ranged strikes the chassis also carries
+    /// are a Conjuration and two Transmutations. Collapsing them would
+    /// be the kind of rounding that is invisible until an Abjuration
+    /// Wizard's ward declines to weave off a Banishing Smite.
+    ///
+    /// It is not decoration. Two Reactions in the engine — Counterspell
+    /// and the absorbing family — read `Action::school()` as *"is this a
+    /// spell at all?"*, so a smite that answered `None` was one no
+    /// archmage could interrupt and no Ioun Stone could eat.
+    pub school: SpellSchool,
 }
 
 impl Action for SmiteSpell {
@@ -13846,6 +13981,9 @@ impl Action for SmiteSpell {
     /// — and so the assertion in `Action::execute` stays quiet.
     fn holds_concentration(&self) -> bool {
         true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(self.school)
     }
     fn name(&self) -> &str {
         self.display_name
@@ -13932,6 +14070,7 @@ pub static SEARING_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 1,
     prime: Condition::SearingSmiting,
     concentration_name: "Searing Smite",
+    school: SpellSchool::Evocation,
 };
 
 /// Wrathful Smite — 1st-level paladin enchantment, bonus action,
@@ -13943,6 +14082,7 @@ pub static WRATHFUL_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 1,
     prime: Condition::WrathfulSmiting,
     concentration_name: "Wrathful Smite",
+    school: SpellSchool::Evocation,
 };
 
 /// Branding Smite — 2nd-level paladin evocation, bonus action,
@@ -13963,6 +14103,7 @@ pub static BRANDING_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 2,
     prime: Condition::BrandingSmiting,
     concentration_name: "Branding Smite",
+    school: SpellSchool::Evocation,
 };
 
 /// Blinding Smite — 3rd-level paladin evocation, bonus action,
@@ -13974,6 +14115,7 @@ pub static BLINDING_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 3,
     prime: Condition::BlindingSmiting,
     concentration_name: "Blinding Smite",
+    school: SpellSchool::Evocation,
 };
 
 /// Staggering Smite — 4th-level paladin enchantment, bonus action,
@@ -13988,6 +14130,7 @@ pub static STAGGERING_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 4,
     prime: Condition::StaggeringSmiting,
     concentration_name: "Staggering Smite",
+    school: SpellSchool::Enchantment,
 };
 
 /// Banishing Smite — 5th-level paladin abjuration, bonus action,
@@ -14003,6 +14146,7 @@ pub static BANISHING_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 5,
     prime: Condition::BanishingSmiting,
     concentration_name: "Banishing Smite",
+    school: SpellSchool::Abjuration,
 };
 
 /// Thunderous Smite — 1st-level paladin evocation, bonus action,
@@ -14019,6 +14163,7 @@ pub static THUNDEROUS_SMITE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 1,
     prime: Condition::ThunderousSmiting,
     concentration_name: "Thunderous Smite",
+    school: SpellSchool::Evocation,
 };
 
 /// Central registry of every Smite spell, ordered cheapest-slot first.
@@ -14185,6 +14330,9 @@ impl Action for HeatMetal {
     }
     fn name(&self) -> &str {
         "heat metal"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["hm-fire", "heat"]
@@ -14397,6 +14545,9 @@ pub struct Goodberry {}
 impl Action for Goodberry {
     fn name(&self) -> &str {
         "goodberry"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["gb", "berry"]
@@ -14620,6 +14771,9 @@ impl Action for CallLightning {
     }
     fn name(&self) -> &str {
         "call lightning"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["cl-spell", "lightning", "callbolt"]
@@ -15078,6 +15232,9 @@ impl Action for ReverseGravity {
     fn name(&self) -> &str {
         "reverse gravity"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["rg", "reverse"]
     }
@@ -15189,6 +15346,9 @@ impl Action for StormOfVengeance {
     }
     fn name(&self) -> &str {
         "storm of vengeance"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["sov", "stormv"]
@@ -15389,6 +15549,9 @@ impl Action for SpiritShroud {
     }
     fn name(&self) -> &str {
         "spirit shroud"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["shroud", "spirits"]
@@ -15902,6 +16065,9 @@ impl Action for Fly {
     fn name(&self) -> &str {
         "fly"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["levitate-flight", "wing"]
     }
@@ -15976,6 +16142,9 @@ impl Action for Levitate {
     }
     fn name(&self) -> &str {
         "levitate"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["lev", "hoist"]
@@ -16059,6 +16228,9 @@ impl Action for PlantGrowth {
 
     fn name(&self) -> &str {
         "plant growth"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["pg", "vines", "entangle"]
@@ -16389,6 +16561,9 @@ impl Action for HeroesFeast {
     fn name(&self) -> &str {
         "heroes' feast"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["hf", "feast"]
     }
@@ -16617,6 +16792,9 @@ impl Action for HolyWord {
     }
     fn name(&self) -> &str {
         "holy word"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["hwd", "holy"]
@@ -17049,6 +17227,9 @@ impl Action for Maze {
     fn name(&self) -> &str {
         "maze"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["banish"]
     }
@@ -17207,6 +17388,9 @@ impl Action for Eyebite {
     }
     fn name(&self) -> &str {
         "eyebite"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["evil eye"]
@@ -18485,6 +18669,9 @@ impl Action for MassPolymorph {
     fn name(&self) -> &str {
         "mass polymorph"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
 
     fn deals_damage(&self) -> bool {
         // Control, not damage. The AI's focus-fire lane scores by who
@@ -18773,6 +18960,9 @@ pub struct NegativeEnergyFlood {}
 impl Action for NegativeEnergyFlood {
     fn name(&self) -> &str {
         "negative energy flood"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["nef", "negflood"]
@@ -19142,6 +19332,9 @@ impl Action for TensersTransformation {
     fn name(&self) -> &str {
         "tenser's transformation"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["tt", "tenser", "transformation"]
     }
@@ -19438,6 +19631,9 @@ impl Action for AcidArrow {
     fn name(&self) -> &str {
         "acid arrow"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["arrow", "aa"]
     }
@@ -19540,6 +19736,9 @@ pub struct TidalWave {}
 impl Action for TidalWave {
     fn name(&self) -> &str {
         "tidal wave"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["wave", "tw"]
@@ -19773,6 +19972,9 @@ impl Action for MentalPrison {
     fn name(&self) -> &str {
         "mental prison"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["mp", "prison"]
     }
@@ -19875,6 +20077,9 @@ impl Action for InvestitureOfFlame {
     }
     fn name(&self) -> &str {
         "investiture of flame"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["iof", "flameinvest"]
@@ -20938,6 +21143,9 @@ impl Action for MaximiliansEarthenGrasp {
     fn name(&self) -> &str {
         "earthen grasp"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["grasp", "earth", "meg"]
     }
@@ -21417,6 +21625,9 @@ pub struct PsychicLance {}
 impl Action for PsychicLance {
     fn name(&self) -> &str {
         "psychic lance"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["plance", "lance"]
@@ -22644,6 +22855,9 @@ impl Action for DestructiveWave {
     fn name(&self) -> &str {
         "destructive wave"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["dwave", "dw5"]
     }
@@ -22879,6 +23093,9 @@ impl Action for Catapult {
     fn name(&self) -> &str {
         "catapult"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["cat", "hurl"]
     }
@@ -22973,6 +23190,9 @@ impl Action for EarthTremor {
     }
     fn name(&self) -> &str {
         "earth tremor"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["tremor", "quake-1"]
@@ -23334,6 +23554,9 @@ pub struct ChaosBolt {}
 impl Action for ChaosBolt {
     fn name(&self) -> &str {
         "chaos bolt"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["chaos", "cb-bolt"]
@@ -23784,6 +24007,9 @@ impl Action for DragonsBreath {
     fn name(&self) -> &str {
         "dragon's breath"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["dragon-breath", "db", "breath"]
     }
@@ -24146,6 +24372,9 @@ impl Action for WallOfIce {
     }
     fn name(&self) -> &str {
         "wall of ice"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["woice", "ice-wall"]
@@ -24733,6 +24962,9 @@ impl Action for EruptingEarth {
     fn name(&self) -> &str {
         "erupting earth"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["erupt", "ee"]
     }
@@ -24860,6 +25092,9 @@ impl Action for Blight {
     fn name(&self) -> &str {
         "blight"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["bl", "wither"]
     }
@@ -24980,6 +25215,9 @@ impl Action for CircleOfDeath {
     fn name(&self) -> &str {
         "circle of death"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["cod", "circle"]
     }
@@ -25056,6 +25294,9 @@ pub struct Harm {}
 impl Action for Harm {
     fn name(&self) -> &str {
         "harm"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["hrm"]
@@ -25147,6 +25388,9 @@ pub struct DelayedBlastFireball {}
 impl Action for DelayedBlastFireball {
     fn name(&self) -> &str {
         "delayed blast fireball"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["dbf", "delayed", "dblast"]
@@ -25375,6 +25619,9 @@ impl Action for Weird {
     fn name(&self) -> &str {
         "weird"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["wd", "fear9"]
     }
@@ -25462,6 +25709,9 @@ pub struct Regenerate {}
 impl Action for Regenerate {
     fn name(&self) -> &str {
         "regenerate"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["regen", "rg"]
@@ -25716,6 +25966,7 @@ pub static LIGHTNING_ARROW: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 3,
     prime: Condition::LightningArrowPrimed,
     concentration_name: "Lightning Arrow",
+    school: SpellSchool::Transmutation,
 };
 
 /// Ensnaring Strike — level-1 ranger conjuration, bonus action,
@@ -25752,6 +26003,7 @@ pub static ENSNARING_STRIKE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 1,
     prime: Condition::EnsnaringStriking,
     concentration_name: "Ensnaring Strike",
+    school: SpellSchool::Conjuration,
 };
 
 /// Zephyr Strike — level-1 ranger transmutation (XGtE), bonus action,
@@ -25797,6 +26049,7 @@ pub static ZEPHYR_STRIKE: SmiteSpell = SmiteSpell {
     spell_slot_lvl: 1,
     prime: Condition::ZephyrStriking,
     concentration_name: "Zephyr Strike",
+    school: SpellSchool::Transmutation,
 };
 
 /// Conjure Volley — level-5 ranger conjuration. The ranger fires a
@@ -25903,6 +26156,9 @@ impl Action for Tsunami {
     }
     fn name(&self) -> &str {
         "tsunami"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ts", "wave", "tidal"]
@@ -26135,6 +26391,9 @@ impl Action for Barkskin {
     fn name(&self) -> &str {
         "barkskin"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["bark", "bs-skin"]
     }
@@ -26343,6 +26602,9 @@ impl Action for HolyWeapon {
     fn name(&self) -> &str {
         "holy weapon"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["hw", "holy", "blessed-weapon"]
     }
@@ -26524,6 +26786,9 @@ impl Action for WardingWind {
     fn name(&self) -> &str {
         "warding wind"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["wwind"]
     }
@@ -26595,6 +26860,9 @@ impl Action for ShadowBlade {
     }
     fn name(&self) -> &str {
         "shadow blade"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["sblade", "shadow"]
@@ -26955,6 +27223,9 @@ impl Action for FlameBlade {
     fn name(&self) -> &str {
         "flame blade"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["fblade", "flblade"]
     }
@@ -27100,6 +27371,9 @@ impl Action for RayOfEnfeeblement {
     fn name(&self) -> &str {
         "ray of enfeeblement"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["roe", "enfeeble"]
     }
@@ -27205,6 +27479,9 @@ pub struct WitherAndBloom {}
 impl Action for WitherAndBloom {
     fn name(&self) -> &str {
         "wither and bloom"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["wab", "wither"]
@@ -27575,6 +27852,9 @@ impl Action for CrownOfThorns {
     fn name(&self) -> &str {
         "crown of thorns"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["thorns", "cot"]
     }
@@ -27788,6 +28068,9 @@ impl Action for ProtectionFromEnergy {
     }
     fn name(&self) -> &str {
         "protection from energy"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["pfe", "prot energy"]
@@ -28238,6 +28521,9 @@ impl Action for AntilifeShell {
     fn name(&self) -> &str {
         "antilife shell"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["als", "antilife"]
     }
@@ -28677,6 +28963,9 @@ impl Action for InvestitureOfIce {
     fn name(&self) -> &str {
         "investiture of ice"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ioi", "iceinvest"]
     }
@@ -28763,6 +29052,9 @@ impl Action for InvestitureOfStone {
     fn name(&self) -> &str {
         "investiture of stone"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ios", "stoneinvest"]
     }
@@ -28846,6 +29138,9 @@ impl Action for SpiderClimb {
     }
     fn name(&self) -> &str {
         "spider climb"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["scl", "climb"]
@@ -28936,6 +29231,9 @@ impl Action for TashasCausticBrew {
     }
     fn name(&self) -> &str {
         "tasha's caustic brew"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["tcb", "brew", "caustic"]
@@ -29191,6 +29489,9 @@ impl Action for PhantasmalForce {
     fn name(&self) -> &str {
         "phantasmal force"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["pf", "phantasm-force", "phantasmal"]
     }
@@ -29298,6 +29599,9 @@ impl Action for WallOfLight {
     }
     fn name(&self) -> &str {
         "wall of light"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["wol", "light-wall"]
@@ -29516,6 +29820,9 @@ impl Action for InvestitureOfWind {
     fn name(&self) -> &str {
         "investiture of wind"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["iow", "windinvest"]
     }
@@ -29587,6 +29894,9 @@ pub struct OtilukesFreezingSphere {}
 impl Action for OtilukesFreezingSphere {
     fn name(&self) -> &str {
         "freezing sphere"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ofs", "otiluke", "sphere"]
@@ -29680,6 +29990,9 @@ pub struct Maelstrom {}
 impl Action for Maelstrom {
     fn name(&self) -> &str {
         "maelstrom"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["mael", "vortex"]
@@ -29897,6 +30210,9 @@ impl Action for FleshToStone {
     fn name(&self) -> &str {
         "flesh to stone"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["fts", "petrify", "stone"]
     }
@@ -30003,6 +30319,9 @@ impl Action for PsychicScream {
     }
     fn name(&self) -> &str {
         "psychic scream"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Enchantment)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ps", "scream", "psy-scream"]
@@ -30134,6 +30453,9 @@ impl Action for BonesOfTheEarth {
     fn name(&self) -> &str {
         "bones of the earth"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["bones", "pillars", "bote"]
     }
@@ -30260,6 +30582,9 @@ impl Action for StormSphere {
     fn name(&self) -> &str {
         "storm sphere"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["sphere", "storm", "ss"]
     }
@@ -30377,6 +30702,9 @@ impl Action for MaddeningDarkness {
     }
     fn name(&self) -> &str {
         "maddening darkness"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["maddening", "darkness", "md"]
@@ -30605,6 +30933,9 @@ impl Action for WallOfSand {
     fn name(&self) -> &str {
         "wall of sand"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["sand", "wos", "sand-wall"]
     }
@@ -30713,6 +31044,9 @@ impl Action for WallOfWater {
     }
     fn name(&self) -> &str {
         "wall of water"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Evocation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["water", "wow", "water-wall"]
@@ -30945,6 +31279,9 @@ impl Action for Longstrider {
     fn name(&self) -> &str {
         "longstrider"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ls", "longstride"]
     }
@@ -31023,6 +31360,9 @@ impl Action for ExpeditiousRetreat {
     }
     fn name(&self) -> &str {
         "expeditious retreat"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["er", "expeditious", "retreat"]
@@ -31254,6 +31594,9 @@ impl Action for EnhanceAbility {
     fn name(&self) -> &str {
         "enhance ability"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ea", "enhance"]
     }
@@ -31363,6 +31706,9 @@ impl Action for Blink {
     fn name(&self) -> &str {
         "blink"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["bl", "phase"]
     }
@@ -31431,6 +31777,9 @@ pub struct Contagion {}
 impl Action for Contagion {
     fn name(&self) -> &str {
         "contagion"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["cg", "infect"]
@@ -31519,6 +31868,9 @@ pub struct Pyrotechnics {}
 impl Action for Pyrotechnics {
     fn name(&self) -> &str {
         "pyrotechnics"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["pyro", "flash"]
@@ -31618,6 +31970,9 @@ impl Action for FlameArrows {
     fn name(&self) -> &str {
         "flame arrows"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["fire arrows", "fa"]
     }
@@ -31698,6 +32053,9 @@ impl Action for AshardalonsStride {
     }
     fn name(&self) -> &str {
         "ashardalon's stride"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["stride", "ashardalon"]
@@ -31788,6 +32146,9 @@ impl Action for OtherworldlyGuise {
     fn name(&self) -> &str {
         "otherworldly guise"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["og", "guise"]
     }
@@ -31877,6 +32238,9 @@ impl Silence {
 impl Action for Silence {
     fn name(&self) -> &str {
         "silence"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["sil", "hush"]
@@ -32074,6 +32438,9 @@ pub struct RaiseDead {}
 impl Action for RaiseDead {
     fn name(&self) -> &str {
         "raise dead"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["rd", "raise"]
@@ -32340,6 +32707,9 @@ impl Action for ShadowOfMoil {
     fn name(&self) -> &str {
         "shadow of moil"
     }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Necromancy)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["moil", "shadow-moil"]
     }
@@ -32430,6 +32800,9 @@ impl Action for AnimateObjects {
     }
     fn name(&self) -> &str {
         "animate objects"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ao", "animate-obj", "objects"]
@@ -32528,6 +32901,9 @@ pub struct MagnifyGravity {}
 impl Action for MagnifyGravity {
     fn name(&self) -> &str {
         "magnify gravity"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["mg", "magnify", "gravity"]
@@ -32646,6 +33022,9 @@ impl Action for ElementalWeapon {
     }
     fn name(&self) -> &str {
         "elemental weapon"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
     }
     fn aliases(&self) -> Vec<&str> {
         vec!["ew", "elemental-weapon"]

@@ -27807,21 +27807,30 @@ fn the_counterspeller_keeps_its_slot_for_something_worth_it() {
     );
 }
 
-/// The cheap self-buff goes unanswered, and Shield is why.
+/// Anything smaller than a level-3 slot and not holding concentration
+/// goes unanswered, and Shield is why.
 ///
 /// A counterspeller that fires automatically pays a level-3 slot
 /// whichever way the save falls, so it has to be told what is worth
 /// three. `spells::SHIELD` is a level-1 Reaction every mage on the
-/// roster casts; without the policy a counterspeller would spend a
-/// third-level slot on each one until there was nothing left for the
-/// Fireball.
+/// roster casts and `MAGIC_MISSILE` is the level-1 attack they open
+/// with; without the policy a counterspeller would spend a third-level
+/// slot on each one until there was nothing left for the Fireball.
+///
+/// Magic Missile is the case the earlier, looser rule got wrong: it
+/// answered anything *harmful* at any level, which is most of a
+/// caster's first three slots and every one of a paladin's smites.
 #[test]
 fn a_counterspeller_does_not_answer_a_level_one_self_buff() {
-    use crate::actions::spells::{MAGE_ARMOR, SHIELD};
+    use crate::actions::spells::{MAGE_ARMOR, MAGIC_MISSILE, SHIELD};
     use crate::actors::creatures::sorcerers::SORCERER_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
 
-    for spell in [&*SHIELD as &dyn Action, &*MAGE_ARMOR as &dyn Action] {
+    for spell in [
+        &*SHIELD as &dyn Action,
+        &*MAGE_ARMOR as &dyn Action,
+        &*MAGIC_MISSILE as &dyn Action,
+    ] {
         let mut e = ei_with_terrain(15, 15, &[]);
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 1, 0)
@@ -105428,5 +105437,108 @@ fn oil_of_sharpness_sharpens_every_swing_for_the_rest_of_the_fight() {
         e.actors[&who].attack_bonus_buff(),
         0,
         "the buff does not survive the rest that ends the hour"
+    );
+}
+
+/// Every leveled spell on the roster says which school it is.
+///
+/// This used to be tidiness and is now load-bearing. Two Reactions in
+/// the engine answer a cast rather than its effects — the absorbing
+/// family and Counterspell — and both are handed `Action::school()` as
+/// the question *"is this a spell at all?"*. Nothing else on an action
+/// can answer it: a stat-block ability and a Fireball both have a name,
+/// a target and a damage die, and only a spell has a school.
+///
+/// So a leveled spell that declares no school is one no Ioun Stone can
+/// eat and no archmage can counter — and it is invisible, because the
+/// symptom is a reaction that quietly never fires. The paired half of
+/// the sweep is deliberate too: an action with a school and no slot is
+/// fine (every cantrip is one), and a *non*-spell with a school would be
+/// the same bug from the other side, so the sweep asks only in the
+/// direction that can hide.
+#[test]
+fn every_leveled_spell_names_its_school() {
+    use crate::actions::action_template::Action;
+    use crate::engine::side_effects::spell_slot_level;
+
+    // The things that spend a spell slot and are not spells. Named one
+    // by one rather than exempted by a rule, because "spends a slot" is
+    // the only handle there is and a rule over it would exempt the next
+    // spell somebody forgets to file.
+    //
+    //   - **Font of Magic** (the three `convert level-N slot` rows) is
+    //     the Sorcerer trading a slot for sorcery points. The slot is
+    //     what is spent, not what is cast.
+    //   - **Eldritch Smite** is an Eldritch Invocation that spends a
+    //     Pact Magic slot. RAW files invocations outside the spell list
+    //     on purpose: nothing counterspells one.
+    //   - **Water Whip** is a Way of Four Elements monk's Elemental
+    //     Discipline. RAW buys it with ki; the engine prices it in the
+    //     slot lane the rest of that subclass uses, which is a
+    //     bookkeeping choice and not a claim that the monk is casting.
+    const SPENDS_A_SLOT_WITHOUT_CASTING: &[&str] = &[
+        "convert level-1 slot",
+        "convert level-2 slot",
+        "convert level-3 slot",
+        "eldritch smite",
+        "water whip",
+    ];
+    let mut schoolless: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let mut exempt_seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    let mut leveled = 0usize;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let templates = EncounterInstance::template_pool()
+        .into_iter()
+        .chain(
+            crate::actors::creatures::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+    for (i, template) in templates.enumerate() {
+        // One body per template, somewhere out of everybody's way. The
+        // costs below are resolved against a live actor because
+        // `Action::cost` takes one; nothing here makes an attack, so the
+        // board's shape does not matter.
+        let Ok(id) = e.instantiate_creature(template, Coordinate::new(1, 1), 0, 10_000 + i)
+        else {
+            continue;
+        };
+        let actions: Vec<&'static (dyn Action + Send + Sync)> =
+            e.actors[&id].actions.to_vec();
+        for action in actions {
+            let costs: Vec<crate::engine::side_effects::Resource> =
+                action.cost(&e, id, None, None, None);
+            if spell_slot_level(&costs).is_none_or(|lvl| lvl == 0) {
+                continue;
+            }
+            if SPENDS_A_SLOT_WITHOUT_CASTING.contains(&action.name()) {
+                exempt_seen.insert(action.name());
+                continue;
+            }
+            leveled += 1;
+            if action.school().is_none() {
+                schoolless.insert(action.name());
+            }
+        }
+        e.actors.remove(&id);
+    }
+    assert!(
+        leveled > 200,
+        "only {leveled} leveled casts swept — the roster walk has stopped working"
+    );
+    // And the exemption list is not a place to hide a typo, nor a place
+    // to quietly file a spell: everything on it must actually be on the
+    // roster, and must actually spend a slot.
+    for name in SPENDS_A_SLOT_WITHOUT_CASTING {
+        assert!(
+            exempt_seen.contains(name),
+            "{name} is exempted from the school sweep and nothing on the roster carries it"
+        );
+    }
+    assert!(
+        schoolless.is_empty(),
+        "{} leveled spells declare no school, so nothing can counter or absorb them:\n  {}",
+        schoolless.len(),
+        schoolless.into_iter().collect::<Vec<_>>().join("\n  ")
     );
 }

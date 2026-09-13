@@ -15538,8 +15538,24 @@ mod tests {
             let _ = e.instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(16, 8), 1, 3);
 
             let ai = SimpleAi;
+            // Summed over the creatures the fight *opened* with, not
+            // over whoever is on the board when it stops.
+            //
+            // The difference is a warlock's Animate Dead. Three ghouls
+            // arriving mid-fight add a hundred hit points to a naive
+            // total, so a board where blood was drawn reads as a board
+            // where the total went *up* — and the "did anybody hit
+            // anybody" assertion at the bottom fails on a fight that
+            // plainly happened. It read correctly for as long as none of
+            // these four seeds happened to summon anything, which is not
+            // the same as being right.
+            let combatants: Vec<usize> = e.actors.keys().copied().collect();
             let total_hp = |e: &EncounterInstance| -> u32 {
-                e.actors.values().map(|a| a.hitpoints()).sum()
+                combatants
+                    .iter()
+                    .filter_map(|id| e.actors.get(id))
+                    .map(|a| a.hitpoints())
+                    .sum()
             };
             let opening_hp = total_hp(&e);
             let mut last_total = opening_hp;

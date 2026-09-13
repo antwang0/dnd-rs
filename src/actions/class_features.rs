@@ -4305,6 +4305,9 @@ impl Action for DivineSmite {
     fn name(&self) -> &str {
         "divine smite"
     }
+    fn school(&self) -> Option<crate::engine::types::SpellSchool> {
+        Some(crate::engine::types::SpellSchool::Evocation)
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["ds", "smite"]
     }

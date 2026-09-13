@@ -10089,24 +10089,26 @@ impl EncounterInstance {
     /// anything, including a cantrip. One that fires *automatically* has
     /// to be told when not to, because there is no reaction window to
     /// ask a player in — and the price is a level-3 slot whichever way
-    /// the save falls, so the policy is really "is this worth three".
-    /// Three things are:
+    /// the save falls. So the policy is the one arithmetic a player
+    /// would do: **never spend three on something smaller than three,
+    /// unless its value is not in its level.**
     ///
-    ///   - **a cast of level 3 or higher** — at least as expensive as
-    ///     the answer;
-    ///   - **anything harmful** — it is aimed at this side of the board,
-    ///     which is reason enough at any level;
-    ///   - **anything holding concentration** — a Haste, a Hypnotic
-    ///     Pattern, a Wall of Force. These are the casts that decide
-    ///     fights, and stopping one costs the caster the whole minute
-    ///     they were going to get out of it.
+    ///   - **A cast of level 3 or higher** is at least as expensive as
+    ///     the answer.
+    ///   - **Anything holding concentration** is the exception the rule
+    ///     needs. A Hex is a level-1 slot and a whole fight's worth of
+    ///     extra damage; a Hold Person is a level-2 slot and somebody
+    ///     out of the fight. What those cost their caster is a minute of
+    ///     concentration, which is the thing a counterspell actually
+    ///     takes.
     ///
-    /// What that leaves out is the cheap self-buff, and leaving it out
-    /// matters more than it sounds: **Shield** is a level-1 Reaction
-    /// every mage on the roster casts, and without this a counterspeller
-    /// would spend a third-level slot on each one until there were none
-    /// left for the Fireball. A cantrip is out for the same reason and
-    /// the same arithmetic.
+    /// Everything else goes past, and the case that matters is the one
+    /// that would otherwise happen every round: **Shield** is a level-1
+    /// Reaction every mage on the roster casts, **Divine Smite** is a
+    /// level-1 Bonus Action a paladin spends on every hit, and a
+    /// counterspeller that answered either would be out of third-level
+    /// slots before the first Fireball. A cantrip is out for the same
+    /// reason and the same arithmetic.
     ///
     /// **Subtle Spell still walks past it**, which is the point of the
     /// metamagic and was already checked in the old action's validator:
@@ -10121,14 +10123,13 @@ impl EncounterInstance {
         spell_name: &str,
         school: Option<crate::engine::types::SpellSchool>,
         level: u32,
-        harmful: bool,
         holds_concentration: bool,
     ) -> bool {
         use crate::engine::side_effects::Resource;
         if school.is_none() || level == 0 {
             return false;
         }
-        if level < Self::COUNTERSPELL_LEVEL && !harmful && !holds_concentration {
+        if level < Self::COUNTERSPELL_LEVEL && !holds_concentration {
             return false;
         }
         let Some(caster) = self.actors.get(&caster_id) else {

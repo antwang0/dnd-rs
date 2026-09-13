@@ -2452,7 +2452,6 @@ pub trait Action {
             self.name(),
             self.school(),
             cast_level,
-            self.is_harmful(),
             self.holds_concentration(),
         ) {
             let costs: Vec<Resource> = self
