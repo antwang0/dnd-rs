@@ -433,10 +433,8 @@ fn cleave(
             damage_dice: p.damage_dice,
             damage_bonus,
             damage_type: p.damage_type,
-            is_melee: true,
-            long_range: None,
             min_range: p.min_range,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     );
     effects.extend(follow_up);

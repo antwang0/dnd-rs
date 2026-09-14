@@ -2942,10 +2942,7 @@ fn weapon_plus_one_increases_dealt_damage_over_baseline() {
                     damage_dice: Dice::new(1, 8),
                     damage_bonus: 3,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             sum = sum.saturating_add(dealt);
@@ -4848,10 +4845,7 @@ fn champion_crits_on_nineteen() {
                 damage_dice: Dice::new(1, 8),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-            is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         champ_dmg = champ_dmg.saturating_add(dealt);
@@ -4875,10 +4869,7 @@ fn champion_crits_on_nineteen() {
                 damage_dice: Dice::new(1, 8),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-            is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         base_dmg = base_dmg.saturating_add(dealt);
@@ -4934,10 +4925,7 @@ fn brutal_critical_adds_die_on_melee_crit() {
                     damage_dice: Dice::new(1, 12),
                     damage_bonus: 4,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-            is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             sum = sum.saturating_add(dealt);
@@ -4999,10 +4987,7 @@ fn savage_attacks_adds_die_on_melee_crit() {
                     damage_dice: Dice::new(1, 12),
                     damage_bonus: 4,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-            is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             sum = sum.saturating_add(dealt);
@@ -5071,9 +5056,7 @@ fn savage_attacks_skips_ranged_crit() {
                     damage_bonus: 3,
                     damage_type: DamageType::Piercing,
                     is_melee: false,
-                    long_range: None,
-                    min_range: None,
-            is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             sum = sum.saturating_add(dealt);
@@ -8086,10 +8069,7 @@ fn paralyzed_melee_hit_promotes_to_crit() {
                     damage_dice: Dice::new(1, 10),
                     damage_bonus: 3,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-            is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             total = total.saturating_add(dmg);
@@ -9538,10 +9518,7 @@ fn a_magic_weapon_carries_a_swing_through_mundane_resistance() {
                 damage_dice: Dice::new(0, 1),
                 damage_bonus: 20,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         let before = e.actors[&tarrasque].hitpoints();
@@ -25747,10 +25724,7 @@ fn empowered_arms_only_pays_while_the_arms_are_up() {
         damage_dice: Dice::new(1, 8),
         damage_bonus: 3,
         damage_type: DamageType::Force,
-        is_melee: true,
-        long_range: None,
-        min_range: None,
-        is_spell: false,
+        ..AttackParams::DEFAULTS
     };
     let mut effects = Vec::new();
     assert!(
@@ -29202,10 +29176,7 @@ fn inspired_bonus_lands_on_weapon_attack() {
                     damage_dice: Dice::new(1, 8),
                     damage_bonus: 0,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-            is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             if !effects.is_empty() {
@@ -34134,10 +34105,7 @@ fn illusory_self_zeroes_damage_at_the_weapon_attack_chokepoint() {
                 damage_dice: crate::engine::dice::Dice::new(1, 8),
                 damage_bonus: 0,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         )
         .1
@@ -37530,10 +37498,7 @@ fn sweeping_attack_splash_targets_adjacent_enemy() {
             damage_dice: crate::engine::dice::Dice::new(0, 1),
             damage_bonus: 0,
             damage_type: crate::engine::types::DamageType::Slashing,
-            is_melee: true,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..crate::engine::attack::AttackParams::DEFAULTS
         },
     ) {
         ef.apply(&mut e);
@@ -43626,10 +43591,7 @@ fn uncanny_dodge_consumes_reaction_on_hit() {
                 damage_dice: Dice::new(1, 8),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if !effects.is_empty() {
@@ -43679,9 +43641,7 @@ fn deflect_missiles_reduces_ranged_damage_and_consumes_reaction() {
                 damage_bonus: 2,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -43719,10 +43679,7 @@ fn deflect_missiles_reduces_ranged_damage_and_consumes_reaction() {
                 damage_dice: Dice::new(1, 4),
                 damage_bonus: 2,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -43805,9 +43762,7 @@ fn uncanny_dodge_does_not_fire_against_invisible_attacker() {
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -43870,9 +43825,7 @@ fn deflect_missiles_does_not_fire_when_monk_is_blinded() {
                 damage_bonus: 2,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -43928,10 +43881,7 @@ fn parry_reduces_melee_damage_and_consumes_charge() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 2,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -43989,9 +43939,7 @@ fn parry_only_fires_on_melee_and_gates_on_charge() {
                 damage_bonus: 2,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -44029,10 +43977,7 @@ fn parry_only_fires_on_melee_and_gates_on_charge() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 2,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -44085,10 +44030,7 @@ fn riposte_fires_on_melee_miss_and_consumes_charge() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if !e.actors[&fighter].has_reaction() {
@@ -44134,9 +44076,7 @@ fn riposte_does_not_fire_on_ranged_miss_or_on_hit() {
                 damage_bonus: 0,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         assert!(
@@ -45048,8 +44988,7 @@ fn a_shot_past_normal_range_from_the_water_cannot_land() {
         damage_type: DamageType::Piercing,
         is_melee: false,
         long_range: Some(2),
-        min_range: None,
-        is_spell: false,
+        ..crate::engine::attack::AttackParams::DEFAULTS
     };
     let (effects, damage) = crate::engine::attack::resolve_attack_outcome(&mut e, params);
     assert_eq!(damage, 0, "the shot cannot hit");
@@ -45086,8 +45025,7 @@ fn the_same_shot_from_the_bank_connects() {
         damage_type: DamageType::Piercing,
         is_melee: false,
         long_range: Some(2),
-        min_range: None,
-        is_spell: false,
+        ..crate::engine::attack::AttackParams::DEFAULTS
     };
     let (_, damage) = crate::engine::attack::resolve_attack_outcome(&mut e, params);
     assert!(damage > 0, "a +50 shot from the bank connects");
@@ -60338,10 +60276,7 @@ fn unwavering_mark_locks_the_target_onto_the_cavalier() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         let hit = !effects.is_empty();
@@ -60397,9 +60332,7 @@ fn unwavering_mark_skips_ranged_swings() {
                 damage_bonus: 3,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -60670,10 +60603,7 @@ fn psionic_strike_fires_once_per_turn() {
         damage_dice: Dice::new(1, 6),
         damage_bonus: 3,
         damage_type: DamageType::Slashing,
-        is_melee: true,
-        long_range: None,
-        min_range: None,
-        is_spell: false,
+        ..AttackParams::DEFAULTS
     };
     let mut effects = Vec::new();
     assert!(
@@ -60810,10 +60740,7 @@ fn eldritch_strike_marks_the_target_on_a_weapon_hit() {
                     damage_dice: Dice::new(1, 6),
                     damage_bonus: 3,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             if dealt > 0 {
@@ -61717,10 +61644,7 @@ fn a_help_grant_grants_advantage_on_a_weapon_swing() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         e.messages()[before..]
@@ -63176,10 +63100,7 @@ fn dueling_style_adds_damage_on_melee_weapon_hits() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         styled_dmg = styled_dmg.saturating_add(dealt);
@@ -63208,10 +63129,7 @@ fn dueling_style_adds_damage_on_melee_weapon_hits() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         unstyled_dmg = unstyled_dmg.saturating_add(dealt);
@@ -63301,10 +63219,7 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
                 damage_dice: Dice::new(2, 12),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         styled_dmg = styled_dmg.saturating_add(dealt);
@@ -63334,10 +63249,7 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
                 damage_dice: Dice::new(2, 12),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         unstyled_dmg = unstyled_dmg.saturating_add(dealt);
@@ -65745,10 +65657,7 @@ fn aura_of_hate_adds_damage_on_melee_weapon_hits() {
                 damage_dice: Dice::new(2, 6),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         aura_dmg = aura_dmg.saturating_add(dealt);
@@ -65774,10 +65683,7 @@ fn aura_of_hate_adds_damage_on_melee_weapon_hits() {
                 damage_dice: Dice::new(2, 6),
                 damage_bonus: 3,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         baseline_dmg = baseline_dmg.saturating_add(dealt);
@@ -65825,8 +65731,7 @@ fn aura_of_hate_does_not_fire_on_ranged_weapon_hits() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: Some(30),
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         aura_dmg = aura_dmg.saturating_add(dealt);
@@ -65853,8 +65758,7 @@ fn aura_of_hate_does_not_fire_on_ranged_weapon_hits() {
                 damage_type: DamageType::Piercing,
                 is_melee: false,
                 long_range: Some(30),
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         baseline_dmg = baseline_dmg.saturating_add(dealt);
@@ -81336,10 +81240,7 @@ fn a_boar_that_runs_at_you_hits_harder_than_one_that_does_not() {
                     damage_dice: Dice::new(1, 6),
                     damage_bonus: 1,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             for ef in effects {
@@ -81424,10 +81325,7 @@ fn a_boar_cannot_trample_something_it_only_comes_up_to() {
                     damage_dice: Dice::new(1, 6),
                     damage_bonus: 1,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             for ef in effects {
@@ -81804,10 +81702,7 @@ fn a_cavalier_rides_down_one_foe_per_turn_with_whatever_it_is_holding() {
                     damage_dice: Dice::new(1, 6),
                     damage_bonus: 3,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             let hit = !effects.is_empty();
@@ -81871,10 +81766,7 @@ fn swing_guaranteed_hit(
             damage_dice,
             damage_bonus: 0,
             damage_type,
-            is_melee: true,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     );
     for ef in effects {
@@ -83333,10 +83225,7 @@ fn redirect_attack_lands_a_miss_on_the_bystander() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 2,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         let hurt = e
@@ -83386,10 +83275,7 @@ fn redirect_attack_needs_somebody_other_than_the_attacker_to_hit() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 2,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         assert!(
@@ -83723,9 +83609,7 @@ fn misdirection_hands_the_hit_to_whoever_was_granting_cover() {
                 damage_bonus: 1,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         let blocker_hurt = e
@@ -83777,9 +83661,7 @@ fn misdirection_declines_when_the_shot_is_clear() {
             damage_bonus: 1,
             damage_type: DamageType::Piercing,
             is_melee: false,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     ) {
         eff.apply(&mut e);
@@ -104318,8 +104200,7 @@ fn sharpshooter_shoots_past_normal_range_without_disadvantage() {
                 // Sixteen tiles is forty feet; the target is thirty
                 // tiles away, which is past it.
                 long_range: Some(16),
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         e.messages()[before..].to_vec()
@@ -106686,10 +106567,7 @@ fn swing_at(e: &mut EncounterInstance, attacker: usize, target: usize) {
             damage_dice: Dice::new(1, 8),
             damage_bonus: 3,
             damage_type: DamageType::Slashing,
-            is_melee: true,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     );
 }
@@ -107273,10 +107151,7 @@ fn a_knight_parries_the_swings_that_would_have_landed_by_a_point() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         // The chokepoint returns the damage rather than applying it;
@@ -107366,9 +107241,7 @@ fn a_knight_keeps_the_reaction_for_a_swing_two_points_can_turn() {
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
                 is_melee: *melee,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
     }
@@ -107472,10 +107345,7 @@ fn a_parried_captain_answers_with_the_rapier() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if !e.messages().iter().any(|m| m.contains("parries")) {
@@ -107565,9 +107435,7 @@ fn a_goblin_puts_its_friend_in_front_of_the_arrow_and_takes_their_square() {
             damage_bonus: 0,
             damage_type: DamageType::Piercing,
             is_melee: false,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     );
     for ef in effects {
@@ -107654,9 +107522,7 @@ fn a_goblin_with_nobody_to_hide_behind_takes_the_arrow() {
                 damage_bonus: 0,
                 damage_type: DamageType::Piercing,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -108223,10 +108089,7 @@ fn defensive_duelist_turns_the_swings_its_proficiency_can_reach() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -108303,9 +108166,7 @@ fn defensive_duelist_never_spends_a_reaction_it_cannot_cash() {
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
                 is_melee,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -108381,10 +108242,7 @@ fn defensive_duelist_needs_a_finesse_weapon_in_hand() {
                     damage_dice: Dice::new(1, 6),
                     damage_bonus: 0,
                     damage_type: DamageType::Bludgeoning,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             );
             for ef in effects {
@@ -108433,10 +108291,7 @@ fn a_bard_without_the_feat_takes_the_blow() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -109045,10 +108900,7 @@ fn sentinel_answers_a_swing_aimed_at_somebody_else() {
             damage_dice: Dice::new(1, 6),
             damage_bonus: 0,
             damage_type: DamageType::Bludgeoning,
-            is_melee: true,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     );
     for ef in effects {
@@ -109109,10 +108961,7 @@ fn sentinel_declines_the_swings_the_clause_does_not_name() {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         for ef in effects {
@@ -109172,10 +109021,7 @@ fn a_guardian_swing_does_not_provoke_another_guardian() {
             damage_dice: Dice::new(1, 6),
             damage_bonus: 0,
             damage_type: DamageType::Bludgeoning,
-            is_melee: true,
-            long_range: None,
-            min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     );
     for ef in effects {

@@ -63,6 +63,47 @@ pub struct AttackParams<'a> {
     pub is_spell: bool,
 }
 
+impl AttackParams<'_> {
+    /// The swing every weapon in the engine is, minus the five things
+    /// that make it a particular one: who, at whom, called what, for
+    /// which dice of which type.
+    ///
+    /// Six fields on this struct answer "no" for almost every attack
+    /// there is — nothing is thrown, nothing is a lance, nothing is a
+    /// spell — and eighty-five literals were spelling all six out. The
+    /// cost of that was not the lines; it was that the struct had become
+    /// the one place in the engine a per-swing fact could not cheaply be
+    /// added, because adding a seventh field meant touching every site
+    /// that had ever built one. `..AttackParams::DEFAULTS` is what the
+    /// rest of the file already does — see `Item::DEFAULTS` and
+    /// `SimpleWeapon::melee`, which exist for the same reason.
+    ///
+    /// The lifetime is `'static` and that is deliberate rather than
+    /// incidental: `action_name` is the empty string here, so the base
+    /// outlives every borrow that could be written over it, and a
+    /// literal that forgets to name its action produces a blank log line
+    /// rather than a borrow-check error. Every site names it.
+    ///
+    /// **`is_melee: true` is the default**, which is the one value here
+    /// that is a real choice rather than an absence. Melee is what the
+    /// overwhelming majority of the engine's swings are, and a ranged
+    /// one already has to declare `long_range` to be worth anything, so
+    /// the two travel together at the sites that need them.
+    pub const DEFAULTS: AttackParams<'static> = AttackParams {
+        caster_id: 0,
+        target_id: 0,
+        action_name: "",
+        attack_bonus: 0,
+        damage_dice: Dice::new(0, 0),
+        damage_bonus: 0,
+        damage_type: DamageType::Bludgeoning,
+        is_melee: true,
+        long_range: None,
+        min_range: None,
+        is_spell: false,
+    };
+}
+
 /// An extra clause a specific action layers onto its own swing, run at
 /// the end of `resolve_attack_outcome` once the shared pipeline has
 /// finished with the hit.

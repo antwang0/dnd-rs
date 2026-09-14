@@ -858,12 +858,10 @@ impl crate::actions::action_template::Action for PoleStrike {
                 damage_dice: POLE_STRIKE_DICE,
                 damage_bonus,
                 damage_type: crate::engine::types::DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
                 // The butt end is not the business end: RAW's lance
                 // disadvantage-within-5-feet clause belongs to the point.
                 min_range: None,
-                is_spell: false,
+                ..crate::engine::attack::AttackParams::DEFAULTS
             },
         )
         // No mastery rider. RAW's mastery property is printed beside

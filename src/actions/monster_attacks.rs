@@ -838,7 +838,7 @@ pub fn weapon_swing_with_damage(
             // lives on `SimpleWeapon`, which has its own path to
             // `resolve_attack`.
             min_range: None,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     )
 }
@@ -880,7 +880,7 @@ pub fn simple_weapon_attack_ranged(
             is_melee,
             long_range: normal_range,
             min_range: min_effective_range,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
     )
 }
@@ -960,7 +960,7 @@ fn simple_weapon_swing(
             is_melee: weapon.is_melee,
             long_range: weapon.normal_range,
             min_range: weapon.min_effective_range,
-            is_spell: false,
+            ..AttackParams::DEFAULTS
         },
         // The reach the rider needs is Cleave's "within your reach",
         // which is the weapon's own — a glaive carries further into the
@@ -4733,9 +4733,7 @@ impl Action for AcidSpit {
                 damage_bonus: 0,
                 damage_type: DamageType::Acid,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if effects.is_empty() {
@@ -5985,10 +5983,7 @@ impl Action for LifeDrain {
                 damage_dice: Dice::new(4, 8),
                 damage_bonus: 3,
                 damage_type: DamageType::Necrotic,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if damage == 0 {
@@ -6063,10 +6058,7 @@ impl Action for VampiricBite {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if piercing_damage == 0 {
@@ -6856,10 +6848,7 @@ impl Action for WorgBite {
                 damage_dice: Dice::new(2, 6),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if dealt == 0 {
@@ -8392,10 +8381,7 @@ impl Action for LichParalyzingTouch {
                 damage_dice: Dice::new(3, 6),
                 damage_bonus: 0,
                 damage_type: DamageType::Cold,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if damage == 0 {
@@ -8610,10 +8596,7 @@ impl Action for CouatlBite {
                 damage_dice: Dice::new(1, 6),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Piercing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         // 5e RAW: poison rider applies on hit only — bail if the bite missed.
@@ -8948,10 +8931,7 @@ impl Action for TarrasqueTail {
                 damage_dice: Dice::new(3, 8),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if dmg > 0 {
@@ -9072,10 +9052,7 @@ impl Action for SolarLongsword {
                 damage_dice: Dice::new(4, 8),
                 damage_bonus: damage_mod,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         // Only fire the radiant rider on a successful hit. We detect
@@ -9245,10 +9222,7 @@ impl Action for MindFlayerTentacles {
                 damage_dice: Dice::new(2, 10),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Psychic,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if effects.is_empty() {
@@ -9322,10 +9296,7 @@ impl Action for ErinyesLongsword {
                 damage_dice: Dice::new(2, 8),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if !effects.is_empty() {
@@ -10045,10 +10016,7 @@ impl Action for DeathKnightLongsword {
                 damage_dice: Dice::new(1, 8),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Slashing,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         if slash_dmg == 0 {
@@ -14666,10 +14634,7 @@ impl Action for ClayGolemSlam {
                 damage_dice: Dice::new(1, 10),
                 damage_bonus: str_mod,
                 damage_type: DamageType::Bludgeoning,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
         );
         // A miss deals no acid and drains nothing — both clauses of the
@@ -17756,9 +17721,8 @@ impl Action for HornedDevilHurledFlame {
                 damage_bonus: 0,
                 damage_type: DamageType::Fire,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
                 is_spell: true,
+                ..AttackParams::DEFAULTS
             },
         )
     }
@@ -18003,9 +17967,8 @@ impl Action for EfreetiHurlFlame {
                 damage_bonus: 0,
                 damage_type: DamageType::Fire,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
                 is_spell: true,
+                ..AttackParams::DEFAULTS
             },
         )
     }

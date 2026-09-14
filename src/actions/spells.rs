@@ -2399,9 +2399,8 @@ impl Action for FireBolt {
                 damage_bonus: 0,
                 damage_type: DamageType::Fire,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
                 is_spell: true,
+                ..AttackParams::DEFAULTS
             },
         )
     }
@@ -3445,9 +3444,8 @@ impl Action for RayOfFrost {
                 damage_bonus: 0,
                 damage_type: DamageType::Cold,
                 is_melee: false,
-                long_range: None,
-                min_range: None,
                 is_spell: true,
+                ..AttackParams::DEFAULTS
             },
         )
     }

@@ -200,9 +200,7 @@ impl Action for RogueWeapon {
                 damage_bonus: dex_mod,
                 damage_type: self.damage_type,
                 is_melee: self.is_melee,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..AttackParams::DEFAULTS
             },
             &MasteryRider::with_reach(
                 self.mastery,
@@ -973,10 +971,7 @@ impl Action for BeastFormClaws {
                     damage_dice: Dice::new(2, 6),
                     damage_bonus: BEAST_FORM_STR_MOD,
                     damage_type: DamageType::Slashing,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
             )
         };
@@ -1135,10 +1130,7 @@ impl Action for BeastNaturalWeapon {
                     damage_dice: self.dice,
                     damage_bonus,
                     damage_type: self.damage_type,
-                    is_melee: true,
-                    long_range: None,
-                    min_range: None,
-                    is_spell: false,
+                    ..AttackParams::DEFAULTS
                 },
                 // The rider no-ops on the forms that don't hold the bite
                 // tag, so all three swings can share one call site.

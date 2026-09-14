@@ -312,10 +312,7 @@ impl Action for OffHandAttack {
                 damage_dice: self.damage_dice,
                 damage_bonus,
                 damage_type: self.damage_type,
-                is_melee: true,
-                long_range: None,
-                min_range: None,
-                is_spell: false,
+                ..crate::engine::attack::AttackParams::DEFAULTS
             },
             // Every property but Nick applies to the off-hand swing
             // exactly as it would to the main-hand one — RAW's mastery
