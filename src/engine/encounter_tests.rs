@@ -107130,3 +107130,386 @@ fn a_kytons_stare_reaches_thirty_feet_and_no_further() {
         );
     }
 }
+
+// ---------------------------------------------------------------
+// The damage-type feat trio — Crusher, Piercer, Slasher.
+//
+// Every feat here is worded on what the *swing* deals rather than on
+// who swung it, which is the axis none of the engine's on-hit cohorts
+// could ask about until these three arrived. So every test below drives
+// a real weapon through `resolve_attack` and checks the log, rather than
+// calling the riders: the thing worth pinning is that a swing picks the
+// clause up at all, and that a swing of the wrong damage type does not.
+//
+// The loops use the shared `swing_until` idiom — the engine has no
+// die-rigging hook, so a test that needs a hit (or a critical) asks for
+// one until the dice oblige.
+// ---------------------------------------------------------------
+
+/// **Crusher**, first clause: *"once per turn, when you hit a creature
+/// with an attack that deals Bludgeoning damage, you can move it 5 feet
+/// … "*
+///
+/// The dwarf is the fixture because its warhammer is the roster's one
+/// signature bludgeoning weapon *and* the chassis has no Weapon Mastery
+/// training — so the hammer's own Push property is inert and the only
+/// thing that can move the target is the feat.
+#[test]
+fn crusher_shoves_a_bludgeoning_hit_five_feet() {
+    use crate::actions::feats::CRUSHER_TAG;
+    use crate::actions::monster_attacks::WARHAMMER;
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let dwarf = e
+        .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    assert!(
+        e.actors[&dwarf].has_passive_feature(CRUSHER_TAG),
+        "the dwarf chassis takes Crusher"
+    );
+    assert!(
+        !e.actors[&dwarf].has_weapon_mastery(),
+        "and is untrained, so the hammer's own Push property cannot fire"
+    );
+
+    let crushed = swing_until(&mut e, &WARHAMMER, dwarf, goblin, 200, |l| {
+        l.contains("crusher: the blow")
+    });
+    assert!(crushed, "a landed warhammer blow should shift the goblin");
+    assert!(
+        !e.messages().iter().any(|l| l.contains("push:")),
+        "and the 10 ft mastery shove is not what did it"
+    );
+}
+
+/// The once-a-turn ledger. RAW rations the shove and not the feat, so a
+/// dwarf who swings twice in a turn crushes once.
+#[test]
+fn crusher_shoves_only_once_in_a_turn() {
+    use crate::actions::monster_attacks::WARHAMMER;
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let dwarf = e
+        .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+
+    // One turn, many swings: top the pair up between them (so nobody
+    // dies out from under the loop) but never `reset_for_new_round`,
+    // which is what would clear the ledger.
+    let mut crushes = 0;
+    for _ in 0..60 {
+        top_up(&mut e, &[dwarf, goblin]);
+        // Put the goblin back where it started, so the shove never
+        // walks it out of the hammer's reach.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .set_location(Coordinate::new(6, 5));
+        let before = e.messages().len();
+        let tv = vec![goblin];
+        for eff in WARHAMMER.side_effects(&mut e, dwarf, Some(&tv), None, None) {
+            eff.apply(&mut e);
+        }
+        crushes += e.messages()[before..]
+            .iter()
+            .filter(|l| l.contains("crusher: the blow"))
+            .count();
+    }
+    assert_eq!(crushes, 1, "one shove a turn, however many blows land");
+}
+
+/// RAW's size clause, and it is *relative*: *"if the target is no more
+/// than one size larger than you."* A Medium dwarf shoves a Large ogre
+/// and bounces off a Huge giant.
+#[test]
+fn crusher_cannot_shift_something_two_sizes_larger() {
+    use crate::actions::monster_attacks::WARHAMMER;
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+    use crate::actors::creatures::hill_giants::HILL_GIANT_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    for (template, expect, why) in [
+        (
+            &*OGRE_TEMPLATE,
+            true,
+            "one size larger is inside the clause",
+        ),
+        (
+            &*HILL_GIANT_TEMPLATE,
+            false,
+            "two sizes larger is outside it",
+        ),
+    ] {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let dwarf = e
+            .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(template, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        let crushed = swing_until(&mut e, &WARHAMMER, dwarf, target, 200, |l| {
+            l.contains("crusher: the blow")
+        });
+        assert_eq!(crushed, expect, "{why}");
+    }
+}
+
+/// The damage-type gate, which is the axis the whole trio turns on. A
+/// Crusher holding a longsword is a fighter with a longsword.
+#[test]
+fn crusher_says_nothing_about_a_slashing_swing() {
+    use crate::actions::feats::CRUSHER_TAG;
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .grant_feature_for_test(CRUSHER_TAG);
+    let crushed = swing_until(&mut e, &LONGSWORD, fighter, goblin, 200, |l| {
+        l.contains("crusher:")
+    });
+    assert!(
+        !crushed,
+        "neither clause of Crusher answers a slashing blade"
+    );
+}
+
+/// **Crusher**, second clause: *"when you score a Critical Hit that
+/// deals Bludgeoning damage to a creature, attack rolls against that
+/// creature have Advantage until the start of your next turn."*
+///
+/// The critical is forced rather than waited for: a Paralyzed target
+/// turns every close hit into one, which is the engine's own
+/// promotion and therefore the right thing for a `crit_only` row to be
+/// tested through.
+#[test]
+fn crusher_staggers_what_it_crits() {
+    use crate::actions::monster_attacks::WARHAMMER;
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let dwarf = e
+        .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        Condition::Paralyzed,
+        ConditionTimer::Permanent,
+    );
+    let staggered = swing_until(&mut e, &WARHAMMER, dwarf, goblin, 200, |l| {
+        l.contains("crusher: the critical")
+    });
+    assert!(staggered, "an auto-critical hammer blow rattles the goblin");
+    assert!(
+        e.actors[&goblin].has_condition(Condition::Staggered),
+        "and the flag every attacker reads is actually on it"
+    );
+    assert!(
+        Condition::Staggered.grants_advantage_to_attackers(),
+        "which is the whole of what the clause does"
+    );
+}
+
+/// **Slasher**, first clause: *"once per turn when you hit a creature
+/// with an attack that deals Slashing damage, you can reduce its Speed
+/// by 10 feet until the start of your next turn."*
+///
+/// Shares `Condition::Hobbled` with the Slow weapon mastery, whose RAW
+/// sentence is the same sentence. The Champion's longsword is a Sap
+/// weapon, not a Slow one, so nothing but the feat can hobble here.
+#[test]
+fn slasher_hobbles_what_it_cuts() {
+    use crate::actions::feats::SLASHER_TAG;
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::mastery::WeaponMastery;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let champion = e
+        .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    assert!(e.actors[&champion].has_passive_feature(SLASHER_TAG));
+    assert_eq!(
+        LONGSWORD.mastery,
+        Some(WeaponMastery::Sap),
+        "the fixture needs a slashing weapon that is not already a Slow one"
+    );
+    let hobbled = swing_until(&mut e, &LONGSWORD, champion, goblin, 200, |l| {
+        l.contains("slasher: the cut")
+    });
+    assert!(hobbled, "a landed longsword cut should slow the goblin");
+    assert!(e.actors[&goblin].has_condition(Condition::Hobbled));
+}
+
+/// **Slasher**, second clause: *"when you score a Critical Hit that
+/// deals Slashing damage to a creature, the target has Disadvantage on
+/// attack rolls until the start of your next turn."*
+///
+/// `EveryHit` rather than `OncePerTurn`, which is RAW: the book rations
+/// the speed cut above and pointedly does not ration this.
+#[test]
+fn slasher_maims_what_it_crits() {
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let champion = e
+        .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        Condition::Paralyzed,
+        ConditionTimer::Permanent,
+    );
+    let maimed = swing_until(&mut e, &LONGSWORD, champion, goblin, 200, |l| {
+        l.contains("slasher: the critical")
+    });
+    assert!(maimed, "an auto-critical cut opens the goblin's guard");
+    assert!(e.actors[&goblin].has_condition(Condition::Maimed));
+    assert!(
+        Condition::Maimed.imposes_attacker_disadvantage(),
+        "which is the whole of what the clause does"
+    );
+}
+
+/// **Piercer**, first clause: *"once per turn, when you hit a creature
+/// with an attack that deals Piercing damage, you can reroll one of the
+/// attack's damage dice, and you must use the new roll."*
+///
+/// Two things are checked here that a "did it fire" assertion would
+/// miss: the die it reaches for is the pool's *weakest*, and it only
+/// reaches at all when that die came up below the die's own average —
+/// which is what "must use the new roll" costs, and the difference
+/// between this feat and Savage Attacker.
+#[test]
+fn piercer_rerolls_only_a_below_average_die() {
+    use crate::actions::feats::PIERCER_TAG;
+    use crate::actions::monster_attacks::LONGBOW;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rangers::GLOOM_STALKER_RANGER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ranger = e
+        .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 5), 1, 0)
+        .unwrap();
+    assert!(
+        e.actors[&ranger].has_passive_feature(PIERCER_TAG),
+        "the gloom stalker chassis takes Piercer"
+    );
+    let fired = swing_until(&mut e, &LONGBOW, ranger, goblin, 300, |l| {
+        l.contains("piercer: the point")
+    });
+    assert!(fired, "a longbow hit with a weak die should be rerolled");
+
+    // Every reroll the loop produced names the face it replaced, and
+    // every one of those faces is at or below the longbow d8's average
+    // of 4.5 — i.e. the engine never took the gamble on a die it was
+    // already happy with.
+    let replaced: Vec<u32> = e
+        .messages()
+        .iter()
+        .filter(|l| l.contains("piercer: the point"))
+        .filter_map(|l| l.split("rerolled, ").nth(1)?.split(' ').next()?.parse().ok())
+        .collect();
+    assert!(!replaced.is_empty(), "the loop logged what it rerolled");
+    for face in replaced {
+        assert!(
+            face <= 4,
+            "a d8 showing {face} is not worth the gamble RAW forces"
+        );
+    }
+}
+
+/// **Piercer**, second clause: *"when you score a Critical Hit that
+/// deals Piercing damage to a creature, you can roll one additional
+/// damage die."*
+///
+/// The row that made `CRIT_EXTRA_DICE_SOURCES` grow a `melee_only`
+/// column: Brutal Critical and Savage Attacks beside it are both worded
+/// on melee, and this is not.
+#[test]
+fn piercer_adds_a_die_to_a_piercing_critical() {
+    use crate::actions::feats::PIERCER_TAG;
+    use crate::actions::monster_attacks::SPEAR;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rangers::GLOOM_STALKER_RANGER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ranger = e
+        .instantiate_creature(&GLOOM_STALKER_RANGER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    assert!(e.actors[&ranger].has_passive_feature(PIERCER_TAG));
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        Condition::Paralyzed,
+        ConditionTimer::Permanent,
+    );
+    let fired = swing_until(&mut e, &SPEAR, ranger, goblin, 200, |l| {
+        l.contains("piercer: +")
+    });
+    assert!(fired, "an auto-critical spear thrust rolls the extra die");
+}
+
+/// The damage-type gate on the crit lane. A Piercer with a longsword
+/// gets nothing from a critical hit that it would not get anyway.
+#[test]
+fn piercer_adds_nothing_to_a_slashing_critical() {
+    use crate::actions::feats::PIERCER_TAG;
+    use crate::actions::monster_attacks::LONGSWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .grant_feature_for_test(PIERCER_TAG);
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        Condition::Paralyzed,
+        ConditionTimer::Permanent,
+    );
+    let fired = swing_until(&mut e, &LONGSWORD, fighter, goblin, 200, |l| {
+        l.contains("piercer:")
+    });
+    assert!(!fired, "neither clause of Piercer answers a slashing blade");
+}

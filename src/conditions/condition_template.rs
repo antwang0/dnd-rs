@@ -2958,6 +2958,49 @@ pub enum Condition {
     /// generous and is the shortest window the timer vocabulary can
     /// express for a condition held by somebody other than its owner.
     Vexed,
+    /// The **Crusher** feat's second clause: *"when you score a
+    /// Critical Hit that deals Bludgeoning damage to a creature, attack
+    /// rolls against that creature have Advantage until the start of
+    /// your next turn."*
+    ///
+    /// One row on `grants_advantage_to_attackers`, which is the whole
+    /// implementation.
+    ///
+    /// Deliberately **not** `Outlined`, which is the flag Faerie Fire
+    /// lights a creature with and which would have been the one-word
+    /// change. Outlined carries a second clause — the holder cannot
+    /// benefit from the Invisible condition, via `suppresses_invisibility`
+    /// — that RAW gives a level-1 concentration spell and does not give
+    /// a maul. Borrowing it would have made a feat's crit rider strictly
+    /// better than the spell whose name it borrowed, against exactly the
+    /// creatures invisibility matters against. `WispLit` sits on the
+    /// other side of the same split for the same reason.
+    ///
+    /// Unlinked, and that is RAW rather than an omission: the advantage
+    /// is *everyone's*. `Vexed` one variant up is the linked sibling —
+    /// "**you** have Advantage on your next attack roll" — and the
+    /// difference between the two is why one of them has a back-link
+    /// and the other must not.
+    Staggered,
+    /// The **Slasher** feat's second clause: *"when you score a
+    /// Critical Hit that deals Slashing damage to a creature, the target
+    /// has Disadvantage on attack rolls until the start of your next
+    /// turn."*
+    ///
+    /// One row on `imposes_attacker_disadvantage`, and pointedly not a
+    /// second one on `BLANKET_CHECK_DISADVANTAGE_CONDITIONS`: RAW names
+    /// attack rolls and nothing else. That is the line `Flinching`
+    /// crosses — the flesh golem's aversion is worded on attacks *and*
+    /// ability checks — and it is why this is its own flag rather than
+    /// a third install of that one.
+    ///
+    /// Distinct from `Sapped` for the other half of the same reason.
+    /// Sap's penalty is spent by the target's *next* swing (it rides
+    /// `CONSUMED_ON_ATTACK`); this one rides the window out, so a
+    /// multiattacker eats it on every swing it makes before the
+    /// slasher's next turn. A shared flag would have silently halved
+    /// the feat against the creatures it is best against.
+    Maimed,
     /// 5e **Surprised**: *"if you're surprised, you can't move or take
     /// an action on your first turn of the combat, and you can't take a
     /// reaction until that turn ends."*
@@ -3909,6 +3952,8 @@ impl Condition {
             Condition::Flinching => "flinching",
             Condition::Chilled => "chilled",
             Condition::Vexed => "vexed",
+            Condition::Staggered => "staggered",
+            Condition::Maimed => "maimed",
             Condition::Surprised => "surprised",
             Condition::Banished => "banished",
             Condition::Earthbound => "earthbound",
@@ -4530,6 +4575,13 @@ impl Condition {
                 // clauses; the ability-check half rides
                 // `BLANKET_CHECK_DISADVANTAGE_CONDITIONS`.
                 | Condition::Flinching
+                // The Slasher feat's crit rider. Unlike `Flinching`
+                // directly above it, this one is *only* here: RAW's
+                // clause names attack rolls, so it stays off the
+                // ability-check cohort. Unlike `Sapped` above it, it is
+                // not on `CONSUMED_ON_ATTACK` — the penalty rides the
+                // whole window rather than the first swing in it.
+                | Condition::Maimed
         )
     }
 
@@ -4587,6 +4639,11 @@ impl Condition {
                 | Condition::EarthenGrasped
                 | Condition::Lifted
                 | Condition::WaterSphered
+                // The Crusher feat's crit rider — the one entry here
+                // that is a *feat's* doing rather than a spell's or a
+                // condition's, and the reason it is not `Outlined`:
+                // see the variant's own docstring.
+                | Condition::Staggered
         )
     }
 

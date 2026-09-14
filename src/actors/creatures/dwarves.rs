@@ -66,7 +66,18 @@ pub static DWARF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,
         ]),
-        features: HashSet::from([SECOND_WIND_TAG, ACTION_SURGE_TAG]),
+        // The **Crusher** feat, and the dwarf is who it belongs to: the
+        // one chassis on the roster whose signature weapon is a
+        // warhammer, and the one whose whole build is standing in front
+        // of somebody. Both halves of the feat are about what the hammer
+        // does to a target's footing — five feet of it on any hit, and
+        // an open guard on a critical. See
+        // `crate::actions::feats::CRUSHER_TAG`.
+        features: HashSet::from([
+            SECOND_WIND_TAG,
+            ACTION_SURGE_TAG,
+            crate::actions::feats::CRUSHER_TAG,
+        ]),
         // 5e Dwarven Resilience: advantage on saves vs poison AND
         // resistance to poison damage. The single flag drives both halves.
         has_dwarven_resilience: true,

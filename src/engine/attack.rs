@@ -15,7 +15,7 @@ use crate::engine::underwater::UnderwaterVerdict;
 /// count) — a future signed bump (a hypothetical debuff-driven -1 to
 /// melee damage) would land as a sibling alias with an `i32` return
 /// rather than widening this one. Both attack-side cohort tables
-/// (`MELEE_CASTER_BUMPS` flat-damage and `CRIT_MELEE_EXTRA_DICE_SOURCES`
+/// (`MELEE_CASTER_BUMPS` flat-damage and `CRIT_EXTRA_DICE_SOURCES`
 /// extra-dice) share this shape — factoring out the `fn` pointer type
 /// keeps the row literal readable at a glance and drops the two "very
 /// complex type" clippy warnings the raw signature triggered.
@@ -281,12 +281,38 @@ const MELEE_CASTER_BUMPS: &[(&str, AttackBumpFn)] = &[
     }),
 ];
 
-/// Caster-side crit-only melee extra-dice sources read at
-/// `resolve_attack_outcome` when a critical hit lands with a melee
-/// weapon. Each entry is a (label, count_fn) tuple: the count_fn
-/// reads the caster's template flag / dice-count field and returns
-/// the number of extra weapon-face dice to roll (`0` skips the log
-/// line and the roll).
+/// One caster-side source of extra weapon dice on a critical hit.
+///
+/// Was a `(label, count_fn)` tuple while every source it held was
+/// worded the same way — *"when you score a critical hit with a melee
+/// weapon attack"* — and became a struct when the Piercer feat arrived
+/// worded on neither the lane nor the swinger but on the **damage
+/// type**, and not melee-gated at all. Two columns carry the
+/// difference; the tuple could carry neither.
+struct CritExtraDiceSource {
+    /// Log label — "brutal critical", "savage attacks", "piercer".
+    label: &'static str,
+    /// How many extra dice of the weapon's own face count this source
+    /// adds for the given swinger. `0` skips the roll and the log line,
+    /// which is what every non-holder returns.
+    count: AttackBumpFn,
+    /// `true` if RAW scopes the source to melee — Brutal Critical and
+    /// Savage Attacks both say *"melee weapon attack"*.
+    ///
+    /// Piercer does not, and it is the row the column exists for: the
+    /// feat is worded *"when you score a Critical Hit that deals
+    /// Piercing damage"*, and a longbow is the most piercing weapon in
+    /// the book.
+    melee_only: bool,
+    /// The damage types the swing must deal, or `None` for the sources
+    /// that ask nothing about it. The same column
+    /// `OnHitConditionMark::damage_types` carries, asked of
+    /// `AttackParams::damage_type` for the same reason.
+    damage_types: Option<&'static [DamageType]>,
+}
+
+/// Caster-side crit-only extra-dice sources read at
+/// `resolve_attack_outcome` when a critical hit lands.
 ///
 /// Entries stack additively on holders that carry multiple sources —
 /// a level-17 half-orc barbarian reads Brutal Critical's 3 dice AND
@@ -296,12 +322,42 @@ const MELEE_CASTER_BUMPS: &[(&str, AttackBumpFn)] = &[
 ///   - **Brutal Critical**: Barbarian level 9 / 13 / 17 template-
 ///     driven dice count. `0` for non-barbarians (the default).
 ///   - **Savage Attacks**: Half-Orc racial flag; one flat extra die.
-///
-/// A new crit-extra-dice source (Piercer feat's +1 die, a hypothetical
-/// Champion "Superior Critical" bonus die) drops in as a new tuple.
-const CRIT_MELEE_EXTRA_DICE_SOURCES: &[(&str, AttackBumpFn)] = &[
-    ("brutal critical", |a| a.brutal_critical_dice()),
-    ("savage attacks", |a| if a.has_savage_attacks() { 1 } else { 0 }),
+///   - **Piercer** (General feat): one flat extra die, on any critical
+///     hit that deals Piercing damage — melee or not.
+const CRIT_EXTRA_DICE_SOURCES: &[CritExtraDiceSource] = &[
+    CritExtraDiceSource {
+        label: "brutal critical",
+        count: |a| a.brutal_critical_dice(),
+        melee_only: true,
+        damage_types: None,
+    },
+    CritExtraDiceSource {
+        label: "savage attacks",
+        count: |a| if a.has_savage_attacks() { 1 } else { 0 },
+        melee_only: true,
+        damage_types: None,
+    },
+    // The **Piercer** feat's second clause: "when you score a Critical
+    // Hit that deals Piercing damage to a creature, you can roll one
+    // additional damage die when determining the extra Piercing damage
+    // the target takes."
+    //
+    // "The extra Piercing damage" is the crit's doubled half, so the
+    // die is one of the weapon's own faces — which is what this cohort
+    // rolls for every row, and the reason the feat lands here rather
+    // than as a rider with a die of its own.
+    CritExtraDiceSource {
+        label: "piercer",
+        count: |a| {
+            if a.has_passive_feature(crate::actions::feats::PIERCER_TAG) {
+                1
+            } else {
+                0
+            }
+        },
+        melee_only: false,
+        damage_types: Some(&[DamageType::Piercing]),
+    },
 ];
 
 /// Shared eligibility gate for target-side reactive self-clamp damage
@@ -865,6 +921,43 @@ struct OnHitConditionMark {
     /// spent with `spend_feature` after it, so a goliath out of ancestry
     /// uses simply stops knocking things over.
     charge: Option<&'static str>,
+    /// The damage types the swing must deal for the mark to land, or
+    /// `None` for every row whose RAW asks nothing about what the
+    /// weapon does.
+    ///
+    /// The damage-type feat trio — Crusher, Piercer, Slasher — is what
+    /// it is for. Each is worded *"when you hit a creature with an
+    /// attack that deals \[type\] damage"*, which is a question about
+    /// the swing rather than about either creature, and until this
+    /// column the row could ask about the swinger (`tag`,
+    /// `holder_gate`), about the target (`target_gate`) and about the
+    /// lane (`melee_only`) but not about the blow.
+    ///
+    /// A slice rather than a single `DamageType` because the question a
+    /// row asks is membership, and a hypothetical future clause worded
+    /// on "Bludgeoning, Piercing, or Slashing damage" — RAW phrases a
+    /// great many rules that way — would otherwise need three rows that
+    /// could drift apart.
+    ///
+    /// Read against `AttackParams::damage_type`, which is what the
+    /// swing *rolled*, not what the target ended up taking: a mark on a
+    /// creature immune to bludgeoning still lands, exactly as RAW's
+    /// "hit a creature with an attack that deals" reads. The rows that
+    /// care about the blow actually hurting say so through
+    /// `target_gate` instead.
+    damage_types: Option<&'static [DamageType]>,
+    /// `true` for the rows whose RAW trigger is a **critical hit**
+    /// rather than a hit — the "Enhanced Critical" half that Crusher
+    /// and Slasher each carry.
+    ///
+    /// Asked of `HitContext::is_crit`, which is the engine's verdict on
+    /// the swing and therefore includes every widened crit range on the
+    /// board: a Champion's 19 and a Paralyzed target's automatic
+    /// critical both count. That is deliberately *not* the question
+    /// `OnHitRider::requires_natural_twenty` asks one cohort over —
+    /// those rows are worded on the die face, and these are worded on
+    /// the critical hit.
+    crit_only: bool,
     /// How often the mark lands. See `MarkCadence`.
     cadence: MarkCadence,
     /// Full log line for the stamp, minus the leading indent.
@@ -893,6 +986,32 @@ enum MarkCadence {
     /// last turn's target keeps the mark until its own timer runs out
     /// and the barbarian ends up guarded against a growing crowd.
     FirstHitOfTurn,
+    /// "Once per turn, when you hit a creature…" — the holder stamps at
+    /// most one creature a turn and whoever they stamped last turn is
+    /// none of their business. Slasher's speed cut.
+    ///
+    /// Half of `FirstHitOfTurn` and deliberately so: both spend the
+    /// turn's single stamp through the shared once-per-turn ledger, and
+    /// only `FirstHitOfTurn` also *moves* the mark off its previous
+    /// holder. The move is what makes Ancestral Protectors a
+    /// relationship with one creature; a feat that slows what it hits
+    /// is not one, and a slasher who hobbled a goblin last round has no
+    /// reason to un-hobble it for hitting an ogre now.
+    OncePerTurn,
+}
+
+impl MarkCadence {
+    /// True for the cadences the shared once-per-turn ledger rations —
+    /// which is both of the two that are not `EveryHit`.
+    ///
+    /// A method rather than an `==` at each of the three sites that
+    /// asks, because the question and the *set* of variants that answer
+    /// it yes are two different things: adding a fourth cadence should
+    /// make this function read wrong rather than let a site that spelled
+    /// the question as `!= EveryHit` quietly pick it up.
+    const fn rations_by_turn(self) -> bool {
+        matches!(self, MarkCadence::FirstHitOfTurn | MarkCadence::OncePerTurn)
+    }
 }
 
 /// Cohort of passive weapon-hit condition marks, walked by
@@ -912,6 +1031,13 @@ enum MarkCadence {
 /// free, at-will, no-concentration Compelled Duel is a fair reading of
 /// RAW, and the reason the two share a condition rather than each
 /// getting one.
+///
+/// The tail of the table is the **damage-type feat trio** — three rows
+/// for two feats, since Slasher's two clauses are both marks and
+/// Crusher's first one is a shove. They are what `damage_types` and
+/// `crit_only` exist for, and between them they are the first rows here
+/// that ask a question about the *swing* rather than about either
+/// creature holding a weapon.
 const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
     OnHitConditionMark {
         tag: crate::actions::class_features::ELDRITCH_STRIKE_TAG,
@@ -921,6 +1047,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         holder_gate: None,
         target_gate: None,
         charge: None,
+        damage_types: None,
+        crit_only: false,
         cadence: MarkCadence::EveryHit,
         log: "eldritch strike: the blow rattles the target's guard",
     },
@@ -932,6 +1060,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         holder_gate: None,
         target_gate: None,
         charge: None,
+        damage_types: None,
+        crit_only: false,
         cadence: MarkCadence::EveryHit,
         log: "unwavering mark: the target is locked onto its attacker",
     },
@@ -953,6 +1083,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         holder_gate: Some(|a| a.has_condition(Condition::Raging)),
         target_gate: None,
         charge: None,
+        damage_types: None,
+        crit_only: false,
         cadence: MarkCadence::FirstHitOfTurn,
         log: "ancestral protectors: the spirits fix on the barbarian's first mark",
     },
@@ -982,6 +1114,8 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         holder_gate: None,
         target_gate: None,
         charge: None,
+        damage_types: None,
+        crit_only: false,
         cadence: MarkCadence::EveryHit,
         log: "thunder gauntlets: the concussion fixes the target on its attacker",
     },
@@ -1026,8 +1160,77 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         // "When you hit", not "the first creature you hit" — a goliath
         // who reaches two targets could knock both down, if it had the
         // uses. The charge is what actually rations it.
+        damage_types: None,
+        crit_only: false,
         cadence: MarkCadence::EveryHit,
         log: "hill's tumble: the goliath's weight goes through the blow and the target goes down",
+    },
+    // The **Slasher** feat's first clause: "once per turn when you hit
+    // a creature with an attack that deals Slashing damage, you can
+    // reduce its Speed by 10 feet until the start of your next turn."
+    //
+    // `Hobbled` is the Slow weapon mastery's flag, and RAW's two
+    // sentences are the same sentence. Sharing it inherits mastery's
+    // don't-stack clause: a creature both slashed and Slowed in one
+    // round is ten feet slower, never twenty, because the flag is a set
+    // membership and not a counter.
+    OnHitConditionMark {
+        tag: crate::actions::feats::SLASHER_TAG,
+        condition: Condition::Hobbled,
+        // "Until the start of your next turn" is the slasher's clock,
+        // not the target's — the same reason every row above uses
+        // `Rounds(2)`.
+        timer: ConditionTimer::Rounds(2),
+        // RAW is "an attack that deals Slashing damage", with no melee
+        // clause at all: a thrown handaxe slashes.
+        melee_only: false,
+        holder_gate: None,
+        target_gate: None,
+        charge: None,
+        damage_types: Some(&[DamageType::Slashing]),
+        crit_only: false,
+        cadence: MarkCadence::OncePerTurn,
+        log: "slasher: the cut opens up and the target slows",
+    },
+    // The **Slasher** feat's second clause: "when you score a Critical
+    // Hit that deals Slashing damage to a creature, the target has
+    // Disadvantage on attack rolls until the start of your next turn."
+    //
+    // `EveryHit` rather than `OncePerTurn` — RAW rations the speed cut
+    // above and pointedly does not ration this one, so a Champion who
+    // crits twice in a turn maims both.
+    OnHitConditionMark {
+        tag: crate::actions::feats::SLASHER_TAG,
+        condition: Condition::Maimed,
+        timer: ConditionTimer::Rounds(2),
+        melee_only: false,
+        holder_gate: None,
+        target_gate: None,
+        charge: None,
+        damage_types: Some(&[DamageType::Slashing]),
+        crit_only: true,
+        cadence: MarkCadence::EveryHit,
+        log: "slasher: the critical opens an arm and the target's guard drops",
+    },
+    // The **Crusher** feat's second clause: "when you score a Critical
+    // Hit that deals Bludgeoning damage to a creature, attack rolls
+    // against that creature have Advantage until the start of your next
+    // turn."
+    //
+    // The feat's first clause is not here: it is a shove rather than a
+    // flag, and it lives at `try_fire_crusher_shove`.
+    OnHitConditionMark {
+        tag: crate::actions::feats::CRUSHER_TAG,
+        condition: Condition::Staggered,
+        timer: ConditionTimer::Rounds(2),
+        melee_only: false,
+        holder_gate: None,
+        target_gate: None,
+        charge: None,
+        damage_types: Some(&[DamageType::Bludgeoning]),
+        crit_only: true,
+        cadence: MarkCadence::EveryHit,
+        log: "crusher: the critical rattles the target and every attacker sees the opening",
     },
 ];
 
@@ -1040,6 +1243,7 @@ fn push_on_hit_condition_marks(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     p: &AttackParams,
+    is_crit: bool,
 ) {
     if p.is_spell {
         return;
@@ -1048,12 +1252,23 @@ fn push_on_hit_condition_marks(
         if row.melee_only && !p.is_melee {
             continue;
         }
+        if row.crit_only && !is_crit {
+            continue;
+        }
+        // The swing's own clause, asked before either creature is
+        // looked up: a row keyed to Slashing has nothing to say about a
+        // warhammer and should not pay for a map lookup to find out.
+        if row
+            .damage_types
+            .is_some_and(|types| !types.contains(&p.damage_type))
+        {
+            continue;
+        }
         let holds = encounter.actors.get(&p.caster_id).is_some_and(|a| {
             a.has_passive_feature(row.tag)
                 && row.holder_gate.is_none_or(|gate| gate(a))
                 && row.charge.is_none_or(|tag| a.feature_available(tag))
-                && !(row.cadence == MarkCadence::FirstHitOfTurn
-                    && a.once_per_turn_used(row.tag))
+                && !(row.cadence.rations_by_turn() && a.once_per_turn_used(row.tag))
         });
         if !holds {
             continue;
@@ -1072,13 +1287,16 @@ fn push_on_hit_condition_marks(
         {
             a.spend_feature(tag);
         }
+        if row.cadence.rations_by_turn()
+            && let Some(a) = encounter.actors.get_mut(&p.caster_id)
+        {
+            // Spend the turn's single stamp. Shared by both rationed
+            // cadences; only `FirstHitOfTurn` also moves the mark.
+            a.mark_once_per_turn_used(row.tag);
+        }
         if row.cadence == MarkCadence::FirstHitOfTurn {
-            // Spend the turn's single stamp, then move the mark off
-            // whoever was carrying it. Both halves of `FirstHitOfTurn`
-            // — see the variant docs.
-            if let Some(a) = encounter.actors.get_mut(&p.caster_id) {
-                a.mark_once_per_turn_used(row.tag);
-            }
+            // Move the mark off whoever was carrying it — the second
+            // half of `FirstHitOfTurn`; see the variant docs.
             for stale in previously_marked_by(encounter, row.condition, p.caster_id, p.target_id) {
                 effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
                     actor_id: stale,
@@ -1124,6 +1342,94 @@ fn previously_marked_by(
     ids.sort_unstable();
     ids
 }
+
+/// Queue a straight-line shove: the target is driven `tiles` away from
+/// the attacker's own square, with `log` written in the rulebook's feet
+/// rather than the board's tiles.
+///
+/// The one shape every on-hit forced shove in the engine has. Push
+/// weapon mastery and the Crusher feat are its two callers today and
+/// their clauses differ only in the distance and the size gate, so the
+/// gate stays with each caller and the anchor lookup, the log and the
+/// `PushActor` push live here.
+///
+/// Returns `false` — queueing nothing — if the attacker has left the
+/// board between the swing and the rider, which is the one way the
+/// anchor can be missing.
+pub fn shove_straight_back(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    p: &AttackParams,
+    tiles: u32,
+    log: &str,
+) -> bool {
+    let Some(from) = encounter.actors.get(&p.caster_id).map(|c| c.location()) else {
+        return false;
+    };
+    encounter.log(log.to_string());
+    effects.push(Box::new(PushActor {
+        actor_id: p.target_id,
+        from,
+        max_tiles: tiles,
+    }));
+    true
+}
+
+/// The **Crusher** feat's first clause: *"once per turn, when you hit a
+/// creature with an attack that deals Bludgeoning damage, you can move
+/// it 5 feet to an unoccupied space, if the target is no more than one
+/// size larger than you."*
+///
+/// Not a row on `ON_HIT_CONDITION_MARKS` with its two siblings, because
+/// the clause installs nothing: the whole benefit is the movement, and
+/// forced movement is a side effect rather than a flag.
+///
+/// Three gates, all RAW: the swing deals Bludgeoning, the holder has
+/// not already crushed something this turn, and the target is no more
+/// than one size larger — which is `Size::can_grapple`, the same
+/// relative comparison 5e's shove rule uses and the reason this gate is
+/// not Push mastery's absolute "Large or smaller".
+///
+/// The ledger is spent only when the shove is actually queued, so a
+/// dwarf who clubs an ancient dragon keeps the turn's use for whatever
+/// it can actually move.
+fn try_fire_crusher_shove(
+    encounter: &mut EncounterInstance,
+    effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    p: &AttackParams,
+) {
+    use crate::actions::feats::CRUSHER_TAG;
+    if p.is_spell || p.damage_type != DamageType::Bludgeoning {
+        return;
+    }
+    let Some(caster) = encounter.actors.get(&p.caster_id) else {
+        return;
+    };
+    if !caster.has_passive_feature(CRUSHER_TAG) || caster.once_per_turn_used(CRUSHER_TAG) {
+        return;
+    }
+    let caster_size = caster.size();
+    let reaches = encounter
+        .actors
+        .get(&p.target_id)
+        .is_some_and(|t| caster_size.can_grapple(t.size()));
+    if !reaches {
+        return;
+    }
+    if shove_straight_back(
+        encounter,
+        effects,
+        p,
+        CRUSHER_SHOVE_TILES,
+        "  crusher: the blow shifts the target five feet",
+    ) && let Some(caster) = encounter.actors.get_mut(&p.caster_id)
+    {
+        caster.mark_once_per_turn_used(CRUSHER_TAG);
+    }
+}
+
+/// How far a Crusher shove moves its target. RAW is 5 feet.
+const CRUSHER_SHOVE_TILES: u32 = crate::engine::util::tiles_from_feet(5);
 
 /// Resolve which actor (if any) spends a reaction for `row` against this
 /// swing. `&self`-only so the caller can keep reading actor stats before
@@ -2932,15 +3238,29 @@ pub fn resolve_attack_outcome_with_rider(
     // had been missed. Great Weapon Fighting is deliberately not
     // considered on that branch: RAW gates it to melee weapons, and
     // `apply_gwf` is already false for every spell here.
-    let raw_damage = if p.is_spell {
+    let spell_damage = if p.is_spell {
         encounter.roll_empowered_sum(p.caster_id, p.damage_dice.count, p.damage_dice.faces) as i32
     } else {
-        encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
-    };
-    let crit_extra = if is_crit {
-        encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
-    } else {
         0
+    };
+    // The weapon branch keeps its pool **one face at a time** rather
+    // than as a total, because the two riders below reach into it:
+    // Savage Attacker rerolls the whole pool, and Piercer rerolls a
+    // single die of it — a choice nobody can make from a sum. The
+    // per-die roller draws from the seeded roller in the same order the
+    // summing one did, so nothing about a replayed encounter changes.
+    let mut base_faces = if p.is_spell {
+        Vec::new()
+    } else {
+        encounter.roll_weapon_damage_dice_each(p.damage_dice, apply_gwf)
+    };
+    // A critical hit's doubled dice, on both branches: RAW doubles the
+    // dice of *any* attack, and a Fire Bolt's second 1d10 is rolled
+    // here rather than at the spell chokepoint above.
+    let mut crit_faces = if is_crit {
+        encounter.roll_weapon_damage_dice_each(p.damage_dice, apply_gwf)
+    } else {
+        Vec::new()
     };
     // The **Savage Attacker** feat: "Once per turn when you hit a
     // target with a weapon, you can roll the weapon's damage dice twice
@@ -2955,30 +3275,47 @@ pub fn resolve_attack_outcome_with_rider(
     // the player and no player takes the smaller number, so the choice
     // is not one. Weapon attacks only — `p.is_spell` rolls through a
     // different chokepoint above and a Fire Bolt is not a weapon.
-    let (raw_damage, crit_extra) = if !p.is_spell {
-        savage_attacker_reroll(encounter, &p, apply_gwf, raw_damage, crit_extra)
+    //
+    // The **Piercer** feat's reroll runs after it, and the order is the
+    // rule rather than a convenience: Savage Attacker's swap replaces
+    // the pool wholesale, so a Piercer reroll made first would be
+    // thrown away along with the die it improved.
+    if !p.is_spell {
+        savage_attacker_reroll(encounter, &p, apply_gwf, &mut base_faces, &mut crit_faces);
+        piercer_reroll(encounter, &p, apply_gwf, &mut base_faces, &mut crit_faces);
+    }
+    let raw_damage = if p.is_spell {
+        spell_damage
     } else {
-        (raw_damage, crit_extra)
+        faces_total(&base_faces)
     };
-    // 5e Brutal Critical (Barbarian level 9 / 13 / 17) + Half-Orc
-    // Savage Attacks: both add extra weapon damage dice on a critical
-    // melee hit. Spell attacks don't qualify — gated on `is_melee` +
-    // `is_crit`. Read from the shared `CRIT_MELEE_EXTRA_DICE_SOURCES`
-    // table — each entry is a (label, dice_count_fn) pair; the fn
-    // reads the caster's template flag / dice-count field and returns
-    // the number of extra weapon-face dice to roll (0 = skip). A
-    // level-17 half-orc barbarian rolls 3 (Brutal Critical) + 1
+    let crit_extra = faces_total(&crit_faces);
+    // 5e Brutal Critical (Barbarian level 9 / 13 / 17), Half-Orc Savage
+    // Attacks and the Piercer feat: all three add extra weapon damage
+    // dice on a critical hit. Read from the shared
+    // `CRIT_EXTRA_DICE_SOURCES` table — each row owns its own lane gate
+    // (`melee_only`), its own damage-type gate, and a count fn that
+    // returns the number of extra weapon-face dice to roll (0 = skip).
+    // A level-17 half-orc barbarian rolls 3 (Brutal Critical) + 1
     // (Savage Attacks) = 4 extra dice without touching this site.
     // Each rider logs separately so the source of the extra dice is
-    // legible in the combat log. A new crit-extra-dice source (Piercer
-    // feat's +1 die, a hypothetical Champion "Superior Critical"
-    // bonus die) drops in as a new tuple rather than another
-    // if-block copy.
-    let brutal_extra = if is_crit && p.is_melee {
+    // legible in the combat log. A new crit-extra-dice source (a
+    // hypothetical Champion "Superior Critical" bonus die) drops in as
+    // a new row rather than another if-block copy.
+    let brutal_extra = if is_crit {
         let mut total = 0;
-        for (label, count_fn) in CRIT_MELEE_EXTRA_DICE_SOURCES {
+        for row in CRIT_EXTRA_DICE_SOURCES {
+            if row.melee_only && !p.is_melee {
+                continue;
+            }
+            if row
+                .damage_types
+                .is_some_and(|types| !types.contains(&p.damage_type))
+            {
+                continue;
+            }
             let Some(a) = encounter.actors.get(&p.caster_id) else { break; };
-            let count = count_fn(a);
+            let count = (row.count)(a);
             if count == 0 {
                 continue;
             }
@@ -2986,7 +3323,7 @@ pub fn resolve_attack_outcome_with_rider(
             let rolled = encounter.roll(&extra_dice) as i32;
             encounter.log(format!(
                 "  {}: +{}({}) = +{} {:?}",
-                label, extra_dice, rolled, rolled, p.damage_type
+                row.label, extra_dice, rolled, rolled, p.damage_type
             ));
             total += rolled;
         }
@@ -3284,11 +3621,16 @@ pub fn resolve_attack_outcome_with_rider(
         }
     }
     // Passive weapon-hit condition marks — Eldritch Strike (Eldritch
-    // Knight lv10) and Unwavering Mark (Cavalier lv3). Both are rows on
-    // the shared `ON_HIT_CONDITION_MARKS` cohort; the walker owns the
-    // spell / melee lane gates, the tag check, the log, and the
-    // condition-plus-back-link push.
-    push_on_hit_condition_marks(encounter, &mut effects, &p);
+    // Knight lv10), Unwavering Mark (Cavalier lv3), the Crusher and
+    // Slasher feats' riders. All are rows on the shared
+    // `ON_HIT_CONDITION_MARKS` cohort; the walker owns the spell / melee
+    // lane gates, the damage-type and critical-hit gates, the tag check,
+    // the log, and the condition-plus-back-link push.
+    push_on_hit_condition_marks(encounter, &mut effects, &p, is_crit);
+    // The Crusher feat's shove — the trio's one clause that is movement
+    // rather than a mark, and so the one that could not be a row on the
+    // cohort above.
+    try_fire_crusher_shove(encounter, &mut effects, &p);
     // Melee retaliation: any condition the *target* holds that bounces
     // damage back at a melee attacker, plus their creature-intrinsic
     // reflect. Shared with the spell-attack path via
@@ -4254,8 +4596,17 @@ const MELEE_REFLECT_RIDERS: &[MeleeReflectRider] = &[
     },
 ];
 
-/// The **Savage Attacker** feat's reroll. Returns the (base, crit)
-/// damage pair the swing should actually use.
+/// A rolled dice pool's total, as the signed figure the damage
+/// arithmetic downstream works in.
+///
+/// Saturating, matching the roller's own overflow guard: a pool large
+/// enough to wrap a `u32` is not a weapon, but the guard is free.
+fn faces_total(faces: &[u32]) -> i32 {
+    faces.iter().copied().fold(0u32, u32::saturating_add) as i32
+}
+
+/// The **Savage Attacker** feat's reroll, applied in place to the
+/// swing's base and crit dice pools.
 ///
 /// Rolls the whole dice pool a second time and keeps whichever total is
 /// larger, spending the holder's once-per-turn charge only when the
@@ -4274,35 +4625,126 @@ fn savage_attacker_reroll(
     encounter: &mut EncounterInstance,
     p: &AttackParams,
     apply_gwf: bool,
-    base: i32,
-    crit_extra: i32,
-) -> (i32, i32) {
+    base: &mut Vec<u32>,
+    crit: &mut Vec<u32>,
+) {
     use crate::actions::feats::SAVAGE_ATTACKER_TAG;
     let ready = encounter.actors.get(&p.caster_id).is_some_and(|a| {
         a.has_passive_feature(SAVAGE_ATTACKER_TAG) && !a.once_per_turn_used(SAVAGE_ATTACKER_TAG)
     });
     if !ready {
-        return (base, crit_extra);
+        return;
     }
-    let second_base = encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32;
-    let second_crit = if crit_extra > 0 {
-        encounter.roll_weapon_damage_dice(p.damage_dice, apply_gwf) as i32
+    let second_base = encounter.roll_weapon_damage_dice_each(p.damage_dice, apply_gwf);
+    let second_crit = if crit.is_empty() {
+        Vec::new()
     } else {
-        0
+        encounter.roll_weapon_damage_dice_each(p.damage_dice, apply_gwf)
     };
-    if second_base + second_crit <= base + crit_extra {
-        return (base, crit_extra);
+    let before = faces_total(base) + faces_total(crit);
+    let after = faces_total(&second_base) + faces_total(&second_crit);
+    if after <= before {
+        return;
     }
     if let Some(actor) = encounter.actors.get_mut(&p.caster_id) {
         actor.mark_once_per_turn_used(SAVAGE_ATTACKER_TAG);
     }
     encounter.log(format!(
         "  savage attacker: {} rerolls the dice for {} instead of {}",
-        p.action_name,
-        second_base + second_crit,
-        base + crit_extra
+        p.action_name, after, before
     ));
-    (second_base, second_crit)
+    *base = second_base;
+    *crit = second_crit;
+}
+
+/// The **Piercer** feat's reroll: *"once per turn, when you hit a
+/// creature with an attack that deals Piercing damage, you can reroll
+/// one of the attack's damage dice, and you must use the new roll."*
+///
+/// Three things separate it from Savage Attacker directly above, and
+/// all three are in that one sentence.
+///
+///   - **One die, not the pool.** So the caller hands over the pool's
+///     individual faces rather than its total, which is why
+///     `roll_weapon_damage_dice_each` exists.
+///   - **"Must use the new roll."** Savage Attacker keeps the better of
+///     two totals and is therefore free to take; this is a gamble, and
+///     the engine only takes it when the odds are on. The weakest face
+///     in the pool is rerolled, and only when it came up *below the
+///     die's own average* — which is the whole of the judgement RAW
+///     leaves to the holder, and the only reading of it that has a
+///     right answer. `2 * face <= faces` is that test in integers:
+///     a d8 is rerolled at 4 and kept at 5.
+///   - **Piercing.** The gate is on what the swing deals, not on who
+///     swung, so a piercer with a warhammer in hand gets nothing.
+///
+/// The crit half of the pool is eligible too: RAW's unit is "the
+/// attack's damage dice" and a critical hit's doubled dice are those
+/// dice, the same reading Savage Attacker's whole-pool reroll takes.
+///
+/// **Weapon attacks only**, which is a narrowing: RAW says "an attack",
+/// and a spell attack that dealt Piercing damage would qualify. The
+/// spell branch of the damage chokepoint rolls its pool through
+/// `roll_empowered_sum`, which folds a flat bonus into the figure it
+/// returns and so cannot hand back faces; no spell attack on the roster
+/// deals Piercing damage, so the narrowing is currently invisible.
+///
+/// The reroll honours Great Weapon Fighting, because it is a damage die
+/// rolled for the attack like any other. The below-average test is
+/// still taken against the plain die's average, which slightly
+/// *under*-uses the feat for a GWF holder — their reroll is worth more
+/// than the bare average says — and under-use is the safe direction for
+/// a once-a-turn resource.
+fn piercer_reroll(
+    encounter: &mut EncounterInstance,
+    p: &AttackParams,
+    apply_gwf: bool,
+    base: &mut [u32],
+    crit: &mut [u32],
+) {
+    use crate::actions::feats::PIERCER_TAG;
+    if p.damage_type != DamageType::Piercing {
+        return;
+    }
+    let ready = encounter
+        .actors
+        .get(&p.caster_id)
+        .is_some_and(|a| a.has_passive_feature(PIERCER_TAG) && !a.once_per_turn_used(PIERCER_TAG));
+    if !ready {
+        return;
+    }
+    // The weakest face across both halves of the pool, as an index into
+    // base-then-crit. `min_by_key` takes the first minimum, so a tie
+    // rerolls the earliest die and the choice stays deterministic.
+    let Some((slot, weakest)) = base
+        .iter()
+        .chain(crit.iter())
+        .copied()
+        .enumerate()
+        .min_by_key(|(_, face)| *face)
+    else {
+        return;
+    };
+    if 2 * weakest > p.damage_dice.faces {
+        return;
+    }
+    let replacement = encounter
+        .roll_weapon_damage_dice_each(Dice::new(1, p.damage_dice.faces), apply_gwf)
+        .first()
+        .copied()
+        .unwrap_or(weakest);
+    if let Some(actor) = encounter.actors.get_mut(&p.caster_id) {
+        actor.mark_once_per_turn_used(PIERCER_TAG);
+    }
+    encounter.log(format!(
+        "  piercer: the point works the wound — d{} rerolled, {} for {}",
+        p.damage_dice.faces, weakest, replacement
+    ));
+    if slot < base.len() {
+        base[slot] = replacement;
+    } else {
+        crit[slot - base.len()] = replacement;
+    }
 }
 
 /// Roll a single rider die for an on-hit bonus, doubling on crit per

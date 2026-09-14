@@ -22,6 +22,9 @@
 //! | Speedy | General | ten feet of walking speed |
 //! | Charger | General | 1d8 on the swing at the end of a run |
 //! | War Caster | General | the concentration save |
+//! | Crusher | General | five feet, and the guard of what it crit |
+//! | Piercer | General | the weakest damage die, and one more on a crit |
+//! | Slasher | General | ten feet of speed, and the swings of what it crit |
 //! | Boon of Combat Prowess | Epic Boon | one miss a turn becomes a hit |
 //! | Boon of Dimensional Travel | Epic Boon | thirty feet after the swing |
 //! | Boon of Fate | Epic Boon | 2d4 onto a d20 that came up short |
@@ -29,6 +32,20 @@
 //! | Boon of Spell Recall | Epic Boon | one slot in four comes back |
 //! | Boon of the Night Spirit | Epic Boon | what the dark is worth to its holder |
 //! | Boon of Truesight | Epic Boon | sixty feet of seeing through |
+//!
+//! ## Where the entries come from
+//!
+//! SRD 5.2's own feat list is short — four Origin feats, two General,
+//! four Fighting Style and the seven boons — and the table above is
+//! longer than that in one column. Tough, Speedy, Charger, War Caster,
+//! Sharpshooter, Mage Slayer, Mounted Combatant, Crusher, Piercer and
+//! Slasher are 2024 PHB feats that the SRD does not reprint, and they
+//! are here for the same reason the roster carries XGtE and TCE
+//! subclasses: the engine's scope is fifth edition as played, with the
+//! SRD as its spine rather than its fence. Where a clause below cites
+//! RAW, the citation is to whichever book prints the feat; the
+//! categories are SRD 5.2's four and every entry is filed under the one
+//! its own book gives it.
 //!
 //! ## The Epic Boon column
 //!
@@ -61,10 +78,17 @@
 //! reaction — needs a channel for a decision taken between a roll and
 //! its consequence, which the engine has in exactly one place (the
 //! reaction dispatcher) and cannot generalise cheaply. **A swing bound
-//! to a weapon** — Polearm Master, Dual Wielder, Crusher/Piercer/Slasher
-//! — needs the attack pipeline to know which object made the attack,
-//! and it does not: see `conditions::Condition::DragonSlaying` for the
-//! same absence viewed from the magic armoury.
+//! to a weapon** — Polearm Master, Dual Wielder — needs the attack
+//! pipeline to know which *object* made the attack, and it does not:
+//! see `conditions::Condition::DragonSlaying` for the same absence
+//! viewed from the magic armoury.
+//!
+//! Crusher, Piercer and Slasher used to be listed in that second group
+//! and are not any more, because the group was drawn one notch too
+//! wide. None of the three asks which object swung — each asks what
+//! *type* the swing dealt, and `AttackParams::damage_type` has always
+//! carried that. Polearm Master genuinely needs the object (a
+//! quarterstaff's opposite end is not a damage type) and stays.
 //!
 //! ## Why tags rather than fields
 //!
@@ -444,6 +468,112 @@ pub const MOUNTED_COMBATANT_TAG: &str = "feat.mounted_combatant";
 /// Ships on `fighters::CHAMPION_TEMPLATE` — the subclass whose entire
 /// identity is that its attack rolls land more often than anybody
 /// else's.
+/// **Crusher** (General feat) — the first of the three feats keyed on
+/// the *damage type* of the swing rather than on the swinger.
+///
+/// Two clauses, both shipped:
+///
+///   - *"Push. Once per turn, when you hit a creature with an attack
+///     that deals Bludgeoning damage, you can move it 5 feet to an
+///     unoccupied space, if the target is no more than one size larger
+///     than you."* — `engine::attack::try_fire_crusher_shove`, over the
+///     shared `shove_straight_back` helper that the Push weapon mastery
+///     also drives.
+///   - *"Enhanced Critical. When you score a Critical Hit that deals
+///     Bludgeoning damage to a creature, attack rolls against that
+///     creature have Advantage until the start of your next turn."* —
+///     one row on `ON_HIT_CONDITION_MARKS`, installing
+///     `Condition::Staggered`.
+///
+/// **The direction of the shove is not a choice.** RAW lets the holder
+/// put the target in any unoccupied space within 5 feet, and the whole
+/// tactical content of the clause is *which* space — into a Spirit
+/// Guardians aura, off a ledge, out of an ally's reach. The engine's
+/// forced-movement primitive (`side_effects::PushActor`) moves a
+/// creature straight away from a point and nothing in the engine asks a
+/// player where to put somebody mid-swing, so the shove is a shove
+/// backwards. That is the same narrowing the Push weapon mastery
+/// already accepts one clause over, for the same reason, and it is
+/// named here rather than quietly taken because for a melee holder it
+/// is occasionally a *downgrade* — a target driven out of reach is a
+/// target the second swing cannot follow.
+///
+/// **The size gate is RAW's and is relative**, which is what separates
+/// it from Push's absolute "Large or smaller": a Medium holder shoves
+/// up to Large, and a Large holder shoves up to Huge.
+///
+/// The Ability Score Increase is absent for the reason every feat's is
+/// — see the module header.
+///
+/// Ships on `dwarves::DWARF_TEMPLATE`, the one chassis on the roster
+/// whose signature weapon is a warhammer.
+pub const CRUSHER_TAG: &str = "feat.crusher";
+
+/// **Piercer** (General feat) — the damage-type trio's second entry,
+/// and the only one of the three whose clauses both land on the
+/// *damage roll* rather than on the target.
+///
+///   - *"Puncture. Once per turn, when you hit a creature with an
+///     attack that deals Piercing damage, you can reroll one of the
+///     attack's damage dice, and you must use the new roll."* —
+///     `engine::attack::piercer_reroll`, at the weapon-damage
+///     chokepoint beside Savage Attacker's whole-pool reroll.
+///   - *"Enhanced Critical. When you score a Critical Hit that deals
+///     Piercing damage to a creature, you can roll one additional
+///     damage die when determining the extra Piercing damage the target
+///     takes."* — one row on `CRIT_EXTRA_DICE_SOURCES`, whose docstring
+///     has been naming this feat as its example future row since Brutal
+///     Critical and Savage Attacks were the only two on it.
+///
+/// **"Must use the new roll" is what makes this a different feat from
+/// Savage Attacker**, and the implementation turns on it. Savage
+/// Attacker rerolls the pool and keeps the better of two totals, so
+/// taking it is free and the engine takes it whenever it is offered.
+/// Piercer is a gamble: the new face replaces the old one whatever it
+/// says. So the engine rerolls the pool's *weakest* die and only when
+/// that die came up below the die's own average — the one policy under
+/// which the swap is worth making, and the only judgement RAW leaves
+/// to the holder that has a right answer.
+///
+/// The crit clause is *not* melee-gated, and it is the row that made
+/// `CRIT_EXTRA_DICE_SOURCES` grow a `melee_only` column: Brutal
+/// Critical and Savage Attacks are both worded on melee, and a longbow
+/// is the most piercing weapon there is.
+///
+/// Ships on `rangers::GLOOM_STALKER_RANGER_TEMPLATE` — the archer whose
+/// subclass is the opening volley, and whose Dread Ambusher hands it an
+/// extra arrow to spend the once-a-turn reroll on.
+pub const PIERCER_TAG: &str = "feat.piercer";
+
+/// **Slasher** (General feat) — the trio's third entry, and the one
+/// whose two clauses are both conditions somebody else already needed.
+///
+///   - *"Slash. Once per turn when you hit a creature with an attack
+///     that deals Slashing damage, you can reduce its Speed by 10 feet
+///     until the start of your next turn."* — `Condition::Hobbled`,
+///     which is the Slow weapon mastery's flag and whose RAW sentence
+///     is word-for-word this one. Sharing it also inherits the
+///     don't-stack clause for free: a creature slashed and Slowed in
+///     the same round loses ten feet, not twenty.
+///   - *"Enhanced Critical. When you score a Critical Hit that deals
+///     Slashing damage to a creature, the target has Disadvantage on
+///     attack rolls until the start of your next turn."* —
+///     `Condition::Maimed`, which is new, and whose docstring says why
+///     it is neither `Sapped` (spent by the target's next swing) nor
+///     `Flinching` (which reaches ability checks too).
+///
+/// Both rows ride `ON_HIT_CONDITION_MARKS`, which is why this feat
+/// needed no lane of its own — only the two columns the whole trio
+/// needed (`damage_types` and `crit_only`) and the `OncePerTurn`
+/// cadence.
+///
+/// Ships on `fighters::CHAMPION_TEMPLATE`. The Champion is the chassis
+/// whose entire subclass is *how often the swing crits* — Improved
+/// Critical turns a 19 into a 20 — and Slasher is the feat with the
+/// most to gain from that, since the half of it that actually lands a
+/// debuff on a multiattacker only fires on a critical hit.
+pub const SLASHER_TAG: &str = "feat.slasher";
+
 pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 
 /// **Boon of Dimensional Travel** (Epic Boon) — *"Blink Steps.
@@ -671,6 +801,9 @@ pub const FEAT_TAGS: &[&str] = &[
     SHARPSHOOTER_TAG,
     MAGE_SLAYER_TAG,
     MOUNTED_COMBATANT_TAG,
+    CRUSHER_TAG,
+    PIERCER_TAG,
+    SLASHER_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,

@@ -3022,23 +3022,54 @@ impl EncounterInstance {
     /// to "melee weapon attack" since the engine doesn't track
     /// weapon-hand-usage (same shape as Dueling's gate collapse).
     ///
-    /// The GWF-off fast path (the vast majority of damage rolls) is a
-    /// single delegated `self.roll(&dice)` call, keeping the common case
-    /// as cheap as the un-rerolled path was before this helper existed.
+    /// The sum every caller but one wants. Delegates to
+    /// `roll_weapon_damage_dice_each` and adds the faces up.
     pub fn roll_weapon_damage_dice(&mut self, dice: Dice, apply_gwf_reroll: bool) -> u32 {
-        if !apply_gwf_reroll || dice.count == 0 || dice.faces == 0 {
-            return self.roll(&dice);
+        self.roll_weapon_damage_dice_each(dice, apply_gwf_reroll)
+            .into_iter()
+            .fold(0u32, u32::saturating_add)
+    }
+
+    /// The same weapon-damage roll, handed back **one face at a time**.
+    ///
+    /// The pool's individual dice, not its total, because two rules in
+    /// the engine are written about a single die rather than about the
+    /// damage: Great Weapon Fighting rerolls *"any 1 or 2 on a damage
+    /// die"* (which this function applies itself, since the reroll is
+    /// per-die by construction) and the **Piercer** feat rerolls *"one
+    /// of the attack's damage dice"* — a choice its caller cannot make
+    /// from a sum, and the reason this became the primitive and
+    /// `roll_weapon_damage_dice` became the wrapper rather than the
+    /// other way round.
+    ///
+    /// Rolls one die at a time in both branches, which consumes the
+    /// seeded roller in exactly the order `roll(&dice)` did — the
+    /// `Roller` contract is one draw per die — so an encounter replayed
+    /// from a seed is unchanged by the split.
+    ///
+    /// A degenerate pool (`count` or `faces` of zero) yields an empty
+    /// vector, which sums to the zero the old fast path returned.
+    pub fn roll_weapon_damage_dice_each(
+        &mut self,
+        dice: Dice,
+        apply_gwf_reroll: bool,
+    ) -> Vec<u32> {
+        if dice.count == 0 || dice.faces == 0 {
+            return Vec::new();
         }
         let one_die = Dice::new(1, dice.faces);
-        let mut sum: u32 = 0;
-        for _ in 0..dice.count {
-            let mut roll = self.roll(&one_die);
-            if roll <= 2 {
-                roll = self.roll(&one_die);
-            }
-            sum = sum.saturating_add(roll);
-        }
-        sum
+        (0..dice.count)
+            .map(|_| {
+                let roll = self.roll(&one_die);
+                // RAW: "you must use the new roll", so a reroll that
+                // comes up 1 or 2 again stands.
+                if apply_gwf_reroll && roll <= 2 {
+                    self.roll(&one_die)
+                } else {
+                    roll
+                }
+            })
+            .collect()
     }
 
     /// Roll `count` individual dice of `faces` faces, applying the

@@ -464,6 +464,17 @@ pub static GLOOM_STALKER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
             AbilityScoreType::Dexterity,
             AbilityScoreType::Wisdom,
         ]),
+        // The **Piercer** feat. The Gloom Stalker is the archer whose
+        // subclass is the opening volley — Dread Ambusher buys it an
+        // extra arrow before anything has moved — and both halves of
+        // Piercer are about making one arrow count: the weakest damage
+        // die rerolled once a turn, and a whole extra die on a
+        // critical. See `crate::actions::feats::PIERCER_TAG`.
+        features: {
+            let mut features = RANGER_TEMPLATE.features.clone();
+            features.insert(crate::actions::feats::PIERCER_TAG);
+            features
+        },
         ..RANGER_TEMPLATE.clone()
     }
 });

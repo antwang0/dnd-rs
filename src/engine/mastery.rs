@@ -58,10 +58,11 @@ use crate::actions::action_template::MELEE_REACH;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::attack::{
     ActionOnHitRider, AttackParams, AttackRiderPair, HitContext, resolve_attack,
+    shove_straight_back,
 };
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::side_effects::{
-    ApplicableSideEffect, DealDamage, PushActor, install_condition_with_link,
+    ApplicableSideEffect, DealDamage, install_condition_with_link,
 };
 use crate::engine::types::{AbilityScoreType, Size};
 use crate::engine::util::tiles_from_feet;
@@ -503,15 +504,17 @@ fn push(
     if !reaches {
         return;
     }
-    let Some(from) = encounter.actors.get(&p.caster_id).map(|c| c.location()) else {
-        return;
-    };
-    encounter.log("  push: the blow drives the target back 10 ft");
-    effects.push(Box::new(PushActor {
-        actor_id: p.target_id,
-        from,
-        max_tiles: PUSH_TILES,
-    }));
+    // The anchor lookup, the log and the `PushActor` all live on the
+    // shared `shove_straight_back` helper, which the Crusher feat's
+    // five-foot shove also drives. Only the distance and the size gate
+    // are this property's own.
+    shove_straight_back(
+        encounter,
+        effects,
+        p,
+        PUSH_TILES,
+        "  push: the blow drives the target back 10 ft",
+    );
 }
 
 /// **Sap** — the target's next attack roll is at disadvantage.

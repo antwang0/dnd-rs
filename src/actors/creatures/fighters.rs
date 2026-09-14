@@ -70,12 +70,19 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     anybody else's — a crit range widened to 19, and now one
         //     miss a turn that simply isn't one. See
         //     `crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG`.
+        //   - SLASHER_TAG: the General feat with the most to gain from
+        //     a widened crit range. Its first clause takes ten feet of
+        //     speed off whatever the longsword lands on; its second
+        //     only fires on a critical hit, which on this chassis is
+        //     one roll in ten rather than one in twenty. See
+        //     `crate::actions::feats::SLASHER_TAG`.
         features: HashSet::from([
             SECOND_WIND_TAG,
             ACTION_SURGE_TAG,
             INDOMITABLE_TAG,
             SURVIVOR_TAG,
             crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
+            crate::actions::feats::SLASHER_TAG,
         ]),
         has_extra_attack: true,
         // 5e Champion subclass level-3 feature: critical hits trigger on
