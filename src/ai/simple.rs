@@ -13076,6 +13076,17 @@ mod tests {
             if seed.is_multiple_of(2) {
                 e.scatter_traps(1 + (seed % 6) as usize);
             }
+            // …and a third of them with the floor open, so SRD 5.2's
+            // Long Jump is on the driver's path too. A rift is the only
+            // thing on the board that can make a route *exist* for one
+            // creature and not for another standing beside it, which is
+            // the shape of thing that could plausibly wedge a fight —
+            // and `carve_rifts` refusing to strand anybody is a promise
+            // about walking, not about what the AI decides to do with
+            // its turn. This is where that promise meets the driver.
+            if seed.is_multiple_of(3) {
+                e.carve_rifts(1 + (seed % 5) as usize);
+            }
             let ai = SimpleAi;
             // The cap is a backstop for a genuine hang, not a budget:
             // a settled fight uses a low four-figure number of steps,

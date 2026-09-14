@@ -697,6 +697,40 @@ const UNNERVING_GAZE_RANGE: isize = 12;
 /// Thief's own.
 const THIEFS_REFLEXES_INITIATIVE_PENALTY: i32 = 10;
 
+/// The widths a rift is rolled from, in tiles, one entry per draw so the
+/// list is its own weighting — the same shape `POOL_BRUSH_WIDTHS` uses
+/// for the pools.
+///
+/// Two and a half feet against five, and the difference is a whole
+/// Strength band. A Medium body has to land its footprint clear of the
+/// crack, so a one-tile rift is a seven-and-a-half-foot Long Jump and a
+/// two-tile rift is a ten-foot one: the first is a running jump for
+/// anything with Strength 8 and a standing jump at 15, the second wants
+/// Strength 10 running and 20 standing. Three narrow cracks to one wide
+/// one, because the wide one is the landmark — a rift most of the room
+/// simply cannot cross is a wall with a view, and the map already has a
+/// tile for that.
+const RIFT_WIDTHS: &[isize] = &[1, 1, 1, 2];
+
+/// How far a rift grows from its seed in either direction, in tiles.
+///
+/// Six each way is a crack up to thirty feet long, which on a 40x30
+/// board is most of a room — long enough that walking round it is a
+/// decision rather than a shrug, and short enough that the lane at
+/// either end is usually still on the map. Candidates that grow past
+/// what the room can take are cut back by the wall lip and then by the
+/// reachability check; this is only the point at which the generator
+/// stops asking for more.
+const RIFT_MAX_REACH: isize = 6;
+
+/// The shortest band worth cutting, in cross-sections.
+///
+/// A two-tile scratch in the floor is something everybody steps round
+/// without thinking, and a scatter nobody has to think about is a
+/// scatter that only costs frames. The whole value of a rift is that it
+/// makes somebody choose.
+const RIFT_MIN_LENGTH: isize = 3;
+
 /// Which side of the emitter's team an aura projects onto. Every
 /// paladin aura but one helps the emitter's allies; Oath of Conquest's
 /// hurts their enemies. Read by `EncounterInstance::aura_emitters`,
@@ -8640,6 +8674,284 @@ impl EncounterInstance {
             self.log(format!("The dungeon is trapped: {} armed.", armed));
         }
         armed
+    }
+
+    /// Cut `count` rifts into the floor — `TerrainType::Chasm`, laid as a
+    /// straight crack across a room, and the only thing on the board a
+    /// Long Jump is for. See `crate::engine::jumping`.
+    ///
+    /// `scatter_traps`'s sibling in every way that matters: opt-in for
+    /// the same reason (turning it on by default would silently rewrite
+    /// every seeded encounter in the suite), drawn from the same seeded
+    /// `rng()` so a seed still reproduces a board exactly, run from the
+    /// same place — `BoardSettings::apply`, after the actors are placed
+    /// — and returning how many actually landed rather than how many
+    /// were asked for.
+    ///
+    /// # Why this one has to check its work
+    ///
+    /// Every other scatter on the board is safe by construction. Rubble
+    /// and a low wall are passable, a pool is passable, a trap is not
+    /// terrain at all; none of them can make a room unreachable however
+    /// unluckily it falls. A chasm can, and a board cut in two is not a
+    /// hard encounter — it is a fight where half the roster stands
+    /// looking across a gap for twenty rounds.
+    ///
+    /// So the pass is **carve, check, and put it back**: a candidate
+    /// rift is cut, the walking reachability of every creature on the
+    /// board is recomputed, and if any creature lost a peer it could
+    /// reach before, the tiles are restored and the seed is spent. That
+    /// is a stronger guarantee than any placement rule could give,
+    /// because it is about the board that actually resulted rather than
+    /// about the one the rule was hoping for — and it is measured
+    /// against the board *as it was*, not against a perfect one, so a
+    /// map whose Huge creature was already walled off by a narrow door
+    /// is not blamed on the rift.
+    ///
+    /// Reachability is asked of the **walk** and not of the path a
+    /// creature could actually take, which is the conservative half of
+    /// the bargain: a rift a strong creature could leap still has to be
+    /// walkable-around by everybody, so a party of one wizard is never
+    /// stranded by a gap their Strength 8 cannot clear.
+    ///
+    /// The crack itself is a straight band one or two tiles wide, laid
+    /// along a random axis from a random floor tile and grown in both
+    /// directions for as long as the whole cross-section is open floor
+    /// with nobody standing on it. It stops one tile short of a wall,
+    /// which is not cosmetic: that lip is the lane a creature that
+    /// cannot jump walks round by, and it is what turns most candidates
+    /// into rifts the check above will accept.
+    pub fn carve_rifts(&mut self, count: usize) -> usize {
+        if count == 0 {
+            return 0;
+        }
+        let before = self.walking_reach();
+        let mut candidates: Vec<Coordinate> = Vec::new();
+        for y in 0..self.height as isize {
+            for x in 0..self.width as isize {
+                let coord = Coordinate::new(x, y);
+                if self
+                    .terrain_at(coord)
+                    .is_some_and(|t| t.terrain_type == TerrainType::Floor)
+                    && self.actor_id_at(coord).is_none()
+                {
+                    candidates.push(coord);
+                }
+            }
+        }
+        let mut cut = 0usize;
+        for _ in 0..count {
+            if candidates.is_empty() {
+                break;
+            }
+            let pick = self.rng().usize(0..candidates.len());
+            let seed = candidates.swap_remove(pick);
+            let axis = if self.rng().bool() {
+                Coordinate::new(1, 0)
+            } else {
+                Coordinate::new(0, 1)
+            };
+            let width = RIFT_WIDTHS[self.rng().usize(0..RIFT_WIDTHS.len())];
+            let Some(band) = self.rift_band(seed, axis, width) else {
+                continue;
+            };
+            let restore: Vec<(Coordinate, TerrainType)> = band
+                .iter()
+                .filter_map(|&c| self.terrain_at(c).map(|t| (c, t.terrain_type)))
+                .collect();
+            for &c in &band {
+                self.set_terrain_at(c, TerrainType::Chasm);
+            }
+            if self.walking_reach() == before {
+                cut += 1;
+            } else {
+                for (c, was) in restore {
+                    self.set_terrain_at(c, was);
+                }
+            }
+        }
+        if cut > 0 {
+            self.log(format!("The floor has given way: {} rifts open.", cut));
+        }
+        cut
+    }
+
+    /// The tiles one candidate rift would take, or `None` when the seed
+    /// grew nothing worth cutting.
+    ///
+    /// A band `width` tiles across, laid along `axis`, grown from `seed`
+    /// in both directions for as long as the whole cross-section is
+    /// open, unoccupied floor — then pulled back one cross-section at
+    /// either end that ran into a wall, which is the lip a walker gets
+    /// round by.
+    ///
+    /// Refuses a band shorter than [`RIFT_MIN_LENGTH`]: a two-tile
+    /// scratch in the floor is something everybody steps over and
+    /// nobody has to think about, and the whole value of a rift is that
+    /// it makes somebody choose.
+    fn rift_band(
+        &self,
+        seed: Coordinate,
+        axis: Coordinate,
+        width: isize,
+    ) -> Option<Vec<Coordinate>> {
+        let perp = Coordinate::new(axis.y, axis.x);
+        let open = |at: Coordinate| {
+            (0..width).all(|k| {
+                let c = at + Coordinate::new(perp.x * k, perp.y * k);
+                self.terrain_at(c)
+                    .is_some_and(|t| t.terrain_type == TerrainType::Floor)
+                    && self.actor_id_at(c).is_none()
+            })
+        };
+        let walled = |at: Coordinate| {
+            (0..width).any(|k| {
+                let c = at + Coordinate::new(perp.x * k, perp.y * k);
+                self.terrain_at(c)
+                    .is_some_and(|t| t.terrain_type == TerrainType::Wall)
+            })
+        };
+        if !open(seed) {
+            return None;
+        }
+        let mut lo = 0isize;
+        let mut hi = 0isize;
+        while hi < RIFT_MAX_REACH && open(seed + Coordinate::new(axis.x * (hi + 1), axis.y * (hi + 1)))
+        {
+            hi += 1;
+        }
+        while -lo < RIFT_MAX_REACH && open(seed + Coordinate::new(axis.x * (lo - 1), axis.y * (lo - 1)))
+        {
+            lo -= 1;
+        }
+        // The lip. A band that stopped because it ran into a wall gives
+        // back its last cross-section, so there is always a tile of
+        // floor between the crack and the stone for somebody to edge
+        // along. A band that stopped for any other reason — a pool, a
+        // patch of rubble, a creature — keeps its full length, because
+        // what it stopped against is something a walker can cross.
+        if walled(seed + Coordinate::new(axis.x * (hi + 1), axis.y * (hi + 1))) {
+            hi -= 1;
+        }
+        if walled(seed + Coordinate::new(axis.x * (lo - 1), axis.y * (lo - 1))) {
+            lo += 1;
+        }
+        if hi - lo + 1 < RIFT_MIN_LENGTH {
+            return None;
+        }
+        let mut band = Vec::new();
+        for t in lo..=hi {
+            for k in 0..width {
+                band.push(
+                    seed + Coordinate::new(axis.x * t + perp.x * k, axis.y * t + perp.y * k),
+                );
+            }
+        }
+        Some(band)
+    }
+
+    /// Who can still walk to whom — the board property `carve_rifts`
+    /// refuses to make worse.
+    ///
+    /// One entry per combat-active creature, holding the ids of everyone
+    /// else it could reach on foot, and comparable with `==` because
+    /// both halves are built in id order.
+    ///
+    /// **Terrain only.** Creatures are not obstacles here: a flood fill
+    /// that treated them as walls would answer "unreachable" for two
+    /// allies standing in the same doorway and the rift pass would then
+    /// blame a gap for it. Nor are the hazards — a reachability question
+    /// asked of a board is about what the floor allows, and a party that
+    /// has to cross a Spike Growth to get at somebody can still get at
+    /// them.
+    ///
+    /// Each creature is flooded at *its own* footprint, because that is
+    /// the whole difficulty: an ogre and a goblin do not have the same
+    /// board. Reaching somebody means getting a footprint next to
+    /// theirs, not standing where they stand — nobody can do the second
+    /// one.
+    fn walking_reach(&self) -> Vec<(usize, Vec<usize>)> {
+        let mut ids: Vec<usize> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.is_combat_active())
+            .map(|(id, _)| *id)
+            .collect();
+        ids.sort_unstable();
+        ids.iter()
+            .map(|&id| {
+                let reached = self.walk_reachable_anchors(id);
+                let peers = ids
+                    .iter()
+                    .copied()
+                    .filter(|&other| other != id && self.anchor_set_touches(&reached, id, other))
+                    .collect();
+                (id, peers)
+            })
+            .collect()
+    }
+
+    /// Every anchor a body the size of `actor_id` could walk to from
+    /// where that actor stands, as a bitmap over the tile grid.
+    fn walk_reachable_anchors(&self, actor_id: usize) -> Vec<bool> {
+        let mut seen = vec![false; self.width * self.height];
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return seen;
+        };
+        let span = get_tiles_from_size(actor.size()) as isize;
+        let fits = |anchor: Coordinate| {
+            (0..span).all(|dy| {
+                (0..span).all(|dx| {
+                    self.terrain_at(Coordinate::new(anchor.x + dx, anchor.y + dy))
+                        .is_some_and(|t| t.terrain_type.is_passable())
+                })
+            })
+        };
+        let start = actor.location();
+        let Ok(start_idx) = self.idx(start) else {
+            return seen;
+        };
+        seen[start_idx] = true;
+        let mut queue = std::collections::VecDeque::from([start]);
+        while let Some(coord) = queue.pop_front() {
+            for dy in -1..=1isize {
+                for dx in -1..=1isize {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let next = Coordinate::new(coord.x + dx, coord.y + dy);
+                    let Ok(next_idx) = self.idx(next) else {
+                        continue;
+                    };
+                    if seen[next_idx] || !fits(next) {
+                        continue;
+                    }
+                    seen[next_idx] = true;
+                    queue.push_back(next);
+                }
+            }
+        }
+        seen
+    }
+
+    /// True when any anchor in `reached` puts a body of `mover_id`'s size
+    /// within arm's length of `target_id`.
+    fn anchor_set_touches(&self, reached: &[bool], mover_id: usize, target_id: usize) -> bool {
+        let (Some(mover), Some(target)) = (self.actors.get(&mover_id), self.actors.get(&target_id))
+        else {
+            return false;
+        };
+        let mover_span = get_tiles_from_size(mover.size());
+        let target_span = get_tiles_from_size(target.size());
+        let target_loc = target.location();
+        reached.iter().enumerate().any(|(idx, &ok)| {
+            ok && footprint_chebyshev(
+                Coordinate::new((idx % self.width) as isize, (idx / self.width) as isize),
+                mover_span,
+                target_loc,
+                target_span,
+            ) <= 1
+        })
     }
 
     /// Every patch of conjured map currently standing, in install order.

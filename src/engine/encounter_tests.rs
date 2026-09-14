@@ -109095,3 +109095,87 @@ fn a_leap_onto_broken_ground_can_put_the_jumper_on_their_face() {
     assert!(fell > 0, "thirty landings on rubble and nobody stumbled");
     assert!(stood > 0, "thirty landings on rubble and nobody kept their feet");
 }
+
+/// The generator's own promise: a rift is a decision, never a wall the
+/// party is standing on the wrong side of.
+///
+/// Swept over generated boards rather than a fixture, because the thing
+/// that could go wrong is *geometric* — a crack that happens to line up
+/// with the one doorway between two rooms — and a hand-built board is
+/// exactly the board that will not do that. Twenty-five dungeons with
+/// six rifts asked of each is enough for the unlucky alignment to come
+/// up many times over; what is asserted is that when it does, the tiles
+/// go back.
+///
+/// The second assertion is what stops the first from passing vacuously:
+/// a `carve_rifts` that had quietly become a no-op would preserve every
+/// reachability on every board.
+#[test]
+fn a_rift_never_leaves_anybody_on_the_wrong_side_of_the_board() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let tp = TerrainGenParams {
+        width: 40,
+        height: 20,
+        branch_depth: 8,
+        branch_prob: 0.5,
+    };
+    let ap = ActorGenParams {
+        cr_target: 1.0,
+        n_teams: 2,
+        pc_template: Some(&FIGHTER_TEMPLATE),
+        start_team: 0,
+    };
+    let mut total_cut = 0usize;
+    for seed in 0..25u64 {
+        let mut e = EncounterInstance::from_params(&tp, &ap, Some(seed)).unwrap();
+        let before = e.walking_reach();
+        total_cut += e.carve_rifts(6);
+        assert_eq!(
+            e.walking_reach(),
+            before,
+            "seed {seed}: a rift stranded somebody"
+        );
+    }
+    assert!(
+        total_cut > 0,
+        "twenty-five dungeons and the floor never once gave way"
+    );
+}
+
+/// …and the adversarial case, where every rift that could be cut would
+/// cut the board.
+///
+/// A two-tile corridor with a creature at each end has exactly one route
+/// on it, so any crack wide enough to span the floor severs it. The pass
+/// is allowed to try twenty times and must come away with the corridor
+/// intact — which in practice means it comes away with nothing, and the
+/// assertion is written about the property rather than about the count
+/// so it still holds if a future rift shape finds a crack that fits.
+#[test]
+fn a_corridor_with_one_route_on_it_keeps_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let walls: Vec<(isize, isize)> = (0..20isize)
+        .flat_map(|x| [(x, 2isize), (x, 5isize)])
+        .collect();
+    let mut e = ei_with_terrain(20, 20, &walls);
+    let west = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(0, 3), 0, 1)
+        .unwrap();
+    let east = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(18, 3), 1, 0)
+        .unwrap();
+    let before = e.walking_reach();
+    assert_eq!(
+        before,
+        vec![(west, vec![east]), (east, vec![west])],
+        "the fixture's own premise: one corridor, two ends, mutual reach"
+    );
+    e.carve_rifts(20);
+    assert_eq!(
+        e.walking_reach(),
+        before,
+        "the only route on the board survived"
+    );
+}

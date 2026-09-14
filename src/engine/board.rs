@@ -10,7 +10,7 @@
 //! `TerrainGenParams` and `ActorGenParams` and those describe a shape
 //! rather than a place.
 //!
-//! Three things the player asked for on the command line are neither.
+//! Four things the player asked for on the command line are neither.
 //! They are not the party and they are not the generator's shape — they
 //! are what the sky is doing and what is under the flagstones, and they
 //! belong to the whole run:
@@ -26,14 +26,17 @@
 //!   - the **trap density**, which was worse off still: the count lived
 //!     in `main`, was spent on the first board by `scatter_traps`, and
 //!     was not recorded anywhere afterwards. A `--traps=8` run had eight
-//!     traps in room one and a clean floor for the rest of the dungeon.
+//!     traps in room one and a clean floor for the rest of the dungeon;
+//!   - the **rift density**, which is the fourth answer the paragraph
+//!     below predicted, and which arrived already knowing where it
+//!     lived because of it.
 //!
-//! One struct rather than three fields on `App`, because the three are
-//! one question — *what kind of place is this run happening in?* — and
-//! because the next thing the command line grows will be a fourth answer
+//! One struct rather than four fields on `App`, because the four are one
+//! question — *what kind of place is this run happening in?* — and
+//! because whatever the command line grows next will be a fifth answer
 //! to it. [`BoardSettings::apply`] is the single place that knows how to
 //! put them onto a board, so `main`'s first room and every room after it
-//! are set up by the same three lines rather than by two copies that can
+//! are set up by the same four lines rather than by two copies that can
 //! drift.
 //!
 //! ## What is deliberately *not* here
@@ -49,8 +52,8 @@ use crate::engine::weather::Weather;
 
 /// The board-level settings a whole dungeon run is played under.
 ///
-/// `Default` is the game as it was played before any of the three
-/// existed: a lit hall, still air, and a clean floor. That matters more
+/// `Default` is the game as it was played before any of them existed: a
+/// lit hall, still air, and an unbroken floor. That matters more
 /// than it looks — it is what lets every test and every caller that does
 /// not care about the sky keep saying nothing about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -65,6 +68,17 @@ pub struct BoardSettings {
     /// that makes sense of carrying the number forward. A party does not
     /// walk into the same pit twice.
     pub traps: usize,
+    /// How many rifts the floor of each room is cracked open by — see
+    /// [`crate::engine::encounter::EncounterInstance::carve_rifts`] and
+    /// [`crate::engine::jumping`], which is the rule they exist for.
+    ///
+    /// A density like `traps`, and carried across the boundary for the
+    /// same reason: a `--rifts=4` run is a dungeon whose floor is going,
+    /// not one room with a crack in it. Also like `traps`, it is what
+    /// the room *asked* for rather than what it got — a rift that would
+    /// have cut the board in two is put back, so a room with no space
+    /// for four gets fewer.
+    pub rifts: usize,
 }
 
 impl BoardSettings {
@@ -74,13 +88,18 @@ impl BoardSettings {
     /// light first, because nothing reads it back; the weather second,
     /// because `set_weather` puts open flames out and has to run after
     /// every carried torch has been lit (which instantiation does); the
-    /// traps last, because `scatter_traps` walks the board looking for
+    /// traps next, because `scatter_traps` walks the board looking for
     /// floor tiles nobody is standing on, and it wants the actors
-    /// already placed so it does not arm the square the party spawns in.
+    /// already placed so it does not arm the square the party spawns in;
+    /// and the rifts last, for that reason and one more of their own —
+    /// `carve_rifts` refuses any crack that leaves a creature unable to
+    /// walk to another, and it cannot ask that question until it knows
+    /// where the creatures are.
     pub fn apply(&self, encounter: &mut EncounterInstance) {
         encounter.set_ambient_light(self.ambient);
         encounter.set_weather(self.weather);
         encounter.scatter_traps(self.traps);
+        encounter.carve_rifts(self.rifts);
     }
 }
 
@@ -99,5 +118,6 @@ mod tests {
         assert_eq!(board.ambient, AmbientLight::BrightLight);
         assert_eq!(board.weather, Weather::Calm);
         assert_eq!(board.traps, 0);
+        assert_eq!(board.rifts, 0);
     }
 }

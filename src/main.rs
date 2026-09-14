@@ -61,7 +61,13 @@ struct Cli {
     ///     interesting question a trapped board asks is how often it is
     ///     worth spending an Action on the floor, and that is entirely a
     ///     matter of density. `--traps` arms `Cli::DEFAULT_TRAPS` of
-    ///     them and `--traps=N` arms N.
+    ///     them and `--traps=N` arms N;
+    ///   - the **rifts** are a count for exactly the same reason, and
+    ///     they are the reason SRD 5.2's Long Jump exists in this engine
+    ///     at all — see `crate::engine::jumping`. `--rifts` cuts
+    ///     `Cli::DEFAULT_RIFTS` cracks in the floor and `--rifts=N` cuts
+    ///     N, or as many of them as the board can take without being
+    ///     split in two.
     board: BoardSettings,
 }
 
@@ -92,6 +98,7 @@ impl Cli {
         let mut ambient = AmbientLight::default();
         let mut weather = Weather::default();
         let mut traps = 0usize;
+        let mut rifts = 0usize;
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
             // Checked before the number parse and before the name
@@ -141,14 +148,18 @@ impl Cli {
             // number is already the seed and the parser is
             // order-independent — there would be no way to tell
             // `--traps 42` from `42 --traps`.
-            if let Some(rest) = arg.strip_prefix("--traps") {
-                traps = match rest.strip_prefix('=') {
-                    Some(n) => n
-                        .parse::<usize>()
-                        .map_err(|_| format!("--traps wants a count, not {:?}", n))?,
-                    None if rest.is_empty() => Self::DEFAULT_TRAPS,
-                    None => return Err(format!("unknown flag {:?}", arg)),
-                };
+            // The traps and the rifts, on the same `--` lane as the
+            // other board settings and with the same optional count.
+            // One parser rather than two, because the second flag would
+            // otherwise have been the second copy of a six-line match
+            // whose error message names the flag — and a copied error
+            // message is one that ends up naming the wrong flag.
+            if let Some(count) = Self::count_flag(&arg, "--traps", Self::DEFAULT_TRAPS)? {
+                traps = count;
+                continue;
+            }
+            if let Some(count) = Self::count_flag(&arg, "--rifts", Self::DEFAULT_RIFTS)? {
+                rifts = count;
                 continue;
             }
             match arg.parse::<u64>() {
@@ -169,6 +180,7 @@ impl Cli {
                 ambient,
                 weather,
                 traps,
+                rifts,
             },
         }))
     }
@@ -182,13 +194,56 @@ impl Cli {
     /// spending and the fight stops being about the creatures.
     const DEFAULT_TRAPS: usize = 6;
 
+    /// Rifts cut by a bare `--rifts`, on the 40x30 board `main`
+    /// generates.
+    ///
+    /// Lower than the trap density, and the reason is that a rift is not
+    /// one tile: each one takes a band of up to thirteen, and the ones
+    /// that land are the ones a walker can still get round — so three
+    /// asked for is a board with two or three real decisions on it
+    /// rather than a floor made of holes. `carve_rifts` puts back
+    /// anything that would have cut the board in two, so this is a
+    /// ceiling rather than a promise.
+    const DEFAULT_RIFTS: usize = 3;
+
+    /// Parse one `--flag` / `--flag=N` board-density argument.
+    ///
+    /// `Ok(None)` means "this argument is not that flag" and the caller
+    /// moves on; `Ok(Some(n))` is the count; `Err` is a flag that was
+    /// spelled right and given a count that is not one.
+    ///
+    /// The `=` form rather than a following bare number, and this is
+    /// where that decision lives for every density flag at once: the
+    /// parser is order-independent and a bare number is already the
+    /// seed, so `--traps 42` and `42 --traps` are the same argument
+    /// list and there is no way to tell which the 42 belonged to.
+    ///
+    /// The `strip_prefix` is deliberately *not* a whole-string
+    /// comparison, so `--trapsss` is caught as an unknown flag here
+    /// rather than falling through to the class matcher and coming back
+    /// as `unknown class "--trapsss"`.
+    fn count_flag(arg: &str, flag: &str, default: usize) -> Result<Option<usize>, String> {
+        let Some(rest) = arg.strip_prefix(flag) else {
+            return Ok(None);
+        };
+        match rest.strip_prefix('=') {
+            Some(n) => n
+                .parse::<usize>()
+                .map(Some)
+                .map_err(|_| format!("{} wants a count, not {:?}", flag, n)),
+            None if rest.is_empty() => Ok(Some(default)),
+            None => Err(format!("unknown flag {:?}", arg)),
+        }
+    }
+
     /// Usage plus the full class listing. Shares
     /// `class_listing` with the unknown-class error so the two can't
     /// disagree about what is playable.
     fn help_message() -> String {
         let mut msg =
             String::from(
-                "usage: dnd-rs [seed] [class name] [--light-level] [--weather] [--traps[=N]]\n\n",
+                "usage: dnd-rs [seed] [class name] [--light-level] [--weather] \
+                 [--traps[=N]] [--rifts[=N]]\n\n",
             );
         msg.push_str("Every argument is optional and order-independent: the first\n");
         msg.push_str("argument that parses as a number is the seed, a --flag sets\n");
@@ -202,6 +257,11 @@ impl Cli {
         msg.push_str(&format!(
             "Traps (none by default):\n  --traps arms {}, --traps=N arms N\n\n",
             Self::DEFAULT_TRAPS
+        ));
+        msg.push_str(&format!(
+            "Rifts in the floor (none by default):\n  \
+             --rifts cuts {}, --rifts=N cuts N\n\n",
+            Self::DEFAULT_RIFTS
         ));
         msg.push_str("Classes:\n");
         msg.push_str(&Self::class_listing());
@@ -608,13 +668,66 @@ mod tests {
 
     /// A count that is not a count is refused rather than read as a
     /// class name — the same discipline the unknown-class message
-    /// keeps, applied to the flag that takes an argument.
+    /// keeps, applied to the flags that take an argument.
+    ///
+    /// Swept over both density flags rather than pinned on one, because
+    /// they now share a parser: the thing that could break is the shared
+    /// helper naming the wrong flag in its error, and a test of `--traps`
+    /// alone would not see it.
     #[test]
-    fn a_malformed_trap_count_is_refused_by_name() {
-        let err = match parse(&["--traps=lots"]) {
-            Err(e) => e,
-            Ok(cli) => panic!("\"lots\" is not {} traps", cli.board.traps),
-        };
-        assert!(err.contains("lots"), "{}", err);
+    fn a_malformed_density_count_is_refused_by_name() {
+        for flag in ["--traps", "--rifts"] {
+            let arg = format!("{}=lots", flag);
+            let err = match parse(&[&arg]) {
+                Err(e) => e,
+                Ok(cli) => panic!("{:?} started a game with {} traps", arg, cli.board.traps),
+            };
+            assert!(err.contains("lots"), "{}", err);
+            assert!(err.contains(flag), "the error should name {}: {}", flag, err);
+        }
+    }
+
+    /// `--rifts` takes the same shape as `--traps`, composes with every
+    /// other board flag, and is off unless it is asked for.
+    ///
+    /// The last clause is the load-bearing one. Rifts are the only
+    /// scatter on the board that can refuse a route outright, so a
+    /// default that cut them would change every fight in the engine at
+    /// once — and the engine's own suite would have been the thing that
+    /// found out.
+    #[test]
+    fn the_rift_flag_takes_an_optional_count_and_is_off_by_default() {
+        assert_eq!(parse(&[]).unwrap().board.rifts, 0, "unbroken floor by default");
+        assert_eq!(parse(&["--rifts"]).unwrap().board.rifts, Cli::DEFAULT_RIFTS);
+        assert_eq!(parse(&["--rifts=9"]).unwrap().board.rifts, 9);
+        assert_eq!(parse(&["--rifts=0"]).unwrap().board.rifts, 0);
+
+        let cli = parse(&["--rifts=2", "--traps=3", "--dark", "5", "Rogue"])
+            .expect("the board flags compose with each other and with the seed");
+        assert_eq!(cli.board.rifts, 2);
+        assert_eq!(cli.board.traps, 3);
+        assert_eq!(cli.board.ambient, AmbientLight::Darkness);
+        assert_eq!(cli.seed, Some(5));
+        assert_eq!(cli.pc_template.name, "Rogue");
+    }
+
+    /// A flag spelled *nearly* right is an error, not a class name.
+    ///
+    /// `count_flag` matches on a prefix, which is what lets `--traps=6`
+    /// and `--traps` share one arm — and is exactly what would let
+    /// `--trapsss` through as "the flag --traps followed by the text
+    /// `ss`" if the empty-remainder case were not spelled out. Without
+    /// this the typo reaches the class matcher and comes back as
+    /// `unknown class "--trapsss"`, which is an error message about the
+    /// wrong thing.
+    #[test]
+    fn a_flag_spelled_nearly_right_is_named_as_a_flag() {
+        for arg in ["--trapsss", "--rifts9"] {
+            let err = match parse(&[arg]) {
+                Err(e) => e,
+                Ok(_) => panic!("{:?} should not start a game", arg),
+            };
+            assert!(err.contains("unknown flag"), "{:?}: {}", arg, err);
+        }
     }
 }

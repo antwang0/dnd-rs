@@ -1390,6 +1390,7 @@ mod tests {
             ambient: AmbientLight::Darkness,
             weather: Weather::HeavyPrecipitation,
             traps: 4,
+            rifts: 2,
         };
         app.board.apply(&mut app.encounter);
         app.encounter
@@ -1414,6 +1415,21 @@ mod tests {
                 .count()
         };
         assert_eq!(traps_on_board(&app), 4, "the fixture's own premise");
+        // …and the same question asked of the floor itself. A rift is
+        // terrain rather than a zone, so it is counted off the map
+        // directly; `carve_rifts` puts back anything that would have
+        // split the board, so the count is "some" rather than a number.
+        let rift_tiles = |app: &App| {
+            let e = &app.encounter;
+            (0..e.height as isize)
+                .flat_map(|y| (0..e.width as isize).map(move |x| Coordinate::new(x, y)))
+                .filter(|&c| {
+                    e.terrain_at(c)
+                        .is_some_and(|t| t.terrain_type == crate::engine::terrain::TerrainType::Chasm)
+                })
+                .count()
+        };
+        assert!(rift_tiles(&app) > 0, "the fixture's own premise");
 
         assert!(app.start_next_encounter(), "the next room generates");
 
@@ -1431,6 +1447,10 @@ mod tests {
             traps_on_board(&app),
             4,
             "the second room's floor was swept clean"
+        );
+        assert!(
+            rift_tiles(&app) > 0,
+            "the second room's floor was quietly mended"
         );
     }
 
