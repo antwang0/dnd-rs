@@ -107974,3 +107974,63 @@ fn the_pole_strike_is_a_bonus_action_d4_at_the_lance_s_reach() {
         "and it costs the bonus action"
     );
 }
+
+/// The whole lane, driven by the AI rather than by a hand-pushed
+/// action: the lance goes in at Action cost, the ledger flips, and the
+/// picker finds the shaft swing waiting for a bonus action.
+///
+/// The cavalier's charges are spent before the fight starts, and that
+/// is the fixture rather than a cheat. Every Battle Master maneuver on
+/// the chassis wants the same bonus action and every one of them ranks
+/// above a d4 — a Trip Attack's Prone is worth more than five points of
+/// bludgeoning and the ladder is right to say so. What is worth pinning
+/// is that the swing is *reachable*: a feat the picker can never arrive
+/// at is a feat that only exists for a human at the prompt.
+#[test]
+fn the_ai_reaches_for_the_pole_strike_once_its_maneuvers_are_spent() {
+    use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+    use crate::actors::creatures::hydras::HYDRA_TEMPLATE;
+    use crate::ai::{Controller, ControllerDecision, simple::SimpleAi};
+
+    let ai = SimpleAi;
+    let mut struck = 0;
+    for seed in 0..10u64 {
+        let mut e = ei_with_terrain_seeded(30, 20, &[], seed);
+        let cav = e
+            .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let _hydra = e
+            .instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .unwrap();
+        e.initialize();
+        let tags: Vec<&'static str> = CAVALIER_FIGHTER_TEMPLATE.features.iter().copied().collect();
+        let a = e.actors.get_mut(&cav).unwrap();
+        for tag in tags {
+            while a.spend_feature(tag) {}
+        }
+        let mut steps = 0;
+        while steps < 20_000 {
+            steps += 1;
+            e.process_stack();
+            if e.is_complete() {
+                break;
+            }
+            let Some(prompt) = e.peek_prompt() else { break };
+            let actor_id = prompt.actor_id();
+            match ai.decide(&e, actor_id) {
+                ControllerDecision::AwaitInput => break,
+                ControllerDecision::Act(aei) => {
+                    e.pop_prompt();
+                    e.push_action(aei);
+                }
+            }
+        }
+        if e.messages().iter().any(|l| l.contains("pole strike")) {
+            struck += 1;
+        }
+    }
+    assert_eq!(
+        struck, 10,
+        "the picker should find the shaft swing on every seed"
+    );
+}

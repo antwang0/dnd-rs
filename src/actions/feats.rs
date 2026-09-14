@@ -657,6 +657,15 @@ pub const DEFENSIVE_DUELIST_TAG: &str = "feat.defensive_duelist";
 ///
 /// Ships on `fighters::CAVALIER_FIGHTER_TEMPLATE`, which also gains the
 /// lance it had been fighting without — see that template.
+///
+/// **The AI reaches for it last, and that is the ladder being right
+/// rather than the feat being unreachable.** The Cavalier inherits the
+/// fighter's whole Battle Master suite, every maneuver in it wants the
+/// same bonus action, and a Trip Attack's Prone is worth more than 1d4
+/// plus a modifier. So the shaft swing is what the picker takes once
+/// the charges are gone, which is exactly where it belongs — and
+/// `the_ai_reaches_for_the_pole_strike_once_its_maneuvers_are_spent`
+/// is what keeps "last" from quietly becoming "never".
 pub const POLEARM_MASTER_TAG: &str = "feat.polearm_master";
 
 /// Per-turn ledger key stamped when a Pole Strike-eligible weapon is
