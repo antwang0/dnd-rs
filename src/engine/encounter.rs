@@ -2222,6 +2222,24 @@ pub struct EncounterInstance {
     /// outright, on the grounds that a stat block carrying both flags
     /// is the same rule written twice.
     multiattack_depth: u32,
+    /// Nesting depth of the **opportunity attack** currently resolving,
+    /// or 0 outside one. The sibling of `multiattack_depth` directly
+    /// above, and it exists for the same reason: a swing's *provenance*
+    /// is a fact about how it was invoked, and `AttackParams` carries
+    /// only the swing itself.
+    ///
+    /// Two rules read it, and they are the two halves of the Sentinel
+    /// feat. **Halt** is worded on the opportunity attack landing, so it
+    /// has to know that this swing is one; **Guardian** must not fire on
+    /// an opportunity attack, or the reaction it hands out would provoke
+    /// the next Sentinel along and the chain would only end when the
+    /// board ran out of reactions.
+    ///
+    /// A counter rather than a flag so a Guardian swing nested inside
+    /// another one leaves a well-formed gate on the way out — the same
+    /// argument `multiattack_depth` makes for a hypothetical
+    /// Multi-of-Multis.
+    opportunity_attack_depth: u32,
     /// Stack of in-flight spell casts. `Action::execute` pushes a frame
     /// before building the action's side-effects and pops it after, so
     /// any resolution site nested inside — a burst's per-target save
@@ -11222,8 +11240,14 @@ impl EncounterInstance {
             // Run the underlying attack's side_effects directly (consumes
             // Reaction below, NOT the action's normal cost).
             let target_vec = vec![mover_id];
+            // Wrapped so the swing knows what it is. The Sentinel feat's
+            // Halt clause is worded on the opportunity attack landing,
+            // and `AttackParams` carries the die and the reach but not
+            // how the swing came to be made.
+            self.enter_opportunity_attack();
             let effects =
                 attack.side_effects(self, reactor_id, Some(&target_vec), None, None);
+            self.exit_opportunity_attack();
             for e in effects {
                 e.apply(self);
             }
@@ -13224,6 +13248,7 @@ impl EncounterInstance {
             messages: Vec::new(),
             outcome_tracker: OutcomeTracker::new(),
             multiattack_depth: 0,
+            opportunity_attack_depth: 0,
             cast_stack: Vec::new(),
             turn_started_for: None,
             zones: Vec::new(),
@@ -13264,6 +13289,32 @@ impl EncounterInstance {
     pub fn exit_multiattack(&mut self) {
         if self.multiattack_depth > 0 {
             self.multiattack_depth -= 1;
+        }
+    }
+
+    /// True if attack resolution is currently nested inside an
+    /// opportunity attack — either the ordinary one the dispatcher
+    /// makes as a creature leaves a reach envelope, or the Sentinel
+    /// feat's Guardian swing, which RAW calls an Opportunity Attack in
+    /// so many words.
+    ///
+    /// See `opportunity_attack_depth` for the two clauses that read it
+    /// and why one of them reads it the other way round.
+    pub fn in_opportunity_attack(&self) -> bool {
+        self.opportunity_attack_depth > 0
+    }
+
+    /// Increment / decrement the opportunity-attack nesting counter.
+    /// Every site that resolves a swing *as* an opportunity attack
+    /// wraps the resolution in the pair, symmetric-guard style, exactly
+    /// as the multiattack counter is wrapped.
+    pub fn enter_opportunity_attack(&mut self) {
+        self.opportunity_attack_depth += 1;
+    }
+
+    pub fn exit_opportunity_attack(&mut self) {
+        if self.opportunity_attack_depth > 0 {
+            self.opportunity_attack_depth -= 1;
         }
     }
 

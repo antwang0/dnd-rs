@@ -27,6 +27,7 @@
 //! | Slasher | General | ten feet of speed, and the swings of what it crit |
 //! | Defensive Duelist | General | one swing a round, off the armour class |
 //! | Polearm Master | General | a bonus-action swing with the other end |
+//! | Sentinel | General | a swing on somebody else's turn, and their feet |
 //! | Boon of Combat Prowess | Epic Boon | one miss a turn becomes a hit |
 //! | Boon of Dimensional Travel | Epic Boon | thirty feet after the swing |
 //! | Boon of Fate | Epic Boon | 2d4 onto a d20 that came up short |
@@ -41,7 +42,8 @@
 //! four Fighting Style and the seven boons — and the table above is
 //! longer than that in one column. Tough, Speedy, Charger, War Caster,
 //! Sharpshooter, Mage Slayer, Mounted Combatant, Crusher, Piercer,
-//! Slasher and Defensive Duelist are 2024 PHB feats that the SRD does
+//! Slasher, Defensive Duelist, Polearm Master and Sentinel are 2024 PHB
+//! feats that the SRD does
 //! not reprint, and they
 //! are here for the same reason the roster carries XGtE and TCE
 //! subclasses: the engine's scope is fifth edition as played, with the
@@ -76,18 +78,18 @@
 //! The General column is long and this file is not. Every feat above
 //! earned its place by landing on a lane that already existed; the ones
 //! still missing are missing because they need a lane nobody has built,
-//! and the two shapes recur. **A mid-roll choice** — Lucky's luck
-//! points, Great Weapon Master's bonus-action follow-up, Sentinel's
-//! opportunity-attack clause — needs a channel for a decision taken
-//! between a roll and its consequence. The engine has two such channels
-//! now, not one: the reaction dispatcher, and `REACTIVE_AC_GUARDS`,
-//! which is where Defensive Duelist lands. Neither generalises to a
-//! clause the *attacker* decides mid-swing, which is what the three
-//! above are. **A swing bound to a weapon** — Dual Wielder's
-//! second-blade clause — needs the attack pipeline to know which
-//! *object* made the attack, and it does not: see
-//! `conditions::Condition::DragonSlaying` for the same absence viewed
-//! from the magic armoury.
+//! and the two shapes recur. **A mid-roll choice the *attacker*
+//! makes** — Lucky's luck points, Great Weapon Master's bonus-action
+//! follow-up — needs a channel for a decision taken between a roll and
+//! its consequence, on the swinging side. The engine has three
+//! defender-side channels for exactly that (the reaction dispatcher,
+//! `REACTIVE_AC_GUARDS`, and the bystander sweep Sentinel's Guardian
+//! rides) and none of them generalises to the attacker, because none
+//! of them is asked before the attacker's own swing has finished.
+//! **A swing bound to a weapon** — Dual Wielder's second-blade clause —
+//! needs the attack pipeline to know which *object* made the attack,
+//! and it does not: see `conditions::Condition::DragonSlaying` for the
+//! same absence viewed from the magic armoury.
 //!
 //! That second group used to be much longer, and it was wrong. Crusher,
 //! Piercer and Slasher were on it: none of the three asks which object
@@ -866,6 +868,53 @@ pub static POLE_STRIKE_LANCE: PoleStrike = PoleStrike {
     reach: 2,
 };
 
+/// **Sentinel** (General feat) — the feat about standing between
+/// somebody and their friends, and the only one in this module whose
+/// two clauses are both about somebody *else's* turn.
+///
+///   - *"Halt. When you hit a creature with an Opportunity Attack, the
+///     creature's Speed becomes 0 for the rest of the turn."* — one row
+///     on `ON_HIT_CONDITION_MARKS`, installing `Condition::Rooted`, and
+///     the row whose gate made that cohort's `holder_gate` take the
+///     encounter: *"with an Opportunity Attack"* is a question about how
+///     the swing came to be made, not about either creature swinging.
+///   - *"Guardian. Immediately after a creature within 5 feet of you
+///     makes an attack against a target other than you, you can take a
+///     Reaction to make an Opportunity Attack against that creature."*
+///     — `engine::attack::try_fire_sentinel_guardian`, over the same
+///     `swing_back_at` helper the Pirate Captain's riposte drives.
+///
+/// **The two halves compose, and that is the feat.** RAW calls
+/// Guardian's swing an Opportunity Attack in so many words, so a
+/// Sentinel who answers a blow aimed at their ally also pins the
+/// attacker where it stands — and a pinned attacker cannot walk away
+/// from the sentinel to try again. Neither clause is worth much alone;
+/// together they are a creature that has to fight the sentinel.
+///
+/// The engine spells both out with one marker,
+/// `EncounterInstance::in_opportunity_attack`, which Halt reads to fire
+/// and Guardian reads to *decline* — a Guardian swing does not provoke
+/// the next sentinel along, or the chain would end only when the board
+/// ran out of reactions. That guard is the one thing here RAW does not
+/// say; see `try_fire_sentinel_guardian` for why it costs a table
+/// nothing they would notice.
+///
+/// **A third clause is absent.** The 2014 printing also stops a
+/// creature's movement dead when it tries to Disengage past the holder;
+/// the current one folds that into Halt, which is what ships. What
+/// neither printing's version of Guardian reaches here is a spell
+/// attack resolved through `spells::spell_attack_outcome`, the other
+/// attack chokepoint — see the fire site.
+///
+/// Ships on `barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE`, whose
+/// whole subclass is already the sentence Sentinel is: Ancestral
+/// Protectors punishes the marked creature for attacking anybody but
+/// the barbarian, and Guardian is that idea spent as a reaction rather
+/// than as a debuff. It is also the one martial chassis on the roster
+/// with nothing else to do with a reaction — the fighter has Parry, the
+/// psi warrior has Protective Field, and a barbarian has a free hand.
+pub const SENTINEL_TAG: &str = "feat.sentinel";
+
 pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 
 /// **Boon of Dimensional Travel** (Epic Boon) — *"Blink Steps.
@@ -1098,6 +1147,7 @@ pub const FEAT_TAGS: &[&str] = &[
     SLASHER_TAG,
     DEFENSIVE_DUELIST_TAG,
     POLEARM_MASTER_TAG,
+    SENTINEL_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,

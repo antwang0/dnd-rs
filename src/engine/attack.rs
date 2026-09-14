@@ -910,7 +910,18 @@ struct OnHitConditionMark {
     /// always-on marks; Ancestral Protectors uses it for RAW's "while
     /// raging" clause, which is a condition rather than a feature and so
     /// can't be folded into the tag check.
-    holder_gate: Option<fn(&crate::actors::actor_template::ActorInstance) -> bool>,
+    ///
+    /// Takes the encounter alongside the holder, and the widening is
+    /// the sibling cohort's: `OncePerTurnWeaponRiderSpec::caster_gate`
+    /// grew the same parameter for the same reason, which is that a
+    /// clause can be about the *board* rather than about the creature.
+    /// The Sentinel feat's Halt clause is the row that needed it here —
+    /// *"when you hit a creature with an Opportunity Attack"* is a
+    /// question about how this swing came to be made, and the answer
+    /// lives on `EncounterInstance::in_opportunity_attack`.
+    holder_gate: Option<
+        fn(&EncounterInstance, &crate::actors::actor_template::ActorInstance) -> bool,
+    >,
     /// Target-side gate. `None` for the rows RAW leaves ungated, which
     /// is every class mark here; the Goliath's Hill's Tumble uses it for
     /// RAW's *"a Large or smaller creature"* clause.
@@ -1080,7 +1091,7 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         // RAW is "hit with an attack", not "with a melee weapon
         // attack" — a thrown handaxe marks just as well.
         melee_only: false,
-        holder_gate: Some(|a| a.has_condition(Condition::Raging)),
+        holder_gate: Some(|_, a| a.has_condition(Condition::Raging)),
         target_gate: None,
         charge: None,
         damage_types: None,
@@ -1232,6 +1243,41 @@ const ON_HIT_CONDITION_MARKS: &[OnHitConditionMark] = &[
         cadence: MarkCadence::EveryHit,
         log: "crusher: the critical rattles the target and every attacker sees the opening",
     },
+    // The **Sentinel** feat's Halt clause: "when you hit a creature with
+    // an Opportunity Attack, the creature's Speed becomes 0 for the rest
+    // of the turn."
+    //
+    // `Condition::Rooted` is the engine's name for a speed pinned to
+    // zero by something that is not a grapple, a restraint or a loss of
+    // consciousness, and RAW's second half — the target cannot benefit
+    // from a bonus to its speed either — comes with it: a halted
+    // creature that Dashes still reads zero. See that variant.
+    //
+    // The only row on this cohort whose gate asks about the *board*
+    // rather than about either creature, and the reason `holder_gate`
+    // takes the encounter.
+    OnHitConditionMark {
+        tag: crate::actions::feats::SENTINEL_TAG,
+        condition: Condition::Rooted,
+        // "For the rest of the turn" is the *target's* clock here, not
+        // the marker's — the opportunity attack happens on the moving
+        // creature's own turn, and what RAW takes away is the rest of
+        // their movement. Every other row on this cohort says
+        // `Rounds(2)` for the opposite reason.
+        timer: ConditionTimer::UntilStartOfNextTurn,
+        // RAW names an Opportunity Attack, which is a melee attack by
+        // construction; the gate below already implies it, and this
+        // states it so a future ranged opportunity lane cannot widen the
+        // feat by accident.
+        melee_only: true,
+        holder_gate: Some(|e, _| e.in_opportunity_attack()),
+        target_gate: None,
+        charge: None,
+        damage_types: None,
+        crit_only: false,
+        cadence: MarkCadence::EveryHit,
+        log: "sentinel: the blow pins the target where it stands",
+    },
 ];
 
 /// Walk `ON_HIT_CONDITION_MARKS` and queue every mark the swing earns.
@@ -1266,7 +1312,7 @@ fn push_on_hit_condition_marks(
         }
         let holds = encounter.actors.get(&p.caster_id).is_some_and(|a| {
             a.has_passive_feature(row.tag)
-                && row.holder_gate.is_none_or(|gate| gate(a))
+                && row.holder_gate.is_none_or(|gate| gate(encounter, a))
                 && row.charge.is_none_or(|tag| a.feature_available(tag))
                 && !(row.cadence.rations_by_turn() && a.once_per_turn_used(row.tag))
         });
@@ -2075,38 +2121,180 @@ fn swing_back_after_parry(
     target_id: usize,
     attacker_id: usize,
 ) {
+    swing_back_at(
+        encounter,
+        target_id,
+        attacker_id,
+        "ripostes {} through the parry",
+        false,
+    );
+}
+
+/// One free melee swing from `swinger_id` at `victim_id`, resolved
+/// immediately rather than queued.
+///
+/// The shared body behind every "and then it hits back" clause in the
+/// engine: the swinger's first melee weapon, a reach check against the
+/// footprint, and the action's own `side_effects` fired directly rather
+/// than through the cost machinery — because the reaction that bought
+/// the swing has already been spent by the caller.
+///
+/// Asks `hostility_blocked` for the reason the Battle Master's Riposte
+/// does: a parry, and standing in front of a friend, are things a
+/// charmed creature may still do, and swinging back at the charmer is
+/// not.
+///
+/// `as_opportunity_attack` marks the swing for the rules that ask how
+/// it came to be made. RAW calls the Sentinel feat's Guardian swing an
+/// Opportunity Attack outright, which means it halts what it hits and —
+/// because the same marker gates Guardian off — cannot itself provoke
+/// another one. A riposte is not an opportunity attack and passes
+/// `false`.
+///
+/// `log_verb` is a format string taking the victim's name, so each
+/// caller keeps its own sentence.
+fn swing_back_at(
+    encounter: &mut EncounterInstance,
+    swinger_id: usize,
+    victim_id: usize,
+    log_verb: &str,
+    as_opportunity_attack: bool,
+) {
     use crate::actions::action_template::MELEE_REACH;
 
-    if encounter.hostility_blocked(target_id, attacker_id) {
+    if encounter.hostility_blocked(swinger_id, victim_id) {
         return;
     }
     let Some(attack) = encounter
         .actors
-        .get(&target_id)
+        .get(&swinger_id)
         .and_then(|t| t.first_melee_weapon_action())
     else {
         return;
     };
     let reach = attack.reach_tiles().unwrap_or(MELEE_REACH);
     if encounter
-        .footprint_distance(target_id, attacker_id)
+        .footprint_distance(swinger_id, victim_id)
         .is_none_or(|d| d > reach)
     {
         return;
     }
-    let (defender, attacker) = (
-        encounter.actor_name(target_id),
-        encounter.actor_name(attacker_id),
+    let (swinger, victim) = (
+        encounter.actor_name(swinger_id),
+        encounter.actor_name(victim_id),
     );
     encounter.log(format!(
-        "[reaction] {} ripostes {} through the parry",
-        defender, attacker
+        "[reaction] {} {}",
+        swinger,
+        log_verb.replace("{}", &victim)
     ));
-    let target_vec = vec![attacker_id];
-    for e in attack.side_effects(encounter, target_id, Some(&target_vec), None, None) {
+    let target_vec = vec![victim_id];
+    if as_opportunity_attack {
+        encounter.enter_opportunity_attack();
+    }
+    let effects = attack.side_effects(encounter, swinger_id, Some(&target_vec), None, None);
+    if as_opportunity_attack {
+        encounter.exit_opportunity_attack();
+    }
+    for e in effects {
         e.apply(encounter);
     }
     encounter.cleanup_dead_actors();
+}
+
+/// The **Sentinel** feat's Guardian clause: *"immediately after a
+/// creature within 5 feet of you makes an attack against a target other
+/// than you, you can take a Reaction to make an Opportunity Attack
+/// against that creature."*
+///
+/// A bystander reaction, which is a lane the engine already has on the
+/// damage side — `REACTIVE_DAMAGE_CLAMPS` fires for an ally the holder
+/// can see — and had nowhere on the *attack* side. What it needed was
+/// not a new trigger but the swing, and the swing is
+/// `swing_back_at`, shared with the Pirate Captain's riposte.
+///
+/// Five gates, and each is a clause of RAW or a guard the engine needs:
+///
+///   - **The swing was aimed at somebody else.** A Sentinel who is the
+///     target has nothing to answer; RAW gives them the other half of
+///     the feat instead.
+///   - **The sentinel is adjacent to the attacker.** RAW's "within 5
+///     feet", measured on the footprint so a Large attacker counts from
+///     its edge.
+///   - **They can see it happen.** Through `viewer_can_see`, the same
+///     predicate every reactive reducer rides — an invisible swing
+///     provokes nothing, which is one of the things invisibility is
+///     for.
+///   - **They have a reaction, and they are not the one who swung.**
+///   - **This is not already an opportunity attack.** Not RAW, and
+///     named here rather than taken quietly: a Guardian swing is itself
+///     an Opportunity Attack by RAW's own words, so without this gate
+///     one would provoke the next Sentinel along and the chain would
+///     end only when the board ran out of reactions. The reading costs
+///     the feat nothing a table would notice — two Sentinels flanking
+///     one attacker still both answer the attacker's own Action.
+///
+/// Fires on a hit and on a miss alike, which is RAW: the trigger is
+/// *"makes an attack"*, not "hits".
+///
+/// **Spell attack rolls made through the other chokepoint do not
+/// provoke it.** `spells::spell_attack_outcome` resolves a Fire Bolt or
+/// an Eldritch Blast beam without passing through here, and RAW's
+/// "makes an attack" covers those too. The gap is narrower than it
+/// looks — a caster standing inside a sentinel's reach is a caster with
+/// bigger problems — and closing it means the same sweep at a second
+/// site rather than a different rule.
+fn try_fire_sentinel_guardian(encounter: &mut EncounterInstance, p: &AttackParams) {
+    use crate::actions::feats::SENTINEL_TAG;
+    if encounter.in_opportunity_attack() {
+        return;
+    }
+    let Some(attacker_team) = encounter.actors.get(&p.caster_id).map(|a| a.team()) else {
+        return;
+    };
+    // Sorted for determinism: two sentinels beside one attacker both
+    // answer, and the order they do it in has to be the same on every
+    // run of the same seed.
+    let sentinels: Vec<usize> = encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter(|&id| id != p.caster_id && id != p.target_id)
+        .filter(|&id| {
+            encounter.actors.get(&id).is_some_and(|a| {
+                a.is_combat_active()
+                    && a.team() != attacker_team
+                    && a.has_passive_feature(SENTINEL_TAG)
+                    && a.has_reaction()
+            })
+        })
+        .filter(|&id| {
+            encounter
+                .footprint_distance(id, p.caster_id)
+                .is_some_and(|d| d <= crate::actions::action_template::MELEE_REACH)
+        })
+        .filter(|&id| encounter.viewer_can_see(id, p.caster_id))
+        .collect();
+    for sentinel in sentinels {
+        // Re-checked inside the loop: an earlier sentinel's swing may
+        // have dropped the attacker, and a corpse provokes nobody.
+        if !encounter
+            .actors
+            .get(&p.caster_id)
+            .is_some_and(|a| a.is_combat_active())
+        {
+            return;
+        }
+        if let Some(a) = encounter.actors.get_mut(&sentinel) {
+            a.consume_resource(crate::engine::side_effects::Resource::Reaction);
+        }
+        swing_back_at(
+            encounter,
+            sentinel,
+            p.caster_id,
+            "steps in front of the swing and answers {}",
+            true,
+        );
+    }
 }
 
 /// Which swing a row on `ATTACK_REDIRECTS` answers.
@@ -3270,6 +3458,13 @@ pub fn resolve_attack_outcome_with_rider(
             // no chassis on the roster holds both.
             try_fire_attack_redirect(encounter, &p, RedirectLane::Miss);
         }
+        // The **Sentinel** feat's Guardian clause, whose trigger is
+        // "makes an attack" rather than "hits" — so it answers a miss
+        // exactly as it answers a hit, and it answers a bow as readily
+        // as a blade. Last on the miss path because every other
+        // reaction here belongs to the creature that was swung at, and
+        // this one belongs to a bystander.
+        try_fire_sentinel_guardian(encounter, &p);
         return (miss_effects, miss_damage);
     }
     // Post-hit interception: a connecting swing may still land on
@@ -3777,6 +3972,18 @@ pub fn resolve_attack_outcome_with_rider(
     // it deliberately does not move `damage`.
     restore_resisted_physical_damage(encounter, &mut effects, p.caster_id, p.target_id);
     push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
+    // The **Sentinel** feat's Guardian clause, the bystander's answer to
+    // a swing aimed at somebody else. Last in the function, after every
+    // payload the triggering swing will deal has been assembled: RAW's
+    // trigger is *"immediately after a creature … makes an attack"*, and
+    // the attack is not finished until its damage is.
+    //
+    // The swing it makes resolves its own effects rather than joining
+    // `effects`, exactly as the Pirate Captain's riposte does — the
+    // reaction has already been spent, and a counter-attack queued
+    // behind the blow it answers would land in the wrong order against
+    // anything that reads the board.
+    try_fire_sentinel_guardian(encounter, &p);
     (effects, damage)
 }
 

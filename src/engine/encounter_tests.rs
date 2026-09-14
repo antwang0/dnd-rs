@@ -108203,3 +108203,290 @@ fn the_picker_prices_a_reloading_weapon_at_one_shot() {
         "and the longsword still counts its second swing: {sword}"
     );
 }
+
+// ---------------------------------------------------------------
+// The **Sentinel** feat.
+//
+// Two clauses, both about somebody else's turn, and both routed through
+// the one marker `EncounterInstance::in_opportunity_attack`: Halt reads
+// it to fire, Guardian reads it to decline. The tests below pin that
+// asymmetry as much as they pin either clause — a build where the
+// marker was always true would pass half of them and loop on the rest.
+// ---------------------------------------------------------------
+
+/// **Halt**: *"when you hit a creature with an Opportunity Attack, the
+/// creature's Speed becomes 0 for the rest of the turn."*
+///
+/// Driven through a real move so the opportunity attack is a real one:
+/// the barbarian's greataxe fires through the dispatcher, which is the
+/// only thing that sets the marker the row's gate reads.
+#[test]
+fn sentinel_halts_what_its_opportunity_attack_lands_on() {
+    use crate::actions::feats::SENTINEL_TAG;
+    use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+
+    let mut rooted = 0;
+    let mut swung = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let barbarian = e
+            .instantiate_creature(
+                &ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
+                Coordinate::new(7, 5),
+                1,
+                0,
+            )
+            .unwrap();
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert!(e.actors[&barbarian].has_passive_feature(SENTINEL_TAG));
+        MoveActor {
+            actor_id: mover,
+            path: vec![Coordinate::new(15, 5)],
+        }
+        .apply(&mut e);
+        let Some(zombie) = e.actors.get(&mover) else {
+            // The axe finished it; nothing left to root.
+            continue;
+        };
+        let hit = e
+            .messages()
+            .iter()
+            .any(|m| m.contains("sentinel: the blow pins"));
+        if hit {
+            swung += 1;
+            assert!(
+                zombie.has_condition(Condition::Rooted),
+                "seed {seed}: a halted creature is rooted where it stands"
+            );
+            rooted += 1;
+        } else {
+            assert!(
+                !zombie.has_condition(Condition::Rooted),
+                "seed {seed}: a swing that missed roots nobody"
+            );
+        }
+    }
+    assert!(swung > 0, "forty walks and the axe never landed one");
+    assert_eq!(rooted, swung, "every landed halt roots");
+}
+
+/// The marker, from the other side: an ordinary swing on the
+/// barbarian's *own* turn halts nobody, however many it lands.
+#[test]
+fn sentinel_does_not_halt_on_an_ordinary_swing() {
+    use crate::actions::monster_attacks::GREATAXE;
+    use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let barbarian = e
+        .instantiate_creature(
+            &ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
+            Coordinate::new(5, 5),
+            0,
+            0,
+        )
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    let halted = swing_until(&mut e, &GREATAXE, barbarian, zombie, 100, |l| {
+        l.contains("sentinel:")
+    });
+    assert!(
+        !halted,
+        "Halt is worded on the opportunity attack, not on the axe"
+    );
+    assert!(
+        !e.actors[&zombie].has_condition(Condition::Rooted),
+        "and nothing was rooted along the way"
+    );
+}
+
+/// **Guardian**: *"immediately after a creature within 5 feet of you
+/// makes an attack against a target other than you, you can take a
+/// Reaction to make an Opportunity Attack against that creature."*
+#[test]
+fn sentinel_answers_a_swing_aimed_at_somebody_else() {
+    use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // The zombie swings at the fighter; the barbarian is standing next
+    // to the zombie and on the fighter's side.
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .unwrap();
+    let barbarian = e
+        .instantiate_creature(
+            &ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
+            Coordinate::new(5, 7),
+            0,
+            1,
+        )
+        .unwrap();
+    assert!(e.actors[&barbarian].can_consume_resource(Resource::Reaction));
+
+    let (effects, _) = resolve_attack_outcome(
+        &mut e,
+        AttackParams {
+            caster_id: zombie,
+            target_id: fighter,
+            action_name: "slam",
+            attack_bonus: 3,
+            damage_dice: Dice::new(1, 6),
+            damage_bonus: 0,
+            damage_type: DamageType::Bludgeoning,
+            is_melee: true,
+            long_range: None,
+            min_range: None,
+            is_spell: false,
+        },
+    );
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("steps in front of the swing and answers")),
+        "the sentinel should have answered a blow aimed at its ally"
+    );
+    assert!(
+        !e.actors[&barbarian].can_consume_resource(Resource::Reaction),
+        "and paid for it with the reaction"
+    );
+}
+
+/// The clause the trigger *excludes*: a sentinel who is themselves the
+/// target has nothing to answer — RAW hands them the other half of the
+/// feat instead. And a sentinel out of reach of the attacker is a
+/// bystander rather than a guardian.
+#[test]
+fn sentinel_declines_the_swings_the_clause_does_not_name() {
+    use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    // `aimed_at_sentinel`: the blow lands on the barbarian itself.
+    // `far`: the barbarian is across the room from the attacker.
+    for (label, aimed_at_sentinel, far) in [
+        ("a swing aimed at the sentinel", true, false),
+        ("a swing ten tiles away", false, true),
+    ] {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let spot = if far {
+            Coordinate::new(15, 15)
+        } else {
+            Coordinate::new(5, 7)
+        };
+        let barbarian = e
+            .instantiate_creature(&ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE, spot, 0, 1)
+            .unwrap();
+        let target = if aimed_at_sentinel { barbarian } else { fighter };
+        let (effects, _) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: zombie,
+                target_id: target,
+                action_name: "slam",
+                attack_bonus: 3,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.messages()
+                .iter()
+                .any(|m| m.contains("steps in front of the swing and answers")),
+            "{label}: Guardian should have declined"
+        );
+        assert!(
+            e.actors
+                .get(&barbarian)
+                .is_some_and(|a| a.can_consume_resource(Resource::Reaction)),
+            "{label}: and kept its reaction"
+        );
+    }
+}
+
+/// The guard RAW does not write: a Guardian swing is itself an
+/// Opportunity Attack, so without a gate it would provoke the next
+/// sentinel along and the chain would end only when the board ran out
+/// of reactions.
+///
+/// Two sentinels, one attacker, one victim. Both answer the attacker's
+/// own swing — that is the clause working — and neither answers the
+/// other's answer.
+#[test]
+fn a_guardian_swing_does_not_provoke_another_guardian() {
+    use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+        .unwrap();
+    for (i, spot) in [Coordinate::new(5, 7), Coordinate::new(3, 5)]
+        .into_iter()
+        .enumerate()
+    {
+        e.instantiate_creature(&ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE, spot, 0, 1 + i)
+            .unwrap();
+    }
+    let before = e.messages().len();
+    let (effects, _) = resolve_attack_outcome(
+        &mut e,
+        AttackParams {
+            caster_id: zombie,
+            target_id: fighter,
+            action_name: "slam",
+            attack_bonus: 3,
+            damage_dice: Dice::new(1, 6),
+            damage_bonus: 0,
+            damage_type: DamageType::Bludgeoning,
+            is_melee: true,
+            long_range: None,
+            min_range: None,
+            is_spell: false,
+        },
+    );
+    for ef in effects {
+        ef.apply(&mut e);
+    }
+    let answers = e.messages()[before..]
+        .iter()
+        .filter(|m| m.contains("steps in front of the swing and answers"))
+        .count();
+    assert!(
+        answers <= 2,
+        "two sentinels answer one swing and no more: {answers}"
+    );
+    assert!(answers >= 1, "at least the nearer one should have answered");
+}

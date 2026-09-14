@@ -907,11 +907,23 @@ pub static ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> =
         // `with_subclass_tag` helper carries the rest of the chassis —
         // greataxe, Rage, Reckless Attack, Danger Sense, Fast Movement,
         // Brutal Critical, Relentless Rage — unchanged.
-        BARBARIAN_TEMPLATE.with_subclass_tag(
+        let mut template = BARBARIAN_TEMPLATE.with_subclass_tag(
             "Ancestral Guardian Barbarian",
             'G',
             crate::actions::class_features::ANCESTRAL_PROTECTORS_TAG,
-        )
+        );
+        // The **Sentinel** feat, and this is the chassis it is about.
+        // Ancestral Protectors already says "attack anyone but me and it
+        // goes badly" as a debuff; Sentinel says it as a reaction, and
+        // the two are the same sentence spent two different ways. It is
+        // also the one martial build on the roster with a genuinely
+        // free reaction — the fighter has Parry, the psi warrior has
+        // Protective Field, and a barbarian has a spare hand.
+        // See `crate::actions::feats::SENTINEL_TAG`.
+        template
+            .features
+            .insert(crate::actions::feats::SENTINEL_TAG);
+        template
     });
 
 /// Bite Beast Barbarian — **Path of the Beast** (TCE), Form of the
