@@ -108671,3 +108671,62 @@ fn the_pole_strike_list_is_the_one_raw_prints() {
         "and a routine of longswords is not"
     );
 }
+
+/// Halt stops the walk it interrupts, rather than merely noting that it
+/// should have.
+///
+/// The rest of a queued path is not the mover's to walk once their
+/// Speed is zero, and before this the move loop only abandoned a path
+/// when the opportunity attack *killed* them — so Sentinel's first
+/// clause was a condition installed on a creature that kept going. The
+/// same check catches a creature Restrained by a web it walked into on
+/// the previous step.
+#[test]
+fn a_halted_creature_stops_where_the_blow_caught_it() {
+    use crate::actors::creatures::barbarians::ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, MoveActor};
+
+    let mut halted = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 20, &[], seed);
+        let _barbarian = e
+            .instantiate_creature(
+                &ANCESTRAL_GUARDIAN_BARBARIAN_TEMPLATE,
+                Coordinate::new(7, 5),
+                1,
+                0,
+            )
+            .unwrap();
+        let mover = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let path: Vec<Coordinate> = (6..=20).map(|x| Coordinate::new(x, 5)).collect();
+        let destination = *path.last().unwrap();
+        MoveActor {
+            actor_id: mover,
+            path,
+        }
+        .apply(&mut e);
+        let Some(zombie) = e.actors.get(&mover) else {
+            continue;
+        };
+        if !e
+            .messages()
+            .iter()
+            .any(|m| m.contains("sentinel: the blow pins"))
+        {
+            continue;
+        }
+        halted += 1;
+        assert!(
+            zombie.has_condition(Condition::Rooted),
+            "seed {seed}: the halt landed"
+        );
+        assert_ne!(
+            zombie.location(),
+            destination,
+            "seed {seed}: and the rest of the path was not theirs to walk"
+        );
+    }
+    assert!(halted > 0, "forty walks and the axe never halted one");
+}

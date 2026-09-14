@@ -612,6 +612,29 @@ impl ApplicableSideEffect for MoveActor {
             {
                 return;
             }
+            // …and if something along the way pinned their Speed to
+            // zero, the rest of the path is not theirs to walk.
+            //
+            // The reaction above is one way that happens — the Sentinel
+            // feat's Halt clause roots whatever its opportunity attack
+            // lands on, and a creature that walked on regardless would
+            // make the whole feat a log line. A condition installed by
+            // the *previous* step's zone is the other: a creature
+            // Restrained by a web it walked into has a Speed of zero
+            // from that moment, and this check catches it on the next
+            // iteration.
+            //
+            // Asked as "is your Speed zero" rather than "is your budget
+            // spent", and the distinction is load-bearing: the budget is
+            // billed by the action that queued this path, so a walk that
+            // spends it exactly would abandon its own last step.
+            if ei
+                .actors
+                .get(&self.actor_id)
+                .is_some_and(|a| a.conditions().keys().any(|c| c.zeros_movement()))
+            {
+                return;
+            }
             // `walk_actor_to` rather than `place_actor_at`: this is the
             // one path a creature travels under its own power, and so
             // the one that can extend the straight run the charge
