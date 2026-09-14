@@ -1,5 +1,6 @@
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -59,7 +60,7 @@ pub static FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // and it is the clearest case in the bestiary for why
         // `standing_leap_feet` replaces the Strength rule instead of
         // adding to it.
-        standing_leap_feet: Some(10),
+        leap: Some(Leap::standing(10)),
         strength: 1,
         intelligence: 1,
         dexterity: 13,

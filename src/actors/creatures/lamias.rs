@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LAMIA_CLAWS, LAMIA_INTOXICATING_TOUCH, LAMIA_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -56,6 +57,11 @@ pub static LAMIA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 13d10+26 ≈ 97 average per MM (CR 4).
         hitpoints: "13d10+26".parse().unwrap(),
         speed: 40.,
+        // SRD 5.2 **Leap** (Bonus Action): *"The lamia jumps up to 30
+        // feet by spending 10 feet of movement."* Strength 16 would buy
+        // it sixteen at a run and eight standing; the trait nearly
+        // doubles the first and quadruples the second.
+        leap: Some(Leap::standing(30)),
         strength: 16,
         intelligence: 14,
         dexterity: 13,

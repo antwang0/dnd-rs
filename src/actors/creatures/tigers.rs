@@ -2,6 +2,7 @@ use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{TIGER_BITE, TIGER_CLAWS, TIGER_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size, SpecialSense, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -32,6 +33,11 @@ pub static TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 13,
         hitpoints: "4d10+8".parse().unwrap(),
         speed: 40.,
+        // SRD 5.2 **Running Leap**: *"With a 10-foot running start, the
+        // tiger can Long Jump up to 25 feet."* The lion's clause word
+        // for word — see that template for why the run-up is a bit on
+        // `Leap` rather than assumed away.
+        leap: Some(Leap::running(25)),
         strength: 17,
         intelligence: 3,
         dexterity: 16,

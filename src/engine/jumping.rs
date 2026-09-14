@@ -83,6 +83,74 @@ use crate::engine::terrain::TerrainType;
 use crate::engine::types::{AbilityScoreType, Coordinate, Size, Skill};
 use crate::engine::util::{feet_from_tiles, get_tiles_from_size, tiles_from_feet};
 
+/// A stat block's own Long Jump clause — the three-shaped family SRD
+/// 5.2 writes on a dozen creatures, and one struct because the three
+/// shapes differ in exactly one bit.
+///
+/// | printed as | who has it | distance | running start |
+/// |---|---|---|---|
+/// | **Standing Leap** | frog, giant frog, giant toad | 10–20 ft | not needed |
+/// | **Leap** (Bonus Action) | bulette, giant ape, half-dragon, hezrou, lamia | 30 ft | not needed |
+/// | **Running Leap** | lion, tiger | 25 ft | **required** |
+///
+/// Every one of them is *"the creature's Long Jump is up to N feet"*
+/// with a clause about the run-up, which is why they are one field and
+/// not three. They **replace** the Strength rule rather than adding to
+/// it — see `ActorInstance::long_jump_feet`, which takes the larger of
+/// the two and so never punishes a strong creature for also having the
+/// trait.
+///
+/// The bonus-action **Leap** is the one collapse in the table. RAW
+/// prints it as an action costing ten feet of movement for a thirty-foot
+/// jump; here it is a thirty-foot Long Jump at the ordinary
+/// foot-per-foot price, which is the same trade
+/// [`Condition::Leaping`][crate::conditions::condition_template::Condition::Leaping]
+/// makes for the Jump spell and for the same reason — a jump is an edge
+/// in a Dijkstra search, and a discounted, once-a-turn edge would have
+/// to be a second dimension of the search state.
+///
+/// Only the Long Jump is carried. The High Jump the same stat blocks
+/// print has nothing to clear: the board is flat and altitude is a
+/// scalar (`crate::engine::falling`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Leap {
+    /// The Long Jump distance the clause names, in feet.
+    pub feet: u32,
+    /// `true` for **Running Leap**, whose RAW opens *"With a 10-foot
+    /// running start"*; `false` for the two clauses that say *"with or
+    /// without a running start"* or do not mention one.
+    ///
+    /// The whole of what separates the three rows above, and the reason
+    /// this is a bit rather than a second field: a creature that needs
+    /// the run-up and does not have it falls back to the Strength rule,
+    /// which is exactly what RAW's silence means.
+    pub needs_running_start: bool,
+}
+
+impl Leap {
+    /// **Standing Leap** and the bonus-action **Leap** — a distance that
+    /// does not ask for a run-up.
+    pub const fn standing(feet: u32) -> Self {
+        Self { feet, needs_running_start: false }
+    }
+
+    /// **Running Leap** — *"With a 10-foot running start, the lion can
+    /// Long Jump up to 25 feet."*
+    pub const fn running(feet: u32) -> Self {
+        Self { feet, needs_running_start: true }
+    }
+
+    /// What this clause is worth to a jump made with (or without) a
+    /// running start — `0` when it asks for one and there is none.
+    pub fn feet_with(self, running_start: bool) -> u32 {
+        if running_start || !self.needs_running_start {
+            self.feet
+        } else {
+            0
+        }
+    }
+}
+
 /// SRD 5.2 Long Jump's *"if you move at least 10 feet immediately
 /// before the jump"*, in tiles on the 2.5-ft grid.
 ///

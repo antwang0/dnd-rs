@@ -22,16 +22,21 @@
 //! AC 18 — which is to say it is the fight a party gets when the dragon
 //! they were promised sends somebody instead.
 //!
-//! Not modelled: **Leap**, RAW's bonus action to jump thirty feet for
-//! ten feet of movement. The board has no third axis and no gaps to
-//! clear, so a jump is a walk that costs less, and the engine has no
-//! lane for buying movement at a discount that would not simply read as
-//! a worse Dash.
+//! **Leap** is carried — RAW's bonus action to jump thirty feet for ten
+//! feet of movement, as a thirty-foot standing Long Jump. It used to be
+//! written off here, and the reason given was that the board had "no
+//! gaps to clear, so a jump is a walk that costs less". It has gaps
+//! now: see `crate::engine::jumping` and `TerrainType::Chasm`. What
+//! survives of the old note is only RAW's *price* — ten feet of
+//! movement for thirty of jump — which is collapsed to the ordinary
+//! foot-per-foot rate, because a discounted once-a-turn edge would have
+//! to be a second dimension of the pathfinder's search state.
 
 use crate::engine::areas::AreaShape;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BreathWeapon, Multiattack, WeaponWithRider};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::jumping::Leap;
 use crate::engine::dice::Dice;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
@@ -243,6 +248,18 @@ fn half_dragon_template(index: usize) -> CreatureTemplate {
         // 14d8+42 = 105 average per SRD 5.2 (CR 5).
         hitpoints: "14d8+42".parse().expect("half-dragon hit dice parse"),
         speed: 40.,
+        // SRD 5.2 **Leap** (Bonus Action): *"The half-dragon jumps up to
+        // 30 feet by spending 10 feet of movement."* Priced at the
+        // ordinary foot-per-foot rather than RAW's flat ten — see `Leap`
+        // for why the discount and the once-a-turn cap go together.
+        //
+        // This module's own header used to write the clause off, and the
+        // reason it gave was *"the board has no third axis and no gaps
+        // to clear, so a jump is a walk that costs less"*. The first
+        // half is still true and the second is not: `TerrainType::Chasm`
+        // is a gap, and a creature that clears thirty feet of it from a
+        // standstill goes where the party cannot follow.
+        leap: Some(Leap::standing(30)),
         strength: 19,
         dexterity: 14,
         constitution: 16,

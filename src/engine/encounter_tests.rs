@@ -109343,3 +109343,76 @@ fn fast_wrestler_hauls_its_own_weight_and_not_more() {
         "and the exemption stops at the grappler's own size"
     );
 }
+
+/// **Running Leap** is the one printing of the stat-block clause that
+/// keeps RAW's run-up instead of waiving it: *"With a 10-foot running
+/// start, the lion can Long Jump up to 25 feet."*
+///
+/// The whole of `Leap::needs_running_start` is on trial here. The gap is
+/// twenty feet, which is chosen to sit between the lion's two numbers:
+/// Strength 17 buys seventeen feet at a run and eight standing, and the
+/// clause buys twenty-five. So the leap can only be made by a lion that
+/// has both the trait *and* the run-up, and the three assertions take
+/// away one of those at a time.
+///
+/// The frog is the other half of the bit, one board over: Standing Leap
+/// says *"with or without a running start"*, and a frog put down on the
+/// lip with nothing behind it goes anyway.
+#[test]
+fn a_running_leap_is_worth_nothing_from_a_standstill() {
+    use crate::actors::creatures::frogs::FROG_TEMPLATE;
+    use crate::actors::creatures::lions::LION_TEMPLATE;
+
+    /// An open hall with a chasm cut clean across it, top to bottom, so
+    /// there is no way round and the only question on the board is the
+    /// jump. `rift` names the columns; the creature starts at the west
+    /// wall.
+    fn hall(
+        template: &'static CreatureTemplate,
+        rift: std::ops::RangeInclusive<isize>,
+    ) -> (EncounterInstance, usize) {
+        let mut e = ei_with_terrain(24, 12, &[]);
+        for x in rift {
+            for y in 0..12isize {
+                assert!(e.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm));
+            }
+        }
+        let id = e
+            .instantiate_creature(template, Coordinate::new(0, 3), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        (e, id)
+    }
+
+    // Four tiles of nothing, and a Large body needs its whole footprint
+    // clear on both sides: the last anchor it can stand on is column 5
+    // and the first it can land on is column 13, which is eight tiles —
+    // twenty feet.
+    let (e, lion) = hall(&LION_TEMPLATE, 9..=12);
+    assert!(
+        e.path_to(lion, Coordinate::new(13, 3)).is_some(),
+        "with the trait and the run-up, twenty-five feet clears twenty"
+    );
+
+    // The same lion, put down on the lip. Running Leap asks for a run it
+    // has not made, so it falls back to Strength 17 standing — eight
+    // feet.
+    let (mut e, lion) = hall(&LION_TEMPLATE, 9..=12);
+    e.place_actor_at(lion, Coordinate::new(5, 3)).unwrap();
+    e.actors.get_mut(&lion).unwrap().reset_for_new_round();
+    assert!(
+        e.path_to(lion, Coordinate::new(13, 3)).is_none(),
+        "a Running Leap from a standstill is not a Running Leap"
+    );
+
+    // And the frog, whose clause says the opposite in so many words. One
+    // tile of nothing is five feet for a Tiny body, inside its ten and
+    // far outside the six inches its Strength 1 would buy.
+    let (mut e, frog) = hall(&FROG_TEMPLATE, 9..=9);
+    e.place_actor_at(frog, Coordinate::new(8, 3)).unwrap();
+    e.actors.get_mut(&frog).unwrap().reset_for_new_round();
+    assert!(
+        e.path_to(frog, Coordinate::new(10, 3)).is_some(),
+        "\"with or without a running start\" means without"
+    );
+}

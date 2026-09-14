@@ -2,6 +2,7 @@ use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_FROG_BITE, SWALLOW_ACTION};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -78,7 +79,7 @@ pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // standstill is further than a Champion clears at a dead run,
         // which is what the trait is for: a rift that stops the party
         // does not stop this.
-        standing_leap_feet: Some(20),
+        leap: Some(Leap::standing(20)),
         strength: 12,
         intelligence: 2,
         dexterity: 13,

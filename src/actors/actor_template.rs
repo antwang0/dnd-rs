@@ -1,5 +1,6 @@
 use crate::actions::action_template::Action;
 use crate::engine::attack::ChargeRider;
+use crate::engine::jumping::Leap;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, DiceExpr, RollMode, RollModeTally, Roller};
 use crate::engine::side_effects::Resource;
@@ -3371,27 +3372,17 @@ pub struct CreatureTemplate {
     /// that is how the rules phrase it, and because weapon names are not
     /// unique across the bestiary — see `ChargeRider`.
     pub charge: Option<ChargeRider>,
-    /// 5e **Standing Leap** — *"The frog's Long Jump is up to 10 feet
-    /// and its High Jump is up to 5 feet, with or without a running
-    /// start."* — in feet, or `None` for everything that jumps by the
-    /// Strength rule.
-    ///
-    /// Only the Long Jump number is carried. The board is flat and
-    /// altitude is a scalar nothing pathfinds through
-    /// (`crate::engine::falling`), so a High Jump has nothing to clear;
-    /// storing a number no rule could read would be a field that looked
-    /// like a feature.
-    ///
-    /// A number rather than a flag because that is what the trait is:
-    /// the frog leaps 10 feet and the giant frog 20, and both of those
-    /// are *replacements* for the Strength rule rather than bonuses on
-    /// it — see `ActorInstance::long_jump_feet`, which takes the larger
-    /// of the two and so never punishes a strong creature for also
-    /// having the trait.
+    /// This creature's own Long Jump clause — SRD 5.2's **Standing
+    /// Leap**, **Running Leap** and bonus-action **Leap**, which are one
+    /// rule in three printings. `None` for everything that jumps off its
+    /// Strength score.
     ///
     /// A creature-level trait for the same reason `charge` is: RAW
-    /// writes it on the stat block, not on a weapon or an action.
-    pub standing_leap_feet: Option<u32>,
+    /// writes it on the stat block, not on a weapon or an action. See
+    /// [`Leap`] for the table of who carries which, and
+    /// `ActorInstance::long_jump_feet` for how it composes with the
+    /// Strength rule and the Jump spell.
+    pub leap: Option<Leap>,
     /// Whether this creature's anatomy is one a rider can sit on — 5e's
     /// "a willing creature that is at least one size larger than you and
     /// that has an appropriate anatomy may serve as a mount" (PHB
@@ -4680,7 +4671,7 @@ impl CreatureTemplate {
             proficient_saves: HashSet::new(),
             condition_immunities: HashSet::new(),
             charge: None,
-            standing_leap_feet: None,
+            leap: None,
             mountable: false,
             attach: None,
             swallow: None,
@@ -5323,9 +5314,9 @@ pub struct ActorInstance {
     /// This creature's charge clause, copied from its template. See
     /// `CreatureTemplate::charge`.
     charge: Option<ChargeRider>,
-    /// This creature's Standing Leap distance in feet, copied from its
-    /// template. See `CreatureTemplate::standing_leap_feet`.
-    standing_leap_feet: Option<u32>,
+    /// This creature's own Long Jump clause, copied from its template.
+    /// See `CreatureTemplate::leap`.
+    leap: Option<Leap>,
     /// Whether this creature can be ridden at all, copied from its
     /// template. See `CreatureTemplate::mountable`.
     mountable: bool,
@@ -6218,7 +6209,7 @@ impl ActorInstance {
             proficient_saves: ct.proficient_saves.clone(),
             condition_immunities: ct.condition_immunities.clone(),
             charge: ct.charge,
-            standing_leap_feet: ct.standing_leap_feet,
+            leap: ct.leap,
             mountable: ct.mountable,
             mounted_on: None,
             ridden_by: None,
@@ -11492,10 +11483,10 @@ impl ActorInstance {
     /// the Strength rule, not a bonus on top of it:
     ///
     ///   - the **Strength score** itself, halved without a run;
-    ///   - a **Standing Leap** stat-block trait
-    ///     ([`CreatureTemplate::standing_leap_feet`]), which RAW grants
-    ///     "with or without a running start" and which therefore does
-    ///     not halve;
+    ///   - a stat block's own [`Leap`] clause, which names a distance
+    ///     outright and says for itself whether it wants the run-up —
+    ///     the frog's Standing Leap does not, the lion's Running Leap
+    ///     does;
     ///   - the **Jump spell**, through [`Condition::Leaping`] — see that
     ///     variant for the one place its RAW and this number part
     ///     company.
@@ -11512,7 +11503,7 @@ impl ActorInstance {
         }
         let strength = self.ability_score(AbilityScoreType::Strength);
         let by_strength = if running_start { strength } else { strength / 2 };
-        let by_trait = self.standing_leap_feet.unwrap_or(0);
+        let by_trait = self.leap.map_or(0, |l| l.feet_with(running_start));
         let by_spell = if self.has_condition(Condition::Leaping) {
             crate::conditions::condition_template::JUMP_SPELL_FEET
         } else {
@@ -11521,15 +11512,13 @@ impl ActorInstance {
         by_strength.max(by_trait).max(by_spell)
     }
 
-    /// This creature's **Standing Leap** trait, if it has one — the
-    /// stat-block clause that names a Long Jump distance outright and
-    /// waives the running start, as the frog's and the giant frog's do.
+    /// This creature's own Long Jump clause, if it has one.
     ///
-    /// Exposed because `long_jump_feet` folds it into one number and the
-    /// UI wants to say *why* a creature can clear a rift from a
-    /// standstill.
-    pub fn standing_leap_feet(&self) -> Option<u32> {
-        self.standing_leap_feet
+    /// Exposed because `long_jump_feet` folds it into one number and a
+    /// reader — the panel, a test — wants to know *why* a creature can
+    /// clear a rift from a standstill.
+    pub fn leap(&self) -> Option<Leap> {
+        self.leap
     }
 
     /// The unit step the creature's current straight run is being made

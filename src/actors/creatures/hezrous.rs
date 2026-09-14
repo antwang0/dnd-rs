@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HEZROU_BITE, HEZROU_CLAW, HEZROU_MULTI};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::jumping::Leap;
 use crate::conditions::Condition;
 use crate::engine::emanations::HEZROU_STENCH;
 use crate::engine::types::{
@@ -49,6 +50,12 @@ pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 15d10+75 ≈ 157 average per MM (CR 8).
         hitpoints: "15d10+75".parse().unwrap(),
         speed: 30.,
+        // SRD 5.2 **Leap** (Bonus Action): *"The hezrou jumps up to 30
+        // feet by spending 10 feet of movement."* Thirty feet of
+        // standing jump on a creature whose Stench aura is its whole
+        // board presence — the clause is how it gets the aura onto
+        // people who thought a rift was cover.
+        leap: Some(Leap::standing(30)),
         strength: 19,
         intelligence: 5,
         dexterity: 17,

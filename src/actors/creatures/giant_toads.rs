@@ -2,6 +2,7 @@ use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_TOAD_BITE, SWALLOW_ACTION};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -37,7 +38,7 @@ pub static GIANT_TOAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // clause word for word, and worth more on this chassis: the toad
         // is Large, so it needs a wider landing, and twenty feet is what
         // pays for it.
-        standing_leap_feet: Some(20),
+        leap: Some(Leap::standing(20)),
         strength: 15,
         intelligence: 2,
         dexterity: 13,

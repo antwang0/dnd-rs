@@ -815,7 +815,9 @@ pub fn water_bound_templates() -> Vec<&'static CreatureTemplate> {
 mod tests {
     use crate::actors::actor_template::CreatureTemplate;
     use crate::conditions::Condition;
+    use crate::engine::jumping::Leap;
     use crate::engine::types::{DamageModifier, DamageType, Skill};
+    use std::path::Path;
 
     /// SRD 5.2's Exhaustion immunity, stat block by stat block, for every
     /// carrier of it this bestiary ships plus the near misses that share a
@@ -1623,6 +1625,112 @@ mod tests {
         );
     }
 
+    /// Every stat block SRD 5.2 prints a Long Jump clause on, and what
+    /// it says — the table `the_bestiary_agrees_with_the_srd_about_leaps`
+    /// checks in both directions.
+    ///
+    /// Three printings and one rule; see `engine::jumping::Leap`.
+    /// **Standing Leap** and the bonus-action **Leap** waive the
+    /// run-up, **Running Leap** requires it, and that bit is the only
+    /// thing that separates a lion from a frog here.
+    fn srd_leap_table() -> Vec<(&'static CreatureTemplate, Leap)> {
+        vec![
+            // Standing Leap — "with or without a running start".
+            (&*super::frogs::FROG_TEMPLATE, Leap::standing(10)),
+            (&*super::giant_frogs::GIANT_FROG_TEMPLATE, Leap::standing(20)),
+            (&*super::giant_toads::GIANT_TOAD_TEMPLATE, Leap::standing(20)),
+            // Leap (Bonus Action) — "jumps up to 30 feet by spending 10
+            // feet of movement", at the ordinary foot-per-foot rate.
+            (&*super::bulettes::BULETTE_TEMPLATE, Leap::standing(30)),
+            (&*super::giant_apes::GIANT_APE_TEMPLATE, Leap::standing(30)),
+            (&*super::hezrous::HEZROU_TEMPLATE, Leap::standing(30)),
+            (&*super::lamias::LAMIA_TEMPLATE, Leap::standing(30)),
+            // …and all five half-dragons, which share one literal.
+            (&*super::half_dragons::ACID_HALF_DRAGON_TEMPLATE, Leap::standing(30)),
+            (&*super::half_dragons::COLD_HALF_DRAGON_TEMPLATE, Leap::standing(30)),
+            (&*super::half_dragons::FIRE_HALF_DRAGON_TEMPLATE, Leap::standing(30)),
+            (&*super::half_dragons::LIGHTNING_HALF_DRAGON_TEMPLATE, Leap::standing(30)),
+            (&*super::half_dragons::POISON_HALF_DRAGON_TEMPLATE, Leap::standing(30)),
+            // Running Leap — "With a 10-foot running start".
+            (&*super::lions::LION_TEMPLATE, Leap::running(25)),
+            (&*super::tigers::TIGER_TEMPLATE, Leap::running(25)),
+        ]
+    }
+
+    /// The bestiary's Long Jump clauses, both directions.
+    ///
+    /// The forward half is ordinary: every creature the book gives a
+    /// leap to has the right one. The reverse half is the one that earns
+    /// the test, and it is asked of the **source** rather than of a
+    /// template list, for the reason
+    /// `every_creature_template_written_is_one_something_can_put_on_a_board`
+    /// reads files too: a template that is written but not registered is
+    /// invisible to any sweep that walks a registry, and a leap invented
+    /// for a creature the book does not give one to is exactly the kind
+    /// of thing that arrives by copy-paste into a neighbouring stat
+    /// block.
+    ///
+    /// Checked at file granularity because that is the granularity the
+    /// clause is written at — the five half-dragons share one struct
+    /// literal — and because a file that gained a second template with a
+    /// spurious leap would still be caught by the forward half the
+    /// moment it was added to the table.
+    #[test]
+    fn the_bestiary_agrees_with_the_srd_about_leaps() {
+        use std::collections::BTreeSet;
+
+        let wrong: Vec<String> = srd_leap_table()
+            .into_iter()
+            .filter(|&(t, expected)| t.leap != Some(expected))
+            .map(|(t, expected)| {
+                format!("{}: SRD says {:?}, template says {:?}", t.name, expected, t.leap)
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "Long Jump clauses disagree with SRD 5.2:\n  {}",
+            wrong.join("\n  ")
+        );
+
+        let expected: BTreeSet<String> = [
+            "frogs.rs",
+            "giant_frogs.rs",
+            "giant_toads.rs",
+            "bulettes.rs",
+            "giant_apes.rs",
+            "hezrous.rs",
+            "lamias.rs",
+            "half_dragons.rs",
+            "lions.rs",
+            "tigers.rs",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+
+        let creatures = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("actors/creatures");
+        let mut found: BTreeSet<String> = BTreeSet::new();
+        for entry in std::fs::read_dir(&creatures).expect("src/actors/creatures/ is readable") {
+            let path = entry.expect("a readable dir entry").path();
+            let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if !file.ends_with(".rs") || file == "mod.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {}", file, e));
+            if super::reachability::strip_comments(&text).contains("leap: Some(") {
+                found.insert(file);
+            }
+        }
+        assert_eq!(
+            found, expected,
+            "a stat block carries a Long Jump clause the book does not give it, \
+             or the table above has stopped naming one that does"
+        );
+    }
+
     /// The four skills the engine actually rolls, and the templates that
     /// have to claim them for the lanes reading each one to have any
     /// content behind it.
@@ -1917,7 +2025,7 @@ mod reachability {
     /// useless: the natural way to unwire a template is to comment out
     /// the line that pushes it, and the commented line still contains
     /// the name.
-    fn strip_comments(text: &str) -> String {
+    pub(super) fn strip_comments(text: &str) -> String {
         text.lines()
             .map(|line| match line.find("//") {
                 Some(i) => &line[..i],

@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BULETTE_BITE, BULETTE_DEADLY_LEAP, BULETTE_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -30,6 +31,17 @@ pub static BULETTE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         hitpoints: "9d10+45".parse().unwrap(),
         speed: 40.,
+        // SRD 5.2 **Leap** (Bonus Action): *"The bulette jumps up to 30
+        // feet by spending 10 feet of movement."* Priced here at the
+        // foot-per-foot the Long Jump rule charges everybody rather than
+        // at RAW's flat ten — see `Leap` for why the discount and the
+        // once-a-turn cap are traded for each other.
+        //
+        // It is the second half of what makes this creature what it is:
+        // Deadly Leap already lands the bulette *on* somebody, and this
+        // is the clause that gets it across the hole in the floor it
+        // burrowed under first.
+        leap: Some(Leap::standing(30)),
         strength: 19,
         intelligence: 2,
         dexterity: 11,

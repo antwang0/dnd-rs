@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_APE_FIST, GIANT_APE_MULTI, GIANT_APE_ROCK};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size};
 use std::sync::LazyLock;
 
@@ -22,6 +23,11 @@ pub static GIANT_APE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         hitpoints: "16d12+64".parse().unwrap(),
         speed: 40.,
+        // SRD 5.2 **Leap** (Bonus Action): *"The ape jumps up to 30 feet
+        // by spending 10 feet of movement."* Strength 23 already buys
+        // this creature the longest Long Jump on the roster; the trait
+        // is what lets it make that jump from a standstill.
+        leap: Some(Leap::standing(30)),
         strength: 23,
         intelligence: 5,
         dexterity: 14,

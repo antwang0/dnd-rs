@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LION_BITE, LION_CLAWS, LION_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
+use crate::engine::jumping::Leap;
 use crate::engine::types::{CreatureType, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -26,6 +27,17 @@ pub static LION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         hitpoints: "4d10".parse().unwrap(),
         speed: 50.,
+        // SRD 5.2 **Running Leap**: *"With a 10-foot running start, the
+        // lion can Long Jump up to 25 feet."* The one printing of the
+        // clause that *keeps* RAW's run-up rather than waiving it, which
+        // is why `Leap` carries the question as a bit: a lion that has
+        // not built up speed jumps off its Strength 17 like anything
+        // else, and one that has clears half again as far.
+        //
+        // It is the same sentence as Pounce, one rule over. The pounce
+        // is what the run buys at the end of it; this is what the run
+        // buys on the way.
+        leap: Some(Leap::running(25)),
         strength: 17,
         intelligence: 3,
         dexterity: 15,
