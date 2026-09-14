@@ -1877,9 +1877,91 @@ pub fn try_fire_riposte(
     encounter.cleanup_dead_actors();
 }
 
+/// One defender-side reaction that answers a landed swing by raising
+/// Armor Class against it — RAW's *"adds N to its AC against that
+/// attack, possibly causing it to miss"*.
+///
+/// The sibling of `ReactiveDamageClamp` on the other side of the hit:
+/// a clamp accepts the blow and shrinks it, and a guard refuses it.
+/// The distinction is not cosmetic — a guarded swing lands no rider, no
+/// mastery property and no on-hit mark, where a clamped one lands all
+/// three and simply hurts less.
+///
+/// Was `try_fire_parry` alone for as long as the bestiary's Parry was
+/// the only thing in the engine shaped like this. The **Defensive
+/// Duelist** feat is the second, and its clause is Parry's clause with
+/// the magnitude read off a character sheet instead of a stat block —
+/// which is a row, not a second function.
+struct ReactiveAcGuard {
+    /// The points of AC this defender's guard is worth, or `0` for a
+    /// defender who does not carry it. Both current rows read a number
+    /// the defender already has: the stat block's printed Parry value,
+    /// and the holder's proficiency bonus.
+    bonus: fn(&ActorInstance) -> i32,
+    /// Log label — "parries", "defensive duelist".
+    label: &'static str,
+    /// The per-rest charge the guard spends on top of the reaction, or
+    /// `None` for the rows that are free as often as the defender has a
+    /// reaction, which is both of them today.
+    charge: Option<&'static str>,
+    /// True when a successful guard also buys a swing back. The Pirate
+    /// Captain's Riposte half, and nothing else — RAW pays for the
+    /// parry and the counter with one reaction.
+    ripostes: fn(&ActorInstance) -> bool,
+}
+
+/// Cohort of defender-side reactive AC guards, walked by
+/// `try_fire_reactive_ac_guard` once every other clause that could
+/// un-hit or re-hit the swing has spoken.
+///
+/// Entries:
+///   - **Parry** — the bestiary's, at five magnitudes across eight stat
+///     blocks. See the walker for the shared arithmetic gate.
+///   - **Defensive Duelist** — the General feat, at the holder's
+///     proficiency bonus.
+///
+/// Order is spend order: the first row that both applies *and* turns the
+/// swing takes the defender's reaction, and the walk stops. Nothing on
+/// the roster carries two, so the ordering is a rule waiting for a
+/// second carrier rather than a tie-break anybody exercises.
+const REACTIVE_AC_GUARDS: &[ReactiveAcGuard] = &[
+    ReactiveAcGuard {
+        bonus: |a| a.parry_bonus(),
+        label: "parries",
+        charge: None,
+        ripostes: |a| a.parry_ripostes(),
+    },
+    // The **Defensive Duelist** feat: "when you're holding a Finesse
+    // weapon with which you are proficient and another creature hits
+    // you with a melee attack roll, you can take a Reaction to add your
+    // Proficiency Bonus to your Armor Class for that attack, potentially
+    // causing it to miss."
+    //
+    // The finesse clause is collapsed into the tag, because the engine
+    // does not track which object is in a creature's hand — the same
+    // collapse the Dueling and Great Weapon Fighting styles already
+    // make, and for the same reason. What stops it from being free is
+    // where the feat is placed: it ships on a chassis whose weapon is a
+    // scimitar, and a future holder who fights with a maul would make
+    // the gap observable.
+    ReactiveAcGuard {
+        bonus: |a| {
+            if a.has_passive_feature(crate::actions::feats::DEFENSIVE_DUELIST_TAG) {
+                a.proficiency_bonus()
+            } else {
+                0
+            }
+        },
+        label: "turns the blade aside",
+        charge: None,
+        ripostes: |_| false,
+    },
+];
+
 /// SRD 5.2 **Parry** — *"Trigger: The knight is hit by a melee attack
 /// roll while holding a weapon. Response: The knight adds 2 to its AC
-/// against that attack, possibly causing it to miss."*
+/// against that attack, possibly causing it to miss."* — and the
+/// **Defensive Duelist** feat, whose clause is the same clause.
 ///
 /// Eight stat blocks in the book carry it, at five different magnitudes,
 /// and between them they are most of the martial bestiary a party meets
@@ -1890,31 +1972,35 @@ pub fn try_fire_riposte(
 /// *tax on every swing*, and one the party can exhaust by swinging
 /// twice.
 ///
-/// Returns `true` when the parry fired and the swing should be treated
-/// as a miss.
+/// Returns `true` when a guard fired and the swing should be treated as
+/// a miss.
 ///
-/// **It fires only when it works.** RAW's *"possibly causing it to
+/// **A guard fires only when it works.** RAW's *"possibly causing it to
 /// miss"* leaves the choice to the defender, and a reaction spent on a
 /// swing that lands anyway is a reaction the creature does not have for
-/// the next one. So the gate is arithmetic: the parry goes up exactly
+/// the next one. So the gate is arithmetic: the guard goes up exactly
 /// when `attack_total` sits inside the bump. This is the same rule
 /// `magnet_is_worth_it` applies one lane over and for the same reason —
-/// a defender deciding whether a reaction buys anything.
+/// a defender deciding whether a reaction buys anything. It is also
+/// what makes a guard a legitimate reading of a trigger worded *"is
+/// hit"*: the defender answers a swing they have already seen land,
+/// which is exactly when RAW lets them decide.
 ///
-/// **A natural 20 is not parried.** A critical hit lands whatever the
+/// **A natural 20 is not guarded.** A critical hit lands whatever the
 /// AC is, so the clause has nothing to act on; the caller passes
 /// `nat_crit` and this returns early on it. A natural 1 never gets
 /// here, because the swing already missed.
 ///
-/// **Melee only.** RAW's trigger names a melee attack roll on all eight
-/// stat blocks, and the reaction is the creature's weapon meeting the
-/// attacker's — there is nothing to parry an arrow with.
+/// **Melee only.** Every row's RAW trigger names a melee attack roll —
+/// the reaction is the defender's weapon meeting the attacker's, and
+/// there is nothing to parry an arrow with. The gate is shared here
+/// rather than a column because no row on the cohort disagrees.
 ///
 /// Riding the shared `reactive_reducer_eligible` gate gets the rest for
 /// free: combat-active, a reaction to spend, and — the one that matters
 /// here — the defender can *see* the attacker. An invisible swing is
 /// not parried, which is one of the things being invisible is for.
-fn try_fire_parry(
+fn try_fire_reactive_ac_guard(
     encounter: &mut EncounterInstance,
     target_id: usize,
     attacker_id: usize,
@@ -1926,40 +2012,46 @@ fn try_fire_parry(
     if !is_melee || nat_crit {
         return false;
     }
-    let bonus = encounter
-        .actors
-        .get(&target_id)
-        .map(|a| a.parry_bonus())
-        .unwrap_or(0);
-    if bonus <= 0 || attack_total >= target_ac + bonus {
-        return false;
+    for row in REACTIVE_AC_GUARDS {
+        let bonus = encounter
+            .actors
+            .get(&target_id)
+            .map(row.bonus)
+            .unwrap_or(0);
+        // Two arithmetic gates, and the second is the one that makes the
+        // reaction worth spending: the guard must be big enough to turn
+        // *this* swing, not merely to exist.
+        if bonus <= 0 || attack_total >= target_ac + bonus {
+            continue;
+        }
+        if !reactive_reducer_eligible(
+            encounter,
+            target_id,
+            attacker_id,
+            |a| (row.bonus)(a) > 0,
+            row.charge,
+        ) {
+            continue;
+        }
+        let (defender, attacker) = (
+            encounter.actor_name(target_id),
+            encounter.actor_name(attacker_id),
+        );
+        encounter.log(format!(
+            "[reaction] {} {} {} (+{} AC against the swing)",
+            defender, row.label, attacker, bonus
+        ));
+        let ripostes = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|a| (row.ripostes)(a));
+        spend_reactive_reducer(encounter, target_id, row.charge);
+        if ripostes {
+            swing_back_after_parry(encounter, target_id, attacker_id);
+        }
+        return true;
     }
-    if !reactive_reducer_eligible(
-        encounter,
-        target_id,
-        attacker_id,
-        |a| a.parry_bonus() > 0,
-        None,
-    ) {
-        return false;
-    }
-    let (defender, attacker) = (
-        encounter.actor_name(target_id),
-        encounter.actor_name(attacker_id),
-    );
-    encounter.log(format!(
-        "[reaction] {} parries {} (+{} AC against the swing)",
-        defender, attacker, bonus
-    ));
-    let ripostes = encounter
-        .actors
-        .get(&target_id)
-        .is_some_and(|a| a.parry_ripostes());
-    spend_reactive_reducer(encounter, target_id, None);
-    if ripostes {
-        swing_back_after_parry(encounter, target_id, attacker_id);
-    }
-    true
+    false
 }
 
 /// SRD 5.2 **Riposte**, the second half of the Pirate Captain's
@@ -3057,15 +3149,17 @@ pub fn resolve_attack_outcome_with_rider(
         && underwater != UnderwaterVerdict::AutoMiss
         && encounter.peerless_aim_rescues(p.caster_id);
     hit |= peerless_aim;
-    // SRD 5.2 **Parry** / **Riposte**, the defender's last word. Here
-    // rather than anywhere above because every clause that could still
-    // un-hit *or* re-hit the swing has now spoken — the nat-1, Bend
-    // Luck, the lake, and the boon that rescues a miss — and a knight
-    // who spent their reaction answering a swing somebody else was
-    // going to un-hit anyway has spent it for nothing. See
-    // `try_fire_parry`, which also declines a swing it cannot turn.
+    // The defender's last word: the reactive AC guards — SRD 5.2's
+    // **Parry** (and the Pirate Captain's **Riposte** half) and the
+    // **Defensive Duelist** feat. Here rather than anywhere above
+    // because every clause that could still un-hit *or* re-hit the swing
+    // has now spoken — the nat-1, Bend Luck, the lake, and the boon that
+    // rescues a miss — and a knight who spent their reaction answering a
+    // swing somebody else was going to un-hit anyway has spent it for
+    // nothing. See `try_fire_reactive_ac_guard`, which also declines a
+    // swing it cannot turn.
     if hit
-        && try_fire_parry(
+        && try_fire_reactive_ac_guard(
             encounter,
             p.target_id,
             p.caster_id,

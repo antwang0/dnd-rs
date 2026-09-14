@@ -107513,3 +107513,197 @@ fn piercer_adds_nothing_to_a_slashing_critical() {
     });
     assert!(!fired, "neither clause of Piercer answers a slashing blade");
 }
+
+/// The **Defensive Duelist** feat: *"when another creature hits you with
+/// a melee attack roll, you can take a Reaction to add your Proficiency
+/// Bonus to your Armor Class for that attack, potentially causing the
+/// attack to miss you."*
+///
+/// The second row on `REACTIVE_AC_GUARDS` and the first that is a feat
+/// rather than a stat block, so the sweep is the knight's sweep with
+/// the magnitude read off a character sheet: the swing is priced to
+/// land on every face but a natural 1, which puts exactly the bottom
+/// `proficiency_bonus` faces inside what the guard can turn.
+#[test]
+fn defensive_duelist_turns_the_swings_its_proficiency_can_reach() {
+    use crate::actions::feats::DEFENSIVE_DUELIST_TAG;
+    use crate::actors::creatures::bards::SWORDS_BARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    let (mut turned, mut landed) = (0, 0);
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let swinger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let bard = e
+            .instantiate_creature(&SWORDS_BARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&bard].has_passive_feature(DEFENSIVE_DUELIST_TAG),
+            "the swords bard chassis takes Defensive Duelist"
+        );
+        assert_eq!(
+            e.actors[&bard].parry_bonus(),
+            0,
+            "and has no stat-block Parry, so the guard is the feat's"
+        );
+        let ac = e.actors[&bard].armor_class() as i32;
+        let prof = e.actors[&bard].proficiency_bonus();
+        let hp_before = e.actors[&bard].hitpoints();
+
+        let (effects, dealt) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: swinger,
+                target_id: bard,
+                action_name: "slam",
+                attack_bonus: ac - 2,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        let guarded = e
+            .messages()
+            .iter()
+            .any(|m| m.contains("turns the blade aside") && m.contains(&format!("+{prof} AC")));
+        let reaction_left = e.actors[&bard].can_consume_resource(Resource::Reaction);
+        if guarded {
+            turned += 1;
+            assert_eq!(dealt, 0, "seed {seed}: a turned swing deals nothing");
+            assert_eq!(
+                e.actors[&bard].hitpoints(),
+                hp_before,
+                "seed {seed}: and the bard is untouched"
+            );
+            assert!(!reaction_left, "seed {seed}: the reaction is what paid for it");
+        } else {
+            assert!(
+                reaction_left,
+                "seed {seed}: a bard who did not guard still has their reaction"
+            );
+            if dealt > 0 {
+                landed += 1;
+            }
+        }
+    }
+    assert!(turned > 0, "sixty swings and the feat never fired");
+    assert!(
+        landed > 0,
+        "sixty swings and every one was turned — the band is wrong"
+    );
+}
+
+/// The three swings the guard has to decline: an arrow (RAW's trigger
+/// names a melee attack roll), a swing that missed on its own (nothing
+/// to answer), and one that landed so far inside the armour class that
+/// the proficiency bonus cannot reach it (a reaction spent for nothing
+/// is a reaction not there for the next blow).
+#[test]
+fn defensive_duelist_never_spends_a_reaction_it_cannot_cash() {
+    use crate::actors::creatures::bards::SWORDS_BARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+    use crate::engine::side_effects::Resource;
+
+    for (label, is_melee, attack_bonus_offset) in [
+        // A ranged swing priced exactly like the melee one that fires.
+        ("an arrow", false, -2),
+        // Far under the AC: misses without help.
+        ("a swing that missed anyway", true, -25),
+        // Far over it: twenty faces all land, and no proficiency bonus
+        // in the engine closes a gap that size.
+        ("a swing nothing could turn", true, 40),
+    ] {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], 7);
+        let swinger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let bard = e
+            .instantiate_creature(&SWORDS_BARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        let ac = e.actors[&bard].armor_class() as i32;
+        let (effects, _) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: swinger,
+                target_id: bard,
+                action_name: "slam",
+                attack_bonus: ac + attack_bonus_offset,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.messages().iter().any(|m| m.contains("turns the blade aside")),
+            "{label}: the guard should have declined"
+        );
+        assert!(
+            e.actors[&bard].can_consume_resource(Resource::Reaction),
+            "{label}: and kept its reaction"
+        );
+    }
+}
+
+/// A defender who carries neither row on the cohort answers nothing —
+/// the guard is a feat, not a property of having a reaction.
+#[test]
+fn a_bard_without_the_feat_takes_the_blow() {
+    use crate::actions::feats::DEFENSIVE_DUELIST_TAG;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    for seed in 0..30u64 {
+        let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+        let swinger = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let bard = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+            .unwrap();
+        assert!(!e.actors[&bard].has_passive_feature(DEFENSIVE_DUELIST_TAG));
+        let ac = e.actors[&bard].armor_class() as i32;
+        let (effects, _) = resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: swinger,
+                target_id: bard,
+                action_name: "slam",
+                attack_bonus: ac - 2,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                min_range: None,
+                is_spell: false,
+            },
+        );
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.messages().iter().any(|m| m.contains("turns the blade aside")),
+            "seed {seed}: the baseline bard has no guard to raise"
+        );
+    }
+}

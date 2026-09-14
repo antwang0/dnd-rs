@@ -419,7 +419,19 @@ pub static SWORDS_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // the same "flip two boolean flags on the clone" shape
     // `SWASHBUCKLER_ROGUE_TEMPLATE` uses for its Rakish Audacity +
     // Fancy Footwork pair.
-    subclass_bard_template("Swords Bard", 'W', true, true, &[], &[])
+    // The **Defensive Duelist** feat — the bard who fights with a blade
+    // is who it belongs to, and the one chassis on the roster whose
+    // reaction is worth more spent on its own armour class than on
+    // anything else it could do with it. See
+    // `crate::actions::feats::DEFENSIVE_DUELIST_TAG`.
+    subclass_bard_template(
+        "Swords Bard",
+        'W',
+        true,
+        true,
+        &[],
+        &[crate::actions::feats::DEFENSIVE_DUELIST_TAG],
+    )
 });
 
 /// College of Lore Bard — subclass build (PHB). Identical envelope to

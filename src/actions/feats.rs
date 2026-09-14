@@ -25,6 +25,7 @@
 //! | Crusher | General | five feet, and the guard of what it crit |
 //! | Piercer | General | the weakest damage die, and one more on a crit |
 //! | Slasher | General | ten feet of speed, and the swings of what it crit |
+//! | Defensive Duelist | General | one swing a round, off the armour class |
 //! | Boon of Combat Prowess | Epic Boon | one miss a turn becomes a hit |
 //! | Boon of Dimensional Travel | Epic Boon | thirty feet after the swing |
 //! | Boon of Fate | Epic Boon | 2d4 onto a d20 that came up short |
@@ -38,8 +39,9 @@
 //! SRD 5.2's own feat list is short — four Origin feats, two General,
 //! four Fighting Style and the seven boons — and the table above is
 //! longer than that in one column. Tough, Speedy, Charger, War Caster,
-//! Sharpshooter, Mage Slayer, Mounted Combatant, Crusher, Piercer and
-//! Slasher are 2024 PHB feats that the SRD does not reprint, and they
+//! Sharpshooter, Mage Slayer, Mounted Combatant, Crusher, Piercer,
+//! Slasher and Defensive Duelist are 2024 PHB feats that the SRD does
+//! not reprint, and they
 //! are here for the same reason the roster carries XGtE and TCE
 //! subclasses: the engine's scope is fifth edition as played, with the
 //! SRD as its spine rather than its fence. Where a clause below cites
@@ -75,13 +77,15 @@
 //! still missing are missing because they need a lane nobody has built,
 //! and the two shapes recur. **A mid-roll choice** — Lucky's luck
 //! points, Great Weapon Master's bonus-action follow-up, Sentinel's
-//! reaction — needs a channel for a decision taken between a roll and
-//! its consequence, which the engine has in exactly one place (the
-//! reaction dispatcher) and cannot generalise cheaply. **A swing bound
-//! to a weapon** — Polearm Master, Dual Wielder — needs the attack
-//! pipeline to know which *object* made the attack, and it does not:
-//! see `conditions::Condition::DragonSlaying` for the same absence
-//! viewed from the magic armoury.
+//! opportunity-attack clause — needs a channel for a decision taken
+//! between a roll and its consequence. The engine has two such channels
+//! now, not one: the reaction dispatcher, and `REACTIVE_AC_GUARDS`,
+//! which is where Defensive Duelist lands. Neither generalises to a
+//! clause the *attacker* decides mid-swing, which is what the three
+//! above are. **A swing bound to a weapon** — Polearm Master, Dual
+//! Wielder — needs the attack pipeline to know which *object* made the
+//! attack, and it does not: see `conditions::Condition::DragonSlaying`
+//! for the same absence viewed from the magic armoury.
 //!
 //! Crusher, Piercer and Slasher used to be listed in that second group
 //! and are not any more, because the group was drawn one notch too
@@ -574,6 +578,44 @@ pub const PIERCER_TAG: &str = "feat.piercer";
 /// debuff on a multiattacker only fires on a critical hit.
 pub const SLASHER_TAG: &str = "feat.slasher";
 
+/// **Defensive Duelist** (General feat) — *"When you're holding a
+/// Finesse weapon with which you are proficient and another creature
+/// hits you with a melee attack roll, you can take a Reaction to add
+/// your Proficiency Bonus to your Armor Class for that attack,
+/// potentially causing the attack to miss you."*
+///
+/// The first feat in this module to spend a **reaction**, and it lands
+/// without a new lane because the bestiary had already built one: SRD
+/// 5.2's **Parry** is this clause with the magnitude printed on a stat
+/// block instead of derived from a character's proficiency. So the
+/// function that fired Parry became the cohort `REACTIVE_AC_GUARDS` and
+/// the feat is a row on it.
+///
+/// **It fires only when it works**, which is the cohort's shared rule
+/// and is what makes the timing honest rather than clairvoyant. RAW's
+/// trigger is *"hits you"* — the defender answers a swing they have
+/// already watched land — and the engine resolves it at exactly that
+/// moment: the d20 is on the table, every other clause that could
+/// un-hit the swing has spoken, and the guard goes up only if the
+/// proficiency bonus is enough to turn it. A reaction is never spent on
+/// a blow that would have landed anyway, and never on one that was
+/// going to miss.
+///
+/// **The Finesse clause is collapsed into the tag.** The engine does not
+/// track which object is in a creature's hand — it is the same
+/// abstraction the Dueling and Great Weapon Fighting styles already run
+/// on, and the same one `conditions::Condition::DragonSlaying` describes
+/// from the armoury's side. What keeps the collapse from being free is
+/// the placement: the feat ships on a chassis that fights with a
+/// scimitar, and a holder who fought with a maul would make the gap
+/// observable.
+///
+/// Ships on `bards::SWORDS_BARD_TEMPLATE`. The College of Swords bard is
+/// the roster's duelist — a blade, a reaction economy it is already
+/// spending on Cutting Words, and an AC that cannot afford to be hit
+/// twice.
+pub const DEFENSIVE_DUELIST_TAG: &str = "feat.defensive_duelist";
+
 pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 
 /// **Boon of Dimensional Travel** (Epic Boon) — *"Blink Steps.
@@ -804,6 +846,7 @@ pub const FEAT_TAGS: &[&str] = &[
     CRUSHER_TAG,
     PIERCER_TAG,
     SLASHER_TAG,
+    DEFENSIVE_DUELIST_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,
