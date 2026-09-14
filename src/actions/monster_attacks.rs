@@ -724,6 +724,7 @@ pub fn maybe_chain_extra_attack(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     weapon_name: &str,
+    is_loading: bool,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     mut swing: impl FnMut(&mut EncounterInstance) -> Vec<Box<dyn ApplicableSideEffect>>,
 ) {
@@ -733,6 +734,26 @@ pub fn maybe_chain_extra_attack(
     // Ancient Blue Dragon's 3-claw Multi) silently doubles a boss
     // creature's per-turn damage budget.
     if encounter.in_multiattack() {
+        return;
+    }
+    // SRD 5.2's **Loading** property: "you can fire only one piece of
+    // ammunition from a Loading weapon when you use an action, a Bonus
+    // Action, or a Reaction to fire it, regardless of the number of
+    // attacks you can normally make."
+    //
+    // This function is the only place in the engine that turns one
+    // Action-cost attack into several, so the whole of the property is
+    // this early return. It reads as an exception and is really the
+    // rule: "regardless of the number of attacks you can normally make"
+    // is RAW pointing at Extra Attack by name.
+    //
+    // Declared by the caller rather than looked up from `weapon_name`,
+    // because a name is what this function has and a property is what
+    // it needs — the same reason `Action::is_loading_weapon` exists at
+    // all. Three stat blocks were quietly firing a heavy crossbow twice
+    // in one Action before this parameter did: the knight, the veteran
+    // and the bandit captain all carry Extra Attack and a crossbow.
+    if is_loading {
         return;
     }
     let extra = encounter
@@ -1340,6 +1361,32 @@ pub struct SimpleWeapon {
     /// `polearm()` builder, for the reason `is_light` and `mastery`
     /// are.
     pub is_polearm: bool,
+    /// SRD 5.2's **Loading** weapon property — *"you can fire only one
+    /// piece of ammunition from a Loading weapon when you use an
+    /// action, a Bonus Action, or a Reaction to fire it, regardless of
+    /// the number of attacks you can normally make."*
+    ///
+    /// The crossbows, the blowgun and the firearms. It is the one
+    /// property in the weapons table whose whole content is a *cap* on
+    /// the action economy rather than a rider on the swing, and it is
+    /// read at the single place that multiplies a swing:
+    /// `maybe_chain_extra_attack`.
+    ///
+    /// Left unmodelled for a long time, and the comment on
+    /// `HEAVY_CROSSBOW` said so. What that cost was visible on three
+    /// stat blocks — the knight, the veteran and the bandit captain all
+    /// carry Extra Attack and a heavy crossbow, so all three were
+    /// firing a reloading weapon twice in one Action.
+    ///
+    /// Deliberately **not** read by the Multiattack wrapper. A stat
+    /// block that prints "makes two crossbow attacks" is the book
+    /// overriding its own weapon table, and no stat block on this
+    /// roster does; `maybe_chain_extra_attack` already declines inside
+    /// a multiattack for its own reason.
+    ///
+    /// Defaulted to `false` by every constructor and set with the
+    /// `loading()` builder, for the reason every flag above it is.
+    pub is_loading: bool,
     /// The die this weapon rolls *instead of* `damage_dice` when the
     /// target is Bloodied, or `None` for the ordinary weapon that hits
     /// a wounded creature exactly as hard as a fresh one.
@@ -1470,6 +1517,7 @@ impl SimpleWeapon {
             is_light: false,
             mastery: None,
             is_polearm: false,
+            is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
         }
@@ -1515,6 +1563,7 @@ impl SimpleWeapon {
             is_light: false,
             mastery: None,
             is_polearm: false,
+            is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
         }
@@ -1557,6 +1606,7 @@ impl SimpleWeapon {
             is_light: false,
             mastery: None,
             is_polearm: false,
+            is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
         }
@@ -1628,6 +1678,20 @@ impl SimpleWeapon {
     pub const fn polearm(self) -> Self {
         Self {
             is_polearm: true,
+            ..self
+        }
+    }
+
+    /// Const builder that marks a weapon with SRD 5.2's **Loading**
+    /// property — `SimpleWeapon::ranged(...).loading()`.
+    ///
+    /// A builder for the reason `light`, `mastery` and `polearm` are,
+    /// and with one extra: RAW prints Loading on both simple and
+    /// martial ranged weapons, and the property is orthogonal to the
+    /// range numbers the `ranged` constructor already takes.
+    pub const fn loading(self) -> Self {
+        Self {
+            is_loading: true,
             ..self
         }
     }
@@ -1787,6 +1851,9 @@ impl Action for SimpleWeapon {
     fn is_polearm_melee_weapon(&self) -> bool {
         self.is_polearm && self.is_melee
     }
+    fn is_loading_weapon(&self) -> bool {
+        self.is_loading
+    }
     fn weapon_mastery(&self) -> Option<WeaponMastery> {
         self.mastery
     }
@@ -1848,6 +1915,7 @@ impl Action for SimpleWeapon {
             self.damage_ability,
             self.cost_resource,
             0,
+            self.is_loading,
         )
     }
     fn side_effects(
@@ -1873,7 +1941,14 @@ impl Action for SimpleWeapon {
         // `has_extra_attack()` gates uniformly across every WeaponWith*
         // chassis.
         if self.cost_resource == Resource::Action {
-            maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
+            maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            self.display_name,
+            self.is_loading_weapon(),
+            &mut effects,
+            swing,
+        );
         }
         effects
     }
@@ -2157,7 +2232,14 @@ impl Action for WeaponWithRider {
             )
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
+        maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            self.display_name,
+            self.is_loading_weapon(),
+            &mut effects,
+            swing,
+        );
         effects
     }
 }
@@ -2455,7 +2537,14 @@ impl Action for WeaponWithSaveCondition {
             effects
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
+        maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            self.display_name,
+            self.is_loading_weapon(),
+            &mut effects,
+            swing,
+        );
         effects
     }
 }
@@ -2503,6 +2592,20 @@ pub struct WeaponWithSaveDamage {
     /// Crossbow). Same single save gates both riders — matches the RAW
     /// shared-roll semantics.
     pub also_install: Option<(Condition, ConditionTimer)>,
+    /// SRD 5.2's **Loading** property — the mirror of
+    /// `SimpleWeapon::is_loading`, and here for the reason
+    /// `normal_range` below it is: this chassis carries the engine's
+    /// two poisoned crossbows, and a property of the weapons table has
+    /// to be answerable by whichever chassis happens to hold the
+    /// weapon.
+    ///
+    /// Set with the `loading()` builder. Neither carrier has Extra
+    /// Attack today, so the flag currently changes nothing — which is
+    /// exactly why it is set now rather than when it starts to matter:
+    /// a crossbow that quietly fired twice is what this whole property
+    /// exists to prevent, and the invisible version of that bug is the
+    /// one that stays.
+    pub is_loading: bool,
     /// 5e **normal range** in tiles for the ranged variants, and `None`
     /// for every melee one. The mirror of `SimpleWeapon::normal_range`,
     /// and it is here for the same two rules: the long-range
@@ -2552,6 +2655,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+            is_loading: false,
             normal_range: None,
         }
     }
@@ -2589,6 +2693,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+            is_loading: false,
             normal_range: None,
         }
     }
@@ -2635,6 +2740,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: Some((condition, timer)),
+            is_loading: false,
             normal_range: None,
         }
     }
@@ -2674,6 +2780,7 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: None,
+            is_loading: false,
             normal_range: Some(normal_range),
         }
     }
@@ -2720,7 +2827,23 @@ impl WeaponWithSaveDamage {
             rider_type,
             rider_name,
             also_install: Some((condition, timer)),
+            is_loading: false,
             normal_range: Some(normal_range),
+        }
+    }
+
+    /// Chainable: SRD 5.2's **Loading** property —
+    /// `WeaponWithSaveDamage::ranged_with_condition(...).loading()`.
+    ///
+    /// The mirror of `SimpleWeapon::loading`, and a builder for the
+    /// same reason: the property is orthogonal to every constructor
+    /// shape above, and threading `false` through the four melee ones
+    /// to serve the two crossbows would make each row harder to read
+    /// than the rule it encodes.
+    pub const fn loading(self) -> Self {
+        Self {
+            is_loading: true,
+            ..self
         }
     }
 }
@@ -2728,6 +2851,9 @@ impl WeaponWithSaveDamage {
 impl Action for WeaponWithSaveDamage {
     fn name(&self) -> &str {
         self.display_name
+    }
+    fn is_loading_weapon(&self) -> bool {
+        self.is_loading
     }
     fn aliases(&self) -> Vec<&str> {
         self.aliases.to_vec()
@@ -2859,7 +2985,14 @@ impl Action for WeaponWithSaveDamage {
             effects
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
+        maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            self.display_name,
+            self.is_loading_weapon(),
+            &mut effects,
+            swing,
+        );
         effects
     }
 }
@@ -3366,7 +3499,14 @@ impl Action for WeaponWithCondition {
             effects
         };
         let mut effects = swing(encounter);
-        maybe_chain_extra_attack(encounter, caster_id, self.display_name, &mut effects, swing);
+        maybe_chain_extra_attack(
+            encounter,
+            caster_id,
+            self.display_name,
+            self.is_loading_weapon(),
+            &mut effects,
+            swing,
+        );
         effects
     }
 }
@@ -3949,6 +4089,7 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     is_light: true,
     mastery: Some(WeaponMastery::Nick),
     is_polearm: false,
+    is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -3972,6 +4113,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     is_light: false,
     mastery: Some(WeaponMastery::Vex),
     is_polearm: false,
+    is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -4430,8 +4572,13 @@ pub static GREATAXE: SimpleWeapon = SimpleWeapon::melee(
 .mastery(WeaponMastery::Cleave);
 
 /// Heavy Crossbow — DEX-based 1d10 piercing ranged. Differs from the
-/// Longbow in damage die (1d10 vs 1d8) and conceptually loading time
-/// (we don't model the loading property today). Used by bandits.
+/// Longbow in damage die (1d10 vs 1d8) and in RAW's **Loading**
+/// property, which the engine now models: one shot per Action however
+/// many attacks the wielder can normally make. That clause is what the
+/// bigger die is paid for, and it had been free — the knight, the
+/// veteran and the bandit captain all carry Extra Attack and this
+/// crossbow, and all three were firing it twice. See
+/// `SimpleWeapon::is_loading`. Used by bandits.
 /// Vanilla `SimpleWeapon` — the bespoke impl was just `simple_weapon_attack`
 /// wrapped in trait methods. Long-range penalty added: 5e crossbow is
 /// 100/400ft; the engine's 2.5ft grid caps the indoor reach at 16 tiles
@@ -4446,7 +4593,8 @@ pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
     16,
     10,
 )
-.mastery(WeaponMastery::Push);
+.mastery(WeaponMastery::Push)
+.loading();
 
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
@@ -6661,6 +6809,7 @@ impl Action for MinotaurGore {
             Some(AbilityScoreType::Strength),
             Resource::Action,
             0,
+            false,
         )
     }
     fn side_effects(
@@ -8059,7 +8208,8 @@ pub static DROW_POISONED_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage::
     12,
     Condition::Poisoned,
     ConditionTimer::Rounds(2),
-);
+)
+.loading();
 
 /// Frost Giant Greataxe — STR-based 3d12 slashing melee, reach 2 (10 ft).
 /// One of the heaviest single-swing weapons in the bestiary: dice on par
@@ -14159,6 +14309,7 @@ impl Action for ClayGolemSlam {
             Some(AbilityScoreType::Strength),
             Resource::Action,
             0,
+            false,
         )?;
         Some(bludgeon + Dice::new(1, 12).average_roll())
     }
@@ -18651,6 +18802,7 @@ pub static GIANT_WOLF_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
     rider_type: DamageType::Poison,
     rider_name: "wolf spider venom",
     also_install: None,
+    is_loading: false,
     normal_range: None,
 };
 
@@ -19672,7 +19824,8 @@ pub static SPY_HAND_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     20,
     12,
-);
+)
+.loading();
 
 // ─── Priest ─────────────────────────────────────────────────────────
 
@@ -19804,7 +19957,8 @@ pub static ASSASSIN_LIGHT_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage:
     // looking.
     24,
     16,
-);
+)
+.loading();
 
 /// Assassin Multiattack — 2 shortswords per Action. RAW: "The assassin
 /// makes two shortsword attacks."
@@ -20178,6 +20332,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     is_light: false,
     mastery: None,
     is_polearm: false,
+    is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -21573,6 +21728,7 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     is_light: false,
     mastery: None,
     is_polearm: false,
+    is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -22116,7 +22272,8 @@ pub static TOUGH_BOSS_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     40,
     16,
-);
+)
+.loading();
 
 /// Tough Boss Multiattack — two attacks per Action. RAW: "The tough
 /// makes two attacks, using Warhammer or Heavy Crossbow in any
@@ -22317,7 +22474,12 @@ pub static PIRATE_CAPTAIN_PISTOL: SimpleWeapon = SimpleWeapon::ranged(
     DamageType::Piercing,
     20,
     12,
-);
+)
+// RAW's firearms table gives the pistol the Loading property, same as
+// every crossbow above it. The captain's Multiattack is three rapiers,
+// so nothing on this stat block multiplies the shot today — the flag is
+// here because the weapon has the property, not because a bug needed it.
+.loading();
 
 /// Pirate Captain Multiattack — three attacks per Action.
 ///

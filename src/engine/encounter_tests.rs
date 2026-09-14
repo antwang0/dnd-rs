@@ -108059,3 +108059,147 @@ fn the_ai_reaches_for_the_pole_strike_once_its_maneuvers_are_spent() {
         "the picker should find the shaft swing on every seed"
     );
 }
+
+/// SRD 5.2's **Loading** weapon property: *"you can fire only one piece
+/// of ammunition from a Loading weapon when you use an action, a Bonus
+/// Action, or a Reaction to fire it, regardless of the number of
+/// attacks you can normally make."*
+///
+/// The knight is the fixture because it is one of the three stat blocks
+/// the absence was costing: Extra Attack in one hand and a heavy
+/// crossbow in the other. Both halves are asserted on the same creature
+/// in the same test, because the property is a *difference* — the
+/// longsword still chains, and a build where Extra Attack had simply
+/// stopped working would pass half of this.
+#[test]
+fn a_loading_weapon_fires_once_however_many_attacks_its_wielder_has() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{HEAVY_CROSSBOW, LONGSWORD};
+    use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let knight = e
+        .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+        .unwrap();
+    assert!(
+        e.actors[&knight].has_extra_attack(),
+        "the fixture needs a wielder the clause is written about"
+    );
+    assert!(HEAVY_CROSSBOW.is_loading_weapon());
+    assert!(!LONGSWORD.is_loading_weapon());
+
+    for (weapon, chains, why) in [
+        (
+            &LONGSWORD as &dyn Action,
+            true,
+            "a longsword swings as many times as its wielder can",
+        ),
+        (
+            &HEAVY_CROSSBOW as &dyn Action,
+            false,
+            "a crossbow fires once and then has to be cranked",
+        ),
+    ] {
+        let before = e.messages().len();
+        let effects = weapon.side_effects(&mut e, knight, Some(&vec![goblin]), None, None);
+        for eff in effects {
+            eff.apply(&mut e);
+        }
+        let chained = e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("Extra Attack"));
+        assert_eq!(chained, chains, "{why}");
+        // Keep the goblin on its feet so the second pass has something
+        // to shoot at.
+        let max = e.actors[&goblin].max_hitpoints();
+        e.actors.get_mut(&goblin).unwrap().heal(max);
+    }
+}
+
+/// Drift-prevention: every crossbow, firearm and blowgun in the
+/// bestiary declares the Loading property, whatever chassis it happens
+/// to be built on.
+///
+/// The rule lives on two weapon chassis, because the armoury's
+/// crossbows are split across two — `SimpleWeapon` holds the plain
+/// ones and `WeaponWithSaveDamage` holds the two that carry venom — and
+/// a property declared on one chassis and forgotten on the other is
+/// invisible by construction: a weapon that fires twice looks exactly
+/// like a weapon that is allowed to.
+///
+/// Keyed on the display name rather than on a list of statics, so a
+/// seventh crossbow added anywhere in the bestiary has to answer this
+/// test rather than quietly not appear in it.
+#[test]
+fn every_reloading_weapon_in_the_bestiary_says_so() {
+    use crate::actors::creatures::pc_template_families;
+
+    // RAW's Loading weapons are the crossbows, the blowgun and the
+    // firearms. Matched on the name because that is what an action
+    // carries, and because a stat block's weapon is named after the
+    // entry in the weapons table it is a copy of.
+    const RELOADS: &[&str] = &["crossbow", "pistol", "musket", "blowgun"];
+
+    let templates = EncounterInstance::template_pool()
+        .into_iter()
+        .chain(pc_template_families().into_iter().flat_map(|(_, ts)| ts));
+    let mut checked = 0;
+    for template in templates {
+        for action in &template.actions {
+            let name = action.name().to_ascii_lowercase();
+            if !RELOADS.iter().any(|needle| name.contains(needle)) {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                action.is_loading_weapon(),
+                "{} carries {} and does not declare the Loading property — \
+                 its wielder fires it as often as they have attacks",
+                template.name,
+                action.name()
+            );
+        }
+    }
+    assert!(
+        checked >= 4,
+        "the sweep found {checked} reloading weapons, which is fewer than the \
+         bestiary is known to carry — the name match has drifted"
+    );
+}
+
+/// The estimate and the die agree about a reloading weapon.
+///
+/// The AI's attack picker chooses between two swings by what they will
+/// do, so an `expected_damage` that still multiplied a heavy crossbow
+/// by Extra Attack would rank it at twice its worth and take it over a
+/// longsword that actually swings twice. That divergence is the failure
+/// mode `weapon_expected_damage_named` exists to prevent, and it is the
+/// same one `WeaponWithSaveDamage::is_weapon_attack` was written about.
+#[test]
+fn the_picker_prices_a_reloading_weapon_at_one_shot() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{HEAVY_CROSSBOW, LONGSWORD};
+    use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let knight = e
+        .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let dex = e.actors[&knight].ability_modifier(AbilityScoreType::Dexterity) as f32;
+    let str_mod = e.actors[&knight].ability_modifier(AbilityScoreType::Strength) as f32;
+
+    let bolt = HEAVY_CROSSBOW.expected_damage(&e, knight).unwrap();
+    assert!(
+        (bolt - (Dice::new(1, 10).average_roll() + dex)).abs() < 0.01,
+        "one bolt, not two: {bolt}"
+    );
+    let sword = LONGSWORD.expected_damage(&e, knight).unwrap();
+    assert!(
+        (sword - 2.0 * (Dice::new(1, 8).average_roll() + str_mod)).abs() < 0.01,
+        "and the longsword still counts its second swing: {sword}"
+    );
+}

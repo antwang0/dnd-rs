@@ -973,6 +973,8 @@ impl Action for BeastFormClaws {
             encounter,
             caster_id,
             "beast claws",
+            // A natural weapon reloads nothing.
+            false,
             &mut effects,
             swing,
         );
@@ -1136,6 +1138,8 @@ impl Action for BeastNaturalWeapon {
             encounter,
             caster_id,
             self.name,
+            // A natural weapon reloads nothing.
+            false,
             &mut effects,
             &mut swing,
         );

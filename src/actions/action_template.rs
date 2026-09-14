@@ -1059,6 +1059,10 @@ pub fn weapon_expected_damage(
         damage_ability,
         cost_resource,
         extra_swings,
+        // Every chassis that reaches this wrapper swings a natural
+        // weapon or a blade; a reloading weapon knows its own name and
+        // uses the named form.
+        false,
     )
 }
 
@@ -1077,6 +1081,7 @@ pub fn weapon_expected_damage(
 /// the AI moves and then picks its attack, so by the time this is asked
 /// the ground is already covered. A creature that hasn't run gets the
 /// plain estimate and the greataxe wins, which is also correct.
+#[allow(clippy::too_many_arguments)]
 pub fn weapon_expected_damage_named(
     encounter: &EncounterInstance,
     caster_id: usize,
@@ -1085,6 +1090,7 @@ pub fn weapon_expected_damage_named(
     damage_ability: Option<AbilityScoreType>,
     cost_resource: Resource,
     extra_swings: u32,
+    reloads: bool,
 ) -> Option<f32> {
     let caster = encounter.actors.get(&caster_id)?;
     let charge_bonus = caster
@@ -1113,7 +1119,17 @@ pub fn weapon_expected_damage_named(
     // weapons identically and the picker would swing whichever came
     // first in the list — which is the bug this estimate exists to fix
     // for every other pair of weapons.
-    let extra_attack = if cost_resource == Resource::Action {
+    // SRD 5.2's **Loading** property caps the swing count at one,
+    // and the estimate has to know because the resolution does:
+    // `maybe_chain_extra_attack` declines the chain for a reloading
+    // weapon, and an estimate that still multiplied by Extra Attack
+    // would rank a knight's heavy crossbow at twice what it deals.
+    //
+    // Prediction and resolution disagreeing is the failure mode this
+    // whole helper exists to prevent — see `is_weapon_attack` on
+    // `WeaponWithSaveDamage` for the last time the two came apart, and
+    // what it cost.
+    let extra_attack = if cost_resource == Resource::Action && !reloads {
         caster.extra_attack_swings(weapon_name)
     } else {
         0
@@ -1564,6 +1580,28 @@ pub trait Action {
     /// `SimpleWeapon` overrides it from `is_polearm`, anded with
     /// `is_melee` so a thrown spear opens nothing.
     fn is_polearm_melee_weapon(&self) -> bool {
+        false
+    }
+
+    /// True if this action fires a weapon with SRD 5.2's **Loading**
+    /// property — *"you can fire only one piece of ammunition from a
+    /// Loading weapon when you use an action, a Bonus Action, or a
+    /// Reaction to fire it, regardless of the number of attacks you can
+    /// normally make."*
+    ///
+    /// Read once per swing at `maybe_chain_extra_attack`, which is the
+    /// single place in the engine that multiplies an Action-cost attack
+    /// — so the whole of the property is the early return there.
+    ///
+    /// **Defaults to `false`** like its two siblings above, but the
+    /// conservative direction points the other way and that is worth
+    /// saying out loud: a missing `true` here does not cost its holder
+    /// a swing, it *hands them one* — a reloading weapon fired twice in
+    /// an Action. Every weapon chassis that can carry a crossbow
+    /// overrides it (`SimpleWeapon`, `WeaponWithSaveDamage`); the
+    /// default covers natural weapons and spells, which is the only
+    /// place it is safe.
+    fn is_loading_weapon(&self) -> bool {
         false
     }
 

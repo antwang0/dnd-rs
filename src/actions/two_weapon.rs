@@ -278,6 +278,9 @@ impl Action for OffHandAttack {
             offhand_damage_ability(caster, self.attack_ability),
             Resource::BonusAction,
             0,
+            // RAW's Light property names melee weapons, so nothing on
+            // this chassis reloads.
+            false,
         )
     }
 

@@ -812,6 +812,8 @@ impl crate::actions::action_template::Action for PoleStrike {
             Some(self.attack_ability),
             crate::engine::side_effects::Resource::BonusAction,
             0,
+            // A shaft is not a crossbow.
+            false,
         )
     }
 
