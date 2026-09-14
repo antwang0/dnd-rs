@@ -108730,3 +108730,368 @@ fn a_halted_creature_stops_where_the_blow_caught_it() {
     }
     assert!(halted > 0, "forty walks and the axe never halted one");
 }
+
+// ── SRD 5.2 Long Jump ────────────────────────────────────────────────
+//
+// The rule and the tile it is about arrive together — see
+// `crate::engine::jumping` for why a jump is an edge in the pathfinder
+// rather than an action on the bar, and `TerrainType::Chasm` for why
+// nothing, wings included, ever stands in one.
+
+/// A straight east-west corridor two tiles tall with a rift cut across
+/// it, and one creature standing at the western end of it.
+///
+/// Rows 3 and 4 are the floor and rows 2 and 5 are walls, across the
+/// **whole** width — so a Medium 2×2 body can only ever be anchored on
+/// row 3, and there is no way round the gap. That is the point of the
+/// shape: every assertion below is about the rift and about nothing
+/// else, where a corridor with an open flank would be about the
+/// pathfinder's taste in detours.
+///
+/// `rift` names the columns cut out of both floor rows.
+fn rift_corridor(
+    template: &'static CreatureTemplate,
+    rift: std::ops::RangeInclusive<isize>,
+) -> (EncounterInstance, usize) {
+    let walls: Vec<(isize, isize)> = (0..20isize)
+        .flat_map(|x| [(x, 2isize), (x, 5isize)])
+        .collect();
+    let mut e = ei_with_terrain(20, 20, &walls);
+    for x in rift {
+        for y in [3isize, 4] {
+            assert!(e.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm));
+        }
+    }
+    let id = e
+        .instantiate_creature(template, Coordinate::new(0, 3), 0, 1)
+        .unwrap();
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    (e, id)
+}
+
+/// The two sentences the whole feature is: a rift stops a walk, and a
+/// run-up and a Strength score between them get you over it.
+///
+/// A two-tile rift is five feet of nothing. A Medium body anchored on
+/// row 3 spans two columns, so the near lip it can reach is column 7 and
+/// the far lip it can land on is column 11 — four tiles, ten feet, which
+/// the Fighter's Strength 16 clears with a run and would not clear
+/// standing (see the next test). Widen the same gap to five tiles and
+/// the same fighter is simply stopped, which is what makes the first
+/// half of this a test of the *jump* rather than of the pathfinder
+/// having found some way round.
+#[test]
+fn a_rift_stops_a_walk_and_a_running_jump_clears_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    let path = e
+        .path_to(id, Coordinate::new(11, 3))
+        .expect("a two-tile rift is a ten-foot Long Jump for Strength 16 with a run-up");
+    // The hop is in there as a single step of four tiles: the walk lane
+    // only ever queues neighbours, so a step longer than one tile is a
+    // leap and nothing else.
+    let mut steps = std::iter::once(Coordinate::new(0, 3)).chain(path.iter().copied());
+    let mut prev = steps.next().unwrap();
+    let mut hops = Vec::new();
+    for step in steps {
+        let span = (step.x - prev.x).abs().max((step.y - prev.y).abs());
+        if span > 1 {
+            hops.push((prev, step, span));
+        }
+        prev = step;
+    }
+    assert_eq!(
+        hops.len(),
+        1,
+        "one leap, not a series of them: {:?}",
+        hops
+    );
+    assert_eq!(
+        hops[0],
+        (Coordinate::new(7, 3), Coordinate::new(11, 3), 4),
+        "off the near lip and onto the far one"
+    );
+
+    // Five tiles of nothing is seventeen and a half feet, and no
+    // Strength score in the book is seventeen.
+    let (wide, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=13);
+    assert!(
+        wide.path_to(id, Coordinate::new(14, 3)).is_none(),
+        "a rift too wide to leap is a wall"
+    );
+}
+
+/// RAW's *"you can leap only half that distance"*, pinned from both
+/// sides of the same tile.
+///
+/// The same fighter, the same rift, the same ten feet of air — and the
+/// answer turns entirely on what the creature did immediately before.
+/// Walking the corridor gets the run-up for free; being *put* on the
+/// near lip does not, because `set_location` breaks the run, and eight
+/// feet is not ten.
+///
+/// This is the test that would catch a jump lane that had quietly
+/// stopped asking about the run and was handing out the full Strength
+/// score to everybody standing still.
+#[test]
+fn the_running_start_is_worth_exactly_double() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (mut e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    assert!(
+        e.path_to(id, Coordinate::new(11, 3)).is_some(),
+        "seven tiles of corridor is a running start"
+    );
+
+    // Same creature, same board, put down on the lip with no run behind
+    // it. A standing Long Jump off Strength 16 is eight feet; the gap is
+    // ten.
+    e.place_actor_at(id, Coordinate::new(7, 3)).unwrap();
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    assert!(
+        e.path_to(id, Coordinate::new(11, 3)).is_none(),
+        "a standing Long Jump is half a running one, and half is not enough"
+    );
+}
+
+/// RAW's *"each foot you jump costs a foot of movement"*, which is the
+/// clause that keeps a leap from being a discount.
+///
+/// The identical destination, reached two ways on two boards: eleven
+/// tiles of walking over a paved floor, or seven tiles of walking and a
+/// four-tile leap over the rift. Both are 27.5 feet, to the millifoot,
+/// because a jump is priced at exactly the walk it replaces.
+#[test]
+fn a_leap_is_billed_for_every_foot_it_covers() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (leapt, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    let over = leapt
+        .path_cost_to(id, Coordinate::new(11, 3))
+        .expect("the rift is jumpable");
+
+    let (mut paved, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    for x in 9..=10 {
+        for y in [3, 4] {
+            paved.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+        }
+    }
+    let walked = paved
+        .path_cost_to(id, Coordinate::new(11, 3))
+        .expect("a paved corridor is a walk");
+
+    assert!(
+        (over - walked).abs() < 0.01,
+        "a foot of jump costs a foot of movement: leapt {over}, walked {walked}"
+    );
+    assert!(
+        (over - 27.5).abs() < 0.01,
+        "seven tiles of run and ten feet of air is 27.5 ft, got {over}"
+    );
+}
+
+/// Somebody standing on the far lip closes the rift.
+///
+/// A hop has to clear every tile it passes over, and the last of those
+/// tiles overlaps the landing for any body wider than one tile. So a
+/// single defender parked on the other side is not merely something to
+/// land next to — it is a stopper, and a rift with a guard on it is a
+/// wall again.
+///
+/// The counterpart assertion is the one that makes this a test of the
+/// *guard* rather than of the board: move the same defender one tile
+/// further back and the leap is on again.
+#[test]
+fn a_defender_on_the_far_lip_seals_the_rift() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (mut e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    let guard = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 3), 1, 0)
+        .unwrap();
+    assert!(
+        e.path_to(id, Coordinate::new(13, 3)).is_none(),
+        "nobody leaps over somebody else's head"
+    );
+
+    e.place_actor_at(guard, Coordinate::new(13, 3)).unwrap();
+    assert!(
+        e.path_to(id, Coordinate::new(11, 3)).is_some(),
+        "the same rift, with the far lip clear again"
+    );
+}
+
+/// A flier crosses a rift no Strength score could.
+///
+/// The distance limit is lifted rather than raised, and the reason is
+/// not generosity: there is nothing in a chasm for a flying creature to
+/// fall into, so the only thing that should stop one is the movement
+/// budget. Five tiles of gap is seventeen and a half feet — past every
+/// Long Jump in the book, and nothing at all to something with wings.
+#[test]
+fn a_flier_crosses_a_rift_nothing_on_foot_could() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (mut e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=13);
+    assert!(
+        e.path_to(id, Coordinate::new(14, 3)).is_none(),
+        "seventeen and a half feet is past every Long Jump in the book"
+    );
+
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    assert!(
+        e.path_to(id, Coordinate::new(14, 3)).is_some(),
+        "a rift is nothing to something in the air"
+    );
+    // …and it still does not *stand* in the gap. The invariant holds for
+    // the one creature that looks like it ought to be the exception.
+    assert!(
+        !e.can_move_to(id, Coordinate::new(11, 3)),
+        "a chasm is never occupied, wings or no wings"
+    );
+}
+
+/// A hop only ever reaches places a walk could not.
+///
+/// The clause that guarantees it is `footprint_clears_as_air`'s demand
+/// that every tile passed over be a gap, and this is what it buys: on a
+/// board with the rift paved back to floor, the pathfinder's answer is
+/// the plain walk — no four-tile steps, so no way to skip the
+/// opportunity attack, the web or the tile of Spike Growth that each of
+/// those steps would have paid for.
+#[test]
+fn nothing_leaps_over_ground_it_could_have_walked() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (mut e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    for x in 9..=10 {
+        for y in [3, 4] {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+        }
+    }
+    let path = e
+        .path_to(id, Coordinate::new(11, 3))
+        .expect("a paved corridor is a walk");
+    let mut prev = Coordinate::new(0, 3);
+    for step in path {
+        let span = (step.x - prev.x).abs().max((step.y - prev.y).abs());
+        assert_eq!(span, 1, "{prev:?} -> {step:?} is not a step");
+        prev = step;
+    }
+}
+
+/// You can see across a chasm, shoot across it, and get no cover from
+/// it — and you cannot be put in one by anything.
+///
+/// The three properties that separate a hole in the floor from every
+/// other obstruction on the board, asserted together because it is the
+/// *combination* that is new: `Wall` has the first two backwards and
+/// `LowWall` has the third.
+#[test]
+fn a_chasm_is_seen_across_shot_across_and_never_stood_in() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+    assert!(
+        e.has_line_of_sight(Coordinate::new(3, 3), Coordinate::new(15, 3)),
+        "a chasm is not opaque"
+    );
+    assert!(
+        !TerrainType::Chasm.grants_cover(),
+        "a hole in the floor is not a parapet"
+    );
+    assert!(
+        !e.can_move_to(id, Coordinate::new(9, 3)),
+        "nothing walks into a chasm"
+    );
+    // …and the refusal is the terrain layer's rather than the
+    // pathfinder's, so it reaches every other door onto the board
+    // through the same predicate. The spawn picker is the one that can
+    // be asked here without building a fight: it walks the whole map
+    // looking for an anchor whose footprint fits, and on a board that is
+    // all chasm but for one patch it can only ever answer with the
+    // patch.
+    let mut void = ei_with_terrain(20, 20, &[]);
+    for y in 0..20 {
+        for x in 0..20 {
+            void.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm);
+        }
+    }
+    for y in 8..12 {
+        for x in 8..12 {
+            void.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+        }
+    }
+    for _ in 0..20 {
+        let spawn = void
+            .get_random_spawn(Size::Medium)
+            .expect("the patch is big enough for a Medium body");
+        assert!(
+            (8..11).contains(&spawn.x) && (8..11).contains(&spawn.y),
+            "spawned at {spawn:?}, which is over the void"
+        );
+    }
+}
+
+/// SRD 5.2's landing clause: *"If you land in Difficult Terrain, you
+/// must succeed on a DC 10 Dexterity (Acrobatics) check or have the
+/// Prone condition."*
+///
+/// Swept over seeds because the check is a d20 and the interesting
+/// assertion is that **both** outcomes happen: a build that never rolled
+/// would pass a one-sided test either way. What is pinned unconditionally
+/// is the leap itself — every seed logs the crossing, so a jump that had
+/// silently stopped happening would fail here rather than quietly making
+/// the prone count zero.
+#[test]
+fn a_leap_onto_broken_ground_can_put_the_jumper_on_their_face() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::MoveActor;
+
+    let (mut stood, mut fell) = (0, 0);
+    for seed in 0..30u64 {
+        let walls: Vec<(isize, isize)> = (0..20isize)
+            .flat_map(|x| [(x, 2isize), (x, 5isize)])
+            .collect();
+        let mut e = ei_with_terrain_seeded(20, 20, &walls, seed);
+        for x in 9..=10 {
+            for y in [3, 4] {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm);
+            }
+            // …and broken ground on the far lip, which is what the
+            // clause is about.
+        }
+        for y in [3, 4] {
+            e.set_terrain_at(Coordinate::new(11, y), TerrainType::DifficultTerrain);
+            e.set_terrain_at(Coordinate::new(12, y), TerrainType::DifficultTerrain);
+        }
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(0, 3), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        let path = e
+            .path_to(id, Coordinate::new(11, 3))
+            .expect("the rift is jumpable and the far side is rough");
+        MoveActor {
+            actor_id: id,
+            path,
+        }
+        .apply(&mut e);
+        assert!(
+            e.messages().iter().any(|m| m.contains("leaps 10 ft")),
+            "seed {seed}: the crossing is logged in the rulebook's units"
+        );
+        if e.actors[&id].has_condition(Condition::Prone) {
+            fell += 1;
+        } else {
+            stood += 1;
+        }
+    }
+    assert!(fell > 0, "thirty landings on rubble and nobody stumbled");
+    assert!(stood > 0, "thirty landings on rubble and nobody kept their feet");
+}

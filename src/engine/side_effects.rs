@@ -643,6 +643,19 @@ impl ApplicableSideEffect for MoveActor {
                 ei.log(format!("MoveActor failed: {}", e));
                 return;
             }
+            // SRD 5.2 Long Jump's landing clause, for the steps that
+            // were a leap. A step of more than one tile is a hop over a
+            // chasm and nothing else — the pathfinder's walk lane only
+            // ever queues neighbours — so this identifies a jump by its
+            // length rather than by a flag threaded through the path.
+            //
+            // Before the drag and the pickups below, and that order is
+            // the rule: a jumper who comes down badly is Prone *on the
+            // tile they landed on*, which is where the web they landed
+            // in and the loot they landed on both are. Resolving it
+            // after would have had a creature pick up a sword and then
+            // fall over.
+            crate::engine::jumping::resolve_landing(ei, self.actor_id, from);
             // SRD 5.2 Grappled: *"When you move, you can drag or carry
             // the Grappled creature with you."* Whoever this creature
             // has hold of comes along, into the tile just vacated.

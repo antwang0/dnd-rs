@@ -313,6 +313,7 @@ use crate::engine::weather::Weather;
 use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
+use crate::engine::jumping;
 use crate::engine::util::{TILE_FEET, footprint_chebyshev, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
@@ -13028,6 +13029,50 @@ impl EncounterInstance {
         // two surcharge waivers are.
         let water_bound = body.breathes_only_underwater() && self.is_immersed(body_id);
         let body_size = body.size();
+        // SRD 5.2 **Long Jump**, resolved once per path for the reason
+        // every other waiver above is: neither number can change while a
+        // single search is running, and the jump lane below is inside
+        // the inner loop.
+        //
+        // Three numbers rather than one, because RAW asks two questions
+        // and the board answers a third:
+        //
+        //   - `running_jump_mft` / `standing_jump_mft` are RAW's *"up to
+        //     your Strength score … only half that distance"*, in the
+        //     millifeet the heap already counts in. Which of the two
+        //     applies is a *per-edge* question — it depends on the
+        //     direction of the hop and on what the path did just before
+        //     it — so both are carried and `run_reaches` picks.
+        //   - `airborne` is the third answer. A flier crosses a chasm
+        //     because there is nothing there to fall into, not because
+        //     it jumped well; it gets the same edge with the distance
+        //     limit lifted, and the movement budget is what stops it.
+        //     See `TerrainType::Chasm` for why this is the shape flight
+        //     takes here rather than "a flier may stand over the gap".
+        let airborne = body.is_airborne();
+        let running_jump_mft = to_mft(body.long_jump_feet(true) as f32);
+        let standing_jump_mft = to_mft(body.long_jump_feet(false) as f32);
+        // The live straight run the creature arrives holding, which is
+        // what makes RAW's *"if you move at least 10 feet immediately
+        // before the jump"* include movement spent earlier in the turn.
+        // A creature that walked four tiles east and stopped is still
+        // mid-run; the path that resumes east from where it stands does
+        // not have to earn the run-up twice.
+        let live_run = body.run_direction().zip(body.straight_run_tiles());
+        // …and the one question that can switch the whole lane off.
+        //
+        // A board with no holes in it has no jumps on it, and most
+        // boards have no holes: chasms arrive only from
+        // `carve_rifts`, which is off unless the player asked for it.
+        // One early-exiting scan of the terrain vector is a few hundred
+        // reads; the lane it skips is eight directions of footprint
+        // sweep and run-walking at *every tile the search expands*, and
+        // the AI asks for a path dozens of times a turn. Recomputed per
+        // query rather than cached on the struct because the terrain is
+        // written from several places (the generator, `set_terrain_at`,
+        // the conjured-terrain lane) and a cached flag would be a fourth
+        // thing each of them had to remember.
+        let board_has_gaps = self.terrain.iter().any(|t| t.terrain_type.is_gap());
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -13035,6 +13080,50 @@ impl EncounterInstance {
         let mut dist: Vec<u32> = vec![u32::MAX; n];
         let mut parent: Vec<Option<usize>> = vec![None; n];
         dist[start_idx] = 0;
+
+        // RAW's *"if you move at least 10 feet immediately before the
+        // jump"*, asked of the search tree.
+        //
+        // `parent` is the cheapest route to each settled tile, so
+        // walking it backwards from the tile a hop takes off from *is*
+        // the movement made immediately before that hop. Counted in
+        // tiles rather than feet, which is how the charge clauses
+        // already count a run — a diagonal tile is worth 3½ feet and is
+        // credited as one, and the same rounding has stood behind every
+        // pounce in the bestiary since it was written.
+        //
+        // The walk stops the moment a step turns, which is the "straight
+        // line" a run-up means, and stops at four tiles because that is
+        // all the rule asks for. Reaching the start of the search folds
+        // in the run the creature is already holding, so ten feet spent
+        // before the path was planned still counts.
+        let width = self.width;
+        let run_reaches = |parent: &Vec<Option<usize>>, mut idx: usize, dir: (isize, isize)| {
+            let mut tiles = 0isize;
+            while tiles < jumping::RUNNING_START_TILES {
+                if idx == start_idx {
+                    if let Some((step, len)) = live_run
+                        && step == Coordinate::new(dir.0, dir.1)
+                    {
+                        tiles += len;
+                    }
+                    break;
+                }
+                let Some(prev) = parent[idx] else {
+                    break;
+                };
+                let step = (
+                    (idx % width) as isize - (prev % width) as isize,
+                    (idx / width) as isize - (prev / width) as isize,
+                );
+                if step != dir {
+                    break;
+                }
+                tiles += 1;
+                idx = prev;
+            }
+            tiles >= jumping::RUNNING_START_TILES
+        };
 
         let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::new();
         heap.push(Reverse((0, start_idx)));
@@ -13138,9 +13227,112 @@ impl EncounterInstance {
                     }
                 }
             }
+            // ── SRD 5.2 Long Jump ────────────────────────────────────
+            //
+            // The second kind of edge in this graph, and the only one
+            // that is not a step onto a neighbouring tile: a straight
+            // hop of two tiles or more, over nothing but air, landing on
+            // the far lip. It exists because `TerrainType::Chasm` is
+            // impassable — the walk lane above will never enter one — so
+            // a rift in the floor is a wall until something can leap it.
+            //
+            // An edge rather than an action, and that is the decision
+            // this whole lane turns on. A "Jump" action would have had
+            // to be aimed by the player, chosen by the AI, and taught to
+            // every routine that asks "can you get there" — and it would
+            // still be invisible to all of them, because they ask that
+            // question through `path_to`. As an edge it is free
+            // everywhere at once: the AI's approach, the reach checks
+            // that price a move, the player's click on the far side of
+            // the rift, and `MoveActor`'s walk all pick it up without
+            // knowing the rule exists.
+            //
+            // Never a shortcut past the walk. Every tile a hop passes
+            // over has to be a gap nothing could have walked through
+            // (`footprint_clears_as_air`), so the only routes this adds
+            // are ones the walk could not have taken. That is what keeps
+            // a jump from skipping a web, an opportunity attack or a
+            // tile of Spike Growth that a step would have paid for.
+            //
+            // A water-bound creature is excluded outright: every landing
+            // is dry by construction (a `Chasm` is not a `Water`), so the
+            // shark that must stay in its pool is not offered a leap out
+            // of it. The walk lane makes the same refusal one tile at a
+            // time; here it is one check for the whole lane.
+            if board_has_gaps && !water_bound && (airborne || running_jump_mft > 0) {
+                for (dx, dy) in jumping::JUMP_DIRECTIONS {
+                    // RAW's ten feet, measured backwards along the tree
+                    // this search has already built. A hop that
+                    // continues a run of four tiles is a running Long
+                    // Jump; anything else is a standing one, at half.
+                    let allowance = if airborne {
+                        u32::MAX
+                    } else if run_reaches(&parent, idx, (dx, dy)) {
+                        running_jump_mft
+                    } else {
+                        standing_jump_mft
+                    };
+                    if allowance == 0 {
+                        continue;
+                    }
+                    // Distance and price are two numbers, not one. The
+                    // distance is what RAW's Strength score caps; the
+                    // price is what the movement budget pays, and it
+                    // carries the same prone/drag surcharge every step
+                    // above does. Conflating them would have let a
+                    // grappler hauling a knight jump half as far for
+                    // being slowed, which is not what "your Speed is
+                    // halved" says.
+                    let (reach_per_tile, cost_per_tile) = if dx == 0 || dy == 0 {
+                        (to_mft(TILE_FEET), cardinal_mft)
+                    } else {
+                        (to_mft(TILE_FEET * std::f32::consts::SQRT_2), diagonal_mft)
+                    };
+                    for d in 2..=jumping::MAX_JUMP_TILES {
+                        if reach_per_tile.saturating_mul(d) > allowance {
+                            break;
+                        }
+                        let next_cost = cost.saturating_add(cost_per_tile.saturating_mul(d));
+                        if next_cost > budget_mft {
+                            break;
+                        }
+                        // The tile the hop has just gained height over —
+                        // `d - 1`, because the ones before it were
+                        // cleared on earlier turns of this loop. A hop
+                        // that cannot clear this one cannot clear
+                        // anything past it either, so this breaks rather
+                        // than continuing.
+                        let over = Coordinate::new(
+                            cx + dx * (d as isize - 1),
+                            cy + dy * (d as isize - 1),
+                        );
+                        if !jumping::footprint_clears_as_air(self, body_id, over, body_size) {
+                            break;
+                        }
+                        // …and the landing, which is an ordinary
+                        // question about an ordinary tile. A hop that
+                        // has nowhere to come down `continue`s: the next
+                        // tile out may well be solid ground, which is
+                        // exactly the case of a rift two tiles wide.
+                        let land = Coordinate::new(cx + dx * d as isize, cy + dy * d as isize);
+                        if !self.can_move_to(body_id, land) {
+                            continue;
+                        }
+                        let Ok(land_idx) = self.idx(land) else {
+                            continue;
+                        };
+                        if next_cost < dist[land_idx] {
+                            dist[land_idx] = next_cost;
+                            parent[land_idx] = Some(idx);
+                            heap.push(Reverse((next_cost, land_idx)));
+                        }
+                    }
+                }
+            }
         }
         None
     }
+
 
     pub fn from_params(
         terrain_params: &TerrainGenParams,

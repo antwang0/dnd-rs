@@ -3706,11 +3706,49 @@ pub enum Condition {
     /// RAW's hour is ten rounds, the engine's standing stand-in for any
     /// duration that outlasts a fight.
     Withered,
+    /// Under the SRD 5.2 **Jump** spell — *"Once on each of its turns
+    /// until the spell ends, that creature can jump up to 30 feet by
+    /// spending 10 feet of movement."*
+    ///
+    /// Read by `ActorInstance::long_jump_feet` as a Long Jump distance
+    /// of [`JUMP_SPELL_FEET`], which is the headline of the spell and is
+    /// not quite its arithmetic. RAW's two other clauses are traded
+    /// against each other rather than modelled:
+    ///
+    ///   - **RAW's flat price.** A 30-foot leap costs the holder 10 feet
+    ///     of movement. Here it costs thirty, the same foot-per-foot the
+    ///     Long Jump rule charges everybody.
+    ///   - **RAW's once-per-turn cap.** Gone with it.
+    ///
+    /// The two go together because of where the jump lives: it is an
+    /// *edge* in `EncounterInstance::dijkstra_path`, and Dijkstra has no
+    /// memory of what a path has already spent — a once-per-turn
+    /// allowance would have to be a second dimension of the search state
+    /// for one spell. Priced at cost and uncapped, the spell is worth
+    /// what it is obviously worth (a 30-foot Long Jump from a standstill
+    /// on a Bonus Action, which no Strength score in the book reaches)
+    /// without needing the pathfinder to count.
+    ///
+    /// Not a size, not a speed and not a posture, so nothing else in the
+    /// engine reads it; it is on the buff list Dispel Magic sweeps
+    /// because it is a duration-bearing magical benefit on a willing
+    /// holder, which is that list's whole membership test.
+    Leaping,
 }
+
+/// The Long Jump distance the SRD 5.2 **Jump** spell grants, in feet.
+///
+/// Named here rather than spelled `30` at the two sites that need it —
+/// `ActorInstance::long_jump_feet` reads it and `actions::spells`'s
+/// `JUMP` prints it in the log line the player reads — because a number
+/// quoted in prose in one file and compared against in another is a
+/// number that drifts.
+pub const JUMP_SPELL_FEET: u32 = 30;
 
 impl Condition {
     pub fn name(&self) -> &'static str {
         match self {
+            Condition::Leaping => "leaping",
             Condition::StaffStriking => "staff of striking charged",
             Condition::StaffWithering => "staff of withering charged",
             Condition::Withered => "withered",
@@ -4125,6 +4163,9 @@ impl Condition {
                 | Condition::MinuteMeteors
                 | Condition::FarStepping
                 | Condition::BladeOfDisaster
+                // The Jump spell, which is the same shape: a timed
+                // magical benefit somebody agreed to have put on them.
+                | Condition::Leaping
                 | Condition::ShieldOfFaith
                 | Condition::MageArmored
                 | Condition::Heroic

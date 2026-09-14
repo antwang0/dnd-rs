@@ -93,6 +93,49 @@ pub enum TerrainType {
     /// above assumes the creatures can see each other well enough to
     /// swing.
     Water,
+    /// A hole in the floor — SRD 5.2's Long Jump rule names one by
+    /// name: *"a jump across a stream or chasm"*.
+    ///
+    /// The one tile on the board that is **impassable and crossable**,
+    /// and that pair is the whole reason it is not a flavour of
+    /// something that already exists. Every other obstruction is one or
+    /// the other: a `Wall` stops you, a `LowWall` charges you double and
+    /// lets you over, a `ForceWall` stops you and lets you see. A chasm
+    /// stops a *walk* outright and is cleared in one leap by anything
+    /// with the Strength to reach the far lip — see
+    /// `EncounterInstance::dijkstra_path`, where the jump is an edge
+    /// rather than a step.
+    ///
+    /// Three clauses, and the third is the load-bearing one:
+    ///
+    ///   - **Nothing walks into it.** `is_passable` says so, which is
+    ///     what routes the refusal through `can_move_to` and therefore
+    ///     through every spawn, shove, pull, drag and teleport in the
+    ///     engine at once rather than through a list of sites that have
+    ///     to remember.
+    ///   - **It does not block line of sight**, and it grants no cover.
+    ///     A hole in the floor is not a parapet: you can see across it,
+    ///     shoot across it, and a creature on the far lip is in plain
+    ///     view.
+    ///   - **Nothing ever occupies it — including a flier.** That reads
+    ///     as wrong for a second and is the only honest model this board
+    ///     can hold. The map is 2D and altitude is a scalar
+    ///     (`crate::engine::falling`), so "thirty feet above the chasm"
+    ///     and "standing in the chasm" are the same coordinate; a
+    ///     wyvern that lost its wings there would have to be *put*
+    ///     somewhere, and the only somewhere is a tile with no floor in
+    ///     it. So the invariant is absolute, and flight buys what flight
+    ///     should buy by a different route: `dijkstra_path` hands an
+    ///     airborne creature the same jump edge with no distance limit,
+    ///     so a rift is nothing to something with wings and nothing is
+    ///     ever left standing on air.
+    ///
+    /// Never laid by the terrain generator's own passes. Chasms arrive
+    /// through `EncounterInstance::carve_rifts`, which runs after the
+    /// actors are placed and proves it has not cut the board in two
+    /// before it commits — see that method for why a gap in the floor
+    /// is the one scatter that has to check.
+    Chasm,
 }
 
 impl TerrainType {
@@ -130,10 +173,28 @@ impl TerrainType {
         matches!(self, TerrainType::Water)
     }
 
+    /// True if this tile is a gap a creature could *leap over* rather
+    /// than an obstruction it has to go round.
+    ///
+    /// The predicate the jump lane in `EncounterInstance::dijkstra_path`
+    /// is keyed on, and the reason it is a property rather than a bare
+    /// `== TerrainType::Chasm` at that one site: what the pathfinder
+    /// needs to know is whether the tiles under a hop are *empty air*,
+    /// and a second such tile — a collapsed floor a spell opens, a pit
+    /// a trap springs — should join the match arm rather than be missed.
+    ///
+    /// Deliberately narrower than `!is_passable()`: a `Wall` and a
+    /// `ForceWall` are impassable and are emphatically not gaps. You do
+    /// not jump over a wall; you jump over the place where the floor
+    /// stopped.
+    pub fn is_gap(self) -> bool {
+        matches!(self, TerrainType::Chasm)
+    }
+
     pub fn is_passable(self) -> bool {
         !matches!(
             self,
-            TerrainType::Wall | TerrainType::Empty | TerrainType::ForceWall
+            TerrainType::Wall | TerrainType::Empty | TerrainType::ForceWall | TerrainType::Chasm
         )
     }
 
@@ -163,7 +224,10 @@ impl TerrainType {
     /// Underwater Combat rules price being in the water entirely on the
     /// attacker's side — disadvantage on the swing, and a hard range
     /// cut — and never once as AC on the target. Granting cover here
-    /// would tax the same shot twice for the same reason.
+    /// would tax the same shot twice for the same reason. `Chasm` is
+    /// excluded because it is a hole rather than a parapet: the floor
+    /// being absent does not put anything between an archer and the
+    /// creature on the far lip.
     pub fn grants_cover(self) -> bool {
         matches!(self, TerrainType::LowWall)
     }

@@ -13,6 +13,7 @@ pub mod emanations;
 pub mod encounter;
 pub mod errors;
 pub mod falling;
+pub mod jumping;
 pub mod lair_actions;
 pub mod legendary_actions;
 pub mod lighting;

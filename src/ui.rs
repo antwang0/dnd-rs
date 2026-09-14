@@ -331,6 +331,14 @@ pub fn render_map(
                     // it is still in play.
                     Some(TerrainType::ForceWall) => ('╬', None),
                     Some(TerrainType::Water) => ('≈', Some(Color::Blue)),
+                    // Off the shade ramp for the same reason water is,
+                    // and from the other end of it: the ramp says "this
+                    // tile costs you something to cross", and a chasm
+                    // does not cost — it *refuses*, until somebody can
+                    // clear it in one leap. Drawn as the ramp's lightest
+                    // mark in the darkest colour the palette has, which
+                    // is the map's way of saying there is nothing there.
+                    Some(TerrainType::Chasm) => ('·', Some(Color::DarkGray)),
                     _ => (' ', None),
                 };
                 row.push(match color {
@@ -2242,6 +2250,55 @@ mod tests {
             assert_ne!(
                 '≈', ramp,
                 "water must not borrow a glyph from the movement-cost ramp"
+            );
+        }
+    }
+
+    /// A chasm is drawn, and drawn as nothing — off the shade ramp for
+    /// the same reason water is and from the other end of it.
+    ///
+    /// The ramp's lesson is "this tile costs you something", and every
+    /// rung of it is a tile you can walk onto. A chasm is the one the
+    /// player must be able to see *before* they plan a route, because it
+    /// is the only tile on the board that refuses a walk outright and
+    /// answers to a Long Jump instead. A hole borrowing '▒' would read
+    /// as slow ground and cost somebody a turn.
+    ///
+    /// The bare-space case is what makes this worth a test rather than
+    /// an eyeball: `Empty` already draws as ' ', so a chasm that fell
+    /// through to the wildcard arm would be invisible and would look
+    /// exactly like off-map.
+    #[test]
+    fn a_chasm_is_drawn_as_a_hole_and_not_as_a_rung_of_the_shade_ramp() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0)]);
+        let before = rendered_map(&e).matches('·').count();
+
+        let mut cut = 0;
+        for x in 3..=6isize {
+            for y in 3..=6isize {
+                if e.terrain_at(Coordinate::new(x, y)).map(|t| t.terrain_type)
+                    == Some(TerrainType::Floor)
+                {
+                    assert!(e.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm));
+                    cut += 1;
+                }
+            }
+        }
+        assert!(cut > 0, "the fixture map has open floor to cut");
+        let map = rendered_map(&e);
+        assert_eq!(
+            map.matches('·').count(),
+            before + cut,
+            "every cut tile is drawn as a gap:\n{}",
+            map
+        );
+        for ramp in ['░', '▒', '▓', '█', ' '] {
+            assert_ne!(
+                '·', ramp,
+                "a chasm must borrow neither the movement-cost ramp nor the off-map blank"
             );
         }
     }

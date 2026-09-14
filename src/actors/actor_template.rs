@@ -3371,6 +3371,27 @@ pub struct CreatureTemplate {
     /// that is how the rules phrase it, and because weapon names are not
     /// unique across the bestiary — see `ChargeRider`.
     pub charge: Option<ChargeRider>,
+    /// 5e **Standing Leap** — *"The frog's Long Jump is up to 10 feet
+    /// and its High Jump is up to 5 feet, with or without a running
+    /// start."* — in feet, or `None` for everything that jumps by the
+    /// Strength rule.
+    ///
+    /// Only the Long Jump number is carried. The board is flat and
+    /// altitude is a scalar nothing pathfinds through
+    /// (`crate::engine::falling`), so a High Jump has nothing to clear;
+    /// storing a number no rule could read would be a field that looked
+    /// like a feature.
+    ///
+    /// A number rather than a flag because that is what the trait is:
+    /// the frog leaps 10 feet and the giant frog 20, and both of those
+    /// are *replacements* for the Strength rule rather than bonuses on
+    /// it — see `ActorInstance::long_jump_feet`, which takes the larger
+    /// of the two and so never punishes a strong creature for also
+    /// having the trait.
+    ///
+    /// A creature-level trait for the same reason `charge` is: RAW
+    /// writes it on the stat block, not on a weapon or an action.
+    pub standing_leap_feet: Option<u32>,
     /// Whether this creature's anatomy is one a rider can sit on — 5e's
     /// "a willing creature that is at least one size larger than you and
     /// that has an appropriate anatomy may serve as a mount" (PHB
@@ -4659,6 +4680,7 @@ impl CreatureTemplate {
             proficient_saves: HashSet::new(),
             condition_immunities: HashSet::new(),
             charge: None,
+            standing_leap_feet: None,
             mountable: false,
             attach: None,
             swallow: None,
@@ -5301,6 +5323,9 @@ pub struct ActorInstance {
     /// This creature's charge clause, copied from its template. See
     /// `CreatureTemplate::charge`.
     charge: Option<ChargeRider>,
+    /// This creature's Standing Leap distance in feet, copied from its
+    /// template. See `CreatureTemplate::standing_leap_feet`.
+    standing_leap_feet: Option<u32>,
     /// Whether this creature can be ridden at all, copied from its
     /// template. See `CreatureTemplate::mountable`.
     mountable: bool,
@@ -6193,6 +6218,7 @@ impl ActorInstance {
             proficient_saves: ct.proficient_saves.clone(),
             condition_immunities: ct.condition_immunities.clone(),
             charge: ct.charge,
+            standing_leap_feet: ct.standing_leap_feet,
             mountable: ct.mountable,
             mounted_on: None,
             ridden_by: None,
@@ -11447,6 +11473,75 @@ impl ActorInstance {
     /// `WATER_SURCHARGE_IMMUNITIES` for why the two cohorts are not one.
     pub fn swims_freely(&self) -> bool {
         self.matches_any(WATER_SURCHARGE_IMMUNITIES)
+    }
+
+    /// SRD 5.2 **Long Jump**, in feet — *"you leap horizontally a number
+    /// of feet up to your Strength score if you move at least 10 feet
+    /// immediately before the jump. When you make a standing Long Jump,
+    /// you can leap only half that distance."*
+    ///
+    /// The third twin of `ignores_difficult_terrain` and `swims_freely`:
+    /// one number read once per path by
+    /// `EncounterInstance::dijkstra_path`, which is the only caller that
+    /// can turn it into a move. `running_start` is that pathfinder's
+    /// answer to RAW's ten feet, measured off the straight run the
+    /// Dijkstra tree already records rather than guessed at.
+    ///
+    /// Three sources, and `max` rather than a sum, because each of them
+    /// is RAW's *"your Long Jump is up to N feet"* — a replacement for
+    /// the Strength rule, not a bonus on top of it:
+    ///
+    ///   - the **Strength score** itself, halved without a run;
+    ///   - a **Standing Leap** stat-block trait
+    ///     ([`CreatureTemplate::standing_leap_feet`]), which RAW grants
+    ///     "with or without a running start" and which therefore does
+    ///     not halve;
+    ///   - the **Jump spell**, through [`Condition::Leaping`] — see that
+    ///     variant for the one place its RAW and this number part
+    ///     company.
+    ///
+    /// Zero for a creature that cannot leave the ground: a Speed of zero
+    /// (grappled, Rooted, Restrained by a web) and the Prone condition
+    /// both take the jump away, which is the same sentence 5e's crawl
+    /// rule makes. Zero is not a special case downstream — it simply
+    /// buys no jump edge, so a rooted creature on the lip of a rift
+    /// stays on it.
+    pub fn long_jump_feet(&self, running_start: bool) -> u32 {
+        if self.speed() <= 0.0 || self.has_condition(Condition::Prone) {
+            return 0;
+        }
+        let strength = self.ability_score(AbilityScoreType::Strength);
+        let by_strength = if running_start { strength } else { strength / 2 };
+        let by_trait = self.standing_leap_feet.unwrap_or(0);
+        let by_spell = if self.has_condition(Condition::Leaping) {
+            crate::conditions::condition_template::JUMP_SPELL_FEET
+        } else {
+            0
+        };
+        by_strength.max(by_trait).max(by_spell)
+    }
+
+    /// This creature's **Standing Leap** trait, if it has one — the
+    /// stat-block clause that names a Long Jump distance outright and
+    /// waives the running start, as the frog's and the giant frog's do.
+    ///
+    /// Exposed because `long_jump_feet` folds it into one number and the
+    /// UI wants to say *why* a creature can clear a rift from a
+    /// standstill.
+    pub fn standing_leap_feet(&self) -> Option<u32> {
+        self.standing_leap_feet
+    }
+
+    /// The unit step the creature's current straight run is being made
+    /// in, or `None` when it is not running.
+    ///
+    /// The direction half of what `straight_run_tiles` counts; the two
+    /// are read together by the jump lane in
+    /// `EncounterInstance::dijkstra_path`, which needs to know not just
+    /// that a creature has been running but *which way*, because RAW's
+    /// running start only pays for a leap that continues the run.
+    pub fn run_direction(&self) -> Option<Coordinate> {
+        self.run_step
     }
 
     /// True if 5e's Underwater Combat penalties are waived for this
