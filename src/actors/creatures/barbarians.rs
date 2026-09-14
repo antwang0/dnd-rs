@@ -100,9 +100,14 @@ fn subclass_barbarian_template(
         //     most to whoever swings the biggest die, which on this
         //     roster is the greataxe.
         //   - **Grappler** (General) — advantage on attacks against a
-        //     creature you are holding. Pairs with Rage's melee damage
-        //     bonus and with `Grappled`'s own clause taxing the
-        //     captive's swings at everyone but the grappler.
+        //     creature you are holding, and Fast Wrestler: hauling it
+        //     around costs nothing as long as it is not bigger than you
+        //     are. Pairs with Rage's melee damage bonus and with
+        //     `Grappled`'s own clause taxing the captive's swings at
+        //     everyone but the grappler — and the second clause is what
+        //     makes the hold a *plan* rather than a place to stand: a
+        //     barbarian who can drag a knight at full pace can walk them
+        //     off the party's caster.
         //
         // See `crate::actions::feats`.
         features: HashSet::from([

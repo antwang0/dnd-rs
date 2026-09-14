@@ -18,7 +18,7 @@
 //! | Alert | Origin | the initiative roll |
 //! | Savage Attacker | Origin | one weapon damage roll a turn |
 //! | Tough | Origin | the hit point maximum, by twice the level |
-//! | Grappler | General | attack rolls against what you are holding |
+//! | Grappler | General | attack rolls against what you are holding, and the price of dragging it |
 //! | Speedy | General | ten feet of walking speed |
 //! | Charger | General | 1d8 on the swing at the end of a run |
 //! | War Caster | General | the concentration save |
@@ -176,8 +176,9 @@ pub const ALERT_TAG: &str = "feat.alert";
 pub const SAVAGE_ATTACKER_TAG: &str = "feat.savage_attacker";
 
 /// **Grappler** (General feat) — of whose four clauses the engine
-/// carries the one that moves a die: *"Attack Advantage. You have
-/// Advantage on attack rolls against a creature Grappled by you."*
+/// carries the two that move a number. The first moves a die:
+/// *"Attack Advantage. You have Advantage on attack rolls against a
+/// creature Grappled by you."*
 ///
 /// Read at `EncounterInstance::attack_mode_tally` off the `Grappled`
 /// back-link, which is what makes "by you" enforceable: a creature held
@@ -191,7 +192,20 @@ pub const SAVAGE_ATTACKER_TAG: &str = "feat.savage_attacker";
 /// the rest of the fight, and watch it swing back at disadvantage
 /// against everyone but you.
 ///
-/// Three clauses are absent, each for a reason the engine states
+/// **Fast Wrestler** is the second clause the engine carries, and it
+/// arrived late for a reason worth keeping: *"you don't have to spend
+/// extra movement to move a creature Grappled by you if the creature is
+/// your size or smaller."* This entry used to write it off as "an
+/// exemption from a cost the engine does not charge", which was true
+/// when it was written and stopped being true the moment
+/// `EncounterInstance::drag_grapple_captives` and the pathfinder's
+/// `drag_factor` landed — SRD 5.2's *"your Speed is halved"* is billed
+/// now, so there is something to be exempt from. It reads at
+/// `drag_is_encumbering`, and all it does is widen that gate's size
+/// comparison from "two categories down" to "your own size": a
+/// feat-holder hauling something *larger* than themselves still pays.
+///
+/// Two clauses are absent, each for a reason the engine states
 /// elsewhere:
 ///
 ///   - **Ability Score Increase** — the engine builds finished stat
@@ -200,12 +214,6 @@ pub const SAVAGE_ATTACKER_TAG: &str = "feat.savage_attacker";
 ///     of an Unarmed Strike") — the engine's Grapple is its own Action
 ///     rather than an option on a strike, so there is no pair to fold
 ///     together.
-///   - **Fast Wrestler** ("you don't have to spend extra movement to
-///     move a creature Grappled by you") — an exemption from a cost the
-///     engine does not charge. `Condition::Grappled`'s third RAW clause,
-///     the one about dragging a captive along at a foot per foot, is
-///     itself unmodeled; a grappler walks away and the hold breaks on
-///     the range check instead.
 pub const GRAPPLER_TAG: &str = "feat.grappler";
 
 /// **Tough** (Origin feat) — *"Your Hit Point maximum increases by an

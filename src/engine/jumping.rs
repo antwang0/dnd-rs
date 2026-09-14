@@ -36,6 +36,25 @@
 //! to each of those in turn; an edge is picked up by all of them without
 //! any of them knowing the rule exists.
 //!
+//! # The one place the edge is an approximation
+//!
+//! RAW's running start is a fact about *the route*, not about the tile —
+//! and Dijkstra settles tiles. The lane reads the run off the search
+//! tree (`parent` backwards, four tiles, same direction), which is the
+//! movement made immediately before the hop on the **cheapest** route to
+//! the takeoff tile; a dearer route that happened to arrive running is
+//! not considered, because the cheaper one settled the tile first.
+//!
+//! That is a real gap and it is one-directional: it can only withhold a
+//! jump that a slightly longer approach would have earned, never grant
+//! one nobody ran for. Closing it means carrying the incoming direction
+//! in the search state, which multiplies the node count by eight for a
+//! case that needs the near lip to be reachable two ways with different
+//! approach directions *and* the cheaper of the two to be the one that
+//! turns. On a board whose rifts are straight cracks in open floor,
+//! backing up and running at it is the same route the search already
+//! found.
+//!
 //! # What a hop may not do
 //!
 //! A jump adds routes the walk could not take, and *only* those. Every
@@ -158,12 +177,22 @@ pub fn footprint_clears_as_air(
 /// succeed on a DC 10 Dexterity (Acrobatics) check or have the Prone
 /// condition."*
 ///
-/// Called by `side_effects::MoveActor` for every step of a walked path
-/// whose length is more than one tile, which on this board is exactly
-/// the set of steps that came out of the jump lane — nothing else
-/// travels further than a neighbour under its own power. A one-tile step
-/// returns immediately, so the ordinary walk pays nothing for this
-/// living on the hot path.
+/// Called by `side_effects::MoveActor` after every step of a walked
+/// path. A one-tile step returns on the first comparison, so the
+/// ordinary walk pays almost nothing for this living on the hot path.
+///
+/// **It re-derives that the step was a leap rather than trusting its
+/// length**, and that is worth the footprint sweep it costs. A long
+/// step is a jump *in practice* — the walk lane only ever queues
+/// neighbours — but "in practice" is not a guarantee: `Move` falls back
+/// to a bare `vec![destination]` when the pathfinder comes back empty,
+/// and the suite is full of `MoveActor`s hand-built with one long step
+/// to set a board up. Reading a leap off the length alone would have
+/// printed "leaps 25 ft across the gap" for every one of them, and
+/// rolled an Acrobatics check at the end of it. So the test is the
+/// same one the edge was built on: a clean straight line, over nothing
+/// but air the creature could clear. Anything else is somebody moving a
+/// creature, and this rule has nothing to say about it.
 ///
 /// The check is read off the *anchor* tile rather than the whole
 /// footprint. A Huge body coming down astride the boundary between rubble
@@ -181,8 +210,29 @@ pub fn resolve_landing(ei: &mut EncounterInstance, actor_id: usize, from: Coordi
     let Some(to) = ei.actors.get(&actor_id).map(|a| a.location()) else {
         return;
     };
-    let tiles = (to.x - from.x).abs().max((to.y - from.y).abs());
+    let delta = to - from;
+    let tiles = delta.x.abs().max(delta.y.abs());
     if tiles <= 1 {
+        return;
+    }
+    let unit = Coordinate::new(delta.x.signum(), delta.y.signum());
+    // A straight line along one of the eight directions — anything else
+    // is not a shape the jump lane can produce.
+    if delta != Coordinate::new(unit.x * tiles, unit.y * tiles) {
+        return;
+    }
+    let Some(size) = ei.actors.get(&actor_id).map(|a| a.size()) else {
+        return;
+    };
+    let cleared = (1..tiles).all(|k| {
+        footprint_clears_as_air(
+            ei,
+            actor_id,
+            from + Coordinate::new(unit.x * k, unit.y * k),
+            size,
+        )
+    });
+    if !cleared {
         return;
     }
     let name = ei.actor_name(actor_id);

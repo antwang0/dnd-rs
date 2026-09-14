@@ -109242,3 +109242,104 @@ fn a_frogs_standing_leap_crosses_what_its_strength_never_could() {
         );
     }
 }
+
+/// A long step is not automatically a leap.
+///
+/// `MoveActor` is handed a path, and the engine's own `Move` builds that
+/// path out of the pathfinder — where a step longer than one tile can
+/// only be a hop. But `Move` also falls back to a bare one-element path
+/// when the pathfinder comes back empty, and the suite is full of walks
+/// hand-built as one long step to put a creature somewhere. If the
+/// landing clause read "leap" off the length alone, every one of those
+/// would print a crossing that did not happen and roll an Acrobatics
+/// check at the end of it.
+///
+/// So the pair: the same two tiles, the same single-step path, and only
+/// the board between them different.
+#[test]
+fn a_long_step_over_solid_ground_is_not_a_leap() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::MoveActor;
+
+    for (cut, leapt) in [(false, false), (true, true)] {
+        let (mut e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=10);
+        if !cut {
+            for x in 9..=10 {
+                for y in [3, 4] {
+                    e.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+                }
+            }
+        }
+        e.place_actor_at(id, Coordinate::new(7, 3)).unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        MoveActor {
+            actor_id: id,
+            path: vec![Coordinate::new(11, 3)],
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.messages().iter().any(|m| m.contains("leaps")),
+            leapt,
+            "cut={cut}: the log should describe what the board actually was"
+        );
+    }
+}
+
+/// The **Grappler** feat's second engine-visible clause: *"Fast
+/// Wrestler. You don't have to spend extra movement to move a creature
+/// Grappled by you if the creature is your size or smaller."*
+///
+/// Three walks down the same corridor, and the middle one is the feat.
+/// A fighter dragging a zombie pays SRD 5.2's halved Speed; a barbarian
+/// dragging the same zombie does not, because it has the feat and the
+/// zombie is its own size; and the same barbarian dragging an **ogre**
+/// pays again, because RAW's exemption stops at "your size or smaller"
+/// and the feat is not a licence to tow anything.
+///
+/// The third case is what makes this a test of the clause rather than
+/// of the tag. A build that had read the feat as "dragging is free"
+/// would pass the first two assertions and fail only here.
+#[test]
+fn fast_wrestler_hauls_its_own_weight_and_not_more() {
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+
+    let cost_of_walking_with = |template: &'static CreatureTemplate,
+                                captive: &'static CreatureTemplate|
+     -> f32 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let hauler = e
+            .instantiate_creature(template, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let held = e
+            .instantiate_creature(captive, Coordinate::new(2, 6), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&hauler).unwrap().reset_for_new_round();
+        let free = e
+            .path_cost_to(hauler, Coordinate::new(8, 2))
+            .expect("open floor");
+        for effect in
+            install_condition_with_link(Condition::Grappled, held, hauler, ConditionTimer::Permanent)
+        {
+            effect.apply(&mut e);
+        }
+        let laden = e
+            .path_cost_to(hauler, Coordinate::new(8, 2))
+            .expect("still open floor");
+        laden / free
+    };
+
+    assert!(
+        (cost_of_walking_with(&FIGHTER_TEMPLATE, &ZOMBIE_TEMPLATE) - 2.0).abs() < 0.01,
+        "no feat: SRD 5.2 halves the hauler's Speed"
+    );
+    assert!(
+        (cost_of_walking_with(&BARBARIAN_TEMPLATE, &ZOMBIE_TEMPLATE) - 1.0).abs() < 0.01,
+        "Fast Wrestler: a Medium captive costs a Medium grappler nothing"
+    );
+    assert!(
+        (cost_of_walking_with(&BARBARIAN_TEMPLATE, &OGRE_TEMPLATE) - 2.0).abs() < 0.01,
+        "and the exemption stops at the grappler's own size"
+    );
+}

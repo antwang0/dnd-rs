@@ -19394,11 +19394,32 @@ impl EncounterInstance {
     /// halves are one comparison on the size ladder, and `Tiny` is
     /// named separately by RAW rather than folded into the gap because
     /// a Tiny creature is weightless to a Small one too.
+    ///
+    /// The second exemption is the **Grappler** feat's third clause —
+    /// *"Fast Wrestler. You don't have to spend extra movement to move a
+    /// creature Grappled by you if the creature is your size or
+    /// smaller."* — which widens the size gate from "two categories
+    /// down" to "your own size", and which is the whole of what it does.
+    /// A feat-holder dragging something *larger* than themselves still
+    /// pays.
+    ///
+    /// It is here rather than absent because the cost it exempts its
+    /// holder from is one the engine now charges. `feats::GRAPPLER_TAG`
+    /// shipped with this clause written down as unmodelled and the
+    /// reason given — "an exemption from a cost the engine does not
+    /// charge" — and that reason stopped being true when
+    /// `drag_grapple_captives` and the pathfinder's `drag_factor`
+    /// landed. The sentence outlived the fact by exactly one feature.
     fn drag_is_encumbering(&self, grappler_id: usize, captive_id: usize) -> bool {
         let (Some(g), Some(c)) = (self.actors.get(&grappler_id), self.actors.get(&captive_id))
         else {
             return false;
         };
+        if g.has_passive_feature(crate::actions::feats::GRAPPLER_TAG)
+            && c.size().ordinal() <= g.size().ordinal()
+        {
+            return false;
+        }
         c.size() != crate::engine::types::Size::Tiny
             && c.size().ordinal() > g.size().ordinal() - 2
     }
