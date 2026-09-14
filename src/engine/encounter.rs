@@ -8776,6 +8776,24 @@ impl EncounterInstance {
         cut
     }
 
+    /// True when anything on this board is a hole in the floor.
+    ///
+    /// One scan with an early exit, and three readers who each want it
+    /// for the same reason: SRD 5.2's Long Jump is a rule about a board
+    /// that has somewhere to jump *to*, and on the overwhelming majority
+    /// of boards it has nothing to say. The pathfinder's jump lane, the
+    /// AI's jump-buff rung and the status panel's Long Jump row all use
+    /// it to buy themselves out before doing any work.
+    ///
+    /// Recomputed rather than cached on the struct, because the terrain
+    /// is written from several places — the generator, `set_terrain_at`,
+    /// `carve_rifts`, the conjured-terrain lane — and a cached flag
+    /// would be a fifth thing each of them had to remember. A few
+    /// hundred reads is cheaper than every one of those being right.
+    pub fn board_has_gaps(&self) -> bool {
+        self.terrain.iter().any(|t| t.terrain_type.is_gap())
+    }
+
     /// The tiles one candidate rift would take, or `None` when the seed
     /// grew nothing worth cutting.
     ///
@@ -9012,7 +9030,7 @@ impl EncounterInstance {
     /// not need one — the attack rungs sit above the one that calls it,
     /// so anything with a shot has already taken it.
     pub fn a_longer_leap_would_open_a_route(&self, actor_id: usize, jump_feet: u32) -> bool {
-        if !self.terrain.iter().any(|t| t.terrain_type.is_gap()) {
+        if !self.board_has_gaps() {
             return false;
         }
         let Some(actor) = self.actors.get(&actor_id) else {
@@ -13471,6 +13489,9 @@ impl EncounterInstance {
         // mid-run; the path that resumes east from where it stands does
         // not have to earn the run-up twice.
         let live_run = body.run_direction().zip(body.straight_run_tiles());
+        // …and how much of a run this creature needs for RAW's clause to
+        // count, which is ten feet for everybody but a Thief.
+        let needed_run = body.running_start_tiles();
         // …and the one question that can switch the whole lane off.
         //
         // A board with no holes in it has no jumps on it, and most
@@ -13484,7 +13505,7 @@ impl EncounterInstance {
         // written from several places (the generator, `set_terrain_at`,
         // the conjured-terrain lane) and a cached flag would be a fourth
         // thing each of them had to remember.
-        let board_has_gaps = self.terrain.iter().any(|t| t.terrain_type.is_gap());
+        let board_has_gaps = self.board_has_gaps();
 
         let start_idx = self.idx(start).ok()?;
         let dest_idx = self.idx(dest).ok()?;
@@ -13512,7 +13533,7 @@ impl EncounterInstance {
         let width = self.width;
         let run_reaches = |parent: &Vec<Option<usize>>, mut idx: usize, dir: (isize, isize)| {
             let mut tiles = 0isize;
-            while tiles < jumping::RUNNING_START_TILES {
+            while tiles < needed_run {
                 if idx == start_idx {
                     if let Some((step, len)) = live_run
                         && step == Coordinate::new(dir.0, dir.1)
@@ -13534,7 +13555,7 @@ impl EncounterInstance {
                 tiles += 1;
                 idx = prev;
             }
-            tiles >= jumping::RUNNING_START_TILES
+            tiles >= needed_run
         };
 
         let mut heap: BinaryHeap<Reverse<(u32, usize)>> = BinaryHeap::new();

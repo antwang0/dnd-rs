@@ -161,6 +161,15 @@ impl Leap {
 /// `ActorInstance::straight_run_tiles` was written.
 pub const RUNNING_START_TILES: isize = tiles_from_feet(10) as isize;
 
+/// The Thief Rogue's **Second-Story Work** run-up — *"after moving only
+/// 5 feet"* — in the same units.
+///
+/// Beside the number it replaces rather than inside the feature that
+/// grants it, so the two are read in one place and cannot drift into
+/// the same value or past each other. See
+/// `ActorInstance::running_start_tiles`, which picks.
+pub const SHORT_RUNNING_START_TILES: isize = tiles_from_feet(5) as isize;
+
 /// The longest hop the jump lane will consider, in tiles.
 ///
 /// A guard on the loop rather than a rule. The Strength allowance and

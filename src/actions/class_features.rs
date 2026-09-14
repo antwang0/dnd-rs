@@ -18740,6 +18740,29 @@ pub const THIEFS_REFLEXES_TAG: &str = "rogue.thiefs_reflexes";
 /// cannot attune to four things.
 pub const USE_MAGIC_DEVICE_TAG: &str = "rogue.use_magic_device";
 
+/// **Second-Story Work** (Thief Rogue, subclass level 3) — the half of
+/// it the board can hold: *"you can determine the distance of a running
+/// Long Jump after moving only 5 feet."*
+///
+/// Read by `ActorInstance::running_start_tiles`, which is the one number
+/// SRD 5.2's Long Jump asks about the *route* rather than about the
+/// creature — *"if you move at least 10 feet immediately before the
+/// jump"* — and which this feature halves.
+///
+/// Five feet against ten sounds like nothing and is the difference
+/// between a jump and no jump on a board with a rift on it. A running
+/// Long Jump is twice a standing one, and a lip you cannot get a long
+/// run-up to is the normal case rather than the exception: the far side
+/// of a crack is usually reached by turning a corner and going, not by
+/// sprinting down a hall. Two tiles of approach is a corner; four is a
+/// corridor.
+///
+/// **The climb speed is not modelled**, and that is the older half of
+/// this feature's RAW. The board is flat (`crate::engine::falling` keeps
+/// altitude as a scalar, not a coordinate), so there is nothing to climb
+/// — the same absence that keeps High Jump off `engine::jumping::Leap`.
+pub const SECOND_STORY_WORK_TAG: &str = "rogue.second_story_work";
+
 
 // ─── Artificer ──────────────────────────────────────────────────────
 //

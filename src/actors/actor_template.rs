@@ -11521,6 +11521,29 @@ impl ActorInstance {
         self.leap
     }
 
+    /// How long a straight run this creature needs before a Long Jump
+    /// counts as a *running* one, in tiles — SRD 5.2's *"if you move at
+    /// least 10 feet immediately before the jump"*, and the one number
+    /// in the Long Jump rule that is about the route rather than about
+    /// the jumper.
+    ///
+    /// A creature-scoped question rather than a constant, because one
+    /// feature changes it: the Thief Rogue's **Second-Story Work** —
+    /// *"you can determine the distance of a running Long Jump after
+    /// moving only 5 feet"* — halves it. See
+    /// `class_features::SECOND_STORY_WORK_TAG` for why halving the
+    /// approach is worth more than it sounds.
+    ///
+    /// Read once per path by the jump lane in
+    /// `EncounterInstance::dijkstra_path`, beside the two distances.
+    pub fn running_start_tiles(&self) -> isize {
+        if self.has_passive_feature(crate::actions::class_features::SECOND_STORY_WORK_TAG) {
+            crate::engine::jumping::SHORT_RUNNING_START_TILES
+        } else {
+            crate::engine::jumping::RUNNING_START_TILES
+        }
+    }
+
     /// The unit step the creature's current straight run is being made
     /// in, or `None` when it is not running.
     ///

@@ -597,11 +597,21 @@ pub static SOULKNIFE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// that it simply takes more turns than they do, and then runs out of
 /// potions.
 ///
-/// Left out: **Second-Story Work** (lv3, climbing costs no extra
-/// movement, longer running jumps) and **Supreme Sneak** (lv9,
-/// advantage on a Stealth check after moving at half speed) both key off
-/// systems the engine doesn't have — vertical movement and contested
-/// Stealth checks; Hide here installs a condition rather than rolling.
+/// **Second-Story Work** (lv3) is half in. Its climb speed is not
+/// modelled — the board is flat and there is nothing to climb — but its
+/// second clause is: *"you can determine the distance of a running Long
+/// Jump after moving only 5 feet."* That used to be listed here as
+/// keying off "a system the engine doesn't have", and the system
+/// arrived; see `class_features::SECOND_STORY_WORK_TAG` and
+/// `engine::jumping`. Two tiles of approach instead of four is the
+/// difference between turning a corner into a jump and needing a
+/// corridor to sprint down, and a running Long Jump is twice a standing
+/// one.
+///
+/// Left out: **Supreme Sneak** (lv9, advantage on a Stealth check after
+/// moving at half speed) keys off contested Stealth checks, which the
+/// engine does not have; Hide here installs a condition rather than
+/// rolling.
 /// **Use Magic Device** (lv13) — *"you ignore all class, species, and
 /// level requirements on the use of magic items"* — is live, and is the
 /// second reason to pick this subclass over the other five. This
@@ -618,7 +628,7 @@ pub static SOULKNIFE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// Soulknife's.
 pub static THIEF_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     use crate::actions::class_features::{
-        FAST_HANDS_TAG, THIEFS_REFLEXES_TAG, USE_MAGIC_DEVICE_TAG,
+        FAST_HANDS_TAG, SECOND_STORY_WORK_TAG, THIEFS_REFLEXES_TAG, USE_MAGIC_DEVICE_TAG,
     };
     use crate::actions::item_actions::{
         DRINK_HEALING_POTION, DRINK_POTION_OF_BLUR, DRINK_POTION_OF_INVISIBILITY,
@@ -641,6 +651,7 @@ pub static THIEF_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     features.insert(FAST_HANDS_TAG);
     features.insert(THIEFS_REFLEXES_TAG);
     features.insert(USE_MAGIC_DEVICE_TAG);
+    features.insert(SECOND_STORY_WORK_TAG);
     CreatureTemplate {
         name: "Thief Rogue",
         glyph: 'F',

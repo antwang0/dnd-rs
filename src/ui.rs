@@ -971,6 +971,39 @@ pub fn render_sideinfo(
             Style::default().fg(Color::LightBlue),
         )));
     }
+    // SRD 5.2 **Long Jump**, rendered only on a board that has
+    // somewhere to jump to.
+    //
+    // The gate is the same one the pathfinder's jump lane and the AI's
+    // jump-buff rung use, and for the same reason: on an unbroken floor
+    // a Long Jump distance is a number that can never change anything,
+    // and a line saying so on every panel would be the noise the
+    // Airborne row above is careful to avoid. On a board with a rift
+    // across it, it is the one number the player needs and has no other
+    // way to get — the map does not say how wide a crack is in feet, and
+    // the difference between clearing it and not is a Strength score the
+    // panel prints nowhere else.
+    //
+    // Both halves are shown when they differ, because the difference is
+    // the decision: ten feet standing and twenty with a run is a player
+    // who has to back up first. They collapse to one number for the
+    // clauses that waive the run-up — the Jump spell, a frog's Standing
+    // Leap — and to "none" for a creature whose Speed is pinned at zero
+    // or that is on the floor, which is a thing worth saying out loud
+    // beside a hole a moment ago it could have crossed.
+    if encounter.board_has_gaps() {
+        let running = curr_actor.long_jump_feet(true);
+        let standing = curr_actor.long_jump_feet(false);
+        let text = match (running, standing) {
+            (0, _) => "Long Jump: none".to_string(),
+            (r, s) if r == s => format!("Long Jump: {} ft", r),
+            (r, s) => format!("Long Jump: {} ft with a run, {} ft standing", r, s),
+        };
+        stats_lines.push(Line::from(Span::styled(
+            text,
+            Style::default().fg(Color::LightBlue),
+        )));
+    }
     // 5e Suffocation — the breath clock, rendered only when it is
     // running. Every creature spends nearly every round of nearly every
     // fight pinned at full breath, and a line saying so on every panel
@@ -2301,6 +2334,82 @@ mod tests {
                 "a chasm must borrow neither the movement-cost ramp nor the off-map blank"
             );
         }
+    }
+
+    /// The panel names a Long Jump only on a board that has somewhere to
+    /// jump to — and on one that does, it names the *pair* when the two
+    /// numbers differ.
+    ///
+    /// Both halves matter and neither is obvious. A Long Jump distance
+    /// on an unbroken floor is a number that can never change anything,
+    /// and the panel's whole discipline is that a row which is always
+    /// the same is a row nobody reads. On a board with a rift across it
+    /// the number is the only thing standing between the player and
+    /// walking into a gap they cannot cross — the map draws the crack
+    /// and does not say how wide it is in feet.
+    ///
+    /// The split line is the decision the rule actually poses: sixteen
+    /// feet with a run and eight standing means back up first.
+    #[test]
+    fn the_panel_names_a_long_jump_only_where_there_is_something_to_jump() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::terrain::TerrainType;
+
+        // Two teams and a pumped stack, because the stats block is
+        // rendered for whoever is *up* and a one-sided board has nobody
+        // taking a turn.
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0), (&FIGHTER_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel(&e).contains("Long Jump"),
+            "an unbroken floor says nothing about jumping"
+        );
+
+        // One tile of nothing, anywhere on the board, and the row
+        // appears. Placed on a wall rather than hunted for open floor:
+        // the row is gated on the board, not on where the crack is.
+        assert!(e.set_terrain_at(Coordinate::new(0, 0), TerrainType::Chasm));
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Long Jump: 16 ft with a run, 8 ft standing"),
+            "Strength 16 is sixteen feet at a run and eight standing:\n{}",
+            panel
+        );
+
+        // The Jump spell waives the run-up, so the two numbers become
+        // one and the line says so rather than printing the same figure
+        // twice.
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Leaping, ConditionTimer::Rounds(10));
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Long Jump: 30 ft"),
+            "a spell that does not ask for a run prints one number:\n{}",
+            panel
+        );
+        assert!(
+            !panel.contains("with a run"),
+            "…and not the split line:\n{}",
+            panel
+        );
+
+        // And a creature on the floor is not jumping anywhere, which is
+        // worth saying out loud beside a hole it could have crossed a
+        // moment ago.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Prone, ConditionTimer::Permanent);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Long Jump: none"),
+            "a prone creature jumps nowhere:\n{}",
+            panel
+        );
     }
 
     /// The seed is on screen. Every encounter has one now, and it is

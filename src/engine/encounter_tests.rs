@@ -109416,3 +109416,48 @@ fn a_running_leap_is_worth_nothing_from_a_standstill() {
         "\"with or without a running start\" means without"
     );
 }
+
+/// The Thief Rogue's **Second-Story Work**: *"you can determine the
+/// distance of a running Long Jump after moving only 5 feet."*
+///
+/// Two tiles of approach instead of four, which is the whole feature and
+/// is worth more than the numbers make it sound. A running Long Jump is
+/// twice a standing one, and the far lip of a crack is usually reached
+/// by turning a corner rather than by sprinting down a hall — so the
+/// question is rarely "can this creature run ten feet somewhere", it is
+/// "can it run ten feet *at the gap*".
+///
+/// Three runs, same rift, same Strength 10. The baseline rogue given the
+/// whole corridor makes it; the same rogue given two tiles does not; and
+/// the Thief given the same two tiles does. The middle assertion is what
+/// makes the third one about the feature rather than about the distance.
+#[test]
+fn second_story_work_buys_a_shorter_run_up() {
+    use crate::actors::creatures::rogues::{ROGUE_TEMPLATE, THIEF_ROGUE_TEMPLATE};
+
+    // Ten feet of gap: a running Long Jump off Strength 10 exactly, and
+    // twice what the same rogue clears standing.
+    let crosses = |template: &'static CreatureTemplate, approach: isize| {
+        let (mut e, id) = rift_corridor(template, 9..=10);
+        // Seven tiles of corridor is the whole run-up; `place_actor_at`
+        // both moves the creature and breaks whatever run it was
+        // holding, so the only run it can build is the one this leaves
+        // it room for.
+        e.place_actor_at(id, Coordinate::new(7 - approach, 3)).unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        e.path_to(id, Coordinate::new(11, 3)).is_some()
+    };
+
+    assert!(
+        crosses(&ROGUE_TEMPLATE, 7),
+        "the whole corridor is a run-up for anybody"
+    );
+    assert!(
+        !crosses(&ROGUE_TEMPLATE, 2),
+        "five feet of approach is not RAW's ten"
+    );
+    assert!(
+        crosses(&THIEF_ROGUE_TEMPLATE, 2),
+        "…and five feet is exactly what Second-Story Work asks for"
+    );
+}
