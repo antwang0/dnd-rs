@@ -4575,6 +4575,30 @@ pub static SILVER_RAVEN_FIGURINE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Staff of the Python** (Staff, Uncommon, requires attunement) — a
+/// Huge constrictor for a Magic action, once a rest.
+///
+/// The twelfth SRD staff and the only one that is not on the staff
+/// shelf: its charge buys a *body*, so it rides the `SummonItem` lane
+/// beside the figurines instead of the spell-menu chassis in
+/// [`crate::actions::staves`]. See
+/// `item_actions::THROW_STAFF_OF_THE_PYTHON` for why one charge a rest
+/// is the honest reading of a restriction RAW writes in hours.
+///
+/// Attunement with no class restriction, which RAW prints and which is
+/// the point: the snake is the only summon in the file an unarmed,
+/// spell-less chassis can put on the board without spending the object
+/// to do it.
+pub static STAFF_OF_THE_PYTHON: Item = Item {
+    name: "Staff of the Python",
+    glyph: '/',
+    on_use: &[&crate::actions::item_actions::THROW_STAFF_OF_THE_PYTHON],
+    charges: 1,
+    recharge: Some(DAILY_ONE),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// SRD 5.2's Figurines of Wondrous Power, whole.
 ///
 /// A cohort rather than nine loose statics, for the reason
@@ -8016,6 +8040,11 @@ pub static STAVES: &[&Item] = &[
     &STAFF_OF_STRIKING,
     &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
+    // The one whose charge buys a body rather than a spell — see
+    // `item_actions::THROW_STAFF_OF_THE_PYTHON`. On this list because it
+    // is a staff and the family's invariants are about staves; not in
+    // `crate::actions::staves` because nothing there would fit it.
+    &STAFF_OF_THE_PYTHON,
 ];
 
 /// The magic armoury as a set — the nine items above whose value is a
@@ -9010,6 +9039,10 @@ pub static LOOT_POOL: &[&Item] = &[
     &OBSIDIAN_STEED_FIGURINE,
     &SERPENTINE_OWL_FIGURINE,
     &SILVER_RAVEN_FIGURINE,
+    // The staff that is a figurine in everything but name — one Huge
+    // constrictor, once a rest, and it comes back. Uncommon, so it sits
+    // beside the gems rather than beside the Rare statuettes.
+    &STAFF_OF_THE_PYTHON,
     // The vessels — the same four elementals the gems above hold, on a
     // pool that survives the fight. One entry apiece and no more,
     // because a Rare that pays out again in the next room is the

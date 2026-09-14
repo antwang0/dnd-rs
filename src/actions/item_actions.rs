@@ -5749,6 +5749,10 @@ const MARBLE_ELEPHANT_FIGURINE_NAME: &str = "Marble Elephant Figurine";
 const OBSIDIAN_STEED_FIGURINE_NAME: &str = "Obsidian Steed Figurine";
 const SERPENTINE_OWL_FIGURINE_NAME: &str = "Serpentine Owl Figurine";
 const SILVER_RAVEN_FIGURINE_NAME: &str = "Silver Raven Figurine";
+/// The one staff in SRD 5.2 whose charges buy a *body* rather than a
+/// spell, which is why its name lives here beside the figurines rather
+/// than in [`crate::actions::staves`] with the other eleven.
+const STAFF_OF_THE_PYTHON_NAME: &str = "Staff of the Python";
 // The vessels. RAW's four elemental-commanding wonders are the same
 // four bodies the gems above hold and the opposite bargain: the gem is
 // Uncommon and gone, the vessel is Rare and still in the pack at dawn.
@@ -6351,6 +6355,7 @@ pub static ALL_SUMMON_ITEMS: &[&SummonItem] = &[
     &SET_DOWN_OBSIDIAN_STEED,
     &SET_DOWN_SERPENTINE_OWL,
     &SET_DOWN_SILVER_RAVEN,
+    &THROW_STAFF_OF_THE_PYTHON,
     &FILL_BOWL_OF_WATER_ELEMENTALS,
     &LIGHT_BRAZIER_OF_FIRE_ELEMENTALS,
     &SWING_CENSER_OF_AIR_ELEMENTALS,
@@ -6822,6 +6827,57 @@ pub static SET_DOWN_SILVER_RAVEN: SummonItem = SummonItem {
     base_instance_id: 226,
     concentration: None,
     billing: ItemUseBilling::Consumed,
+};
+
+/// **Staff of the Python** (Staff, Uncommon, requires attunement) —
+/// *"As a Magic action, you can throw this staff so that it lands in an
+/// unoccupied space within 10 feet of you, causing the staff to become a
+/// Giant Constrictor Snake in that space. The snake is under your
+/// control and shares your Initiative count."*
+///
+/// The twelfth staff, and the one that could never have lived in
+/// [`crate::actions::staves`]: every row on that shelf is a spell paid
+/// for in charges or a prime that sweetens a swing, and this one is a
+/// CR 2 body. So it is a `SummonItem` filed with the figurines, and the
+/// only member of that family that is not a statuette.
+///
+/// **What it buys is a grapple.** The Giant Constrictor Snake is Huge —
+/// a 3×3 footprint, sixty hit points, a bite and a constrict that
+/// installs `Grappled` — which makes this the cheapest object in the
+/// file that can take a creature *out of the fight* rather than merely
+/// hurt it. At Uncommon that is a better bargain than any elemental gem,
+/// and the attunement slot is what RAW charges for it.
+///
+/// **One snake per rest**, through `ItemUseBilling::Charges(1)` against
+/// an `Item::charges` of 1 — the elemental vessels' lane, and the
+/// closest the engine comes to RAW's shape. The book puts no daily cap
+/// on *summoning* at all: the staff is spent only when the snake is
+/// dismissed early (an hour's cooldown) or killed (the staff shatters).
+/// Neither of those has an engine surface — there is no dismiss verb and
+/// no object destruction — and both of RAW's endings leave the holder
+/// without a snake, so a pool of one that refills on a long rest is the
+/// honest translation: one snake per fight, and the staff survives.
+///
+/// **Concentration is `None`**, which is RAW and is the whole reason
+/// this is worth an attunement slot: the snake is *"under your control"*
+/// with no concentration clause, so a Magic Missile to the wizard's ribs
+/// does not take it away. Compare `CONJURE_ANIMALS`, which buys a
+/// similar amount of body for a level-3 slot and one failed Constitution
+/// save.
+pub static THROW_STAFF_OF_THE_PYTHON: SummonItem = SummonItem {
+    action_name: "throw staff of the python",
+    action_aliases: &["python", "staff of the python", "python staff"],
+    item_name: STAFF_OF_THE_PYTHON_NAME,
+    log_label: "staff of the python",
+    template: &crate::actors::creatures::constrictor_snakes::GIANT_CONSTRICTOR_SNAKE_TEMPLATE,
+    // Huge, like the Marble Elephant's body — and the same wider ring
+    // for the same reason: nine free tiles are harder to find than four.
+    size: crate::engine::types::Size::Huge,
+    count: 1,
+    search_radius: 5,
+    base_instance_id: 227,
+    concentration: None,
+    billing: ItemUseBilling::Charges(1),
 };
 
 /// **Bowl of Commanding Water Elementals** (Wondrous item, Rare) —

@@ -57552,6 +57552,126 @@ fn an_elemental_vessel_refills_at_a_rest_and_a_gem_does_not() {
     }
 }
 
+/// The Staff of the Python puts a Huge constrictor down for a Magic
+/// action, once a rest, and is still a staff afterwards.
+///
+/// The twelfth SRD staff and the only one whose charge buys a *body*, so
+/// it is the only member of two families at once — and each of the three
+/// claims is one of those families asserting something the other would
+/// not have.
+///
+///   - **It needs the bond.** RAW prints "Requires Attunement" and the
+///     staff shelf is where attunement matters; a fighter with the stick
+///     in the pack and no bond to it is holding a stick. Demonstrated by
+///     filling the three slots first, which is the only way an item that
+///     wants a bond ever *fails* to get one — `pickup_item` forms it on
+///     the spot when there is room, because loot here is picked up
+///     mid-fight and a staff that did nothing until the party left the
+///     room is a staff nobody would stop for.
+///   - **It is a summon.** One Huge body, on the holder's team, holding
+///     nobody's concentration — which is the clause that makes it worth
+///     an attunement slot, since a snake that a Magic Missile could
+///     dispel would be Conjure Animals with extra steps.
+///   - **It refills.** One charge, spent, and the object survives — the
+///     elemental vessels' lane. A staff that vanished after one snake
+///     would be a gem, and an uncharged one would be a figurine.
+#[test]
+fn the_staff_of_the_python_summons_once_a_rest_and_stays_a_staff() {
+    use crate::actions::item_actions::THROW_STAFF_OF_THE_PYTHON;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{
+        AMULET_OF_HEALTH, CLOAK_OF_PROTECTION, RING_OF_PROTECTION, STAFF_OF_THE_PYTHON,
+    };
+
+    // Wide and empty: the constrictor is Huge and the spawn loop is
+    // best-effort about finding nine free tiles.
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let user = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+        .unwrap();
+    // RAW's ceiling is three bonds; these are three, so the staff
+    // arrives with nowhere to bond.
+    for filler in [&RING_OF_PROTECTION, &CLOAK_OF_PROTECTION, &AMULET_OF_HEALTH] {
+        e.actors.get_mut(&user).unwrap().pickup_item(filler);
+    }
+    e.actors
+        .get_mut(&user)
+        .unwrap()
+        .pickup_item(&STAFF_OF_THE_PYTHON);
+    assert!(
+        !e.actors[&user].is_attuned_to(STAFF_OF_THE_PYTHON.name),
+        "the slots were supposed to be full"
+    );
+
+    let fire = |e: &mut EncounterInstance, user: usize| {
+        let aei = ActionExecutionInfo::new(&THROW_STAFF_OF_THE_PYTHON, user, None, None, None);
+        let ok = aei.validate(e);
+        if ok {
+            e.push_action(aei);
+            e.process_stack();
+        }
+        ok
+    };
+
+    // Carried but not bonded: RAW's attunement clause, enforced by
+    // `active_items` and therefore by every staff row in the file.
+    assert!(
+        !fire(&mut e, user),
+        "an unattuned staff threw a snake:\n{}",
+        e.messages().join("\n")
+    );
+    assert_eq!(
+        e.actors.len(),
+        1,
+        "something landed on the board without the bond"
+    );
+
+    // Free a slot and the bond forms, which is what switches the row on.
+    e.actors
+        .get_mut(&user)
+        .unwrap()
+        .remove_item_by_name(AMULET_OF_HEALTH.name);
+    assert!(
+        e.actors
+            .get_mut(&user)
+            .unwrap()
+            .attune_to(STAFF_OF_THE_PYTHON.name),
+        "a fighter should be able to bond with a staff RAW puts no class on"
+    );
+    e.actors.get_mut(&user).unwrap().reset_for_new_round();
+    assert!(fire(&mut e, user), "the bonded staff would not open");
+
+    let summoned: Vec<usize> = e.actors.keys().copied().filter(|id| *id != user).collect();
+    assert_eq!(summoned.len(), 1, "one staff, one snake");
+    let snake = summoned[0];
+    assert!(e.actors[&snake].name().contains("Giant Constrictor Snake"));
+    assert_eq!(e.actors[&snake].size(), crate::engine::types::Size::Huge);
+    assert_eq!(e.actors[&snake].team(), e.actors[&user].team());
+    assert!(
+        !e.actors[&snake].has_condition(Condition::Conjured),
+        "RAW's snake is under your control and not your concentration"
+    );
+    assert!(!e.actors[&user].is_concentrating());
+
+    // The pool is one deep, and the staff outlives it.
+    e.actors.get_mut(&user).unwrap().reset_for_new_round();
+    assert!(!fire(&mut e, user), "the staff threw two snakes in a day");
+    assert!(
+        e.actors[&user].has_item_named(STAFF_OF_THE_PYTHON.name),
+        "the staff was spent like an elemental gem"
+    );
+
+    // …and the rest is what makes it a staff rather than a figurine.
+    e.long_rest();
+    e.actors.get_mut(&user).unwrap().reset_for_new_round();
+    assert_eq!(
+        e.actors[&user].item_charges_remaining(STAFF_OF_THE_PYTHON.name),
+        1,
+        "the staff came back from a rest with the wrong pool"
+    );
+    assert!(fire(&mut e, user), "the staff did not refill overnight");
+}
+
 /// Every `SummonItem` in the engine is in [`ALL_SUMMON_ITEMS`], and
 /// every one of them is reachable from an `Item` that names it.
 ///
@@ -102217,13 +102337,19 @@ fn every_spell_that_prices_an_upcast_declares_it() {
 /// simply not very good.
 #[test]
 fn every_staff_row_is_wired_to_the_staff_it_names() {
-    use crate::actions::item_actions::ItemUseBilling;
+    use crate::actions::item_actions::{ALL_SUMMON_ITEMS, ItemUseBilling};
     use crate::actions::staves::{STAFF_PRIMES, STAFF_SPELLS};
     use crate::items::item_template::STAVES;
 
-    // Both chassis, as one list of `(row name, staff name, price)`: a
-    // spell row and a prime row differ in what they do with the charges
-    // and not at all in how they have to be wired.
+    // All three chassis, as one list of `(row name, staff name, price)`:
+    // a spell row, a prime row and a summon row differ in what they do
+    // with the charges and not at all in how they have to be wired.
+    //
+    // The third arm is the Staff of the Python, whose charge buys a
+    // Giant Constrictor Snake. It lives in `item_actions` with the
+    // figurines rather than in `staves` because nothing on that shelf is
+    // a *body* — but it is a staff, and every question below is a
+    // question about staves.
     //
     // A staff row's price is an `ItemUseBilling` now rather than a bare
     // count, because the chassis it shares with the loot table's
@@ -102248,6 +102374,22 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
                 .iter()
                 .map(|r| (r.action_name, r.item_name, r.charges)),
         )
+        .chain(ALL_SUMMON_ITEMS.iter().filter_map(|r| {
+            // Only the summon rows billed against a staff; the gems, the
+            // horn, the bag and the nine figurines are not staves and
+            // have their own sweeps.
+            if !STAVES.iter().any(|s| s.name == r.item_name) {
+                return None;
+            }
+            let ItemUseBilling::Charges(n) = r.billing else {
+                panic!(
+                    "{} is on a staff and is not priced in charges — a staff row \
+                     that is free or that consumes the staff is a different item",
+                    r.action_name
+                )
+            };
+            Some((r.action_name, r.item_name, n))
+        }))
         .collect();
 
     for (action_name, item_name, charges) in &rows {
