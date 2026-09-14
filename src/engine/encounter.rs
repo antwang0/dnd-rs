@@ -681,6 +681,16 @@ const CONSUMED_ON_SAVE: &[Condition] = &[
 /// the field would silently collapse the aura to 0.
 const AURA_OF_CONQUEST_PSYCHIC: u32 = 5;
 
+/// The value SRD 5.2's **Great Weapon Fighting** style reads a low
+/// damage die as: *"you can treat any 1 or 2 on a damage die as a 3."*
+///
+/// A floor rather than a reroll, and named here rather than written
+/// inline at `roll_weapon_damage_dice_each` because it is the whole of
+/// the rule and the number is the rule's — RAW's own 3, not a tuning
+/// dial. Raising it would not make the style better at what it does; it
+/// would make it a different style.
+pub const GREAT_WEAPON_FIGHTING_FLOOR: u32 = 3;
+
 /// SRD 5.2 Chain Devil **Unnerving Gaze**: *"Wisdom Saving Throw: DC
 /// 15."* Printed rather than derived — the kyton's own numbers give
 /// `8 + PB 3 + CHA 2 = 13`, and a stat block's save DC is not obliged to
@@ -3091,16 +3101,27 @@ impl EncounterInstance {
         self.roller.roll(dice)
     }
 
-    /// 5e Fighting Style: **Great Weapon Fighting** — roll a weapon
-    /// damage bundle, and (if `apply_gwf_reroll` is set) reroll any
-    /// die that comes up 1 or 2 once, taking the new value even if it
-    /// comes up 1 or 2 again per RAW ("but you must use the new roll").
-    /// The reroll routes through the same seedable roller so
-    /// reproducibility-by-seed is preserved.
+    /// Fighting Style: **Great Weapon Fighting** — roll a weapon damage
+    /// bundle, and (if `apply_gwf_floor` is set) read every 1 and every 2
+    /// on it as a 3.
     ///
-    /// Callers gate `apply_gwf_reroll` on the attacker's
+    /// SRD 5.2: *"When you roll damage for an attack you make with a
+    /// Melee weapon that you are holding with two hands, you can treat
+    /// any 1 or 2 on a damage die as a 3."*
+    ///
+    /// **This used to be the 2014 style, which is a reroll**, and the
+    /// difference is not cosmetic. A reroll takes a second draw and lands
+    /// wherever it lands — *"you must use the new roll"* — so it could
+    /// come up 1 again, and on a greatsword it was worth slightly *more*
+    /// than the floor on average (3.5 against 3.0) at the price of
+    /// keeping the bad case. The 2024 printing replaced the gamble with a
+    /// guarantee: a d6 that reads 1, 2 or 3 is now a 3 either way, which
+    /// is a lower ceiling, a hard floor, and — the part that matters to
+    /// this engine — **no extra draw**. See [`GREAT_WEAPON_FIGHTING_FLOOR`].
+    ///
+    /// Callers gate `apply_gwf_floor` on the attacker's
     /// `has_great_weapon_fighting()` flag AND `is_melee` — the RAW
-    /// "two-handed or versatile-two-handed melee weapon" gate collapses
+    /// "must have the Two-Handed or Versatile property" gate collapses
     /// to "melee weapon attack" since the engine doesn't track
     /// weapon-hand-usage (same shape as Dueling's gate collapse).
     ///
@@ -3108,8 +3129,14 @@ impl EncounterInstance {
     /// the rolling itself happens one face at a time in
     /// `roll_weapon_damage_dice_each` below, and this adds them up. The
     /// split is that one caller's doing — see there.
-    pub fn roll_weapon_damage_dice(&mut self, dice: Dice, apply_gwf_reroll: bool) -> u32 {
-        self.roll_weapon_damage_dice_each(dice, apply_gwf_reroll)
+    ///
+    /// The second parameter is the *style* flag and has never been a crit
+    /// flag, which is worth saying at the signature because one caller
+    /// read it as one: see `item_actions::SpellAttackDamageItem` and
+    /// `a_critical_ring_of_the_ram_rolls_a_second_pair_of_dice`. Crit
+    /// doubling lives in `attack::roll_rider`.
+    pub fn roll_weapon_damage_dice(&mut self, dice: Dice, apply_gwf_floor: bool) -> u32 {
+        self.roll_weapon_damage_dice_each(dice, apply_gwf_floor)
             .into_iter()
             .fold(0u32, u32::saturating_add)
     }
@@ -3118,41 +3145,45 @@ impl EncounterInstance {
     ///
     /// The pool's individual dice, not its total, because two rules in
     /// the engine are written about a single die rather than about the
-    /// damage: Great Weapon Fighting rerolls *"any 1 or 2 on a damage
-    /// die"* (which this function applies itself, since the reroll is
-    /// per-die by construction) and the **Piercer** feat rerolls *"one
-    /// of the attack's damage dice"* — a choice its caller cannot make
-    /// from a sum, and the reason this became the primitive and
+    /// damage: Great Weapon Fighting reads *"any 1 or 2 on a damage
+    /// die"* as a 3 (which this function applies itself, since the floor
+    /// is per-die by construction) and the **Piercer** feat rerolls
+    /// *"one of the attack's damage dice"* — a choice its caller cannot
+    /// make from a sum, and the reason this became the primitive and
     /// `roll_weapon_damage_dice` became the wrapper rather than the
     /// other way round.
     ///
-    /// Rolls one die at a time in both branches, which consumes the
-    /// seeded roller in exactly the order `roll(&dice)` did — the
-    /// `Roller` contract is one draw per die — so an encounter replayed
-    /// from a seed is unchanged by the split.
+    /// Rolls one die at a time, which consumes the seeded roller in
+    /// exactly the order `roll(&dice)` does — the `Roller` contract is
+    /// one draw per die. The style takes **no second draw**, so a
+    /// Great Weapon Fighter and anybody else on the same seed now see
+    /// the same subsequent rolls; the 2014 reroll this replaced did not,
+    /// and that is why the style's arrival used to shift every die after
+    /// it in the encounter.
+    ///
+    /// The floor is clamped to the die's own faces, which is dead code
+    /// for every weapon on the roster (RAW's Two-Handed and Versatile
+    /// weapons are all d6 or better) and is here so a hypothetical d2
+    /// cannot be made to read higher than it can roll.
     ///
     /// A degenerate pool (`count` or `faces` of zero) yields an empty
     /// vector, which sums to the zero the old fast path returned.
     pub fn roll_weapon_damage_dice_each(
         &mut self,
         dice: Dice,
-        apply_gwf_reroll: bool,
+        apply_gwf_floor: bool,
     ) -> Vec<u32> {
         if dice.count == 0 || dice.faces == 0 {
             return Vec::new();
         }
         let one_die = Dice::new(1, dice.faces);
+        let floor = if apply_gwf_floor {
+            GREAT_WEAPON_FIGHTING_FLOOR.min(dice.faces)
+        } else {
+            0
+        };
         (0..dice.count)
-            .map(|_| {
-                let roll = self.roll(&one_die);
-                // RAW: "you must use the new roll", so a reroll that
-                // comes up 1 or 2 again stands.
-                if apply_gwf_reroll && roll <= 2 {
-                    self.roll(&one_die)
-                } else {
-                    roll
-                }
-            })
+            .map(|_| self.roll(&one_die).max(floor))
             .collect()
     }
 

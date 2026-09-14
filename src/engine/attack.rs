@@ -3500,17 +3500,14 @@ pub fn resolve_attack_outcome_with_rider(
     if let Some(attacker) = encounter.actors.get_mut(&p.caster_id) {
         attacker.mark_hit_target_this_turn(p.target_id);
     }
-    // 5e Fighting Style: **Great Weapon Fighting** — reroll any 1 / 2 on
-    // a melee weapon damage die once, taking the new value even if it
-    // comes up 1 or 2 again per RAW. Gated on `p.is_melee` so a longbow
-    // shot (or a spell attack routed through this chokepoint) doesn't
-    // pick up the reroll — the RAW "two-handed melee weapon" gate
+    // Fighting Style: **Great Weapon Fighting** — SRD 5.2's *"treat any
+    // 1 or 2 on a damage die as a 3"*. Gated on `p.is_melee` so a
+    // longbow shot (or a spell attack routed through this chokepoint)
+    // doesn't pick it up — RAW's "Two-Handed or Versatile" gate
     // collapses to "melee weapon attack" since the engine doesn't track
     // weapon-hand-usage (same shape as Dueling's gate collapse). Applied
     // to BOTH the base damage roll AND the crit's doubled dice so the
-    // per-die reroll fires uniformly across the swing's dice pool. The
-    // helper's non-GWF fast path is a single delegated `roll(&dice)` so
-    // the vast majority of swings pay no extra cost.
+    // floor holds uniformly across the swing's pool.
     let apply_gwf = p.is_melee
         && encounter
             .actors
@@ -4998,11 +4995,15 @@ fn savage_attacker_reroll(
 /// deals Piercing damage, so the narrowing is currently invisible.
 ///
 /// The reroll honours Great Weapon Fighting, because it is a damage die
-/// rolled for the attack like any other. The below-average test is
-/// still taken against the plain die's average, which slightly
-/// *under*-uses the feat for a GWF holder — their reroll is worth more
-/// than the bare average says — and under-use is the safe direction for
-/// a once-a-turn resource.
+/// rolled for the attack like any other — so the replacement face comes
+/// back floored at 3 for a styled holder. The below-average test is
+/// still taken against the *plain* die's average, which slightly
+/// *under*-uses the feat for such a holder: their replacement is worth
+/// more than the bare average says, and a die the style has already
+/// lifted to a 3 is one this test may decline to touch. Under-use is
+/// the safe direction for a once-a-turn resource, and the two clauses
+/// compose in the holder's favour either way — the floor cannot make a
+/// rerolled die worse than the one it replaced.
 fn piercer_reroll(
     encounter: &mut EncounterInstance,
     p: &AttackParams,

@@ -4064,20 +4064,25 @@ pub struct CreatureTemplate {
     /// would add a per-actor set and a rest-time selection step to buy
     /// a distinction no template on the roster is wide enough to feel.
     pub has_weapon_mastery: bool,
-    /// 5e Fighting Style: **Great Weapon Fighting** (Fighter / Paladin
-    /// / Ranger lv1 pick): when the holder rolls a 1 or 2 on a damage
-    /// die for a melee weapon attack made while wielding a two-handed
-    /// or versatile-two-handed weapon, they may reroll the die once and
-    /// must use the new roll (even if it comes up 1 or 2 again). Read
-    /// at the damage-roll chokepoint in `engine::attack` — per-die
-    /// reroll routed through `EncounterInstance::roll_weapon_damage_dice`
-    /// so both the base swing and a crit's doubled dice pick up the
-    /// reroll. We don't track weapon-hand-usage so the RAW "two-handed /
-    /// versatile-two-handed" gate collapses to "melee weapon attack" —
-    /// same shape as Dueling's gate collapse. Templates that ship
-    /// two-handed workhorses (greatsword, greataxe, greatclub) carry
-    /// this flag; the Fighter chassis (scimitar 1H) does NOT so
-    /// Dueling and GWF stay mutually exclusive on the baseline lanes.
+    /// Fighting Style: **Great Weapon Fighting** (Fighter / Paladin /
+    /// Ranger lv1 pick). SRD 5.2: *"When you roll damage for an attack
+    /// you make with a Melee weapon that you are holding with two
+    /// hands, you can treat any 1 or 2 on a damage die as a 3. The
+    /// weapon must have the Two-Handed or Versatile property."*
+    ///
+    /// A **floor**, not the 2014 printing's reroll — see
+    /// `engine::encounter::GREAT_WEAPON_FIGHTING_FLOOR` for what changed
+    /// and why it matters to the seeded roller. Read at the damage-roll
+    /// chokepoint in `engine::attack`, per die, through
+    /// `EncounterInstance::roll_weapon_damage_dice`, so both the base
+    /// swing and a crit's doubled dice pick it up.
+    ///
+    /// We don't track weapon-hand-usage, so RAW's "Two-Handed or
+    /// Versatile" gate collapses to "melee weapon attack" — the same
+    /// shape as Dueling's gate collapse. Templates that ship two-handed
+    /// workhorses (greatsword, greataxe, greatclub) carry this flag; the
+    /// Fighter chassis (scimitar 1H) does NOT, so Dueling and GWF stay
+    /// mutually exclusive on the baseline lanes.
     pub has_great_weapon_fighting: bool,
     /// 5e Fighting Style: **Two-Weapon Fighting** (Fighter / Ranger lv1
     /// pick): "when you engage in two-weapon fighting, you can add your
@@ -5938,8 +5943,8 @@ pub struct ActorInstance {
     /// 5e Weapon Mastery — the level-1 martial class feature that turns
     /// on a weapon's mastery property. See `CreatureTemplate` docs.
     has_weapon_mastery: bool,
-    /// 5e Fighting Style: Great Weapon Fighting (reroll 1s / 2s on melee
-    /// weapon damage dice). See `CreatureTemplate` docs.
+    /// Fighting Style: Great Weapon Fighting (read 1s and 2s on melee
+    /// weapon damage dice as 3s). See `CreatureTemplate` docs.
     has_great_weapon_fighting: bool,
     /// 5e Fighting Style: Two-Weapon Fighting (+STR mod to melee weapon
     /// damage). See `CreatureTemplate` docs.
@@ -6953,16 +6958,16 @@ impl ActorInstance {
         self.has_weapon_mastery = value;
     }
 
-    /// 5e Fighting Style: Great Weapon Fighting — reroll 1 / 2 on a
-    /// melee weapon damage die once. Read at the damage-roll site in
+    /// Fighting Style: Great Weapon Fighting — read a 1 or a 2 on a
+    /// melee weapon damage die as a 3. Read at the damage-roll site in
     /// `engine::attack` via `roll_weapon_damage_dice`.
     pub fn has_great_weapon_fighting(&self) -> bool {
         self.has_great_weapon_fighting
     }
 
     /// Test-only setter for the Great Weapon Fighting flag. Mirrors
-    /// `set_dueling_style` so the per-die reroll rider can be exercised
-    /// in isolation on any chassis.
+    /// `set_dueling_style` so the per-die floor can be exercised in
+    /// isolation on any chassis.
     #[cfg(test)]
     pub fn set_great_weapon_fighting(&mut self, value: bool) {
         self.has_great_weapon_fighting = value;

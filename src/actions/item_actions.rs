@@ -1234,7 +1234,15 @@ impl Action for SpellAttackDamageItem {
         if !roll.hit {
             return Vec::new();
         }
-        let amount = encounter.roll_weapon_damage_dice(self.dice, roll.is_crit);
+        // `roll_rider`, which is the engine's one place the crit-doubling
+        // rule lives, and not `roll_weapon_damage_dice` — whose second
+        // parameter is the **Great Weapon Fighting** flag rather than a
+        // crit flag. Passing `is_crit` there rerolled the ram's 1s and
+        // 2s on a critical hit and never doubled anything, so the ring's
+        // crit was worth about a point and a half instead of a second
+        // 2d10, and a holder with no fighting style was quietly getting
+        // half of one.
+        let amount = crate::engine::attack::roll_rider(encounter, self.dice, roll.is_crit);
         encounter.log(format!(
             "  {}: {} = {} {}",
             self.log_label, self.dice, amount, self.damage_type,

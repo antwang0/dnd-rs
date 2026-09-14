@@ -62935,12 +62935,11 @@ fn dueling_style_adds_damage_on_melee_weapon_hits() {
     );
 }
 
-/// 5e Fighting Style: **Great Weapon Fighting** — reroll any 1/2 on
-/// a melee weapon damage die once, taking the new value even if it
-/// comes up 1 or 2 again. Ships on the baseline PALADIN_TEMPLATE
-/// (greatsword workhorse, canonical two-handed fit). The read
-/// chokepoint is `EncounterInstance::roll_weapon_damage_dice`; both
-/// the base swing AND a crit's doubled dice pick up the reroll.
+/// Fighting Style: **Great Weapon Fighting** — read any 1 or 2 on a
+/// melee weapon damage die as a 3. Ships on the baseline
+/// PALADIN_TEMPLATE (greatsword workhorse, canonical two-handed fit).
+/// The read chokepoint is `EncounterInstance::roll_weapon_damage_dice`;
+/// both the base swing AND a crit's doubled dice pick up the floor.
 #[test]
 fn great_weapon_fighting_ships_on_paladin() {
     use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
@@ -62973,13 +62972,18 @@ fn great_weapon_fighting_ships_on_paladin() {
     );
 }
 
-/// End-to-end check: the GWF reroll actually raises the average
-/// melee weapon damage vs a baseline (GWF-off) actor. 200 seeded
-/// trials smooths out per-roll variance — the reroll's expected
-/// value on a 1 or 2 face of a d12 damage die is roughly 6.5 vs the
-/// original 1.5, so the styled pass should stack meaningfully
-/// higher damage. Uses a large-dice weapon (2d12) so the reroll
-/// signal dominates the per-swing noise floor.
+/// End-to-end check: the GWF floor actually raises the average melee
+/// weapon damage vs a baseline (GWF-off) actor. 200 seeded trials
+/// smooths out per-swing variance — a d12 that comes up 1 or 2 is read
+/// as a 3, which is worth `(2 + 1) / 12` of a point per die, so the
+/// styled pass should stack visibly higher damage. Uses a large pool
+/// (2d12) so the signal clears the per-swing noise floor.
+///
+/// The two passes share a seed sequence and now genuinely share a *roll*
+/// sequence too: the 2024 style takes no second draw, so the styled and
+/// unstyled runs see the same faces and differ only where the floor
+/// bites. Under the 2014 reroll they diverged after the first low die
+/// and this comparison was noisier than it looked.
 #[test]
 fn great_weapon_fighting_adds_damage_on_melee_hits() {
     use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
@@ -63016,9 +63020,8 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
         );
         styled_dmg = styled_dmg.saturating_add(dealt);
     }
-    // Same chassis with GWF flag off — isolates the reroll rider
-    // from every other lane. Same seed sequence keeps the RNG
-    // stream comparable.
+    // Same chassis with GWF flag off — isolates the style from every
+    // other lane. Same seed sequence keeps the RNG stream comparable.
     for seed in 0..trials {
         let mut e = ei_with_terrain(15, 15, &[]);
         e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
@@ -63058,27 +63061,76 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
     );
 }
 
-/// GWF gate: the reroll fires on melee weapon damage rolls only.
-/// A ranged shot (`is_melee: false`) with the same actor must NOT
-/// pick up the reroll — verified by a direct helper call with the
-/// gate off.
+/// The style is SRD 5.2's floor, not the 2014 reroll, and the three
+/// claims are the three ways those differ.
+///
+///   - **No die reads below 3.** *"Treat any 1 or 2 on a damage die as
+///     a 3"* is a guarantee; the reroll it replaced was a gamble that
+///     could land on 1 again, so under the old rule a styled d12 pool
+///     could still come back reading 1 and this assertion would fail on
+///     some seed in the sweep.
+///   - **Nothing else moves.** Every face of 3 or better is untouched,
+///     which is what separates a floor from a bonus: the style is worth
+///     nothing at all to a swing that rolled well.
+///   - **The style costs no draw.** Both passes run off the same seed
+///     and see the same faces — the 2014 reroll took a second draw and
+///     desynchronised the stream for everything downstream of it, which
+///     meant a Great Weapon Fighter changed the *rest of the encounter*
+///     and not only their own swing.
+///
+/// Also the gate: the flag-off path is the bare roll, which is what the
+/// ranged and spell lanes get.
 #[test]
-fn great_weapon_fighting_helper_no_op_when_flag_off() {
-    let mut e = ei_with_terrain(15, 15, &[]);
-    e.roller = crate::engine::dice::FastRandRoller::with_seed(42);
+fn great_weapon_fighting_floors_low_dice_without_touching_the_rest() {
+    use crate::engine::encounter::GREAT_WEAPON_FIGHTING_FLOOR;
+
     let d = Dice::new(2, 12);
-    let with_gwf: u32 = (0..64).map(|_| e.roll_weapon_damage_dice(d, true)).sum();
-    // Reset roller so both passes see identical rolls when the
-    // reroll doesn't fire — the GWF-off path is a single
-    // delegated `self.roll(&dice)`, matching what the flag-off
-    // read chokepoint returns.
+    let mut e = ei_with_terrain(15, 15, &[]);
+
     e.roller = crate::engine::dice::FastRandRoller::with_seed(42);
-    let without_gwf: u32 = (0..64).map(|_| e.roll_weapon_damage_dice(d, false)).sum();
+    let styled: Vec<Vec<u32>> = (0..256)
+        .map(|_| e.roll_weapon_damage_dice_each(d, true))
+        .collect();
+    e.roller = crate::engine::dice::FastRandRoller::with_seed(42);
+    let plain: Vec<Vec<u32>> = (0..256)
+        .map(|_| e.roll_weapon_damage_dice_each(d, false))
+        .collect();
+
+    let mut floored = 0usize;
+    for (styled_pool, plain_pool) in styled.iter().zip(&plain) {
+        assert_eq!(
+            styled_pool.len(),
+            plain_pool.len(),
+            "the style changed the size of the pool"
+        );
+        for (&up, &raw) in styled_pool.iter().zip(plain_pool) {
+            assert!(
+                up >= GREAT_WEAPON_FIGHTING_FLOOR,
+                "a styled die read {up}, which the floor forbids"
+            );
+            if raw >= GREAT_WEAPON_FIGHTING_FLOOR {
+                assert_eq!(up, raw, "the style moved a die it has no business moving");
+                continue;
+            }
+            assert_eq!(up, GREAT_WEAPON_FIGHTING_FLOOR);
+            floored += 1;
+        }
+    }
     assert!(
-        with_gwf >= without_gwf,
-        "GWF-on must equal or exceed GWF-off over a shared seed sequence: on={} off={}",
-        with_gwf,
-        without_gwf,
+        floored > 0,
+        "512 d12 and not one of them came up 1 or 2 — the sweep tested nothing"
+    );
+    // The stream check: same seed, same faces, whatever the style did
+    // with them. A reroll would have made the two sequences diverge.
+    let styled_low = styled.iter().flatten().filter(|&&v| v < 3).count();
+    assert_eq!(
+        styled_low, 0,
+        "the floor let a low face through"
+    );
+    assert_eq!(
+        plain.iter().flatten().filter(|&&v| v < 3).count(),
+        floored,
+        "the unstyled pass saw a different set of faces than the styled one"
     );
 }
 
@@ -98002,6 +98054,74 @@ fn the_ring_of_the_ram_rolls_to_hit_shoves_and_survives_its_pool() {
     assert!(
         e.actors[&user].has_item_named(RING_OF_THE_RAM.name),
         "the pool ran dry and took the ring with it"
+    );
+}
+
+/// A critical hit with the Ring of the Ram doubles its dice.
+///
+/// Split from the test above because it is a regression rather than a
+/// clause: the ram's damage used to be rolled through
+/// `EncounterInstance::roll_weapon_damage_dice`, whose second parameter
+/// is the **Great Weapon Fighting** flag and not a crit flag. Handing it
+/// `is_crit` bought two wrong things at once — a natural 20 rerolled the
+/// ram's 1s and 2s instead of rolling a second 2d10, and it did so for a
+/// wearer with no fighting style at all.
+///
+/// The claim is an upper bound rather than an average, which is what
+/// makes it a proof: `2d10` cannot exceed **20**, so a single roll above
+/// it can only have come from a doubled pool. Under the old code the
+/// ceiling was 20 on every seed in the sweep, crit or not, and the
+/// ring's best possible round was worth about a point and a half more
+/// than its ordinary one.
+///
+/// A troll takes the blows because it survives them: measuring damage as
+/// a hit point delta needs a target that does not die at 20, or every
+/// large roll is silently clamped to whatever was left.
+#[test]
+fn a_critical_ring_of_the_ram_rolls_a_second_pair_of_dice() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::trolls::TROLL_TEMPLATE;
+    use crate::items::item_template::RING_OF_THE_RAM;
+
+    // The most `2d10` can be. Anything past it is the crit's second
+    // pool, and nothing else in the ram's lane adds a die.
+    const UNCRIT_CEILING: u32 = 20;
+
+    let mut best = 0u32;
+    let mut crits = 0usize;
+    for seed in 0..400u64 {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let user = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let troll = e
+            .instantiate_creature(&TROLL_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&user).unwrap().pickup_item(&RING_OF_THE_RAM);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let ram = *e.actors[&user]
+            .available_actions()
+            .iter()
+            .find(|a| a.name() == "use ring of the ram")
+            .expect("wearing the ring offers the ram");
+        let before = e.actors[&troll].hitpoints();
+        for ef in ram.execute(&mut e, user, Some(&vec![troll]), None, None) {
+            ef.apply(&mut e);
+        }
+        let dealt = before.saturating_sub(e.actors[&troll].hitpoints());
+        if e.messages().iter().any(|m| m.to_lowercase().contains("crit")) {
+            crits += 1;
+        }
+        best = best.max(dealt);
+    }
+    assert!(
+        crits > 0,
+        "four hundred rams and not one critical — the sweep stopped testing anything"
+    );
+    assert!(
+        best > UNCRIT_CEILING,
+        "the ram's best roll over 400 seeds was {best}, which 2d10 can reach on \
+         its own — the critical hit is not doubling the pool ({crits} crits seen)"
     );
 }
 
