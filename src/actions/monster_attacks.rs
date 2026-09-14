@@ -1386,6 +1386,33 @@ pub struct SimpleWeapon {
     ///
     /// Defaulted to `false` by every constructor and set with the
     /// `loading()` builder, for the reason every flag above it is.
+    ///
+    /// ## Why Loading and not Heavy
+    ///
+    /// The weapons table prints a second property with a mechanical
+    /// clause the engine does not carry — *"You have Disadvantage on
+    /// attack rolls with a Heavy weapon if it's a Melee weapon and your
+    /// Strength score isn't at least 13 or if it's a Ranged weapon and
+    /// your Dexterity score isn't at least 13"* — and the difference
+    /// between the two is worth writing down here, because a reader who
+    /// sees one modeled will ask about the other.
+    ///
+    /// Five stat blocks would qualify: the bandit, the gnoll, the
+    /// hobgoblin, the knight and the thug all shoot a Heavy ranged
+    /// weapon with a Dexterity of 11 or 12. Applying the clause to them
+    /// would make the engine *disagree with the book* — those stat
+    /// blocks print a flat attack bonus that assumes an ordinary roll,
+    /// and the properties column is a character-equipment rule rather
+    /// than part of a monster's printed attack. Loading is the opposite
+    /// case and that is why it ships: the knight's stat block prints
+    /// *one* crossbow attack, and Extra Attack was giving it two, so
+    /// the property brings the engine back to what the book says rather
+    /// than away from it.
+    ///
+    /// No playable chassis wields a Heavy weapon under the threshold,
+    /// so the clause would be dead code for the side it is actually
+    /// written about. It lands the day a character can pick up a
+    /// greataxe they have no business swinging.
     pub is_loading: bool,
     /// The die this weapon rolls *instead of* `damage_dice` when the
     /// target is Bloodied, or `None` for the ordinary weapon that hits
