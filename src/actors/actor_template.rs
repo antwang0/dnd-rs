@@ -11491,6 +11491,9 @@ impl ActorInstance {
     ///     variant for the one place its RAW and this number part
     ///     company.
     ///
+    /// …and one multiplier on top of whichever of the three won: the
+    /// Monk's **Step of the Wind**, through [`Condition::Bounding`].
+    ///
     /// Zero for a creature that cannot leave the ground: a Speed of zero
     /// (grappled, Rooted, Restrained by a web) and the Prone condition
     /// both take the jump away, which is the same sentence 5e's crawl
@@ -11509,7 +11512,16 @@ impl ActorInstance {
         } else {
             0
         };
-        by_strength.max(by_trait).max(by_spell)
+        let feet = by_strength.max(by_trait).max(by_spell);
+        // Step of the Wind's *"your jump distance is doubled"*, applied
+        // to the result rather than folded into the `max` above — the
+        // three sources above are alternative *distances* and this is a
+        // multiplier on whichever of them won.
+        if self.has_condition(Condition::Bounding) {
+            feet * 2
+        } else {
+            feet
+        }
     }
 
     /// This creature's own Long Jump clause, if it has one.

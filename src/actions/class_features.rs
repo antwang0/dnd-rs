@@ -1352,6 +1352,16 @@ pub enum Maneuver {
     /// A Dexterity (Stealth) check against the best passive Perception
     /// watching, for the `Hidden` condition on a pass.
     Hide,
+    /// SRD-adjacent **Step of the Wind**'s third clause: *"your jump
+    /// distance is doubled for the turn."*
+    ///
+    /// The first entry on this enum that is not an action off the
+    /// standard list. It is here anyway, and the reason is the one the
+    /// slice was built for: RAW's feature is a single activation that
+    /// buys three things at once, and a fourth chassis for the third of
+    /// them would have made Step of the Wind the only mobility feature
+    /// in the file that is not a `BonusManeuver`.
+    Bound,
 }
 
 /// The chassis every bonus-action mobility feature is built on.
@@ -1511,6 +1521,13 @@ impl Action for BonusManeuver {
                 // Through the shared helper, so the roll a bonus-action
                 // Hide makes is the roll the Action-priced Hide makes.
                 Maneuver::Hide => effects.extend(bonus_action_hide_effects(encounter, caster_id)),
+                Maneuver::Bound => {
+                    effects.push(Box::new(crate::engine::side_effects::ApplyCondition {
+                        actor_id: caster_id,
+                        condition: Condition::Bounding,
+                        timer: ConditionTimer::UntilStartOfNextTurn,
+                    }));
+                }
             }
         }
         effects
@@ -5838,15 +5855,26 @@ pub static PATIENT_DEFENSE: LazyLock<PatientDefense> = LazyLock::new(|| PatientD
 /// equal to speed) and `CunningDisengage` (movement this turn doesn't
 /// provoke OAs) — fired in one bonus action instead of two separate
 /// activations, matching the monk's signature "blow past the front line"
-/// flavor. RAW also doubles jump distance for the turn; we don't model
-/// vertical movement so that clause is a no-op.
+/// flavor.
+///
+/// The third clause — *"your jump distance is doubled for the turn"* —
+/// is live, and it used to be written off here as a no-op because "we
+/// don't model vertical movement". That reason was wrong twice: RAW's
+/// clause is about the **Long Jump**, which is horizontal, and the
+/// engine models one now. See `Condition::Bounding` and
+/// `crate::engine::jumping`.
+///
+/// It is the clause that makes the feature *the monk's*, too. A rogue's
+/// Cunning Action buys the same Dash and the same Disengage; nobody
+/// else on the roster doubles a jump, and on a board with a rift across
+/// it that is a route the rest of the party does not have.
 pub static STEP_OF_THE_WIND: BonusManeuver = BonusManeuver::new(
     "step of the wind",
     &["sotw", "step", "wind"],
-    // Dash **and** Disengage in one activation — the one printing in
-    // the book that is an "and" rather than an "or", and the reason
-    // `maneuvers` is a slice.
-    &[Maneuver::Dash, Maneuver::Disengage],
+    // Dash **and** Disengage **and** the doubled jump in one activation
+    // — the one printing in the book that is an "and" rather than an
+    // "or", and the reason `maneuvers` is a slice.
+    &[Maneuver::Dash, Maneuver::Disengage, Maneuver::Bound],
 );
 
 /// Stillness of Mind — Monk action (5e level 7). At-will: spend an Action

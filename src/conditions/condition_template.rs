@@ -3734,6 +3734,22 @@ pub enum Condition {
     /// because it is a duration-bearing magical benefit on a willing
     /// holder, which is that list's whole membership test.
     Leaping,
+    /// Mid-**Step of the Wind** — the Monk's level-2 Bonus Action, whose
+    /// third clause is *"your jump distance is doubled for the turn."*
+    ///
+    /// The one multiplier in the Long Jump rule. Every other source
+    /// names a distance and `ActorInstance::long_jump_feet` takes the
+    /// largest; this one doubles whatever that came to, which is what
+    /// "doubled" means and is why it is applied last rather than folded
+    /// into the `max`.
+    ///
+    /// `UntilStartOfNextTurn`, because RAW says *"for the turn"* and
+    /// that is the timer the engine already keeps for Dodge — the one
+    /// clause in the game shaped the same way.
+    ///
+    /// Not a magical buff and so not on the Dispel Magic list: a monk's
+    /// focus is not a spell, and RAW's Dispel Magic names "a spell".
+    Bounding,
 }
 
 /// The Long Jump distance the SRD 5.2 **Jump** spell grants, in feet.
@@ -3749,6 +3765,7 @@ impl Condition {
     pub fn name(&self) -> &'static str {
         match self {
             Condition::Leaping => "leaping",
+            Condition::Bounding => "bounding",
             Condition::StaffStriking => "staff of striking charged",
             Condition::StaffWithering => "staff of withering charged",
             Condition::Withered => "withered",

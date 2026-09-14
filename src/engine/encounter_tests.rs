@@ -92361,11 +92361,24 @@ fn the_goblin_hides_and_the_thrall_runs() {
     assert_eq!(DEATHLESS_DASH.maneuvers, &[Maneuver::Dash]);
     assert_eq!(DEATHLESS_DISENGAGE.maneuvers, &[Maneuver::Disengage]);
     // The one printing in the book that is an "and" rather than an
-    // "or", and the reason the field is a slice.
+    // "or", and the reason the field is a slice — all three of RAW's
+    // clauses in one activation.
     assert_eq!(
         STEP_OF_THE_WIND.maneuvers,
-        &[Maneuver::Dash, Maneuver::Disengage]
+        &[Maneuver::Dash, Maneuver::Disengage, Maneuver::Bound]
     );
+    // …and the third of them is the monk's alone. A rogue's Cunning
+    // Action buys the same Dash and the same Disengage; nothing else on
+    // the roster doubles a jump, which is what makes this the printing
+    // the slice exists for rather than a longer spelling of the other
+    // four.
+    for other in [&NIMBLE_HIDE, &NIMBLE_DISENGAGE, &DEATHLESS_DASH, &DEATHLESS_DISENGAGE] {
+        assert!(
+            !other.maneuvers.contains(&Maneuver::Bound),
+            "{} is not a monk",
+            other.display_name
+        );
+    }
 }
 
 /// Every ranged weapon in the bestiary that declares a normal range
@@ -109497,5 +109510,50 @@ fn the_board_checker_catches_a_creature_standing_over_nothing() {
         problems.iter().any(|p| p.contains("Chasm")),
         "the floor went out from under #{id} and nothing said so: {:?}",
         problems
+    );
+}
+
+/// **Step of the Wind**'s third clause: *"your jump distance is doubled
+/// for the turn."*
+///
+/// The only multiplier in the Long Jump rule, and the one thing the
+/// feature buys that a rogue's Cunning Action does not — the Dash and
+/// the Disengage are the same two actions on both sheets.
+///
+/// Twelve and a half feet of gap is chosen to sit between the monk's
+/// Strength 12 at a run (twelve feet) and twice it (twenty-four), so
+/// only the doubled number crosses. Fired through the action itself
+/// rather than by installing the condition by hand, because what is on
+/// trial is the wiring: `Maneuver::Bound` is the first entry on that
+/// enum that is not an action off the standard list, and a slice that
+/// quietly dropped it would still Dash and Disengage exactly as before.
+#[test]
+fn step_of_the_wind_doubles_the_jump_it_is_named_for() {
+    use crate::actions::class_features::STEP_OF_THE_WIND;
+    use crate::actors::creatures::monks::MONK_TEMPLATE;
+
+    let (mut e, id) = rift_corridor(&MONK_TEMPLATE, 9..=11);
+    // Four tiles back from the near lip: enough for RAW's ten-foot
+    // run-up and no more, so the budget is never what decides this.
+    e.place_actor_at(id, Coordinate::new(3, 3)).unwrap();
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    assert!(
+        e.path_to(id, Coordinate::new(12, 3)).is_none(),
+        "twelve and a half feet is past a running Long Jump off Strength 12"
+    );
+
+    // Fired through the maneuver's own `side_effects`, which is how the
+    // neighbouring monk tests drive it: the activation's payload is what
+    // is on trial, not the resource it is billed against.
+    for effect in STEP_OF_THE_WIND.side_effects(&mut e, id, None, None, None) {
+        effect.apply(&mut e);
+    }
+    assert!(
+        e.actors[&id].has_condition(Condition::Bounding),
+        "the maneuver installs the doubling it is printed with"
+    );
+    assert!(
+        e.path_to(id, Coordinate::new(12, 3)).is_some(),
+        "…and twice twelve feet clears twelve and a half"
     );
 }
