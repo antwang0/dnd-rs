@@ -1561,6 +1561,32 @@ pub trait Action {
         false
     }
 
+    /// True if this action is a swing with a weapon SRD 5.2 marks
+    /// **Finesse** — the dagger, dart, rapier, scimitar, shortsword and
+    /// whip.
+    ///
+    /// The property itself is resolved inside the weapon chassis (see
+    /// `SimpleWeapon::swing_ability`, which hands the Strength-or-
+    /// Dexterity choice to the wielder). What this exists for is the
+    /// other half: the clauses written *about* holding one, which cannot
+    /// see a `SimpleWeapon` because they hold a `&dyn Action`.
+    ///
+    /// One reader today — the **Defensive Duelist** feat's *"while
+    /// you're holding a Finesse weapon"*, through
+    /// `ActorInstance::holds_finesse_weapon`. That clause spent its
+    /// whole life collapsed into the feat's tag, with the collapse
+    /// written down as a known gap on `REACTIVE_AC_GUARDS`: *"a future
+    /// holder who fights with a maul would make the gap observable."*
+    /// It is askable now.
+    ///
+    /// **Defaults to `false`**, the conservative direction and the same
+    /// one `is_light_melee_weapon` takes: a missing `true` costs a
+    /// holder their reaction, where a wrong `true` would hand a parry to
+    /// somebody swinging a greatclub.
+    fn is_finesse_weapon(&self) -> bool {
+        false
+    }
+
     /// True if this action is a swing with one of the weapons the
     /// **Polearm Master** feat's Pole Strike clause names — RAW's *"a
     /// Quarterstaff, a Spear, or a weapon that has the Heavy and Reach

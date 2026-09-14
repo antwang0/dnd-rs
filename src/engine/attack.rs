@@ -1983,16 +1983,26 @@ const REACTIVE_AC_GUARDS: &[ReactiveAcGuard] = &[
     // Proficiency Bonus to your Armor Class for that attack, potentially
     // causing it to miss."
     //
-    // The finesse clause is collapsed into the tag, because the engine
-    // does not track which object is in a creature's hand — the same
-    // collapse the Dueling and Great Weapon Fighting styles already
-    // make, and for the same reason. What stops it from being free is
-    // where the feat is placed: it ships on a chassis whose weapon is a
-    // scimitar, and a future holder who fights with a maul would make
-    // the gap observable.
+    // **The Finesse clause is asked now**, and it used to be assumed.
+    // This row carried a note saying the clause was collapsed into the
+    // tag because the engine could not see which object was in a
+    // creature's hand, and that the collapse was held honest only by
+    // where the feat was placed — "a future holder who fights with a
+    // maul would make the gap observable." Weapons declare the property
+    // since `SimpleWeapon::is_finesse` shipped, so the sentence reads
+    // off the sheet: `holds_finesse_weapon` walks the holder's own
+    // attack list. The Swords Bard who carries the feat carries a
+    // scimitar, so nothing on the roster changes; what changes is that
+    // the next carrier cannot silently be wrong.
+    //
+    // "With which you are proficient" stays collapsed, and that one has
+    // nowhere to go: the engine has no weapon-proficiency lane, and
+    // every creature is proficient with everything on its own list.
     ReactiveAcGuard {
         bonus: |a| {
-            if a.has_passive_feature(crate::actions::feats::DEFENSIVE_DUELIST_TAG) {
+            if a.has_passive_feature(crate::actions::feats::DEFENSIVE_DUELIST_TAG)
+                && a.holds_finesse_weapon()
+            {
                 a.proficiency_bonus()
             } else {
                 0

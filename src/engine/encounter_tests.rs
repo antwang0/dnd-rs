@@ -108322,6 +108322,88 @@ fn defensive_duelist_never_spends_a_reaction_it_cannot_cash() {
     }
 }
 
+/// RAW's opening clause, which the row spent its whole life assuming:
+/// *"when you're **holding a Finesse weapon**…"*.
+///
+/// The Swords Bard fights with a scimitar, so the clause has never cost
+/// the roster anything — which is exactly why it went unenforced and
+/// why the row's own comment named it as a gap waiting for "a holder
+/// who fights with a maul". This is that holder: a barbarian handed the
+/// feat, with a greataxe and nothing finesse on the sheet, and the guard
+/// stays down.
+///
+/// Both halves, because half of this test is that the *feat* is still
+/// what is being checked and not the weapon: the same barbarian without
+/// the tag would fail the assertion for the wrong reason, so the
+/// comparison is against a bard who has both and does turn the blade.
+#[test]
+fn defensive_duelist_needs_a_finesse_weapon_in_hand() {
+    use crate::actions::feats::DEFENSIVE_DUELIST_TAG;
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::bards::SWORDS_BARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    // (chassis, expects the guard to be reachable at all)
+    let cases: [(&'static crate::actors::actor_template::CreatureTemplate, bool); 2] = [
+        (&SWORDS_BARD_TEMPLATE, true),
+        (&BARBARIAN_TEMPLATE, false),
+    ];
+    for (template, finessed) in cases {
+        let mut guarded_any = false;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            let swinger = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let defender = e
+                .instantiate_creature(template, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&defender)
+                .unwrap()
+                .grant_feature_for_test(DEFENSIVE_DUELIST_TAG);
+            assert_eq!(
+                e.actors[&defender].holds_finesse_weapon(),
+                finessed,
+                "{} carries {} finesse weapon",
+                template.name,
+                if finessed { "a" } else { "no" }
+            );
+            let ac = e.actors[&defender].armor_class() as i32;
+            let (effects, _) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: swinger,
+                    target_id: defender,
+                    action_name: "slam",
+                    attack_bonus: ac - 2,
+                    damage_dice: Dice::new(1, 6),
+                    damage_bonus: 0,
+                    damage_type: DamageType::Bludgeoning,
+                    is_melee: true,
+                    long_range: None,
+                    min_range: None,
+                    is_spell: false,
+                },
+            );
+            for ef in effects {
+                ef.apply(&mut e);
+            }
+            guarded_any |= e
+                .messages()
+                .iter()
+                .any(|m| m.contains("turns the blade aside"));
+        }
+        assert_eq!(
+            guarded_any, finessed,
+            "{}: the guard {} have been reachable",
+            template.name,
+            if finessed { "should" } else { "should not" }
+        );
+    }
+}
+
 /// A defender who carries neither row on the cohort answers nothing —
 /// the guard is a feat, not a property of having a reaction.
 #[test]

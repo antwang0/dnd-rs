@@ -106,6 +106,18 @@ impl Action for RogueWeapon {
         self.is_light && self.is_melee
     }
 
+    /// Every weapon on this chassis is Finesse — the baseline
+    /// shortsword out of the weapon shop, and both Psychic Blades,
+    /// which RAW gives Finesse and Thrown explicitly. That is also why
+    /// the chassis pins Dexterity rather than declaring an ability: see
+    /// the damage lane's comment.
+    ///
+    /// `is_melee`-gated like its sibling above, so the thrown blade is
+    /// not a blade in a hand.
+    fn is_finesse_weapon(&self) -> bool {
+        self.is_melee
+    }
+
     fn weapon_mastery(&self) -> Option<WeaponMastery> {
         self.mastery
     }

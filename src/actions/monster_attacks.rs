@@ -1994,6 +1994,14 @@ impl Action for SimpleWeapon {
     fn is_light_melee_weapon(&self) -> bool {
         self.is_light && self.is_melee
     }
+    /// The Finesse flag, anded with `is_melee` for the reason the light
+    /// one is: RAW's clause about *holding* a Finesse weapon is about a
+    /// blade in a hand, and a thrown dagger in flight is not one. The
+    /// property itself still travels across `thrown()` — it is a fact
+    /// about the object — and this is what keeps that harmless.
+    fn is_finesse_weapon(&self) -> bool {
+        self.is_finesse && self.is_melee
+    }
     /// The same two halves, for the same reason: the spear is declared
     /// twice — once as a thrust and once as a throw — and RAW's Pole
     /// Strike is a *melee* attack with the opposite end of a weapon the

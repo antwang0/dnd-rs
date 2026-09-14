@@ -618,14 +618,19 @@ pub const SLASHER_TAG: &str = "feat.slasher";
 /// a blow that would have landed anyway, and never on one that was
 /// going to miss.
 ///
-/// **The Finesse clause is collapsed into the tag.** The engine does not
-/// track which object is in a creature's hand — it is the same
-/// abstraction the Dueling and Great Weapon Fighting styles already run
-/// on, and the same one `conditions::Condition::DragonSlaying` describes
-/// from the armoury's side. What keeps the collapse from being free is
-/// the placement: the feat ships on a chassis that fights with a
-/// scimitar, and a holder who fought with a maul would make the gap
-/// observable.
+/// **The Finesse clause is enforced**, and it used to be assumed. This
+/// entry read *"collapsed into the tag … a holder who fought with a maul
+/// would make the gap observable"*, and the reason given was that the
+/// engine could not see which object was in a creature's hand. Half of
+/// that is still true — there are no hands — but the half that mattered
+/// stopped being true when weapons learned to declare the property:
+/// `ActorInstance::holds_finesse_weapon` walks the holder's own attack
+/// list and asks. A maul-swinging holder gets nothing now, which is what
+/// RAW says and what the note was waiting for.
+///
+/// *"With which you are proficient"* is still collapsed and has nowhere
+/// to go: the engine carries no weapon-proficiency lane, and every
+/// creature is proficient with everything on its own list.
 ///
 /// Ships on `bards::SWORDS_BARD_TEMPLATE`. The College of Swords bard is
 /// the roster's duelist — a blade, a reaction economy it is already

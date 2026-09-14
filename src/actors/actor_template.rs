@@ -8391,6 +8391,28 @@ impl ActorInstance {
         self.items.iter().any(|i| i.name == name)
     }
 
+    /// True while this creature has a **Finesse** melee weapon it could
+    /// swing — SRD 5.2's dagger, rapier, scimitar, shortsword or whip.
+    ///
+    /// The engine does not model hands, so *"while you're holding"* is
+    /// read as *"while one is on your list"*, which is the same reading
+    /// every other weapon-property clause in the file takes and is exact
+    /// for a creature carrying one weapon. It is asked by the
+    /// **Defensive Duelist** row on `REACTIVE_AC_GUARDS`, whose RAW
+    /// clause opens on exactly this and which used to answer it by
+    /// assuming: the feat's tag stood in for the whole sentence, with
+    /// the collapse written down beside the row as a gap waiting for a
+    /// holder who fought with a maul.
+    ///
+    /// Reads `attack_repertoire` rather than `available_actions`, so a
+    /// blade that arrived in the pack counts and a Wand of Fireballs
+    /// does not — see there for why those are two different questions.
+    pub fn holds_finesse_weapon(&self) -> bool {
+        self.attack_repertoire()
+            .iter()
+            .any(|a| a.is_finesse_weapon())
+    }
+
     /// True when the item named `name` is carried **and switched on** —
     /// either it needs no attunement or the bond has been formed.
     ///
