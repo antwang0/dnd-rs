@@ -3120,11 +3120,11 @@ impl EncounterInstance {
     /// is a lower ceiling, a hard floor, and — the part that matters to
     /// this engine — **no extra draw**. See [`GREAT_WEAPON_FIGHTING_FLOOR`].
     ///
-    /// Callers gate `apply_gwf_floor` on the attacker's
-    /// `has_great_weapon_fighting()` flag AND `is_melee` — the RAW
-    /// "must have the Two-Handed or Versatile property" gate collapses
-    /// to "melee weapon attack" since the engine doesn't track
-    /// weapon-hand-usage (same shape as Dueling's gate collapse).
+    /// Callers gate `apply_gwf_floor` on three things, which are RAW's
+    /// three: the attacker's `has_great_weapon_fighting()` flag, the
+    /// swing being melee, and the weapon carrying the Two-Handed or
+    /// Versatile property (`AttackParams::two_handed`). The third used
+    /// to be collapsed into the second.
     ///
     /// Returns the **total**, which is what every caller but one wants;
     /// the rolling itself happens one face at a time in

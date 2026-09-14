@@ -61,6 +61,29 @@ pub struct AttackParams<'a> {
     /// flag also gates any future "this is a spell" sites that the
     /// engine grows (e.g. counterspell triggers, anti-magic field).
     pub is_spell: bool,
+    /// True when the object that made this swing has SRD 5.2's
+    /// **Two-Handed** or **Versatile** property — the gate the **Great
+    /// Weapon Fighting** style names: *"the weapon must have the
+    /// Two-Handed or Versatile property to gain this benefit."*
+    ///
+    /// The one field on this struct that is a fact about the *weapon*
+    /// rather than about the attack, and it is here because there is
+    /// nowhere else it can be: the style is applied at the damage roll,
+    /// the damage roll happens inside `resolve_attack_outcome`, and what
+    /// that function is handed is an `AttackParams`. `is_light_melee_weapon`
+    /// and its siblings answer the same shape of question one layer up
+    /// — at `mark_weapon_openings`, which sees the `Action` — and this
+    /// one cannot, because a bonus-action opening is a fact about the
+    /// turn and a damage floor is a fact about the swing.
+    ///
+    /// Defaults to `false`, which is the conservative direction and the
+    /// reason a natural weapon needs to say nothing: a bear's claw is
+    /// not a greatsword, and a Great Weapon Fighter who grew claws
+    /// should not be floored. The only carrier of the style on the
+    /// roster swings a greatsword, so what this buys is the case the
+    /// loot table makes possible — a paladin who picks up a Scimitar of
+    /// Speed and keeps floorng its dice.
+    pub two_handed: bool,
 }
 
 impl AttackParams<'_> {
@@ -101,6 +124,7 @@ impl AttackParams<'_> {
         long_range: None,
         min_range: None,
         is_spell: false,
+        two_handed: false,
     };
 }
 
@@ -3552,14 +3576,20 @@ pub fn resolve_attack_outcome_with_rider(
         attacker.mark_hit_target_this_turn(p.target_id);
     }
     // Fighting Style: **Great Weapon Fighting** — SRD 5.2's *"treat any
-    // 1 or 2 on a damage die as a 3"*. Gated on `p.is_melee` so a
-    // longbow shot (or a spell attack routed through this chokepoint)
-    // doesn't pick it up — RAW's "Two-Handed or Versatile" gate
-    // collapses to "melee weapon attack" since the engine doesn't track
-    // weapon-hand-usage (same shape as Dueling's gate collapse). Applied
-    // to BOTH the base damage roll AND the crit's doubled dice so the
-    // floor holds uniformly across the swing's pool.
+    // 1 or 2 on a damage die as a 3"*, on a weapon that has the
+    // Two-Handed or Versatile property.
+    //
+    // Both halves of RAW's gate are asked. `p.is_melee` keeps a longbow
+    // shot (and any spell attack routed through this chokepoint) out;
+    // `p.two_handed` is the weapon clause, which this used to collapse
+    // into "melee weapon attack" with a note conceding the collapse
+    // because the swing could not be asked which object made it. It can
+    // be now — see `AttackParams::two_handed`.
+    //
+    // Applied to BOTH the base damage roll AND the crit's doubled dice
+    // so the floor holds uniformly across the swing's pool.
     let apply_gwf = p.is_melee
+        && p.two_handed
         && encounter
             .actors
             .get(&p.caster_id)

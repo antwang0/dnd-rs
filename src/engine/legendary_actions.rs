@@ -266,6 +266,11 @@ fn legendary_attack(
             // lists is one.
             min_range: None,
             is_spell: swing.kind.is_spell(),
+            // Nothing on a legendary list is an armoury weapon — these
+            // are claws, tails, breath and bespoke rays — so RAW's
+            // Great Weapon Fighting gate finds nothing to open on, which
+            // is the same answer `AttackParams::DEFAULTS` gives.
+            two_handed: false,
         },
     );
     let landed = !effects.is_empty();

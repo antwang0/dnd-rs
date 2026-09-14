@@ -63191,6 +63191,12 @@ fn great_weapon_fighting_ships_on_paladin() {
 /// unstyled runs see the same faces and differ only where the floor
 /// bites. Under the 2014 reroll they diverged after the first low die
 /// and this comparison was noisier than it looked.
+///
+/// **The third pass is RAW's weapon clause**: *"the weapon must have the
+/// Two-Handed or Versatile property."* A styled paladin swinging a blade
+/// that has neither — the Scimitar of Speed the loot table can hand
+/// them — gets exactly the unstyled number, die for die, because the
+/// style never speaks.
 #[test]
 fn great_weapon_fighting_adds_damage_on_melee_hits() {
     use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
@@ -63198,67 +63204,132 @@ fn great_weapon_fighting_adds_damage_on_melee_hits() {
     use crate::engine::attack::{AttackParams, resolve_attack_outcome};
 
     let trials = 200u64;
-    let mut styled_dmg: u32 = 0;
-    let mut unstyled_dmg: u32 = 0;
-    for seed in 0..trials {
-        let mut e = ei_with_terrain(15, 15, &[]);
-        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-        let attacker = e
-            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        let target = e
-            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
-            .unwrap();
-        let (_, dealt) = resolve_attack_outcome(
-            &mut e,
-            AttackParams {
-                caster_id: attacker,
-                target_id: target,
-                action_name: "greatsword",
-                attack_bonus: 5,
-                damage_dice: Dice::new(2, 12),
-                damage_bonus: 3,
-                damage_type: DamageType::Slashing,
-                ..AttackParams::DEFAULTS
-            },
-        );
-        styled_dmg = styled_dmg.saturating_add(dealt);
-    }
-    // Same chassis with GWF flag off — isolates the style from every
-    // other lane. Same seed sequence keeps the RNG stream comparable.
-    for seed in 0..trials {
-        let mut e = ei_with_terrain(15, 15, &[]);
-        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-        let attacker = e
-            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        e.actors
-            .get_mut(&attacker)
-            .unwrap()
-            .set_great_weapon_fighting(false);
-        let target = e
-            .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
-            .unwrap();
-        let (_, dealt) = resolve_attack_outcome(
-            &mut e,
-            AttackParams {
-                caster_id: attacker,
-                target_id: target,
-                action_name: "greatsword",
-                attack_bonus: 5,
-                damage_dice: Dice::new(2, 12),
-                damage_bonus: 3,
-                damage_type: DamageType::Slashing,
-                ..AttackParams::DEFAULTS
-            },
-        );
-        unstyled_dmg = unstyled_dmg.saturating_add(dealt);
-    }
+    // (has the style, the weapon carries Two-Handed or Versatile)
+    let run = |styled: bool, two_handed: bool| {
+        let mut total: u32 = 0;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let attacker = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            e.actors
+                .get_mut(&attacker)
+                .unwrap()
+                .set_great_weapon_fighting(styled);
+            let target = e
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: attacker,
+                    target_id: target,
+                    action_name: if two_handed { "greatsword" } else { "scimitar" },
+                    attack_bonus: 5,
+                    damage_dice: Dice::new(2, 12),
+                    damage_bonus: 3,
+                    damage_type: DamageType::Slashing,
+                    two_handed,
+                    ..AttackParams::DEFAULTS
+                },
+            );
+            total = total.saturating_add(dealt);
+        }
+        total
+    };
+
+    let styled = run(true, true);
+    let unstyled = run(false, true);
     assert!(
-        styled_dmg > unstyled_dmg,
-        "GWF should raise average damage vs baseline (styled {} vs unstyled {})",
-        styled_dmg,
-        unstyled_dmg,
+        styled > unstyled,
+        "GWF should raise average damage vs baseline (styled {styled} vs unstyled {unstyled})",
+    );
+
+    // RAW's weapon clause. Same chassis, same style, same seeds — a
+    // blade RAW gives neither property, and the floor never fires.
+    assert_eq!(
+        run(true, false),
+        run(false, false),
+        "the style reached a weapon RAW does not give it"
+    );
+}
+
+/// The weapon clause, end to end through the real armoury rather than a
+/// hand-built `AttackParams`.
+///
+/// The paladin is the roster's only Great Weapon Fighter and its
+/// greatsword carries Two-Handed, so the style has always looked like it
+/// worked. What it could not do before the property existed is *stop* —
+/// and the loot table can hand that same paladin a Scimitar of Speed,
+/// which RAW gives neither Two-Handed nor Versatile.
+///
+/// Asserted on the floor rather than on an average: a `2d6` greatsword
+/// under the style cannot roll below `2 × 3`, and a scimitar's `1d6`
+/// under no style can roll a 1. Two hundred seeds is enough for the
+/// scimitar to find one.
+#[test]
+fn the_style_reaches_the_paladins_greatsword_and_not_the_blade_they_looted() {
+    use crate::actions::monster_attacks::{GREATSWORD, SCIMITAR_OF_SPEED_SWING};
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::engine::encounter::GREAT_WEAPON_FIGHTING_FLOOR;
+
+    assert!(GREATSWORD.is_two_handed, "a greatsword is Two-Handed");
+    assert!(
+        !SCIMITAR_OF_SPEED_SWING.is_two_handed && !SCIMITAR_OF_SPEED_SWING.is_versatile,
+        "RAW gives a scimitar neither property"
+    );
+
+    // Lowest single-die face seen across the sweep, per weapon. The
+    // greatsword's log prints `2d6(n)`; the scimitar's `1d6(n)`.
+    let sweep = |weapon: &'static crate::actions::monster_attacks::SimpleWeapon,
+                 dice_label: &str| {
+        let mut lowest = u32::MAX;
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let pal = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            assert!(e.actors[&pal].has_great_weapon_fighting());
+            let target = e
+                .instantiate_creature(
+                    &crate::actors::creatures::skeletons::SKELETON_TEMPLATE,
+                    Coordinate::new(3, 2),
+                    1,
+                    0,
+                )
+                .unwrap();
+            let before = e.messages().len();
+            for ef in <crate::actions::monster_attacks::SimpleWeapon as crate::actions::action_template::Action>::side_effects(
+                weapon, &mut e, pal, Some(&vec![target]), None, None,
+            ) {
+                ef.apply(&mut e);
+            }
+            let marker = format!("{dice_label}(");
+            for line in &e.messages()[before..] {
+                if let Some((_, rest)) = line.split_once(&marker)
+                    && let Some(num) = rest.split(')').next()
+                    && let Ok(v) = num.parse::<u32>()
+                {
+                    lowest = lowest.min(v);
+                }
+            }
+        }
+        lowest
+    };
+
+    // Two floored d6 cannot total less than six.
+    assert_eq!(
+        sweep(&GREATSWORD, "2d6"),
+        2 * GREAT_WEAPON_FIGHTING_FLOOR,
+        "the style did not reach the greatsword"
+    );
+    // One unfloored d6 finds a 1.
+    assert_eq!(
+        sweep(&SCIMITAR_OF_SPEED_SWING, "1d6"),
+        1,
+        "the style reached a scimitar"
     );
 }
 

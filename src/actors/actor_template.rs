@@ -4077,12 +4077,24 @@ pub struct CreatureTemplate {
     /// `EncounterInstance::roll_weapon_damage_dice`, so both the base
     /// swing and a crit's doubled dice pick it up.
     ///
-    /// We don't track weapon-hand-usage, so RAW's "Two-Handed or
-    /// Versatile" gate collapses to "melee weapon attack" — the same
-    /// shape as Dueling's gate collapse. Templates that ship two-handed
-    /// workhorses (greatsword, greataxe, greatclub) carry this flag; the
-    /// Fighter chassis (scimitar 1H) does NOT, so Dueling and GWF stay
-    /// mutually exclusive on the baseline lanes.
+    /// **RAW's weapon clause is enforced.** This entry used to say the
+    /// "Two-Handed or Versatile" gate collapsed to "melee weapon attack"
+    /// because the engine did not track which object was in a hand; the
+    /// object declares the properties now (`SimpleWeapon::is_two_handed`,
+    /// `is_versatile`) and the swing carries the answer to the damage
+    /// roll on `AttackParams::two_handed`. A styled paladin who picks up
+    /// a Scimitar of Speed swings it unfloored.
+    ///
+    /// What is still collapsed is Versatile's *other* half — which hand
+    /// a longsword is in, and therefore which die it rolls. The engine
+    /// has no hands, so a Versatile weapon qualifies for the style
+    /// whichever way it is held, which is the generous reading and the
+    /// direction every hand-shaped absence in the file errs in.
+    ///
+    /// Templates that ship two-handed workhorses (greatsword, greataxe,
+    /// greatclub) carry this flag; the Fighter chassis (scimitar 1H)
+    /// does NOT, so Dueling and GWF stay mutually exclusive on the
+    /// baseline lanes.
     pub has_great_weapon_fighting: bool,
     /// 5e Fighting Style: **Two-Weapon Fighting** (Fighter / Ranger lv1
     /// pick): "when you engage in two-weapon fighting, you can add your

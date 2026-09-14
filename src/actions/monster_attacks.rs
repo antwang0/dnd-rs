@@ -960,6 +960,9 @@ fn simple_weapon_swing(
             is_melee: weapon.is_melee,
             long_range: weapon.normal_range,
             min_range: weapon.min_effective_range,
+            // RAW's Great Weapon Fighting gate, carried from the object
+            // to the damage roll — see `AttackParams::two_handed`.
+            two_handed: weapon.is_two_handed || weapon.is_versatile,
             ..AttackParams::DEFAULTS
         },
         // The reach the rider needs is Cleave's "within your reach",
@@ -1343,6 +1346,50 @@ pub struct SimpleWeapon {
     /// it, and pairing it with each would be four more near-identical
     /// constructors to keep in step.
     pub is_light: bool,
+    /// SRD 5.2's **Two-Handed** weapon property — the weapons the
+    /// armoury table marks as requiring both hands: the greatclub, the
+    /// greataxe, the greatsword, the glaive, the halberd, the lance, the
+    /// maul, the pike, both crossbows, both bows and the musket.
+    ///
+    /// Read for exactly one clause, and it is the clause the flag exists
+    /// to make true: the **Great Weapon Fighting** style's *"the weapon
+    /// must have the Two-Handed or Versatile property."* That sentence
+    /// used to be collapsed into "melee weapon attack" with a note
+    /// conceding the collapse, because a swing could not be asked which
+    /// object made it. It can now — see `AttackParams::two_handed`.
+    ///
+    /// The property's *other* content — that the weapon occupies both
+    /// hands, and so cannot be paired with a shield or an off-hand blade
+    /// — is not modeled, because the engine has no hands to occupy. Two
+    /// clauses of RAW's therefore have no surface here: a Two-Handed
+    /// weapon does not stop the Defense style's shield, and does not
+    /// stop the Light property's off-hand swing. Nothing on the roster
+    /// exercises either (no chassis carries both a greataxe and a
+    /// dagger), and both are one field on `ActorInstance` away the day
+    /// one does.
+    pub is_two_handed: bool,
+    /// SRD 5.2's **Versatile** weapon property — *"Versatile (1d10)"* on
+    /// the quarterstaff, spear, battleaxe, longsword, trident, warhammer
+    /// and war pick.
+    ///
+    /// Carried as a plain flag rather than as the larger die RAW prints
+    /// in the parenthesis, and the reason is that the die is the half
+    /// the engine cannot decide: *"this weapon can be used with one or
+    /// two hands"*, and a creature here has neither. What the flag is
+    /// read for is the half that does not need hands — the **Great
+    /// Weapon Fighting** gate names Two-Handed *or* Versatile, and a
+    /// longsword qualifies whichever way it is being held.
+    ///
+    /// So a longsword still rolls its one-handed `1d8` on every swing,
+    /// and a holder with the style still floors its low faces. That is
+    /// the generous reading of a clause the engine cannot adjudicate,
+    /// and it is the same direction every other hand-shaped absence in
+    /// the file errs in.
+    ///
+    /// The day the engine tracks hands, this becomes
+    /// `versatile_dice: Option<Dice>` and the swing picks between two
+    /// numbers.
+    pub is_versatile: bool,
     /// SRD 5.2's **Finesse** weapon property — *"When making an attack
     /// with a Finesse weapon, use your choice of your Strength or
     /// Dexterity modifier for the attack and damage rolls. You must use
@@ -1597,6 +1644,8 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             is_finesse: false,
+            is_two_handed: false,
+            is_versatile: false,
             mastery: None,
             is_polearm: false,
             is_loading: false,
@@ -1644,6 +1693,8 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             is_finesse: false,
+            is_two_handed: false,
+            is_versatile: false,
             mastery: None,
             is_polearm: false,
             is_loading: false,
@@ -1688,6 +1739,8 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             is_finesse: false,
+            is_two_handed: false,
+            is_versatile: false,
             mastery: None,
             is_polearm: false,
             is_loading: false,
@@ -1745,6 +1798,24 @@ impl SimpleWeapon {
     pub const fn finesse(self) -> Self {
         Self {
             is_finesse: true,
+            ..self
+        }
+    }
+
+    /// Const builder marking a weapon SRD 5.2 **Two-Handed** —
+    /// `SimpleWeapon::melee(...).two_handed()`. See `is_two_handed`.
+    pub const fn two_handed(self) -> Self {
+        Self {
+            is_two_handed: true,
+            ..self
+        }
+    }
+
+    /// Const builder marking a weapon SRD 5.2 **Versatile** —
+    /// `SimpleWeapon::melee(...).versatile()`. See `is_versatile`.
+    pub const fn versatile(self) -> Self {
+        Self {
+            is_versatile: true,
             ..self
         }
     }
@@ -4264,7 +4335,8 @@ pub static LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
     20,
     12,
 )
-.mastery(WeaponMastery::Slow);
+.mastery(WeaponMastery::Slow)
+.two_handed();
 
 /// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
 /// canonical "monster fist" attack so multislams (and tests) reference it.
@@ -4347,6 +4419,8 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     // what lets a Dexterity chassis that finds this blade swing it with
     // the ability it actually has.
     is_finesse: true,
+    is_two_handed: false,
+    is_versatile: false,
     mastery: Some(WeaponMastery::Nick),
     is_polearm: false,
     is_loading: false,
@@ -4372,12 +4446,15 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     is_finesse: false,
+    is_two_handed: false,
+    is_versatile: false,
     mastery: Some(WeaponMastery::Vex),
     is_polearm: false,
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
-};
+}
+.two_handed();
 
 /// Dagger — finesse 1d4 piercing melee weapon. STR-or-DEX choice;
 /// we use DEX which is the typical kobold / rogue stat. Cost 1 Action.
@@ -4460,7 +4537,8 @@ pub static GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
     DamageType::Bludgeoning,
     2,
 )
-.mastery(WeaponMastery::Push);
+.mastery(WeaponMastery::Push)
+.two_handed();
 
 /// Warhammer — STR-based 1d8 bludgeoning martial weapon. The classic
 /// dwarven sidearm; in our engine the versatile-2H clause collapses to
@@ -4475,7 +4553,8 @@ pub static WARHAMMER: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 8),
     DamageType::Bludgeoning,
 )
-.mastery(WeaponMastery::Push);
+.mastery(WeaponMastery::Push)
+.versatile();
 
 /// Mace — STR-based 1d6 bludgeoning simple weapon. The canonical Thug /
 /// Acolyte / Priest sidearm in 5e — same damage die as the scimitar but
@@ -4830,7 +4909,8 @@ pub static GREATAXE: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 12),
     DamageType::Slashing,
 )
-.mastery(WeaponMastery::Cleave);
+.mastery(WeaponMastery::Cleave)
+.two_handed();
 
 /// Heavy Crossbow — DEX-based 1d10 piercing ranged. Differs from the
 /// Longbow in damage die (1d10 vs 1d8) and in RAW's **Loading**
@@ -4855,7 +4935,8 @@ pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
     10,
 )
 .mastery(WeaponMastery::Push)
-.loading();
+.loading()
+.two_handed();
 
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
@@ -6697,7 +6778,8 @@ pub static LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 8),
     DamageType::Slashing,
 )
-.mastery(WeaponMastery::Sap);
+.mastery(WeaponMastery::Sap)
+.versatile();
 
 /// Greatsword — STR-based 2d6 slashing melee weapon. The paladin's
 /// signature heavy weapon: bigger dice than the longsword (1d8) at the
@@ -6710,7 +6792,8 @@ pub static GREATSWORD: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(2, 6),
     DamageType::Slashing,
 )
-.mastery(WeaponMastery::Graze);
+.mastery(WeaponMastery::Graze)
+.two_handed();
 
 /// Pact Blade — the Hexblade Warlock's **Hex Warrior** weapon: 1d8
 /// slashing, but keyed to **Charisma** rather than Strength.
@@ -6765,6 +6848,12 @@ pub static LANCE: SimpleWeapon = SimpleWeapon {
     )
     .mastery(WeaponMastery::Topple)
     .polearm()
+    // RAW's lance is Two-Handed *unless you are mounted*, which is the
+    // one conditional property in the table. The engine's `is_mounted`
+    // is a runtime fact and this is a `const`, so the flag takes the
+    // unmounted reading — the stricter one, and the one that matches
+    // what the property is for.
+    .two_handed()
 };
 
 /// Knight's double-longsword multiattack — two swings per Action,
@@ -11683,7 +11772,8 @@ pub static GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
     2,
 )
 .mastery(WeaponMastery::Graze)
-.polearm();
+.polearm()
+.two_handed();
 
 /// Gnoll Pack Lord multiattack — 2 glaive swings per Action. The pack
 /// lord's signature move: two reach-2 slashing strikes that let it
@@ -20661,6 +20751,8 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     is_finesse: false,
+    is_two_handed: false,
+    is_versatile: false,
     mastery: None,
     is_polearm: false,
     is_loading: false,
@@ -22108,6 +22200,8 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     is_finesse: false,
+    is_two_handed: false,
+    is_versatile: false,
     mastery: None,
     is_polearm: false,
     is_loading: false,

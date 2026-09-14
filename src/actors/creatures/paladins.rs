@@ -210,9 +210,10 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // second-style pickup at higher levels — same reasoning that
         // ships Defense here alongside the class's smite kit): read any
         // 1 or 2 on a melee weapon damage die as a 3. RAW gates it on
-        // the Two-Handed or Versatile property; the paladin's greatsword
-        // (`2d6` slashing) is the canonical fit, so the flag rides the
-        // greatsword-baseline paladin. On 2d6 the floor is worth a point
+        // the Two-Handed or Versatile property, which the engine checks
+        // — the paladin's greatsword carries Two-Handed, and a
+        // one-handed blade out of the loot pool would not float on the
+        // style. On 2d6 the floor is worth a point
         // a swing, every swing, which is exactly the shape a paladin
         // wants — it does nothing for the good rolls and stops the bad
         // ones wasting a smite's setup. Composes cleanly with Improved
