@@ -3069,8 +3069,10 @@ impl EncounterInstance {
     /// to "melee weapon attack" since the engine doesn't track
     /// weapon-hand-usage (same shape as Dueling's gate collapse).
     ///
-    /// The sum every caller but one wants. Delegates to
-    /// `roll_weapon_damage_dice_each` and adds the faces up.
+    /// Returns the **total**, which is what every caller but one wants;
+    /// the rolling itself happens one face at a time in
+    /// `roll_weapon_damage_dice_each` below, and this adds them up. The
+    /// split is that one caller's doing — see there.
     pub fn roll_weapon_damage_dice(&mut self, dice: Dice, apply_gwf_reroll: bool) -> u32 {
         self.roll_weapon_damage_dice_each(dice, apply_gwf_reroll)
             .into_iter()

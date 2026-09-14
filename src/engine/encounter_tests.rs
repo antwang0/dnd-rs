@@ -108490,3 +108490,103 @@ fn a_guardian_swing_does_not_provoke_another_guardian() {
     );
     assert!(answers >= 1, "at least the nearer one should have answered");
 }
+
+/// Drift-prevention: every tag on `FEAT_TAGS` is **read** by something
+/// that is not a list.
+///
+/// `every_feat_is_carried_by_a_playable_chassis` one file over pins the
+/// other end of the same wire — that somebody can take the feat — and
+/// between them they close a hole each leaves open on its own. A feat
+/// nobody can take is a passive that never fires; a feat nothing reads
+/// is a constant on a chassis's sheet that changes no die, and the two
+/// are indistinguishable from a log. Both are invisible by
+/// construction: no test fails, no encounter behaves differently, and
+/// the module reads as though the feat shipped.
+///
+/// Written as a source scan for the reason
+/// `every_creature_template_in_the_bestiary_is_reachable` is: the
+/// question is about a *reference existing*, and Rust has no reflection
+/// that can answer it. The haystack is every `.rs` under `src/` except
+/// two exclusions, and both are the point:
+///
+///   - **`feats.rs`'s own declarations and registries** are stripped
+///     out, because a constant that appears only in its own `pub const`
+///     line and in the list of every constant is exactly the unread
+///     case this is looking for. What remains of the file still counts —
+///     `PoleStrike` reads `POLEARM_MASTER_TAG` from inside the module,
+///     which is a real reader.
+///   - **`src/actors/creatures/`** is excluded outright, because a
+///     creature template *places* a feat and never reads it. A tag that
+///     appears only there is carried by a chassis and consulted by
+///     nothing, which is precisely the shape of the bug.
+#[test]
+fn every_feat_tag_is_read_by_something_that_is_not_a_list() {
+    use crate::actions::feats::FEAT_TAGS;
+    use regex::Regex;
+    use std::collections::HashMap;
+
+    let feats_src = std::fs::read_to_string("src/actions/feats.rs")
+        .expect("the feats module is readable");
+
+    // `pub const CRUSHER_TAG: &str = "feat.crusher";` → value to
+    // identifier, so the scan can look for the name the call sites use
+    // rather than for the string nobody writes out.
+    let decl = Regex::new(r#"pub const (\w+): &str = "([^"]+)";"#).unwrap();
+    let idents: HashMap<&str, &str> = decl
+        .captures_iter(&feats_src)
+        .map(|c| {
+            (
+                c.get(2).unwrap().as_str(),
+                c.get(1).unwrap().as_str(),
+            )
+        })
+        .collect();
+
+    // The declarations themselves and the two registries that list them
+    // are not readers. Everything else in the module is.
+    let mut haystack = decl.replace_all(&feats_src, "").into_owned();
+    let registry = Regex::new(r"(?s)pub const (FEAT_TAGS|EPIC_BOON_TAGS): &\[&str\] = &\[.*?\];")
+        .unwrap();
+    haystack = registry.replace_all(&haystack, "").into_owned();
+
+    fn collect(dir: &std::path::Path, out: &mut String) {
+        for entry in std::fs::read_dir(dir).expect("a readable source directory") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                if path.ends_with("creatures") {
+                    continue;
+                }
+                collect(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs")
+                && !path.ends_with("feats.rs")
+            {
+                out.push_str(&std::fs::read_to_string(&path).expect("a readable source file"));
+                out.push('\n');
+            }
+        }
+    }
+    collect(std::path::Path::new("src"), &mut haystack);
+
+    // Guard against the scan silently reading nothing and the whole
+    // test passing vacuously — the exact way a source-reading check
+    // rots.
+    assert!(
+        haystack.len() > 300_000 && idents.len() >= FEAT_TAGS.len(),
+        "the scan found {} bytes of source and {} declarations, which is \
+         less than the module is known to hold",
+        haystack.len(),
+        idents.len()
+    );
+
+    for tag in FEAT_TAGS {
+        let ident = idents
+            .get(tag)
+            .unwrap_or_else(|| panic!("{tag} is on FEAT_TAGS but declares no constant"));
+        let word = Regex::new(&format!(r"\b{}\b", regex::escape(ident))).unwrap();
+        assert!(
+            word.is_match(&haystack),
+            "{ident} is carried and listed and read by nothing — the feat \
+             is a line on a sheet that moves no die"
+        );
+    }
+}
