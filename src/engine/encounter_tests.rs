@@ -109179,3 +109179,66 @@ fn a_corridor_with_one_route_on_it_keeps_it() {
         "the only route on the board survived"
     );
 }
+
+/// SRD 5.2's **Jump** spell, which is thirty feet from a standstill —
+/// further than any Strength score in the book reaches at a dead run.
+///
+/// Five tiles of rift is seventeen and a half feet, past the Fighter's
+/// running Long Jump of sixteen and past every other one on the roster.
+/// The spell clears it without a run-up at all, which is the whole of
+/// what a Bonus Action and a level-1 slot buy.
+#[test]
+fn the_jump_spell_clears_what_no_strength_score_can() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let (mut e, id) = rift_corridor(&FIGHTER_TEMPLATE, 9..=13);
+    // Put down on the near lip with no run behind it, which is the
+    // hardest case and the one the spell is priced against.
+    e.place_actor_at(id, Coordinate::new(7, 3)).unwrap();
+    e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    assert!(
+        e.path_to(id, Coordinate::new(14, 3)).is_none(),
+        "seventeen and a half feet, standing, off Strength 16"
+    );
+
+    e.actors
+        .get_mut(&id)
+        .unwrap()
+        .add_condition(Condition::Leaping, ConditionTimer::Rounds(10));
+    assert!(
+        e.path_to(id, Coordinate::new(14, 3)).is_some(),
+        "the spell is thirty feet and does not ask for a run"
+    );
+}
+
+/// SRD 5.2 **Standing Leap**: *"The frog's Long Jump is up to 10 feet
+/// … with or without a running start."*
+///
+/// Pinned against a rat, which is the same size, the same speed and two
+/// points of Strength away — and cannot cross. That is what makes this
+/// a test of the *trait*: a frog reads Strength 1, so on the Long Jump
+/// rule alone it could not clear a six-inch puddle, and the trait is
+/// not a bonus on that number but a replacement for it.
+#[test]
+fn a_frogs_standing_leap_crosses_what_its_strength_never_could() {
+    use crate::actors::creatures::frogs::FROG_TEMPLATE;
+    use crate::actors::creatures::rats::RAT_TEMPLATE;
+
+    for (template, crosses) in [(&*FROG_TEMPLATE, true), (&*RAT_TEMPLATE, false)] {
+        let (mut e, id) = rift_corridor(template, 9..=9);
+        // On the lip rather than at the end of the corridor: both of
+        // these creatures have twenty feet of Speed, which is the eight
+        // tiles of walking between the two, so a start at the far end
+        // would have the frog fail for want of budget rather than for
+        // want of a leap. Standing there also costs it the run-up,
+        // which is exactly what Standing Leap says it does not need.
+        e.place_actor_at(id, Coordinate::new(8, 3)).unwrap();
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+        assert_eq!(
+            e.path_to(id, Coordinate::new(10, 3)).is_some(),
+            crosses,
+            "{}: a single tile of nothing",
+            template.name
+        );
+    }
+}

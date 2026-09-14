@@ -23,12 +23,14 @@ use std::sync::LazyLock;
 ///   DC 11)" semantics (the escape DC is a later Action the grappled
 ///   actor spends, not a prevention save).
 ///
-/// **Amphibious** (RAW: can breathe air and water) and **Standing
-/// Leap** (long jump up to 20 ft, high jump up to 10 ft) are RAW
-/// flavor-only — the engine doesn't surface 3D movement or
-/// water-breathing mechanics, so that clause collapses to the
-/// per-creature speed (30 walking); the swimming half survives as the
-/// tag that makes `TerrainType::Water` free to cross.
+/// **Amphibious** (RAW: can breathe air and water) survives as the tag
+/// that makes `TerrainType::Water` free to cross. **Standing Leap**
+/// (Long Jump up to 20 ft, with or without a running start) is carried
+/// on `standing_leap_feet` — twenty feet from a standstill is further
+/// than a Champion clears at a dead run, so a rift that stops the party
+/// does not stop this. Only the Long Jump half is kept; the board is
+/// flat and has no height for the High Jump to reach. See
+/// `crate::engine::jumping`.
 ///
 /// The **Swallow** follow-up is carried, and the frog is the place in
 /// the bestiary where its cost is clearest. Its tongue grapples
@@ -71,6 +73,12 @@ pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 4d8 = 18 average per MM (CR ¼).
         hitpoints: "4d8".parse().unwrap(),
         speed: 30.,
+        // SRD 5.2 **Standing Leap**: *"The frog's Long Jump is up to 20
+        // feet … with or without a running start."* Twenty feet from a
+        // standstill is further than a Champion clears at a dead run,
+        // which is what the trait is for: a rift that stops the party
+        // does not stop this.
+        standing_leap_feet: Some(20),
         strength: 12,
         intelligence: 2,
         dexterity: 13,

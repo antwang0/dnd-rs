@@ -31373,6 +31373,91 @@ impl Action for Longstrider {
 
 pub static LONGSTRIDER: LazyLock<Longstrider> = LazyLock::new(|| Longstrider {});
 
+/// SRD 5.2 **Jump** — level-1 transmutation, Bonus Action, Touch, 1
+/// minute: *"You touch a willing creature. Once on each of its turns
+/// until the spell ends, that creature can jump up to 30 feet by
+/// spending 10 feet of movement."*
+///
+/// Longstrider's sibling in shape — a touched ally, a condition, no
+/// concentration — and its opposite in what it is *for*. Longstrider
+/// buys ten feet of everywhere; this buys thirty feet of one direction
+/// and only over ground nobody can walk on. It is worth nothing on a
+/// board with an unbroken floor and it is the difference between a
+/// route and a detour on one without, which makes it the first spell in
+/// the engine whose value is a property of the *map*.
+///
+/// Installs [`Condition::Leaping`], which
+/// `ActorInstance::long_jump_feet` reads as a flat Long Jump of
+/// [`JUMP_SPELL_FEET`] — thirty feet, from a standstill, which no
+/// Strength score in the book reaches even at a run. See that condition
+/// for the one place its arithmetic and RAW's part company: the spell's
+/// flat ten-foot price and its once-per-turn cap are traded for each
+/// other, because a jump is an edge in a Dijkstra search and Dijkstra
+/// has no memory of what a path has already spent.
+///
+/// `Rounds(10)` for RAW's one minute, the engine's standard for a
+/// minute-long buff.
+pub struct Jump {}
+
+impl Action for Jump {
+    fn name(&self) -> &str {
+        "jump"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Transmutation)
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["leap", "jmp"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch range = melee reach in our grid.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_and_slot(1)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_ally_target_id(encounter, caster_id, target_ids) else {
+            return Vec::new();
+        };
+        encounter.log(format!(
+            "  jump: {} can clear {} ft of empty air.",
+            encounter.actor_name(target_id),
+            crate::conditions::condition_template::JUMP_SPELL_FEET
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Leaping,
+            timer: ConditionTimer::Rounds(10),
+        })]
+    }
+}
+
+pub static JUMP: LazyLock<Jump> = LazyLock::new(|| Jump {});
+
 /// Expeditious Retreat — level-1 transmutation, bonus action, concentration.
 /// The caster can Dash as a bonus action on each turn for up to 10 minutes.
 /// We collapse the action-economy half of the RAW spell into a flat

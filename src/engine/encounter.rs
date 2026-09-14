@@ -8894,11 +8894,38 @@ impl EncounterInstance {
     /// Every anchor a body the size of `actor_id` could walk to from
     /// where that actor stands, as a bitmap over the tile grid.
     fn walk_reachable_anchors(&self, actor_id: usize) -> Vec<bool> {
+        self.reachable_anchors(actor_id, 0)
+    }
+
+    /// The same flood fill, with a Long Jump of `jump_feet` allowed on
+    /// top of the walk — `0` for the walk alone.
+    ///
+    /// **Budget-free**, which is the difference between this and
+    /// `dijkstra_path` and the reason both exist. The pathfinder answers
+    /// *"can this creature get there this turn"*, which is the question
+    /// a move has to ask; this answers *"is there a route at all"*,
+    /// which is the question the board has to be able to answer about
+    /// itself — whether a rift has cut it in two, and whether a longer
+    /// leap would open it back up. A creature with ten feet of Speed
+    /// left can still walk the long way round next turn.
+    ///
+    /// A running start is assumed rather than tracked, for the same
+    /// reason: over any number of turns a creature can always back up
+    /// and take one, so a flood fill that withheld the run-up would be
+    /// answering the one-turn question badly instead of the multi-turn
+    /// question well.
+    ///
+    /// Terrain only. Creatures are not obstacles — see `walking_reach`
+    /// for why — and the jump lane is asked the same way, through
+    /// `footprint_clears_as_air` with the mover's own id, so a hop over
+    /// the tile somebody is standing on is still refused.
+    fn reachable_anchors(&self, actor_id: usize, jump_feet: u32) -> Vec<bool> {
         let mut seen = vec![false; self.width * self.height];
         let Some(actor) = self.actors.get(&actor_id) else {
             return seen;
         };
-        let span = get_tiles_from_size(actor.size()) as isize;
+        let size = actor.size();
+        let span = get_tiles_from_size(size) as isize;
         let fits = |anchor: Coordinate| {
             (0..span).all(|dy| {
                 (0..span).all(|dx| {
@@ -8906,6 +8933,11 @@ impl EncounterInstance {
                         .is_some_and(|t| t.terrain_type.is_passable())
                 })
             })
+        };
+        let jump_tiles = if jump_feet == 0 {
+            0
+        } else {
+            ((jump_feet as f32 / TILE_FEET) as u32).min(jumping::MAX_JUMP_TILES)
         };
         let start = actor.location();
         let Ok(start_idx) = self.idx(start) else {
@@ -8930,8 +8962,76 @@ impl EncounterInstance {
                     queue.push_back(next);
                 }
             }
+            if jump_tiles < 2 {
+                continue;
+            }
+            for (dx, dy) in jumping::JUMP_DIRECTIONS {
+                // Diagonals cost √2 tiles of distance apiece, so a hop
+                // that way clears fewer of them — the same arithmetic
+                // the pathfinder's own lane does, rounded the same way.
+                let reach = if dx == 0 || dy == 0 {
+                    jump_tiles
+                } else {
+                    (jump_tiles as f32 / std::f32::consts::SQRT_2) as u32
+                };
+                for d in 2..=reach {
+                    let over =
+                        Coordinate::new(coord.x + dx * (d as isize - 1), coord.y + dy * (d as isize - 1));
+                    if !jumping::footprint_clears_as_air(self, actor_id, over, size) {
+                        break;
+                    }
+                    let land = Coordinate::new(coord.x + dx * d as isize, coord.y + dy * d as isize);
+                    let Ok(land_idx) = self.idx(land) else {
+                        continue;
+                    };
+                    if seen[land_idx] || !fits(land) {
+                        continue;
+                    }
+                    seen[land_idx] = true;
+                    queue.push_back(land);
+                }
+            }
         }
         seen
+    }
+
+    /// True when a Long Jump of `jump_feet` would put this creature
+    /// within arm's length of an enemy it cannot otherwise get to at
+    /// all — the gate the AI's jump-buff rung is built on, and the one
+    /// question that makes a Jump spell worth a Bonus Action.
+    ///
+    /// Two flood fills and a comparison, which is more than a rung
+    /// usually spends; the first line is what keeps it off every other
+    /// board. A board with no holes in it can have nothing cut off by
+    /// one, so the whole thing collapses to a scan of the terrain
+    /// vector on the ninety-nine fights in a hundred that are fought on
+    /// an unbroken floor.
+    ///
+    /// Asked about **reaching**, not about winning. A creature that can
+    /// already shoot across the gap gets no answer from this and does
+    /// not need one — the attack rungs sit above the one that calls it,
+    /// so anything with a shot has already taken it.
+    pub fn a_longer_leap_would_open_a_route(&self, actor_id: usize, jump_feet: u32) -> bool {
+        if !self.terrain.iter().any(|t| t.terrain_type.is_gap()) {
+            return false;
+        }
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        let now = actor.long_jump_feet(true);
+        if jump_feet <= now {
+            return false;
+        }
+        let team = actor.team();
+        let with = self.reachable_anchors(actor_id, jump_feet);
+        let without = self.reachable_anchors(actor_id, now);
+        self.actors.iter().any(|(&other, a)| {
+            other != actor_id
+                && a.team() != team
+                && a.is_combat_active()
+                && self.anchor_set_touches(&with, actor_id, other)
+                && !self.anchor_set_touches(&without, actor_id, other)
+        })
     }
 
     /// True when any anchor in `reached` puts a body of `mover_id`'s size

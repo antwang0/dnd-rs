@@ -304,6 +304,13 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     //     failed-save target — the druid's grounding tool for airborne
     //     enemies (wyverns, dragons, fire imps). Concentration-bound.
     actions.push(&*crate::actions::spells::LONGSTRIDER);
+    //   - lv1 **Jump** (transmutation): a Bonus Action and a touch for a
+    //     thirty-foot Long Jump, which is further than any Strength
+    //     score in the book reaches at a run. The druid's third answer
+    //     to a piece of ground — Spike Growth makes floor cost
+    //     something, Earthbind takes the air away, and this one hands an
+    //     ally the far side of a rift.
+    actions.push(&*crate::actions::spells::JUMP);
     actions.push(&*crate::actions::spells::EARTHBIND);
     // Latest druid additions (PHB druid list):
     //   - lv2 **Enhance Ability** (transmutation): touch ally buff — 2d6

@@ -4811,6 +4811,21 @@ pub static RING_OF_INVISIBILITY: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Jumping** (Ring, Uncommon, requires attunement) — a Bonus
+/// Action and thirty feet of empty air.
+///
+/// The first item on the loot table whose value is a fact about the
+/// *room*: nothing at all on an unbroken floor, and a route across a
+/// rift that no Strength score in the book reaches. See
+/// `item_actions::TURN_RING_OF_JUMPING` and `crate::engine::jumping`.
+pub static RING_OF_JUMPING: Item = Item {
+    name: "Ring of Jumping",
+    glyph: '=',
+    on_use: &[&crate::actions::item_actions::TURN_RING_OF_JUMPING],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Rope of Entanglement** (Wondrous item, Rare) — a reusable
 /// Restrained on a rope, with no attunement and no pool.
 ///
@@ -7950,6 +7965,7 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
 /// times to weight the drop table toward more common items.
 pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_PROTECTION,
+    &RING_OF_JUMPING,
     &BOOTS_OF_STRIDING,
     &CLOAK_OF_RESISTANCE,
     &CLOAK_OF_PROTECTION,

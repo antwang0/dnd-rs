@@ -115,6 +115,16 @@ pub static RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // an ally before the engagement and the speed boost composes with
     // any later Pass Without Trace / Spider Climb stack.
     actions.push(&*crate::actions::spells::LONGSTRIDER);
+    // lv1 **Jump** (transmutation): the ranger's second movement spell
+    // and the opposite of Longstrider in what it buys. Longstrider is
+    // ten feet of everywhere; Jump is thirty feet of one direction, over
+    // ground nobody can walk on at all. It is worth nothing on a clean
+    // floor and it is a route where there was none on a board with a
+    // rift in it — see `crate::engine::jumping`. The ranger gets it
+    // because RAW's spell list gives it to them and because the chassis
+    // is the party's scout: the one build whose job is being on the far
+    // side of something before anybody else is.
+    actions.push(&*crate::actions::spells::JUMP);
     // lv3 **Flame Arrows** (transmutation, XGtE): concentration self-buff
     // that grants +1d6 fire on every ranged weapon hit (ranged-only via
     // the OnHitRider table). Slots cleanly into the ranger's lv3 lane

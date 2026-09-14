@@ -5742,6 +5742,7 @@ const PIPES_OF_THE_SEWERS_NAME: &str = "Pipes of the Sewers";
 // `ItemUseBilling::Free`, the arm they are the first users of.
 const RING_OF_TELEKINESIS_NAME: &str = "Ring of Telekinesis";
 const RING_OF_INVISIBILITY_NAME: &str = "Ring of Invisibility";
+const RING_OF_JUMPING_NAME: &str = "Ring of Jumping";
 const ROPE_OF_ENTANGLEMENT_NAME: &str = "Rope of Entanglement";
 const BROOM_OF_FLYING_NAME: &str = "Broom of Flying";
 const ROD_OF_RULERSHIP_NAME: &str = "Rod of Rulership";
@@ -7858,6 +7859,43 @@ pub static TURN_RING_OF_INVISIBILITY: SelfConditionItem = SelfConditionItem {
     // Re-firing it would spend an Action to refresh a timer that has not
     // run out, which is never what a wearer wants and is exactly what an
     // AI with a free option will do every turn.
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Free,
+};
+
+/// **Ring of Jumping** (Ring, Uncommon, requires attunement) — *"While
+/// wearing this ring, you can cast Jump from it, but can target only
+/// yourself when you do so."*
+///
+/// The Ring of Invisibility's poor relation on the same at-will shelf,
+/// and the first item on the loot table whose worth is a property of
+/// the *board* rather than of the wearer. On a clean floor it is a ring
+/// that does nothing; in a room the generator has cracked open
+/// (`--rifts`) it is a route nobody else on the party has. That makes
+/// it the cheapest thing in the file to price — an Uncommon, one of
+/// three attunement slots, and a Bonus Action the wearer was probably
+/// not spending anyway.
+///
+/// RAW's "can target only yourself" is not a restriction this chassis
+/// has to enforce; `SelfConditionItem` has never been able to aim
+/// anywhere else.
+///
+/// Free rather than charged, because RAW's *"you can cast Jump from
+/// it"* names no pool — the same sentence, and the same billing, as the
+/// Ring of Telekinesis one shelf up. `reject_when_active` because
+/// re-firing it would spend a Bonus Action refreshing a timer that has
+/// not run out, which is exactly what an AI with a free option does
+/// every turn.
+pub static TURN_RING_OF_JUMPING: SelfConditionItem = SelfConditionItem {
+    action_name: "turn ring of jumping",
+    action_aliases: &["jumping ring", "ring of jumping", "vault"],
+    item_name: RING_OF_JUMPING_NAME,
+    log_text: "{actor} turns the ring and the floor feels further away.",
+    condition: Condition::Leaping,
+    timer: ConditionTimer::Rounds(10),
+    bonus_action: true,
     reject_when_active: true,
     temp_hp: None,
     ward: TypedWard::None,

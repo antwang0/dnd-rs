@@ -22,9 +22,13 @@ use std::sync::LazyLock;
 /// `UNDERWATER_BREATHING_TAG` — the frog is on
 /// `underwater_breathing_templates`, so the suffocation clock in
 /// `engine::breath` never starts on it. It has no other combat
-/// surface, which for a 1 HP frog is most of what can be said. **Standing Leap** (RAW: long jump = 10 ft) is captured by
-/// the speed-20 walking baseline; the engine doesn't model separate
-/// jump distances. Darkvision 30 surfaces through the standard
+/// surface, which for a 1 HP frog is most of what can be said.
+/// **Standing Leap** (RAW: Long Jump up to 10 feet, with or without a
+/// running start) is carried on `standing_leap_feet`, and it is the one
+/// thing this creature can do that nothing else its size can: SRD 5.2's
+/// Long Jump is read off the Strength score, and a Strength of 1 buys a
+/// six-inch hop. Ten feet from a standstill clears any rift the
+/// generator cuts. Darkvision 30 surfaces through the standard
 /// `SpecialSense::Darkvision` chokepoint.
 ///
 /// Defensive identity: AC 11 (tiny + DEX), 1 HP. The frog dies to
@@ -48,6 +52,14 @@ pub static FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW: 1 (1d4 - 1) — engine floors HP rolls at 1.
         hitpoints: "1d4-1".parse().unwrap(),
         speed: 20.,
+        // SRD 5.2 **Standing Leap**: *"The frog's Long Jump is up to 10
+        // feet … with or without a running start."* Strength 1 would
+        // otherwise buy this creature a six-inch hop, so the trait is
+        // the whole of the frog's mobility rather than a rider on it —
+        // and it is the clearest case in the bestiary for why
+        // `standing_leap_feet` replaces the Strength rule instead of
+        // adding to it.
+        standing_leap_feet: Some(10),
         strength: 1,
         intelligence: 1,
         dexterity: 13,

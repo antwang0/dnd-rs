@@ -32,6 +32,12 @@ pub static GIANT_TOAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW: 20 ft walk, 40 ft swim. The engine collapses to one
         // ground speed so we land between the two.
         speed: 30.,
+        // SRD 5.2 **Standing Leap**: *"The toad's Long Jump is up to 20
+        // feet … with or without a running start."* The giant frog's
+        // clause word for word, and worth more on this chassis: the toad
+        // is Large, so it needs a wider landing, and twenty feet is what
+        // pays for it.
+        standing_leap_feet: Some(20),
         strength: 15,
         intelligence: 2,
         dexterity: 13,

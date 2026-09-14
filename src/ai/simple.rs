@@ -1826,6 +1826,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 7c. Buy a Long Jump, when the reason nobody is in reach is a
+        //     hole in the floor. Immediately above the approach rung
+        //     because that is the rung it is fixing: `try_step_toward`
+        //     walks whatever route the pathfinder can find, and on a
+        //     board with a rift across it there may be no route to find
+        //     until somebody's Long Jump gets longer. See
+        //     `try_buy_a_leap`.
+        if let Some(aei) = try_buy_a_leap(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -1887,6 +1898,52 @@ impl Controller for SimpleAi {
         // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
+}
+
+/// Spend a Bonus Action on SRD 5.2's **Jump**, when the board is the
+/// reason this creature has nothing to do.
+///
+/// The two printings are the level-1 spell and the Ring of Jumping, and
+/// they install the same condition for the same thirty feet — so one
+/// rung reaches both, in the order a party would spend them: the ring
+/// first, because it costs nothing but the Bonus Action, and the slot
+/// only when there is no ring.
+///
+/// **The gate is the whole rung.** A jump buff is worth a turn on
+/// exactly one kind of board and nothing at all on every other, and the
+/// engine is unusual in being able to tell them apart:
+/// `a_longer_leap_would_open_a_route` asks the map directly whether
+/// thirty feet of Long Jump would put this creature within arm's length
+/// of an enemy it currently cannot get to by any route. On a board with
+/// an unbroken floor the answer is no before the first flood fill runs,
+/// which is where this rung needs to be free — every AI turn in the
+/// suite walks past it.
+///
+/// That is the difference between this and the four situational buffs
+/// on `NOT_FOR_THE_AI` ("a board with a cliff", and its neighbours).
+/// Those are written off because nothing in this file can ask which
+/// board it is standing on. For a rift, something can.
+///
+/// **Below every attack rung**, and that placement is load-bearing: a
+/// creature that can shoot across the gap should shoot across the gap,
+/// and one that has declined every attack lane has already proved it
+/// cannot. Immediately above the approach rung, because the approach is
+/// what it is repairing.
+fn try_buy_a_leap(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::conditions::condition_template::JUMP_SPELL_FEET;
+
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.has_condition(Condition::Leaping) {
+        return None;
+    }
+    if !encounter.a_longer_leap_would_open_a_route(actor_id, JUMP_SPELL_FEET) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "turn ring of jumping")
+        .or_else(|| try_self_action(encounter, actor_id, "jump"))
 }
 
 /// How far away an enemy can be and still be revealed by a light the
@@ -12703,6 +12760,99 @@ mod tests {
         );
     }
 
+    /// The jump-buff rung fires on the one board it is worth a turn on,
+    /// and is silent on every other.
+    ///
+    /// Three boards, one fighter, one ring. A rift the fighter cannot
+    /// clear on Strength 16 and an enemy on the far side of it: the ring
+    /// goes on. The same board with the rift paved back to floor: it
+    /// does not, because the fighter can simply walk. And the rifted
+    /// board with the ring already turned: it does not, because a rung
+    /// that refreshed a live timer every round would spend the Bonus
+    /// Action the rest of the ladder wanted.
+    ///
+    /// The middle case is the one that matters. A jump buff is worth
+    /// nothing on ninety-nine boards in a hundred, and the reason four
+    /// of its neighbours are written off in `NOT_FOR_THE_AI` is that
+    /// nothing in this file could ask which board it was standing on.
+    /// For a hole in the floor, something can.
+    #[test]
+    fn the_ring_of_jumping_goes_on_when_the_floor_is_the_problem() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+        use crate::engine::terrain::TerrainType;
+        use crate::items::item_template::RING_OF_JUMPING;
+
+        // A corridor two tiles tall, walled above and below across the
+        // whole width, so the rift is the only question on the board.
+        let rifted_corridor = |cut: bool| {
+            let tp = TerrainGenParams {
+                width: 20,
+                height: 20,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(0)).unwrap();
+            for y in 0..20isize {
+                for x in 0..20isize {
+                    let floor = matches!(y, 3 | 4);
+                    e.set_terrain_at(
+                        Coordinate::new(x, y),
+                        if floor { TerrainType::Floor } else { TerrainType::Wall },
+                    );
+                }
+            }
+            if cut {
+                for x in 9..=13isize {
+                    for y in [3isize, 4] {
+                        e.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm);
+                    }
+                }
+            }
+            let pc = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 3), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(16, 3), 1, 0)
+                .unwrap();
+            {
+                let a = e.actors.get_mut(&pc).unwrap();
+                a.pickup_item(&RING_OF_JUMPING);
+                assert!(a.is_attuned_to(RING_OF_JUMPING.name), "the ring is inert in the pack");
+                a.reset_for_new_round();
+            }
+            (e, pc)
+        };
+
+        let (e, pc) = rifted_corridor(true);
+        let aei = try_buy_a_leap(&e, pc)
+            .expect("the only way across is a Long Jump the fighter has not got");
+        assert_eq!(aei.action().name(), "turn ring of jumping");
+
+        let (paved, pc) = rifted_corridor(false);
+        assert!(
+            try_buy_a_leap(&paved, pc).is_none(),
+            "a fighter who can walk there does not spend a turn on a ring"
+        );
+
+        let (mut already, pc) = rifted_corridor(true);
+        already
+            .actors
+            .get_mut(&pc)
+            .unwrap()
+            .add_condition(Condition::Leaping, ConditionTimer::Rounds(10));
+        assert!(
+            try_buy_a_leap(&already, pc).is_none(),
+            "the ring is already turned"
+        );
+    }
+
     /// A blade warlock spends its invocations on the blade.
     ///
     /// RAW hands out five invocations, not eight, so the pact-weapon
@@ -20668,12 +20818,20 @@ mod tests {
             // "dimension door".
             .chain(SELF_TELEPORT_ESCAPES.iter().copied())
             .chain(std::iter::once(SUSTAINED_TELEPORT_ESCAPE))
-            // The two rungs that name one item apiece inline rather than
+            // The rungs that name one item apiece inline rather than
             // through a table.
             .chain([
                 "drink potion of mage armor",
                 "cube of force: mage armor",
                 "swear oathbow",
+                // `try_buy_a_leap`, which reaches the ring and the spell
+                // it is a printing of by name. Not on
+                // `ITEM_SELF_BUFF_CONDITIONS` and deliberately so: that
+                // table is walked whenever a buff would be nice to have,
+                // and a Long Jump is worth a turn on one kind of board
+                // and nothing at all on every other. The rung's own gate
+                // is the map.
+                "turn ring of jumping",
             ])
             .collect();
 
