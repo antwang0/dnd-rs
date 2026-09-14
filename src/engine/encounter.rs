@@ -8031,7 +8031,11 @@ impl EncounterInstance {
     ///      id — nothing has half-erased it;
     ///   2. an off-grid actor's anchor is **not** stamped with its own
     ///      id — it gave the tiles up, or the body carrying it owns them;
-    ///   3. every stamp on the grid names an actor that still exists.
+    ///   3. the tiles under an on-grid actor are tiles a body can be on
+    ///      — the question `TerrainType::Chasm` made worth asking, since
+    ///      a creature standing in a hole reads on the map as a creature
+    ///      standing *near* one;
+    ///   4. every stamp on the grid names an actor that still exists.
     ///
     /// Returned as a list rather than asserted, so the soak test can
     /// name the seed and the step alongside it.
@@ -8076,6 +8080,35 @@ impl EncounterInstance {
                             loc,
                             tile,
                             self.actor_id_at(tile)
+                        ));
+                    }
+                    // …and the tile is one a body could be standing on.
+                    //
+                    // The fourth question, and the one `TerrainType::Chasm`
+                    // made worth asking. Every other impassable tile on
+                    // the board is a *wall*, and a creature inside one is
+                    // an obvious absurdity that something would have
+                    // noticed; a hole in the floor is the same violation
+                    // and reads, on the map, as a creature standing near
+                    // a hole. The invariant that nothing ever occupies a
+                    // gap — which is what lets flight be an unbounded
+                    // jump rather than a third coordinate, see
+                    // `TerrainType::Chasm` — is held by every forced-move
+                    // resolver on the board asking `can_move_to` first,
+                    // and that is a lot of sites to hold by inspection.
+                    // This is the sweep that would catch the one that
+                    // forgot.
+                    if !self
+                        .terrain_at(tile)
+                        .is_some_and(|t| t.terrain_type.is_passable())
+                    {
+                        problems.push(format!(
+                            "{} (#{}) at {:?} is standing on {:?}, which is {:?}",
+                            actor.name(),
+                            id,
+                            loc,
+                            tile,
+                            self.terrain_at(tile).map(|t| t.terrain_type)
                         ));
                     }
                 }

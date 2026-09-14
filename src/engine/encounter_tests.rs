@@ -109461,3 +109461,41 @@ fn second_story_work_buys_a_shorter_run_up() {
         "…and five feet is exactly what Second-Story Work asks for"
     );
 }
+
+/// The board checker notices a creature standing where a creature
+/// cannot stand.
+///
+/// The fourth question `board_inconsistencies` asks, and the one
+/// `TerrainType::Chasm` made worth asking. A creature inside a wall is
+/// an absurdity somebody would have noticed; a creature in a hole in the
+/// floor draws as a creature standing *near* a hole, and the invariant
+/// it breaks is the one that lets flight be an unbounded jump rather
+/// than a third coordinate on the board.
+///
+/// Both directions, because a checker that always complains is worth as
+/// little as one that never does: the same creature on the same tile is
+/// clean before the floor goes.
+#[test]
+fn the_board_checker_catches_a_creature_standing_over_nothing() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        e.board_inconsistencies().is_empty(),
+        "a fighter on a floor is not a problem"
+    );
+
+    // One tile of the four its Medium footprint covers, because the
+    // check is per tile rather than per anchor: a body half over a gap
+    // is as impossible as one wholly in it.
+    assert!(e.set_terrain_at(Coordinate::new(6, 6), TerrainType::Chasm));
+    let problems = e.board_inconsistencies();
+    assert!(
+        problems.iter().any(|p| p.contains("Chasm")),
+        "the floor went out from under #{id} and nothing said so: {:?}",
+        problems
+    );
+}
