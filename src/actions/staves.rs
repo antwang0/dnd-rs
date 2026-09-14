@@ -1037,8 +1037,60 @@ pub static CHARGE_STAFF_OF_WITHERING: StaffPrime = StaffPrime {
     log_text: "{actor} wakes the rot in the Staff of Withering.",
 };
 
+pub const STAFF_OF_THUNDER_AND_LIGHTNING_NAME: &str = "Staff of Thunder and Lightning";
+
+/// One charge of four, for 2d6 lightning on the next melee hit — SRD
+/// 5.2's *"Lightning. When you hit with a melee attack using the staff,
+/// you can cause the target to take an extra 2d6 Lightning damage."*
+pub static CHARGE_STAFF_LIGHTNING: StaffPrime = StaffPrime {
+    action_name: "charge staff lightning",
+    action_aliases: &["staff-lightning", "charge lightning"],
+    item_name: STAFF_OF_THUNDER_AND_LIGHTNING_NAME,
+    charges: 1,
+    condition: Condition::StaffLightning,
+    log_text: "{actor} wakes the lightning in the Staff of Thunder and Lightning.",
+};
+
+/// One charge of four, for a DC 17 Constitution save against Stunned on
+/// the next melee hit — SRD 5.2's *"Thunder … The target you hit must
+/// succeed on a DC 17 Constitution saving throw or have the Stunned
+/// condition until the end of your next turn."*
+pub static CHARGE_STAFF_THUNDER: StaffPrime = StaffPrime {
+    action_name: "charge staff thunder",
+    action_aliases: &["staff-thunder", "charge thunder"],
+    item_name: STAFF_OF_THUNDER_AND_LIGHTNING_NAME,
+    charges: 1,
+    condition: Condition::StaffThundering,
+    log_text: "{actor} wakes the thunder in the Staff of Thunder and Lightning.",
+};
+
+/// Every staff row that is an **area** rather than a spell or a prime —
+/// the third and last registry on this shelf.
+///
+/// One staff needs it and it is the reason the list exists: the Staff of
+/// Thunder and Lightning's Lightning Strike is a forty-eight-tile line
+/// and its Thunderclap a sixty-foot emanation, and both are
+/// `item_actions::AreaSaveDamageItem` rows rather than anything in this
+/// file. They are staff rows all the same — billed in charges against a
+/// staff, offered off its `on_use` — and
+/// `every_staff_row_is_wired_to_the_staff_it_names` has to be able to
+/// see them or the sweep would report green on a staff whose loudest two
+/// buttons were wired to nothing.
+///
+/// Declared here rather than beside the rows themselves for the reason
+/// [`STAFF_SPELLS`] and [`STAFF_PRIMES`] are: the question "what does
+/// this shelf carry" is a question about the shelf.
+pub static STAFF_AREAS: &[&crate::actions::item_actions::AreaSaveDamageItem] = &[
+    &crate::actions::item_actions::STAFF_LIGHTNING_STRIKE,
+    &crate::actions::item_actions::STAFF_THUNDERCLAP,
+];
+
 /// Every prime in the file — the [`StaffPrime`] counterpart of
 /// [`STAFF_SPELLS`], swept by the same invariants and read by the AI's
 /// own staff rung.
-pub static STAFF_PRIMES: &[&StaffPrime] =
-    &[&CHARGE_STAFF_OF_STRIKING, &CHARGE_STAFF_OF_WITHERING];
+pub static STAFF_PRIMES: &[&StaffPrime] = &[
+    &CHARGE_STAFF_OF_STRIKING,
+    &CHARGE_STAFF_OF_WITHERING,
+    &CHARGE_STAFF_LIGHTNING,
+    &CHARGE_STAFF_THUNDER,
+];

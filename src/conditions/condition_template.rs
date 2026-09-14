@@ -3687,6 +3687,35 @@ pub enum Condition {
     /// way, with the same parting from RAW about *when* the charge is
     /// committed.
     StaffWithering,
+    /// **Staff of Thunder and Lightning**, lightning charged — SRD 5.2's
+    /// *"Lightning. When you hit with a melee attack using the staff,
+    /// you can cause the target to take an extra 2d6 Lightning damage
+    /// (no action required)."*
+    ///
+    /// The third prime on the staff shelf, and the first whose RAW cost
+    /// is *nothing at all*: the striking and withering staves each name
+    /// a number of charges, and this one says "no action required" and
+    /// leaves the price to the once-a-dawn ledger at the top of the
+    /// item's entry. The engine charges a Bonus Action and one charge
+    /// anyway, for the reason the other two do — see `StaffStriking` for
+    /// why a prime is committed before the d20 rather than after it, and
+    /// `STAFF_OF_THUNDER_AND_LIGHTNING` for why four properties share one
+    /// pool.
+    StaffLightning,
+    /// **Staff of Thunder and Lightning**, thunder charged — SRD 5.2's
+    /// *"Thunder. When you hit with a melee attack using the staff, you
+    /// can cause the staff to emit a crack of thunder … The target you
+    /// hit must succeed on a DC 17 Constitution saving throw or have the
+    /// Stunned condition until the end of your next turn."*
+    ///
+    /// Its sibling one line up, and the other half of the staff's name.
+    /// Zero dice: the whole rider is the follow-up save, which is the
+    /// shape `Condition::FormOfDread` and the Battle Master's Trip
+    /// Attack already use. Stunned until the end of the wielder's next
+    /// turn is the strongest thing any staff on the shelf does to one
+    /// creature, and the DC is the staff's printed 17 rather than the
+    /// wielder's own — a stick does not get sharper in a wizard's hand.
+    StaffThundering,
     /// **Withered** — what a failed save against the Staff of Withering
     /// leaves behind: *"Disadvantage for 1 hour on any ability check or
     /// saving throw that uses Strength or Constitution."*
@@ -3768,6 +3797,8 @@ impl Condition {
             Condition::Bounding => "bounding",
             Condition::StaffStriking => "staff of striking charged",
             Condition::StaffWithering => "staff of withering charged",
+            Condition::StaffLightning => "staff lightning charged",
+            Condition::StaffThundering => "staff thunder charged",
             Condition::Withered => "withered",
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",

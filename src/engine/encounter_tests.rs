@@ -57689,6 +57689,194 @@ fn the_staff_of_the_python_summons_once_a_rest_and_stays_a_staff() {
     assert!(fire(&mut e, user), "the staff did not refill overnight");
 }
 
+/// The Staff of Thunder and Lightning's four buttons, and the field they
+/// needed.
+///
+/// Three claims, one per thing this item is the first of:
+///
+///   - **Four rows, four lanes, one pool.** Two on-hit primes, a line
+///     and an emanation, all billed against the same four charges — and
+///     the staff survives them, which is what separates a staff from a
+///     gem.
+///   - **Thunderclap's rider lands on exactly the creatures that
+///     failed.** RAW's sentence is *"on a failed save, a creature takes
+///     2d6 Thunder damage **and has the Deafened condition**"*, and
+///     `AreaSaveDamageItem` could only say the first half until
+///     `also_install`. The proof is the correlation rather than the
+///     count: every deafened creature took the full roll and every other
+///     one took half of it, from the same pre-rolled pool.
+///   - **The lightning prime is a prime.** It goes up for a Bonus Action
+///     and a charge, it rides the next melee hit for 2d6, and it is
+///     consumed when it does.
+#[test]
+fn the_staff_of_thunder_and_lightning_spends_one_pool_on_four_properties() {
+    use crate::actions::item_actions::{STAFF_LIGHTNING_STRIKE, STAFF_THUNDERCLAP};
+    use crate::actions::staves::{CHARGE_STAFF_LIGHTNING, CHARGE_STAFF_THUNDER};
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::STAFF_OF_THUNDER_AND_LIGHTNING;
+
+    // Every row the staff offers is one of the four, and every one is
+    // priced in charges against the staff itself.
+    let offered: Vec<&str> = STAFF_OF_THUNDER_AND_LIGHTNING
+        .on_use
+        .iter()
+        .map(|a| a.name())
+        .collect();
+    assert_eq!(
+        offered,
+        vec![
+            CHARGE_STAFF_LIGHTNING.action_name,
+            CHARGE_STAFF_THUNDER.action_name,
+            STAFF_LIGHTNING_STRIKE.action_name,
+            STAFF_THUNDERCLAP.action_name,
+        ]
+    );
+    assert_eq!(STAFF_OF_THUNDER_AND_LIGHTNING.charges, 4);
+
+    // Thunderclap: the rider follows the verdict, not the damage.
+    let mut saw_split = false;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(30, 30, &[], seed);
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&wiz)
+            .unwrap()
+            .pickup_item(&STAFF_OF_THUNDER_AND_LIGHTNING);
+        let goblins: Vec<usize> = (0..6)
+            .filter_map(|i| {
+                e.instantiate_creature(
+                    &GOBLIN_TEMPLATE,
+                    Coordinate::new(16 + i * 2, 14),
+                    1,
+                    i as usize,
+                )
+                .ok()
+            })
+            .collect();
+        assert!(goblins.len() >= 4, "seed {seed}: the board lost its goblins");
+        let before: Vec<u32> = goblins.iter().map(|g| e.actors[g].hitpoints()).collect();
+
+        let aei = ActionExecutionInfo::new(
+            &STAFF_THUNDERCLAP,
+            wiz,
+            None,
+            Some(vec![e.actors[&wiz].location()]),
+            None,
+        );
+        assert!(aei.validate(&e), "seed {seed}: thunderclap would not open");
+        e.push_action(aei);
+        e.process_stack();
+
+        let mut deafened_loss: Vec<u32> = Vec::new();
+        let mut hearing_loss: Vec<u32> = Vec::new();
+        for (g, was) in goblins.iter().zip(&before) {
+            let Some(a) = e.actors.get(g) else { continue };
+            let lost = was.saturating_sub(a.hitpoints());
+            if a.has_condition(Condition::Deafened) {
+                deafened_loss.push(lost);
+            } else {
+                hearing_loss.push(lost);
+            }
+        }
+        if deafened_loss.is_empty() || hearing_loss.is_empty() {
+            continue;
+        }
+        saw_split = true;
+        let full = deafened_loss[0];
+        assert!(
+            deafened_loss.iter().all(|&l| l == full),
+            "seed {seed}: the failures took different amounts: {deafened_loss:?}"
+        );
+        assert!(
+            hearing_loss.iter().all(|&l| l == full / 2),
+            "seed {seed}: a creature that passed did not take half: {hearing_loss:?} of {full}"
+        );
+        assert!(full > full / 2, "seed {seed}: the roll was too small to tell");
+    }
+    assert!(
+        saw_split,
+        "forty claps and never one goblin deafened beside one that was not"
+    );
+
+    // The lightning prime: a Bonus Action, a charge, and 2d6 on the
+    // swing that cashes it.
+    //
+    // A fighter holds it rather than the wizard above, and the reason is
+    // `StaffPrime::custom_validate_input`: a prime that sweetens the next
+    // melee hit refuses to go up on a holder with no melee hit to
+    // sweeten. RAW's staff *is* a quarterstaff and so always arms its own
+    // rider, which the engine's staves do not model — see the module
+    // header on `crate::actions::staves` — so the gate reads the rest of
+    // the sheet instead.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let holder = e
+        .instantiate_creature(
+            &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+            Coordinate::new(4, 4),
+            0,
+            0,
+        )
+        .unwrap();
+    e.actors
+        .get_mut(&holder)
+        .unwrap()
+        .pickup_item(&STAFF_OF_THUNDER_AND_LIGHTNING);
+    let aei = ActionExecutionInfo::new(&CHARGE_STAFF_LIGHTNING, holder, None, None, None);
+    assert!(
+        aei.validate(&e),
+        "an attuned holder with a melee swing should be able to charge it:\n{}",
+        e.messages().join("\n")
+    );
+    e.push_action(aei);
+    e.process_stack();
+    assert!(e.actors[&holder].has_condition(Condition::StaffLightning));
+    assert_eq!(
+        e.actors[&holder].item_charges_remaining(STAFF_OF_THUNDER_AND_LIGHTNING.name),
+        3,
+        "the prime cost one of four"
+    );
+
+    // …and the swing that cashes it carries the rider and clears it.
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    let mut fired = false;
+    for _ in 0..40 {
+        let before = e.messages().len();
+        for ef in crate::engine::attack::resolve_attack(
+            &mut e,
+            crate::engine::attack::AttackParams {
+                caster_id: holder,
+                target_id: goblin,
+                action_name: "staff",
+                attack_bonus: 100,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                ..crate::engine::attack::AttackParams::DEFAULTS
+            },
+        ) {
+            ef.apply(&mut e);
+        }
+        if e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("staff lightning"))
+        {
+            fired = true;
+            break;
+        }
+        e.actors.get_mut(&goblin).unwrap().heal(50);
+    }
+    assert!(fired, "the primed staff never paid out");
+    assert!(
+        !e.actors[&holder].has_condition(Condition::StaffLightning),
+        "the rider is consumed by the swing that cashes it"
+    );
+}
+
 /// Every `SummonItem` in the engine is in [`ALL_SUMMON_ITEMS`], and
 /// every one of them is reachable from an `Item` that names it.
 ///
@@ -102370,18 +102558,19 @@ fn every_spell_that_prices_an_upcast_declares_it() {
 #[test]
 fn every_staff_row_is_wired_to_the_staff_it_names() {
     use crate::actions::item_actions::{ALL_SUMMON_ITEMS, ItemUseBilling};
-    use crate::actions::staves::{STAFF_PRIMES, STAFF_SPELLS};
+    use crate::actions::staves::{STAFF_AREAS, STAFF_PRIMES, STAFF_SPELLS};
     use crate::items::item_template::STAVES;
 
-    // All three chassis, as one list of `(row name, staff name, price)`:
-    // a spell row, a prime row and a summon row differ in what they do
-    // with the charges and not at all in how they have to be wired.
+    // All four chassis, as one list of `(row name, staff name, price)`:
+    // a spell row, a prime row, an area row and a summon row differ in
+    // what they do with the charges and not at all in how they have to
+    // be wired.
     //
-    // The third arm is the Staff of the Python, whose charge buys a
-    // Giant Constrictor Snake. It lives in `item_actions` with the
-    // figurines rather than in `staves` because nothing on that shelf is
-    // a *body* — but it is a staff, and every question below is a
-    // question about staves.
+    // The last two arms are the rows that live in `item_actions` rather
+    // than in `staves`, because nothing on that shelf is their shape:
+    // the Staff of Thunder and Lightning's line and emanation, and the
+    // Staff of the Python's Giant Constrictor Snake. They are staff rows
+    // all the same, and every question below is a question about staves.
     //
     // A staff row's price is an `ItemUseBilling` now rather than a bare
     // count, because the chassis it shares with the loot table's
@@ -102406,6 +102595,16 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
                 .iter()
                 .map(|r| (r.action_name, r.item_name, r.charges)),
         )
+        .chain(STAFF_AREAS.iter().map(|r| {
+            let ItemUseBilling::Charges(n) = r.billing else {
+                panic!(
+                    "{} is on a staff and is not priced in charges — a staff row \
+                     that is free or that consumes the staff is a different item",
+                    r.action_name
+                )
+            };
+            (r.action_name, r.item_name, n)
+        }))
         .chain(ALL_SUMMON_ITEMS.iter().filter_map(|r| {
             // Only the summon rows billed against a staff; the gems, the
             // horn, the bag and the nine figurines are not staves and

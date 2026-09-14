@@ -180,6 +180,43 @@ pub fn resolve_area_save_damage(
     damage: u32,
     damage_type: DamageType,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
+    resolve_area_save_damage_saves(
+        encounter,
+        caster_id,
+        shape,
+        aim,
+        save_ability,
+        dc,
+        damage,
+        damage_type,
+    )
+    .0
+}
+
+/// [`resolve_area_save_damage`] with the per-target verdicts kept.
+///
+/// The same walk, returning `(effects, [(target, passed)])` — which is
+/// what `resolve_burst_targets` underneath has always handed back and
+/// what the wrapper above throws away. A caller that wants to hang a
+/// rider on the creatures that *failed* — RAW's *"on a failed save, a
+/// creature takes 2d6 Thunder damage **and has the Deafened
+/// condition**"* — needs the list, and re-deriving it would mean
+/// re-rolling every save.
+///
+/// Shielded allies are recorded as having passed; see
+/// `resolve_burst_targets` for why that is RAW rather than an
+/// approximation.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn resolve_area_save_damage_saves(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    shape: AreaShape,
+    aim: Coordinate,
+    save_ability: AbilityScoreType,
+    dc: i32,
+    damage: u32,
+    damage_type: DamageType,
+) -> (Vec<Box<dyn ApplicableSideEffect>>, Vec<(usize, bool)>) {
     // Shielded allies in the area auto-pass the save AND take 0 damage
     // (Sorcerer Careful Spell, Evocation Wizard Sculpt Spells). Resolved
     // up-front so the shared per-target loop can skip them cleanly; the
@@ -202,7 +239,6 @@ pub fn resolve_area_save_damage(
         SaveDamagePolicy::HalfOnSave,
         &shielded,
     )
-    .0
 }
 
 /// Enemy-only sibling of `resolve_burst_save_damage`. Every combat-active

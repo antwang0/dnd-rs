@@ -8040,12 +8040,75 @@ pub static STAVES: &[&Item] = &[
     &STAFF_OF_STRIKING,
     &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
+    &STAFF_OF_THUNDER_AND_LIGHTNING,
     // The one whose charge buys a body rather than a spell — see
     // `item_actions::THROW_STAFF_OF_THE_PYTHON`. On this list because it
     // is a staff and the family's invariants are about staves; not in
     // `crate::actions::staves` because nothing there would fit it.
     &STAFF_OF_THE_PYTHON,
 ];
+
+/// **Staff of Thunder and Lightning** (Staff, Very Rare, requires
+/// attunement) — a `+2` quarterstaff with the loudest four buttons on
+/// the shelf.
+///
+/// The only Very Rare staff the engine carries and the only one whose
+/// four rows sit in four different lanes at once: two on-hit primes
+/// (`staves::CHARGE_STAFF_LIGHTNING`, `CHARGE_STAFF_THUNDER`, which ride
+/// `ON_HIT_RIDERS` like the striking and withering staves), a
+/// forty-eight-tile line (`item_actions::STAFF_LIGHTNING_STRIKE`) and a
+/// sixty-foot emanation (`STAFF_THUNDERCLAP`). Nothing else in the file
+/// answers both "there is one of them and it is in front of me" and
+/// "there are nine of them and they are all around me".
+///
+/// **Four properties, one pool of four charges**, and that is the one
+/// place this parts company with RAW. The book rations each property
+/// separately — *"once one of these properties is used, it can't be used
+/// again until the next dawn"* — where `Item::charges` is a single
+/// number. So a wielder can spend two charges on Lightning Strike where
+/// RAW allows one, and the divergence is capped by the size of the pool:
+/// four uses a rest either way, which is what a fight sees. Naming it
+/// costs a paragraph; a per-property ledger would cost the item lane a
+/// field nothing else in the file would ever read.
+///
+/// **RAW's fifth property is absent.** *"Thunder and Lightning.
+/// Immediately after you hit with a melee attack using the staff, you
+/// can take a Bonus Action to use the Lightning and Thunder properties
+/// at the same time. Doing so doesn't expend the daily use of those
+/// properties, only the use of this one."* Its whole content is a refund
+/// against the per-property ledger above, and the pool the engine keeps
+/// cannot tell one property's charge from another's — so the clause
+/// would land as "spend one charge instead of two", which is not what it
+/// says and is worth less than the sentence explaining it. The two
+/// primes are each a Bonus Action, so a wielder who wants both spends
+/// two turns opening, which is the honest price here.
+///
+/// The `+2` rides `ItemBonuses` like every other `+N` weapon in the
+/// file, so it reaches the holder's own swings too; see
+/// `WEAPON_PLUS_TWO` for why that generalisation is the file's
+/// convention rather than a decision taken for this staff.
+pub static STAFF_OF_THUNDER_AND_LIGHTNING: Item = Item {
+    name: crate::actions::staves::STAFF_OF_THUNDER_AND_LIGHTNING_NAME,
+    glyph: '/',
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
+    on_use: &[
+        &crate::actions::staves::CHARGE_STAFF_LIGHTNING,
+        &crate::actions::staves::CHARGE_STAFF_THUNDER,
+        &crate::actions::item_actions::STAFF_LIGHTNING_STRIKE,
+        &crate::actions::item_actions::STAFF_THUNDERCLAP,
+    ],
+    // One per property, which is RAW's count even though the engine
+    // cannot keep them apart — see the docstring.
+    charges: 4,
+    recharge: Some(DAILY_1D6_PLUS_1),
+    requires_attunement: true,
+    grants_magical_attacks: true,
+    ..Item::DEFAULTS
+};
 
 /// The magic armoury as a set — the nine items above whose value is a
 /// printed clause rather than a bonus.
@@ -9039,6 +9102,10 @@ pub static LOOT_POOL: &[&Item] = &[
     &OBSIDIAN_STEED_FIGURINE,
     &SERPENTINE_OWL_FIGURINE,
     &SILVER_RAVEN_FIGURINE,
+    // The shelf's one Very Rare staff, and the only item in the file
+    // that carries both a line and an emanation. Single entry, like the
+    // other premium rows.
+    &STAFF_OF_THUNDER_AND_LIGHTNING,
     // The staff that is a figurine in everything but name — one Huge
     // constrictor, once a rest, and it comes back. Uncommon, so it sits
     // beside the gems rather than beside the Rare statuettes.
@@ -9231,8 +9298,8 @@ mod tests {
             );
         }
         // The staves are the third road onto the allowlist, and the
-        // narrowest: four of the nine are quarterstaffs in RAW and the
-        // other five are sticks that cast. The flag has to track which is
+        // narrowest: five of the eleven are quarterstaffs in RAW and the
+        // other six are sticks that cast. The flag has to track which is
         // which, so the four are named rather than allowed wholesale — a
         // Staff of Charming that quietly started sharpening swings would
         // be caught here, and a Staff of Power that stopped would be too.
@@ -9247,6 +9314,7 @@ mod tests {
             "Staff of Power",
             "Staff of Striking",
             "Staff of Withering",
+            "Staff of Thunder and Lightning",
         ];
         for item in STAVES {
             assert_eq!(

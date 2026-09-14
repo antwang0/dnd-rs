@@ -243,6 +243,23 @@ pub struct AreaSaveDamageItem {
     /// item mid-fight. The condition chassis further down learned the
     /// same thing from the Mace of Terror.
     pub billing: ItemUseBilling,
+    /// A condition every creature that **fails** the save also picks up,
+    /// or `None` for the rows whose whole payload is the damage.
+    ///
+    /// SRD 5.2 writes this shape on a handful of area effects —
+    /// *"takes 2 (2d6) Thunder damage and has the Deafened condition for
+    /// 1 minute"* — and until this field the chassis could not say it,
+    /// so the one carrier the engine had (the Horn of Blasting) is a
+    /// sixty-line bespoke `Action` impl that re-walks the burst by hand.
+    /// It stays bespoke, and for a reason worth naming rather than
+    /// leaving as an oversight: RAW gives the horn a flavour line of its
+    /// own before the damage row, and this chassis logs one line.
+    ///
+    /// Read off the per-target verdicts
+    /// `resolve_area_save_damage_saves` returns, so a creature shielded
+    /// by Careful Spell picks up nothing — it is recorded as having
+    /// passed, which is what RAW's *"automatically succeed"* means.
+    pub also_install: Option<(Condition, ConditionTimer)>,
 }
 
 impl Action for AreaSaveDamageItem {
@@ -308,7 +325,7 @@ impl Action for AreaSaveDamageItem {
         target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::actions::action_template::resolve_area_save_damage;
+        use crate::actions::action_template::resolve_area_save_damage_saves;
 
         let Some(aim) = first_target_location(target_locations) else {
             return Vec::new();
@@ -326,7 +343,7 @@ impl Action for AreaSaveDamageItem {
             self.log_label, self.dice.count, self.dice.faces, damage
         ));
 
-        resolve_area_save_damage(
+        let (mut effects, saves) = resolve_area_save_damage_saves(
             encounter,
             caster_id,
             self.shape,
@@ -335,7 +352,25 @@ impl Action for AreaSaveDamageItem {
             self.dc,
             damage,
             self.damage_type,
-        )
+        );
+        // RAW's on-failure rider, if this row carries one. Pushed after
+        // the damage so the log reads in the order the sentence does,
+        // and gated on the verdict rather than on damage landing: a
+        // creature immune to thunder that failed the save is still
+        // deafened.
+        if let Some((condition, timer)) = self.also_install {
+            for (target_id, passed) in saves {
+                if passed {
+                    continue;
+                }
+                effects.push(Box::new(ApplyCondition {
+                    actor_id: target_id,
+                    condition,
+                    timer,
+                }));
+            }
+        }
+        effects
     }
 }
 
@@ -817,6 +852,7 @@ pub static READ_FIREBALL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 150 ft range — well past any current map.
     reach: 60,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Config struct for "Magic Missile auto-hit dart volley" consumables —
@@ -1525,6 +1561,7 @@ pub static READ_LIGHTNING_BOLT_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Config struct for "single-target heal" consumable items — the shared
@@ -1877,6 +1914,7 @@ pub static READ_CONE_OF_COLD_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Cone { length: 24 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Wand of Magic Missiles — 5 darts of 1d4+1 force each, auto-hit, no
@@ -1947,6 +1985,7 @@ pub static USE_WAND_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Burst { radius: 4 },
     reach: 60,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 const WAND_OF_LIGHTNING_BOLTS_NAME: &str = "Wand of Lightning Bolts";
@@ -1968,6 +2007,7 @@ pub static USE_WAND_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageItem 
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 const SCROLL_OF_SHATTER_NAME: &str = "Scroll of Shatter";
@@ -1991,6 +2031,7 @@ pub static READ_SHATTER_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft range = 24 tiles, matching the spell's reach.
     reach: 24,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 const WAND_OF_CONE_OF_COLD_NAME: &str = "Wand of Cone of Cold";
@@ -2012,6 +2053,7 @@ pub static USE_WAND_OF_CONE_OF_COLD: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Cone { length: 24 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 const SCROLL_OF_MASS_HEALING_WORD_NAME: &str = "Scroll of Mass Healing Word";
@@ -2325,6 +2367,7 @@ pub static READ_BURNING_HANDS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Cone { length: 6 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Thunderwave — 2d8 thunder CON-save burst, 2-tile radius.
@@ -2349,6 +2392,7 @@ pub static READ_THUNDERWAVE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // safety (caster picks the cube's center). 6 tiles ≈ 15 ft.
     reach: 6,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Config struct for "area save-or-condition" consumable items — the
@@ -2859,6 +2903,7 @@ pub static FIRE_SHOOTING_STAR: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft = 24 tiles.
     reach: 24,
     billing: ItemUseBilling::Charges(1),
+    also_install: None,
 };
 
 /// **Clap of Thunder** — the Thunderous Greatclub's Magic action:
@@ -3078,6 +3123,7 @@ pub static READ_VITRIOLIC_SPHERE_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem
     // match the Fireball scroll's picker envelope.
     reach: 60,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Archmage Pearl of Power — bonus action; restore one expended level-4
@@ -4072,6 +4118,7 @@ pub static READ_ICE_STORM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
     reach: 48,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Web — Action; 4-tile burst, DEX save vs DC 13, fail =
@@ -4163,6 +4210,7 @@ pub static USE_NECKLACE_OF_FIREBALLS: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft RAW; 24 tiles.
     reach: 24,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Dust of Disappearance — Bonus Action; installs `Invisible` on the
@@ -4307,6 +4355,7 @@ pub static READ_CLOUDKILL_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 120 ft RAW; 48 tiles. Capped to map-realistic 48.
     reach: 48,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Prayer of Healing — 2d8+3 per-ally heal, up to 6 closest
@@ -4417,6 +4466,7 @@ pub static READ_SYNAPTIC_STATIC_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     // 120 ft RAW; 48 tiles.
     reach: 48,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Circle of Death — Action; 6-tile burst, CON save vs DC 15,
@@ -4440,6 +4490,7 @@ pub static READ_CIRCLE_OF_DEATH_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     // 150 ft RAW; 48 tiles (engine cap).
     reach: 48,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Potion of Mind Blank — Action; installs `MindBlanked` on the drinker
@@ -5069,6 +5120,7 @@ pub static READ_MOONBEAM_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 120 ft RAW; 48 tiles.
     reach: 48,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Guiding Bolt — Action; single-target, 4d6 radiant damage on
@@ -5338,6 +5390,7 @@ pub static USE_NECKLACE_OF_LIGHTNING_BOLTS: AreaSaveDamageItem = AreaSaveDamageI
     shape: AreaShape::Line { length: 40, half_width: 1 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Mind Blank — Action; self-install `MindBlanked` for 10
@@ -5803,6 +5856,7 @@ pub static READ_PYROTECHNICS_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft RAW range; 24 tiles.
     reach: 24,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Flame Arrows — Action; install `FlamingArrowed` for 10
@@ -5999,6 +6053,69 @@ const HORN_OF_BLASTING_CONE: isize = 12;
 
 pub static BLOW_HORN_OF_BLASTING: HornOfBlastingItem = HornOfBlastingItem {};
 
+/// **Staff of Thunder and Lightning**, *Lightning Strike* — Magic
+/// action; *"a bolt of lightning … in a Line that is 5 feet wide and 120
+/// feet long. Each creature in that Line makes a DC 17 Dexterity saving
+/// throw, taking 9d6 Lightning damage on a failed save or half as much
+/// damage on a successful one."*
+///
+/// Nine d6 is the largest single pool any item in the file throws, and
+/// the line is the shape that makes it worth throwing: forty-eight tiles
+/// of it, aimed down a corridor, is most of a dungeon room. Pure data on
+/// the shared chassis — the Javelin of Lightning below is the same
+/// geometry at half the dice, and neither needed a line of code.
+pub static STAFF_LIGHTNING_STRIKE: AreaSaveDamageItem = AreaSaveDamageItem {
+    action_name: "lightning strike",
+    action_aliases: &["staff bolt", "lightning strike"],
+    item_name: crate::actions::staves::STAFF_OF_THUNDER_AND_LIGHTNING_NAME,
+    log_label: "staff of thunder and lightning",
+    dice: Dice::new(9, 6),
+    damage_type: DamageType::Lightning,
+    save: AbilityScoreType::Dexterity,
+    dc: 17,
+    // 120 ft RAW; 48 tiles, and its own reach.
+    shape: AreaShape::Line { length: 48, half_width: 1 },
+    reach: 0,
+    billing: ItemUseBilling::Charges(1),
+    also_install: None,
+};
+
+/// **Staff of Thunder and Lightning**, *Thunderclap* — Magic action;
+/// *"every creature within a 60-foot Emanation originating from you
+/// makes a DC 17 Constitution saving throw. On a failed save, a creature
+/// takes 2d6 Thunder damage and has the Deafened condition for 1
+/// minute."*
+///
+/// The first row in the file to use [`AreaSaveDamageItem::also_install`],
+/// and the reason that field exists: RAW's sentence is damage *and* a
+/// condition on the same failed save, and the chassis could only say the
+/// first half. The Horn of Blasting is the other carrier of the shape
+/// and stays bespoke — see the field's docstring.
+///
+/// RAW's Emanation is centred on the wielder rather than aimed, which on
+/// this grid is a `Burst` the caster stands in the middle of; twenty-four
+/// tiles is sixty feet. The damage is small for a Very Rare item and is
+/// not the point — a room full of Deafened creatures is, since deafness
+/// is what stops a spellcaster hearing a verbal component and what stops
+/// a pack co-ordinating.
+pub static STAFF_THUNDERCLAP: AreaSaveDamageItem = AreaSaveDamageItem {
+    action_name: "thunderclap",
+    action_aliases: &["staff thunderclap", "clap"],
+    item_name: crate::actions::staves::STAFF_OF_THUNDER_AND_LIGHTNING_NAME,
+    log_label: "staff thunderclap",
+    dice: Dice::new(2, 6),
+    damage_type: DamageType::Thunder,
+    save: AbilityScoreType::Constitution,
+    dc: 17,
+    // 60 ft Emanation RAW; 24 tiles of radius, centred wherever the
+    // wielder is standing.
+    shape: AreaShape::Burst { radius: 24 },
+    reach: 24,
+    billing: ItemUseBilling::Charges(1),
+    // RAW's "for 1 minute", as the engine's ten rounds.
+    also_install: Some((Condition::Deafened, ConditionTimer::Rounds(10))),
+};
+
 /// Javelin of Lightning — Action; 4d6 lightning in RAW's *"5-foot-wide,
 /// 120-foot-long Line"*, forty-eight tiles long, DEX save vs DC 13 for
 /// half. The line runs along the throw, which is what the javelin is:
@@ -6020,6 +6137,7 @@ pub static THROW_JAVELIN_OF_LIGHTNING: AreaSaveDamageItem = AreaSaveDamageItem {
     shape: AreaShape::Line { length: 48, half_width: 1 },
     reach: 0,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Bead of Force — Action; a single bead torn from a Necklace of Beads
@@ -6046,6 +6164,7 @@ pub static THROW_BEAD_OF_FORCE: AreaSaveDamageItem = AreaSaveDamageItem {
     // 60 ft RAW; 24 tiles.
     reach: 24,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Fly — Action; install `Flying` for 10 rounds on a single
@@ -7060,6 +7179,7 @@ pub static READ_MAGNIFY_GRAVITY_SCROLL: AreaSaveDamageItem = AreaSaveDamageItem 
     // 60 ft RAW = 24 tiles.
     reach: 24,
     billing: ItemUseBilling::Consumed,
+    also_install: None,
 };
 
 /// Scroll of Elemental Weapon — Action; install `ElementallyWeaponed` for

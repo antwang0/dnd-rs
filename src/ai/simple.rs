@@ -4136,34 +4136,48 @@ fn try_item_self_buff(
 ///   3. `fangs of the fire snake` — the Four Elements monk's +1d10
 ///      fire rider. Same shape as Divine Strike and sits with it for
 ///      the same reason; the monk carries no other entry on this lane.
-///   4. `fire rune` — the Rune Knight's prime, and the only entry on
+///   4. `charge staff thunder` — the Staff of Thunder and Lightning's
+///      DC 17 Constitution save against **Stunned**, which is the
+///      strongest thing anything on this lane does to one creature: an
+///      incapacitated target with a Speed of 0 that auto-fails every
+///      Strength and Dexterity save and hands advantage to the whole
+///      party. Ahead of Fire Rune because Stunned strictly contains
+///      Restrained and adds the failed saves; the DC is the staff's
+///      printed 17 rather than the wielder's, which is the highest
+///      number on the lane as well.
+///   5. `fire rune` — the Rune Knight's prime, and the only entry on
 ///      this lane that pays twice: 2d6 fire on the hit *and* a STR
 ///      save against Restrained, which is prone's advantage-granting
 ///      clause plus a speed of zero plus disadvantage on the target's
 ///      own swings. Ahead of every maneuver below because it strictly
 ///      contains what they buy.
-///   5. `charge staff of withering` — 2d10 necrotic and a DC 15 CON
+///   6. `charge staff of withering` — 2d10 necrotic and a DC 15 CON
 ///      save against `Withered`, for one of the staff's three charges.
-///      With the row below it, the only two entries on this lane that
-///      arrive on an *item* rather than a stat block. Withering is ahead
-///      of striking for the reason Fire Rune is ahead of the maneuvers:
-///      it pays twice, and its pool is three charges deep, so a charge
-///      held back is a third of the staff left unused.
-///   6. `charge staff of striking` — 3d6 force for three of ten. Pure
+///      Withering is ahead of striking for the reason Fire Rune is
+///      ahead of the maneuvers: it pays twice, and its pool is three
+///      charges deep, so a charge held back is a third of the staff
+///      left unused.
+///   7. `charge staff of striking` — 3d6 force for three of ten. Pure
 ///      damage, no save, and the deeper pool, so it is the one to fall
 ///      through to.
-///   7. `trip attack` — prone is the strongest maneuver rider: it
+///   8. `charge staff lightning` — 2d6 lightning for one of four. Pure
+///      damage like striking above it and a smaller die, and behind it
+///      for a second reason as well: the Staff of Thunder and
+///      Lightning's four charges are also what pay for its 9d6 line, so
+///      a charge spent sweetening one swing is a charge not spent on
+///      the room.
+///   9. `trip attack` — prone is the strongest maneuver rider: it
 ///      hands every melee ally advantage against the target *and*
 ///      costs the target its movement.
-///   8. `menacing attack` — Frightened sticks on tough-STR monsters
+///  10. `menacing attack` — Frightened sticks on tough-STR monsters
 ///      that shrug off the trip, but only disadvantages the target's
 ///      own swings rather than enabling the party's.
-///   9. `disarming attack` — attacker disadvantage, which bites
+///  11. `disarming attack` — attacker disadvantage, which bites
 ///      hardest on ranged and multiattack threats but lasts a single
 ///      round in this engine.
-///  10. `pushing attack` — pure displacement, no accuracy or save
+///  12. `pushing attack` — pure displacement, no accuracy or save
 ///      rider attached; the finisher when nothing above is available.
-///  11. `goading attack` — the tank-anchor. Last because its value is
+///  13. `goading attack` — the tank-anchor. Last because its value is
 ///      conditional on the fighter *wanting* to be attacked, which is
 ///      the situation left over once the debuff riders are spent.
 ///
@@ -4424,9 +4438,11 @@ const MELEE_ADJACENT_PRIMES: &[&str] = &[
     "divine strike necrotic",
     "divine strike psychic",
     "fangs of the fire snake",
+    "charge staff thunder",
     "fire rune",
     "charge staff of withering",
     "charge staff of striking",
+    "charge staff lightning",
     "trip attack",
     "menacing attack",
     "disarming attack",

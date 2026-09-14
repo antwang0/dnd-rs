@@ -9256,6 +9256,67 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
         //
         // The DC is the staff's own 15, not the wielder's spell save DC,
         // for the reason the Giant Slayer's is — see `fixed_dc`.
+        // SRD 5.2 **Staff of Thunder and Lightning**, the *Lightning*
+        // property: "when you hit with a melee attack using the staff,
+        // you can cause the target to take an extra 2d6 Lightning
+        // damage." The plainest rider on the shelf — a die and nothing
+        // else — and the only one whose RAW price is no action at all;
+        // see `Condition::StaffLightning` for what the engine charges
+        // instead and why.
+        OnHitRider {
+            condition: Condition::StaffLightning,
+            dice: Dice::new(2, 6),
+            label: "staff lightning",
+            damage_type: RiderDamage::Fixed(DamageType::Lightning),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: None,
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+            attacker_gate: None,
+            attacker_link: None,
+            spends_item_charge: None,
+        },
+        // …and the *Thunder* property: "the target you hit must succeed
+        // on a DC 17 Constitution saving throw or have the Stunned
+        // condition until the end of your next turn."
+        //
+        // Zero dice — the whole rider is the follow-up, the shape
+        // Stunning Strike and Form of Dread already use. The DC is the
+        // staff's printed 17 rather than the wielder's spell save DC,
+        // for the reason `SmiteFollowUp::fixed_dc` gives: a stat line's
+        // number belongs to the object.
+        OnHitRider {
+            condition: Condition::StaffThundering,
+            dice: Dice::new(0, 0),
+            label: "staff thunder",
+            damage_type: RiderDamage::Fixed(DamageType::Thunder),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(17),
+                effect: FollowUpEffect::Condition {
+                    condition: Condition::Stunned,
+                    // RAW's "until the end of your next turn", which is
+                    // the two-round window every other same-worded rider
+                    // in the engine uses.
+                    timer: ConditionTimer::Rounds(2),
+                },
+                label: "staff thunder",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+            attacker_gate: None,
+            attacker_link: None,
+            spends_item_charge: None,
+        },
         OnHitRider {
             condition: Condition::StaffWithering,
             dice: Dice::new(2, 10),
