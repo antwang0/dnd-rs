@@ -3158,6 +3158,25 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // turn." Every other row above says "once on each of your turns"
     // and means the same thing. See `feats::BOON_OF_COMBAT_PROWESS_TAG`.
     crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
+    // The damage-type feat trio's three rationed clauses. Crusher's
+    // shove and Slasher's speed cut are both RAW's "once per turn when
+    // you hit …"; Piercer's is the same window around a damage-die
+    // reroll rather than around an effect on the target. None of the
+    // three is a damage rider, which is the fourth time this list has
+    // had to say that and the best evidence it is keyed by the right
+    // thing. See `crate::actions::feats`.
+    crate::actions::feats::CRUSHER_TAG,
+    crate::actions::feats::PIERCER_TAG,
+    crate::actions::feats::SLASHER_TAG,
+    // The odd one out, and worth the line it costs to say so: this key
+    // marks an **opening** rather than a spend. Every row above is
+    // stamped when its holder cashes something and read back to refuse
+    // a second cash; this one is stamped when a polearm goes in and
+    // read back by `feats::PoleStrike` to *permit* a swing. Same
+    // ledger, same per-turn window, opposite polarity — which is only
+    // possible because the ledger is keyed by plain tag and asks
+    // nothing about what the tag means.
+    crate::actions::feats::POLE_STRIKE_OPENING_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).

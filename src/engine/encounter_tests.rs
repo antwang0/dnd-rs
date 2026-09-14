@@ -84490,19 +84490,20 @@ fn a_warlock_with_no_tentacle_does_not_shield_themselves() {
 #[test]
 fn the_once_per_turn_ledger_registry_names_every_rider() {
     use crate::actions::class_features::{
-        ANCESTRAL_PROTECTORS_TAG, DIVINE_FURY_TAG, FEROCIOUS_CHARGER_TAG, FOE_SLAYER_TAG,
-        ONCE_PER_TURN_RIDER_TAGS, SNEAK_ATTACK_TAG,
+        DIVINE_FURY_TAG, FEROCIOUS_CHARGER_TAG, FOE_SLAYER_TAG, ONCE_PER_TURN_RIDER_TAGS,
+        SNEAK_ATTACK_TAG,
     };
-    use crate::engine::attack::{ONCE_PER_TURN_WEAPON_DIE_RIDERS, on_hit_rider_ledger_tags};
+    use crate::engine::attack::{
+        ONCE_PER_TURN_WEAPON_DIE_RIDERS, on_hit_condition_mark_ledger_tags,
+        on_hit_rider_ledger_tags,
+    };
     use std::collections::HashSet;
 
     /// Tags on the ledger that belong to no cohort row, because their
     /// rider is open-coded rather than declarative. Four damage riders
-    /// whose log or bonus shape doesn't fit either table (Sneak Attack,
-    /// Foe Slayer, Divine Fury, Ferocious Charger), one that isn't a
-    /// damage rider at all — Ancestral Protectors uses the ledger to
-    /// enforce "the first creature you hit on your turn" — and one that
-    /// is neither a rider nor a class feature: the **Savage Attacker**
+    /// whose log or bonus shape doesn't fit any table (Sneak Attack,
+    /// Foe Slayer, Divine Fury, Ferocious Charger), and one that is
+    /// neither a rider nor a class feature: the **Savage Attacker**
     /// feat rerolls the swing's existing dice rather than adding any of
     /// its own, so there is no die pool for either cohort to describe.
     ///
@@ -84521,7 +84522,6 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         FOE_SLAYER_TAG,
         DIVINE_FURY_TAG,
         FEROCIOUS_CHARGER_TAG,
-        ANCESTRAL_PROTECTORS_TAG,
         crate::actions::feats::SAVAGE_ATTACKER_TAG,
         crate::actions::class_features::GRASP_OF_HADAR_TAG,
         crate::actions::class_features::LANCE_OF_LETHARGY_TAG,
@@ -84532,6 +84532,24 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         // adds no damage at all, so it is open-coded at the two attack
         // chokepoints through `EncounterInstance::peerless_aim_rescues`.
         crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
+        // **Crusher**'s shove. Its sibling clauses are both rows on
+        // `ON_HIT_CONDITION_MARKS` and reach this test through
+        // `on_hit_condition_mark_ledger_tags`; this one installs
+        // nothing, so it is a helper (`try_fire_crusher_shove`) rather
+        // than a row.
+        crate::actions::feats::CRUSHER_TAG,
+        // **Piercer**'s reroll, for Savage Attacker's reason exactly:
+        // it changes a die the swing had already rolled, and neither
+        // cohort describes a pool that isn't added.
+        crate::actions::feats::PIERCER_TAG,
+        // **Polearm Master**'s opening, and the one tag on the whole
+        // ledger whose polarity is inverted: it is stamped when a
+        // polearm goes in and read back to *permit* a bonus-action
+        // swing, where every other entry is stamped on a spend and read
+        // back to refuse a second one. Written at the stack's execution
+        // chokepoint (`mark_weapon_openings`), which is not an attack
+        // cohort at all.
+        crate::actions::feats::POLE_STRIKE_OPENING_TAG,
     ];
 
     let declared: HashSet<&str> = ONCE_PER_TURN_RIDER_TAGS.iter().copied().collect();
@@ -84545,6 +84563,11 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         .iter()
         .map(|spec| spec.tag)
         .chain(on_hit_rider_ledger_tags())
+        // The third cohort, and the one this check could not see until
+        // it had an accessor: `ON_HIT_CONDITION_MARKS`'s rationed rows
+        // — Ancestral Protectors' "the first creature you hit on your
+        // turn", and Slasher's speed cut.
+        .chain(on_hit_condition_mark_ledger_tags())
         .chain(OPEN_CODED.iter().copied())
         .collect();
 
@@ -108002,7 +108025,9 @@ fn the_ai_reaches_for_the_pole_strike_once_its_maneuvers_are_spent() {
         let _hydra = e
             .instantiate_creature(&HYDRA_TEMPLATE, Coordinate::new(12, 5), 1, 0)
             .unwrap();
-        e.initialize();
+        // `ei_with_terrain_seeded` has already initialized; the two
+        // `instantiate_creature` calls wired both bodies into the
+        // initiative tracker at their rolled slots.
         let tags: Vec<&'static str> = CAVALIER_FIGHTER_TEMPLATE.features.iter().copied().collect();
         let a = e.actors.get_mut(&cav).unwrap();
         for tag in tags {

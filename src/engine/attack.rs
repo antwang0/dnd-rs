@@ -9043,6 +9043,31 @@ pub fn on_hit_rider_ledger_tags() -> Vec<&'static str> {
         .collect()
 }
 
+/// Every tag `ON_HIT_CONDITION_MARKS` writes to the shared
+/// once-per-turn ledger, read back out of the private table.
+///
+/// The sibling of `on_hit_rider_ledger_tags` directly above, and it
+/// exists because that one was the only cohort the ledger's drift check
+/// could see. A rationed mark whose tag never reaches
+/// `reset_for_new_round` fires once per *fight* instead of once per
+/// turn, and there is nothing in a log that says so: a ledger entry
+/// that is never cleared is indistinguishable from a rider that has
+/// already gone off. Ancestral Protectors had been hand-listed as
+/// "open-coded" in that check for exactly as long as this accessor did
+/// not exist, which is what a missing derivation looks like from the
+/// outside — the answer was right and the reason was wrong.
+///
+/// Only the rationed rows appear. `MarkCadence::EveryHit` touches no
+/// ledger at all, so listing its tags here would make the check demand
+/// registration for something that never needs clearing.
+pub fn on_hit_condition_mark_ledger_tags() -> Vec<&'static str> {
+    ON_HIT_CONDITION_MARKS
+        .iter()
+        .filter(|row| row.cadence.rations_by_turn())
+        .map(|row| row.tag)
+        .collect()
+}
+
 /// Every bystander-side condition `RANGED_ATTACK_MAGNETS` keys a row
 /// off, read back out of the private table.
 ///
