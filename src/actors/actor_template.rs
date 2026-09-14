@@ -6973,12 +6973,22 @@ impl ActorInstance {
         self.has_great_weapon_fighting = value;
     }
 
-    /// 5e Fighting Style: Two-Weapon Fighting — +STR mod (min 0) to
-    /// melee weapon damage rolls. Approximates the RAW "add ability
-    /// modifier to the off-hand attack" clause by folding it into
-    /// every melee swing (the engine doesn't distinguish off-hand
-    /// swings at the action-list level). Read at the damage-roll site
-    /// in `engine::attack`, gated on `p.is_melee`.
+    /// Fighting Style: Two-Weapon Fighting — SRD 5.2's *"when you make
+    /// an extra attack as a result of using a weapon that has the Light
+    /// property, you can add your ability modifier to the damage of
+    /// that attack."*
+    ///
+    /// Read by `actions::two_weapon::offhand_damage_ability` and by
+    /// nothing else: the style's entire content is that one clause, and
+    /// the "extra attack" it names is the bonus-action off-hand swing.
+    ///
+    /// **This docstring used to describe a different feature**, and the
+    /// difference was a whole fighting style wide: the flag once added
+    /// the wielder's Strength modifier to *every* melee swing, which a
+    /// Ranger with Extra Attack would have collected three times a turn
+    /// for a clause RAW grants once. That collapse went when
+    /// `actions::two_weapon` shipped and the accessor's comment did not
+    /// go with it. See that module's header for the whole story.
     pub fn has_two_weapon_fighting_style(&self) -> bool {
         self.has_two_weapon_fighting_style
     }

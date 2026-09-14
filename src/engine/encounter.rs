@@ -24,6 +24,7 @@ use crate::actors::creatures::owls::OWL_TEMPLATE;
 use crate::actors::creatures::piranhas::PIRANHA_TEMPLATE;
 use crate::actors::creatures::rhinoceroses::RHINOCEROS_TEMPLATE;
 use crate::actors::creatures::scorpions::SCORPION_TEMPLATE;
+use crate::actors::creatures::spiders::SPIDER_TEMPLATE;
 use crate::actors::creatures::seahorses::{GIANT_SEAHORSE_TEMPLATE, SEAHORSE_TEMPLATE};
 use crate::actors::creatures::venomous_snakes::VENOMOUS_SNAKE_TEMPLATE;
 use crate::actors::creatures::giant_fire_beetles::GIANT_FIRE_BEETLE_TEMPLATE;
@@ -15282,6 +15283,10 @@ impl EncounterInstance {
             &RHINOCEROS_TEMPLATE,
             &SCORPION_TEMPLATE,
             &SEAHORSE_TEMPLATE,
+            // SRD 5.2's plain Spider — one hit point, a Tiny frame and a
+            // venom die worth twice its own body. The name the Giant
+            // Spider used to answer to, and the rung below it.
+            &SPIDER_TEMPLATE,
             &VENOMOUS_SNAKE_TEMPLATE,
             // The top of two extraplanar ladders and the bottom of two
             // more, each filling a rung nothing else sits on:

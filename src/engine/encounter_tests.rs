@@ -35306,6 +35306,96 @@ fn the_summon_registry_lists_every_summon_spell_declared() {
     );
 }
 
+/// A weapon whose printed Hit line is a bare number adds no ability
+/// modifier to it.
+///
+/// SRD 5.2 writes a handful of natural weapons as *"Hit: 1 Piercing
+/// damage"* — no die, no `+ 2`, just the number. The engine spells that
+/// as a `1d1` die, which is right (a one-sided die always reads 1, and a
+/// critical hit doubles it to 2 through the same chassis as everything
+/// else) and is only half the answer: the weapon chassis fold the
+/// **to-hit** ability into the damage roll, so a `1d1` on a Dexterity-16
+/// bird becomes a 4 and a `1d1` on a Strength-2 rat becomes a 0. Both
+/// halves of that are wrong and the second is worse — a creature whose
+/// only attack cannot deal damage is one nothing in the suite will ever
+/// notice, because zero damage is a legal outcome of every swing.
+///
+/// `SimpleWeapon::flat_melee` and `WeaponWithRider::flat_melee` are the
+/// constructors that say so, and this is the sweep that makes using them
+/// compulsory. It read the source when it was written because seven
+/// weapons had drifted: the sprite's shortsword, the hawk's talons, and
+/// the bite or claw of the bat, rat, cat, lizard and weasel — every one
+/// of them declared before the flat constructor existed, and every one
+/// of them dealing between zero and five times the printed 1.
+///
+/// **Reading the source is the blunt instrument and the right one**, for
+/// the reason `every_creature_template_in_the_bestiary_is_reachable`
+/// gives: the alternative is a hand-maintained list of natural weapons,
+/// which is one more thing to forget to edit and reintroduces the bug it
+/// would exist to catch. There is no registry of weapon statics to walk
+/// and the fields are not reachable through `&dyn Action`.
+#[test]
+fn a_weapon_that_prints_a_bare_number_adds_no_modifier_to_it() {
+    let source = include_str!("../actions/monster_attacks.rs");
+    let lines: Vec<&str> = source.lines().collect();
+
+    // Every `pub static NAME: TYPE = TYPE::ctor(` in the file, paired
+    // with the constructor it calls. The positional constructors on both
+    // weapon chassis put `damage_dice` fourth (name, aliases,
+    // attack_ability, damage_dice), so the die is the fourth argument
+    // line — which is what makes this parseable at all.
+    let mut checked = 0usize;
+    let mut wrong: Vec<String> = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let Some(rest) = line.strip_prefix("pub static ") else {
+            continue;
+        };
+        let Some((name, tail)) = rest.split_once(": ") else {
+            continue;
+        };
+        let Some((_ty, ctor_call)) = tail.split_once(" = ") else {
+            continue;
+        };
+        let Some(ctor) = ctor_call
+            .split_once("::")
+            .and_then(|(_, c)| c.strip_suffix("("))
+        else {
+            continue;
+        };
+        // The four argument lines that follow the opening paren.
+        let args: Vec<&str> = lines
+            .iter()
+            .skip(i + 1)
+            .take(4)
+            .map(|l| l.trim())
+            .collect();
+        if args.len() < 4 || args[3] != "Dice::new(1, 1)," {
+            continue;
+        }
+        checked += 1;
+        if !ctor.starts_with("flat") {
+            wrong.push(format!(
+                "{name} prints a bare 1 but is built with `{ctor}`, which adds \
+                 the to-hit ability to it"
+            ));
+        }
+    }
+
+    // Guard against the scan silently finding nothing and the test
+    // passing vacuously — the exact way a source-reading check rots.
+    assert!(
+        checked >= 8,
+        "the sweep found only {checked} bare-number weapons, which means it \
+         stopped working rather than that the bestiary lost them"
+    );
+    assert!(
+        wrong.is_empty(),
+        "{} weapon(s) add a modifier to a number the book prints bare:\n  {}",
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+}
+
 /// Conjure Elemental's validate gate fizzles when there's no room
 /// to spawn a Large (4-tile) footprint adjacent to the caster.
 /// Mirrors the Conjure Animals validate gate.

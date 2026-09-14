@@ -26,6 +26,7 @@ pub mod piranhas;
 pub mod rhinoceroses;
 pub mod scorpions;
 pub mod seahorses;
+pub mod spiders;
 pub mod venomous_snakes;
 pub mod artificers;
 pub mod eldritch_cannons;
@@ -1443,6 +1444,7 @@ mod tests {
         (&*piranhas::PIRANHA_TEMPLATE, 13, "1d4-1", [2, 16, 9, 1, 7, 2], 5, 0, 0.0),
         (&*rhinoceroses::RHINOCEROS_TEMPLATE, 13, "6d10+12", [21, 8, 15, 2, 12, 6], 40, 0, 2.0),
         (&*scorpions::SCORPION_TEMPLATE, 11, "1d4-1", [2, 11, 8, 1, 8, 2], 10, 0, 0.0),
+        (&*spiders::SPIDER_TEMPLATE, 12, "1d4-1", [2, 14, 8, 1, 10, 2], 20, 0, 0.0),
         (&*seahorses::SEAHORSE_TEMPLATE, 12, "1d4-1", [1, 12, 8, 1, 10, 2], 5, 0, 0.0),
         (&*venomous_snakes::VENOMOUS_SNAKE_TEMPLATE, 12, "2d4", [2, 15, 11, 1, 10, 3], 30, 0, 0.125),
         (&*ice_devils::ICE_DEVIL_TEMPLATE, 18, "24d10+96", [21, 14, 18, 18, 15, 18], 40, 0, 14.0),

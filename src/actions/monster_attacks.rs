@@ -131,7 +131,10 @@ pub fn weapon_swing_with_flat_rider(
     caster_id: usize,
     target_id: usize,
     action_name: &'static str,
-    ability: AbilityScoreType,
+    attack_ability: AbilityScoreType,
+    // `None` for a weapon whose printed Hit line carries no ability
+    // modifier — see `weapon_swing_with_damage`.
+    damage_ability: Option<AbilityScoreType>,
     damage_dice: Dice,
     damage_type: DamageType,
     is_melee: bool,
@@ -150,7 +153,8 @@ pub fn weapon_swing_with_flat_rider(
         caster_id,
         target_id,
         action_name,
-        ability,
+        attack_ability,
+        damage_ability,
         damage_dice,
         damage_type,
         is_melee,
@@ -767,14 +771,12 @@ pub fn maybe_chain_extra_attack(
     }
 }
 
-/// Resolve a single weapon swing whose attack and damage modifiers both
-/// derive from the same ability (the standard "STR-to-hit STR-to-damage"
-/// shape), at an arbitrary reach. Returns `(effects, damage_dealt)` so the
-/// caller can chain riders that gate on the actual damage (a save-or-
-/// extra-damage clause, a max-HP drain equal to the necrotic dealt, a
-/// self-heal equal to half the damage, etc.). Returns `(empty, 0)` on a
-/// missing caster / target — same fail-quiet contract as
-/// `simple_weapon_attack`.
+/// Resolve a single weapon swing at an arbitrary reach. Returns
+/// `(effects, damage_dealt)` so the caller can chain riders that gate on
+/// the actual damage (a save-or-extra-damage clause, a max-HP drain
+/// equal to the necrotic dealt, a self-heal equal to half the damage,
+/// etc.). Returns `(empty, 0)` on a missing caster / target — same
+/// fail-quiet contract as `simple_weapon_attack`.
 ///
 /// Centralizes the recurring 4-line `caster.ability_modifier(X) +
 /// proficiency_bonus() / caster.ability_modifier(X) / resolve_attack_outcome
@@ -783,6 +785,16 @@ pub fn maybe_chain_extra_attack(
 /// Otyugh Tentacle. Companion to `simple_weapon_attack` (single-return,
 /// vanilla MELEE_REACH); use this variant when you need the damage value
 /// for a rider OR a non-standard reach (10ft reach-2 tentacles, etc.).
+///
+/// **`damage_ability` is separate from `attack_ability`**, and is
+/// `Option` for the reason `simple_weapon_attack_ranged`'s is: SRD 5.2
+/// prints a handful of natural weapons as a bare *"Hit: 1 Piercing
+/// damage"* with no `(1d4 + 2)` behind it, and a helper that folded the
+/// to-hit ability into the damage roll could not say that. It used to be
+/// one parameter used twice, and what that cost was invisible for as
+/// long as every flat-damage weapon on the chassis happened to belong to
+/// a creature with a +0 modifier — see `FLYING_SNAKE_BITE`, the one that
+/// did not.
 ///
 /// `reach` is in tile-gap units — `MELEE_REACH` for a standard 5ft swing,
 /// 2 for a 10ft reach weapon, etc. Pass `is_spell = false` (the default
@@ -795,7 +807,8 @@ pub fn weapon_swing_with_damage(
     caster_id: usize,
     target_id: usize,
     action_name: &'static str,
-    ability: AbilityScoreType,
+    attack_ability: AbilityScoreType,
+    damage_ability: Option<AbilityScoreType>,
     damage_dice: Dice,
     damage_type: DamageType,
     is_melee: bool,
@@ -804,8 +817,10 @@ pub fn weapon_swing_with_damage(
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return (Vec::new(), 0);
     };
-    let attack_mod = caster.spell_attack_modifier(ability);
-    let damage_mod = caster.ability_modifier(ability);
+    let attack_mod = caster.spell_attack_modifier(attack_ability);
+    let damage_mod = damage_ability
+        .map(|a| caster.ability_modifier(a))
+        .unwrap_or(0);
     crate::engine::attack::resolve_attack_outcome(
         encounter,
         AttackParams {
@@ -2005,6 +2020,26 @@ pub struct WeaponWithRider {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
     pub attack_ability: AbilityScoreType,
+    /// Which modifier the *swing* half of the damage adds, or `None` for
+    /// a weapon whose Hit line prints a bare number.
+    ///
+    /// The mirror of `SimpleWeapon::damage_ability`, and it arrived for
+    /// the same reason one step later: SRD 5.2 prints a handful of these
+    /// natural weapons as *"Hit: 1 Piercing damage plus N (XdY) Poison
+    /// damage"* — a flat 1 and a rider, with nothing added to the 1.
+    /// This chassis had no way to say that, so it added the to-hit
+    /// ability to the swing half of every entry on it.
+    ///
+    /// What that cost was invisible while the only two flat entries
+    /// belonged to creatures whose modifier was zero. The scorpion's is
+    /// (DEX 11), and its docstring leaned on the coincidence in so many
+    /// words; the flying snake's is not (DEX 15), and it had been
+    /// stinging for three piercing where the book prints one.
+    ///
+    /// Defaulted to `Some(attack_ability)` by every constructor — the
+    /// standard "STR to hit, STR to damage" shape — and set to `None`
+    /// with [`WeaponWithRider::flat_melee`].
+    pub damage_ability: Option<AbilityScoreType>,
     pub damage_dice: Dice,
     pub damage_type: DamageType,
     pub reach: isize,
@@ -2077,6 +2112,7 @@ impl WeaponWithRider {
             display_name,
             aliases,
             attack_ability,
+            damage_ability: Some(attack_ability),
             damage_dice,
             damage_type,
             reach,
@@ -2086,6 +2122,40 @@ impl WeaponWithRider {
             rider_type,
             rider_name,
             is_polearm: false,
+        }
+    }
+
+    /// Const constructor for the "flat swing plus a typed rider" shape —
+    /// SRD 5.2's *"Hit: 1 Piercing damage plus 3 (1d6) Poison damage"*.
+    ///
+    /// `damage_ability: None`, so the swing half lands exactly as
+    /// printed. The mirror of `SimpleWeapon::flat_melee`, and the
+    /// constructor the scorpion, the spider and the flying snake belong
+    /// on: all three are tiny things whose puncture is a formality and
+    /// whose venom is the stat block.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn flat_melee(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        rider_dice: Dice,
+        rider_type: DamageType,
+        rider_name: &'static str,
+    ) -> Self {
+        Self {
+            damage_ability: None,
+            ..Self::melee(
+                display_name,
+                aliases,
+                attack_ability,
+                damage_dice,
+                damage_type,
+                rider_dice,
+                rider_type,
+                rider_name,
+            )
         }
     }
 
@@ -2123,6 +2193,7 @@ impl WeaponWithRider {
             display_name,
             aliases,
             attack_ability,
+            damage_ability: Some(attack_ability),
             damage_dice,
             damage_type,
             reach,
@@ -2268,6 +2339,7 @@ impl Action for WeaponWithRider {
                 target_id,
                 self.display_name,
                 self.attack_ability,
+                self.damage_ability,
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
@@ -2531,6 +2603,7 @@ impl Action for WeaponWithSaveCondition {
                 target_id,
                 self.display_name,
                 self.attack_ability,
+                Some(self.attack_ability),
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
@@ -2989,6 +3062,7 @@ impl Action for WeaponWithSaveDamage {
                 target_id,
                 self.display_name,
                 self.attack_ability,
+                Some(self.attack_ability),
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
@@ -3437,6 +3511,7 @@ impl Action for WeaponWithCondition {
                 target_id,
                 self.display_name,
                 self.attack_ability,
+                Some(self.attack_ability),
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
@@ -4027,6 +4102,7 @@ impl Action for AttachingWeapon {
             target_id,
             self.display_name,
             self.attack_ability,
+            Some(self.attack_ability),
             self.damage_dice,
             self.damage_type,
             true,
@@ -6818,6 +6894,7 @@ impl Action for WightLifeDrain {
             target_id,
             "life drain",
             AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
             Dice::new(1, 6),
             DamageType::Necrotic,
             true,
@@ -15859,6 +15936,7 @@ impl Action for SpiritNagaBite {
             target_id,
             "naga bite",
             AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
             Dice::new(1, 6),
             DamageType::Piercing,
             true,
@@ -15975,6 +16053,7 @@ impl Action for OtyughTentacle {
             target_id,
             "otyugh tentacle",
             AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
             Dice::new(1, 8),
             DamageType::Bludgeoning,
             true,
@@ -16019,14 +16098,18 @@ pub static OTYUGH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtt
 
 // ─── Sprite ──────────────────────────────────────────────────────────
 
-/// Sprite Shortsword — DEX-based 1 piercing melee. RAW the sprite's
-/// shortsword does a flat 1 damage (the tiny fey has STR 3, and the
-/// d6 is replaced by the size-restricted minimum). We model the flat 1
-/// via a 1d1 placeholder die because the engine's `Dice` rolls a uniform
-/// `[1, n]`; rolling on a 1-sided die always returns 1, matching RAW.
-/// Vanilla `SimpleWeapon::melee` — no per-hit rider; the load-bearing
-/// threat is the sleep-arrow on the bow, not the melee jab.
-pub static SPRITE_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
+/// Sprite Shortsword — a flat 1 piercing, DEX to hit. RAW gives the
+/// sprite's shortsword a bare 1 damage, and the `1d1` die is how the
+/// engine spells a bare number: `Dice` rolls a uniform `[1, n]`, so a
+/// one-sided die always returns 1 and a critical hit doubles it to 2
+/// through the same chassis every other swing uses.
+///
+/// **`flat_melee`, not `melee`.** The sprite's Dexterity is 18, and the
+/// plain constructor folds the to-hit ability into the damage — so the
+/// jab landed for five where RAW prints one, which is five times the
+/// number and more than the sleep-arrow it is supposed to be the
+/// fallback for. See `SimpleWeapon::damage_ability`.
+pub static SPRITE_SHORTSWORD: SimpleWeapon = SimpleWeapon::flat_melee(
     "sprite shortsword",
     &["ssw", "sprite-sword"],
     AbilityScoreType::Dexterity,
@@ -17806,6 +17889,7 @@ pub static GIANT_CONSTRICTOR_SNAKE_BITE: WeaponWithRider = WeaponWithRider {
     display_name: "giant constrictor snake bite",
     aliases: &["giant-snake-bite", "gcs-bite"],
     attack_ability: AbilityScoreType::Strength,
+    damage_ability: Some(AbilityScoreType::Strength),
     damage_dice: Dice::new(2, 6),
     damage_type: DamageType::Piercing,
     reach: 2,
@@ -18023,6 +18107,7 @@ impl Action for CrocodileBite {
             target_id,
             "crocodile bite",
             AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
             Dice::new(1, 10),
             DamageType::Piercing,
             true,
@@ -18086,6 +18171,7 @@ impl Action for GiantCrocodileBite {
             target_id,
             "giant crocodile bite",
             AbilityScoreType::Strength,
+            Some(AbilityScoreType::Strength),
             Dice::new(3, 10),
             DamageType::Piercing,
             true,
@@ -18826,14 +18912,18 @@ pub static GIANT_FROG_BITE: WeaponWithCondition = WeaponWithCondition::melee(
 
 // ─── Hawk ───────────────────────────────────────────────────────────
 
-/// Hawk Talons — DEX-based 1d1 slashing melee. RAW: "Hit: 1 slashing
-/// damage." We model the flat 1 via a `Dice::new(1, 1)` so a confirmed
-/// crit doubles cleanly to 2 through the engine's uniform crit-
-/// doubling chassis instead of needing a flat-1 special case. The
-/// load-bearing threat is the hawk's mobility (fly 60, the highest
-/// non-dragon flight in the low-CR pool), not the swing — even a
-/// crit-doubled talon barely scratches a soft target.
-pub static HAWK_TALONS: SimpleWeapon = SimpleWeapon::melee(
+/// Hawk Talons — a flat 1 slashing, DEX to hit. RAW: *"Talons. Melee
+/// Attack Roll: +5, reach 5 ft. Hit: 1 Slashing damage."* The `1d1` is
+/// how the engine spells a bare number, so a confirmed crit doubles
+/// cleanly to 2 through the uniform crit chassis instead of needing a
+/// flat-1 special case.
+///
+/// **`flat_melee`, not `melee`.** The hawk's Dexterity is 16, and the
+/// plain constructor was adding that +3 to the talon — four damage
+/// where the book prints one, on the CR 0 bird whose whole design is
+/// that its swing does not matter. The load-bearing threat is the
+/// mobility (fly 60, the highest non-dragon flight in the low-CR pool).
+pub static HAWK_TALONS: SimpleWeapon = SimpleWeapon::flat_melee(
     "hawk talons",
     &["talons", "hawk", "rake"],
     AbilityScoreType::Dexterity,
@@ -19259,50 +19349,59 @@ pub static RIDING_HORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
 
 // ─── Bat ────────────────────────────────────────────────────────────
 
-/// Bat Bite — STR-based 1d1-shape (i.e. flat 1) piercing melee. RAW:
-/// "+0 to hit, reach 5 ft, one creature. Hit: 1 piercing damage." The
-/// regular Bat's only swing — a CR-0 tiny flier whose threat profile
-/// is mobility + echolocation, not damage. 1d1 lets a confirmed crit
-/// double cleanly to 2 through the engine's uniform crit-doubling
-/// chassis instead of needing a flat-1 special case — same trick the
-/// Hawk uses. Sister to `GIANT_BAT_BITE` (1d6, CR ¼) on the bat
-/// ladder.
-pub static BAT_BITE: SimpleWeapon = SimpleWeapon::melee(
+/// Bat Bite — a flat 1 piercing, **DEX** to hit. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage."*
+///
+/// Two things were wrong here and they compounded. The swing was keyed
+/// on **Strength**, and a bat's is 2 — so the printed +4 resolved as −2
+/// on the die, and the plain `melee` constructor then subtracted the
+/// same −4 from a damage roll of 1 and floored it at zero. A bat that
+/// hit at all could not hurt anybody, and mostly it did not hit.
+/// Dexterity is the only ability that produces the book's +4 (+2 and a
+/// proficiency bonus of 2), and `flat_melee` is what keeps the 1 a 1.
+///
+/// The `1d1` is the engine's spelling of a bare number, so a confirmed
+/// crit doubles cleanly to 2. Sister to `GIANT_BAT_BITE` (1d6, CR ¼) on
+/// the bat ladder.
+pub static BAT_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     "bat bite",
     &["bb", "bat", "nip"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(1, 1),
     DamageType::Piercing,
 );
 
 // ─── Rat ────────────────────────────────────────────────────────────
 
-/// Rat Bite — STR-based 1d1-shape (flat 1) piercing melee. RAW: "+0
-/// to hit, reach 5 ft, one creature. Hit: 1 piercing damage." The
-/// CR-0 vermin's only swing — a sewer-rat whose threat profile is
-/// "annoying nibble, dies to a stiff breeze." Sister to
-/// `GIANT_RAT_BITE` (1d4 + Pack Tactics, CR ⅛) on the rat ladder;
-/// the regular rat lacks Pack Tactics because RAW doesn't grant it
-/// — flavor "lonely rodent" vs the giant rat's "swarm vermin."
-pub static RAT_BITE: SimpleWeapon = SimpleWeapon::melee(
+/// Rat Bite — a flat 1 piercing, **DEX** to hit. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage."*
+///
+/// The bat's fault exactly, on the same two axes: a Strength of 2 turned
+/// the book's +2 into −2 on the die and then zeroed the damage. The rat
+/// is the CR 0 vermin whose threat profile is "annoying nibble", and it
+/// was not managing the nibble. Sister to `GIANT_RAT_BITE` (1d4 + Pack
+/// Tactics, CR ⅛) on the rat ladder; the plain rat lacks Pack Tactics
+/// because RAW doesn't grant it.
+pub static RAT_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     "rat bite",
     &["rb", "nibble"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(1, 1),
     DamageType::Piercing,
 );
 
 // ─── Cat ────────────────────────────────────────────────────────────
 
-/// Cat Claws — DEX-based 1d1-shape (flat 1) slashing melee. RAW: "Hit:
-/// 1 slashing damage." The CR-0 tiny climber's only swing — a hearth-
-/// cat whose threat profile is mobility + climb 30, not damage. The
-/// 1d1 lets a confirmed crit double cleanly to 2 through the engine's
-/// uniform crit-doubling chassis, mirroring the Hawk Talons / Bat Bite
-/// / Rat Bite shape at this CR tier. Sister to `HAWK_TALONS`
-/// (DEX-based slashing) on the CR-0 ladder — same DEX-driven envelope
-/// since the cat's load-bearing stat is its Dexterity 15.
-pub static CAT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
+/// Cat Claws — a flat 1 slashing, DEX to hit. SRD 5.2 prints it as
+/// *"Scratch. Melee Attack Roll: +4, reach 5 ft. Hit: 1 Slashing
+/// damage."*
+///
+/// **`flat_melee`, not `melee`.** The cat's Dexterity is 15, and the
+/// plain constructor was adding that +2 — three damage where the book
+/// prints one. The CR 0 hearth-cat's threat profile is mobility and a
+/// climb speed, not the swipe. Sister to `HAWK_TALONS` on the CR 0
+/// ladder, and now wired the same way.
+pub static CAT_CLAWS: SimpleWeapon = SimpleWeapon::flat_melee(
     "cat claws",
     &["cc", "cat", "swipe"],
     AbilityScoreType::Dexterity,
@@ -19312,31 +19411,35 @@ pub static CAT_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 
 // ─── Lizard ─────────────────────────────────────────────────────────
 
-/// Lizard Bite — STR-based 1d1-shape (flat 1) piercing melee. RAW:
-/// "Hit: 1 piercing damage." The CR-0 tiny reptile's only swing —
-/// the mundane gecko / skink whose threat profile is "ambient
-/// dungeon-fauna." Same flat-1 shape as Rat Bite / Bat Bite at this
-/// CR tier; sister to `GIANT_LIZARD_BITE` (1d8, CR ¼) on the lizard
-/// ladder. Lacks Spider Climb (RAW: 30 climb) — climb speed is
-/// flavor-only since the engine collapses ground + climb into a
-/// single per-creature speed.
-pub static LIZARD_BITE: SimpleWeapon = SimpleWeapon::melee(
+/// Lizard Bite — a flat 1 piercing, **DEX** to hit. SRD 5.2: *"Bite.
+/// Melee Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage."*
+///
+/// The third of the Strength-keyed CR 0 vermin, and the same two faults
+/// the bat and the rat carried: a Strength of 2 made the book's +2 read
+/// as −2 and zeroed the bite. The mundane gecko is ambient dungeon
+/// fauna, but it should at least be able to break skin. Sister to
+/// `GIANT_LIZARD_BITE` (1d8, CR ¼) on the lizard ladder. Spider Climb
+/// (RAW: climb 30) stays flavor — the engine collapses ground and climb
+/// into one speed.
+pub static LIZARD_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     "lizard bite",
     &["lb", "lizard", "nip"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(1, 1),
     DamageType::Piercing,
 );
 
 // ─── Weasel ─────────────────────────────────────────────────────────
 
-/// Weasel Bite — DEX-based 1d1-shape (flat 1) piercing melee. RAW:
-/// "+5 to hit, reach 5 ft, one creature. Hit: 1 piercing damage."
-/// The CR-0 tiny mustelid's only swing. DEX-based (DEX 16 is the
-/// load-bearing stat — the weasel is a nimble snake-killer rather
-/// than a heavy hitter). Same flat-1 shape as Rat/Bat Bite at this
-/// CR tier, but DEX-keyed like the cat's claws / hawk's talons.
-pub static WEASEL_BITE: SimpleWeapon = SimpleWeapon::melee(
+/// Weasel Bite — a flat 1 piercing, DEX to hit. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +5, reach 5 ft. Hit: 1 Piercing damage."*
+///
+/// **`flat_melee`, not `melee`.** The weasel's Dexterity is 16, which
+/// the plain constructor was adding to the bite — four damage where the
+/// book prints one, from the lightest creature on the CR 0 bench. The
+/// weasel is a nimble snake-killer rather than a heavy hitter, and the
+/// +5 on the roll is where that nimbleness is supposed to show.
+pub static WEASEL_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     "weasel bite",
     &["wb", "weasel", "snap"],
     AbilityScoreType::Dexterity,
@@ -21614,14 +21717,21 @@ pub const RHINOCEROS_CHARGE: ChargeRider = ChargeRider {
 /// Attack Roll: +2, reach 5 ft. Hit: 1 Piercing damage plus 3 (1d6)
 /// Poison damage."
 ///
-/// DEX-based (DEX 11 → +0 + PB 2 = the printed +2), which also zeroes
-/// the damage modifier so the `1d1` piercing half lands as RAW's flat 1.
+/// DEX-based on the roll (DEX 11 → +0 + PB 2 = the printed +2) and
+/// **flat** on the damage, so the `1d1` piercing half lands as RAW's
+/// bare 1. This entry used to reach that answer by arithmetic accident
+/// — the chassis folded the to-hit ability into the damage and the
+/// scorpion's happened to be +0, which its docstring said out loud.
+/// `flat_melee` says it on purpose instead, and a scorpion re-statted
+/// one point of Dexterity higher no longer quietly grows a sharper
+/// sting.
+///
 /// The venom is the whole stat block: a tiny scorpion's puncture is
 /// nothing and its poison averages more than three times the puncture.
 /// The engine's `WeaponWithRider` adds the rider on a hit with no save,
 /// which is what SRD 5.2 prints here — the save-gated venom belongs to
 /// the *giant* scorpion, and that one is already on the roster.
-pub static SCORPION_STING: WeaponWithRider = WeaponWithRider::melee(
+pub static SCORPION_STING: WeaponWithRider = WeaponWithRider::flat_melee(
     "scorpion sting",
     &["sting-s", "scorpion"],
     AbilityScoreType::Dexterity,
@@ -21630,6 +21740,34 @@ pub static SCORPION_STING: WeaponWithRider = WeaponWithRider::melee(
     Dice::new(1, 6),
     DamageType::Poison,
     "scorpion venom",
+);
+
+// ─── Spider ──────────────────────────────────────────────────────────
+
+/// Spider Bite — flat 1 piercing plus 1d4 poison. RAW: *"Bite. Melee
+/// Attack Roll: +4, reach 5 ft. Hit: 1 Piercing damage plus 2 (1d4)
+/// Poison damage."*
+///
+/// The scorpion's sting one size down in every dimension: DEX-based on
+/// the roll (DEX 14 → +2 + PB 2 = the printed +4), flat on the swing,
+/// and a venom die that is the only thing on the line worth counting.
+/// Shares `flat_melee` with the sting and the flying snake's bite, which
+/// is the whole cohort SRD 5.2 writes as a bare number plus a rider.
+///
+/// Deliberately **not** `GIANT_SPIDER_BITE` scaled down: that one is a
+/// `WeaponWithSaveDamage` whose venom is gated on a Constitution save
+/// and carries the Poisoned condition, which is what the *giant* spider's
+/// stat block prints. This one's venom simply lands, because this one's
+/// stat block simply says so.
+pub static SPIDER_BITE: WeaponWithRider = WeaponWithRider::flat_melee(
+    "spider bite",
+    &["sp-bite", "spiderbite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
+    DamageType::Piercing,
+    Dice::new(1, 4),
+    DamageType::Poison,
+    "spider venom",
 );
 
 // ─── Venomous Snake ──────────────────────────────────────────────────
@@ -21659,7 +21797,14 @@ pub static VENOMOUS_SNAKE_BITE: WeaponWithRider = WeaponWithRider::melee(
 /// line: a Tiny monstrosity with a sixty-foot fly speed and Flyby whose
 /// only job is to touch somebody once a turn and leave before anything
 /// can swing back.
-pub static FLYING_SNAKE_BITE: WeaponWithRider = WeaponWithRider::melee(
+///
+/// **`flat_melee`, and it had to be.** The snake's Dexterity is 15, and
+/// on the plain `melee` constructor this chassis folded that +2 into the
+/// swing half — so the bite dealt three piercing where the book prints
+/// one, on every hit, for as long as the snake has been on the roster.
+/// The scorpion two entries up hid the same fault behind a +0 modifier.
+/// See `WeaponWithRider::damage_ability`.
+pub static FLYING_SNAKE_BITE: WeaponWithRider = WeaponWithRider::flat_melee(
     "flying snake bite",
     &["fs-bite", "flying-snake"],
     AbilityScoreType::Dexterity,
