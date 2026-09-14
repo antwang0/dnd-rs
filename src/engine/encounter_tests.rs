@@ -108590,3 +108590,84 @@ fn every_feat_tag_is_read_by_something_that_is_not_a_list() {
         );
     }
 }
+
+/// Drift-prevention: every weapon RAW's Pole Strike clause names
+/// declares the property, and nothing else does.
+///
+/// The sibling of `every_reloading_weapon_in_the_bestiary_says_so`, and
+/// it guards the mirror-image mistake. A missing `polearm()` costs a
+/// Polearm Master their bonus-action swing, which a player would
+/// notice; a spurious one hands a bonus attack to somebody swinging a
+/// mace, which nobody would. Both directions are asserted, because the
+/// flag is a *list* — RAW's own — rather than a property the engine can
+/// derive, and a list is exactly the thing that drifts.
+#[test]
+fn the_pole_strike_list_is_the_one_raw_prints() {
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::pc_template_families;
+
+    // RAW: "a Quarterstaff, a Spear, or a weapon that has the Heavy and
+    // Reach properties" — which on the weapons table is the glaive, the
+    // halberd, the lance and the pike. Matched on the name for the
+    // reason the Loading sweep is: a stat block's weapon is named after
+    // the entry in the table it is a copy of.
+    const POLE_STRIKE_WEAPONS: &[&str] =
+        &["quarterstaff", "spear", "glaive", "halberd", "lance", "pike"];
+
+    let templates = EncounterInstance::template_pool()
+        .into_iter()
+        .chain(pc_template_families().into_iter().flat_map(|(_, ts)| ts));
+    let mut declared = 0;
+    for template in templates {
+        for action in &template.actions {
+            // Attack *routines* are out of scope and are named after
+            // what they expand into — "double glaive", "pike + hooves"
+            // — so the name match would ask them a question about a
+            // weapon they are not. What they answer is checked below
+            // instead, on the one wrapper whose forwarding matters.
+            if action.chains_multiple_attacks() {
+                continue;
+            }
+            // Word-by-word rather than `contains`, which is the
+            // difference between a pike and a **spike**d bone club.
+            let name = action.name().to_ascii_lowercase();
+            let on_raws_list = name
+                .split(|c: char| !c.is_ascii_alphabetic())
+                .any(|word| POLE_STRIKE_WEAPONS.contains(&word))
+                // A spear in flight is not a spear in hand; the melee
+                // half of the gate is what makes the shared static safe.
+                && action.is_melee_attack();
+            if on_raws_list {
+                declared += 1;
+            }
+            assert_eq!(
+                action.is_polearm_melee_weapon(),
+                on_raws_list,
+                "{} carries {}, which {} on RAW's Pole Strike list",
+                template.name,
+                action.name(),
+                if on_raws_list { "is" } else { "is not" }
+            );
+        }
+    }
+    assert!(
+        declared >= 4,
+        "the sweep found {declared} pole-strike weapons, fewer than the \
+         bestiary is known to carry — the name match has drifted"
+    );
+
+    // And the routine reports what it wraps. RAW's clause opens on "the
+    // Attack action … with a Quarterstaff, a Spear, or a weapon that
+    // has the Heavy and Reach properties", and a Multiattack of glaives
+    // is the Attack action with a glaive — so the wrapper forwards,
+    // through `forwards_to_sub_attack!`, and a polearm-master creature
+    // with a routine would open its shaft swing on it.
+    assert!(
+        crate::actions::monster_attacks::GNOLL_PACK_LORD_MULTI.is_polearm_melee_weapon(),
+        "a routine of glaives is still a routine of glaives"
+    );
+    assert!(
+        !crate::actions::monster_attacks::KNIGHT_MULTI.is_polearm_melee_weapon(),
+        "and a routine of longswords is not"
+    );
+}

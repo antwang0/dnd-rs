@@ -2019,6 +2019,10 @@ pub struct WeaponWithRider {
     pub rider_dice: Dice,
     pub rider_type: DamageType,
     pub rider_name: &'static str,
+    /// The **Polearm Master** weapon-list flag — the third chassis to
+    /// carry it, for the reason `SimpleWeapon::is_polearm` explains and
+    /// because the ice devil's spear is a spear. Set with `polearm()`.
+    pub is_polearm: bool,
 }
 
 impl WeaponWithRider {
@@ -2081,6 +2085,7 @@ impl WeaponWithRider {
             rider_dice,
             rider_type,
             rider_name,
+            is_polearm: false,
         }
     }
 
@@ -2126,6 +2131,7 @@ impl WeaponWithRider {
             rider_dice,
             rider_type,
             rider_name,
+            is_polearm: false,
         }
     }
 
@@ -2160,11 +2166,24 @@ impl WeaponWithRider {
             ..self
         }
     }
+
+    /// Chainable: the **Polearm Master** weapon-list flag. The mirror
+    /// of `SimpleWeapon::polearm`, and a builder for the same reason —
+    /// the property is orthogonal to every constructor shape above it.
+    pub const fn polearm(self) -> Self {
+        Self {
+            is_polearm: true,
+            ..self
+        }
+    }
 }
 
 impl Action for WeaponWithRider {
     fn name(&self) -> &str {
         self.display_name
+    }
+    fn is_polearm_melee_weapon(&self) -> bool {
+        self.is_polearm && self.is_melee
     }
     fn aliases(&self) -> Vec<&str> {
         self.aliases.to_vec()
@@ -4842,6 +4861,26 @@ macro_rules! forwards_to_sub_attack {
 
         fn is_melee_attack(&self) -> bool {
             self.$field.is_melee_attack()
+        }
+
+        // Two weapon-table properties, forwarded for the reason every
+        // line above is: they are facts about the object being swung,
+        // and a routine of two glaives is still a routine of glaives.
+        // RAW's Pole Strike opens on "the Attack action … with a
+        // Quarterstaff, a Spear, or a weapon that has the Heavy and
+        // Reach properties", and a Multiattack *is* the Attack action.
+        //
+        // `is_light_melee_weapon` is deliberately not here beside them,
+        // and the asymmetry is the wrapper's rather than an oversight:
+        // it is read to open a *second* attack out of the action
+        // economy, and a stat block that prints its own swing count has
+        // already said how many attacks the Action buys.
+        fn is_polearm_melee_weapon(&self) -> bool {
+            self.$field.is_polearm_melee_weapon()
+        }
+
+        fn is_loading_weapon(&self) -> bool {
+            self.$field.is_loading_weapon()
         }
 
         fn underwater_weapon_name(&self) -> &str {
@@ -9658,6 +9697,14 @@ impl Action for SalamanderSpear {
     fn name(&self) -> &str {
         "salamander spear"
     }
+    /// A bespoke stat-block weapon and still a spear, which is the one
+    /// thing RAW's Pole Strike list asks. Declared here rather than
+    /// left to the trait's `false` default for the reason the drow's
+    /// crossbow declares Loading: the property belongs to the object,
+    /// and nothing on this roster holds the feat that reads it *yet*.
+    fn is_polearm_melee_weapon(&self) -> bool {
+        true
+    }
     fn aliases(&self) -> Vec<&str> {
         vec!["sspear"]
     }
@@ -13239,6 +13286,13 @@ pub static YUAN_TI_MALISON_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Co
 pub struct CambionSpear {}
 
 impl Action for CambionSpear {
+    /// A bespoke stat-block weapon and still a spear — the one thing
+    /// RAW's Pole Strike list asks. Declared for the reason the
+    /// salamander's spear declares it: the property belongs to the
+    /// object, not to whoever happens to be holding it today.
+    fn is_polearm_melee_weapon(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "infernal spear"
     }
@@ -13838,7 +13892,8 @@ pub static ONI_GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
     Dice::new(2, 10),
     DamageType::Slashing,
     2,
-);
+)
+.polearm();
 
 /// Oni Claw — STR-based 1d8 slashing melee. The secondary swing in the
 /// oni's kit; combines with the glaive via `ONI_MULTI` for the canonical
@@ -16835,7 +16890,8 @@ pub static BEARDED_DEVIL_GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
     Dice::new(1, 10),
     DamageType::Slashing,
     2,
-);
+)
+.polearm();
 
 /// Bearded Devil Beard — STR-based 1d8+STR piercing melee, reach 5 ft.
 /// On hit, target makes a CON save vs DC 12 or is Poisoned for 3
@@ -17758,6 +17814,7 @@ pub static GIANT_CONSTRICTOR_SNAKE_BITE: WeaponWithRider = WeaponWithRider {
     rider_dice: Dice::new(1, 4),
     rider_type: DamageType::Poison,
     rider_name: "snake venom",
+    is_polearm: false,
 };
 
 /// Giant Constrictor Snake Constrict — STR-based 2d8+STR bludgeoning melee
@@ -19886,7 +19943,8 @@ pub static GLADIATOR_SPEAR: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Piercing,
-);
+)
+.polearm();
 
 /// Gladiator Shield Bash — STR-based 2d4+STR bludgeoning melee whose hit
 /// forces a STR save (DC 15) or the target is knocked Prone. RAW: "Shield
@@ -20611,7 +20669,8 @@ pub static MERFOLK_SPEAR: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Strength,
     Dice::new(1, 6),
     DamageType::Piercing,
-);
+)
+.polearm();
 
 // ─── Homunculus ─────────────────────────────────────────────────────
 
@@ -22004,7 +22063,8 @@ pub static ICE_DEVIL_SPEAR: WeaponWithRider = WeaponWithRider::melee(
     Dice::new(3, 6),
     DamageType::Cold,
     "ice spear frost",
-);
+)
+.polearm();
 
 /// Ice Devil Tail — STR-based 3d6+STR bludgeoning at reach 2 (10 ft)
 /// plus a flat 4d8 cold rider. RAW: "Tail. Melee Attack Roll: +10,

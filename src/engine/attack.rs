@@ -4982,6 +4982,13 @@ fn savage_attacker_reroll(
 /// The crit half of the pool is eligible too: RAW's unit is "the
 /// attack's damage dice" and a critical hit's doubled dice are those
 /// dice, the same reading Savage Attacker's whole-pool reroll takes.
+/// The dice a *separate* crit source adds — Brutal Critical, Savage
+/// Attacks, Piercer's own extra die — are not, and they are not
+/// reachable from here even in principle: they are rolled further down
+/// the chokepoint, after this has spoken. The narrowing costs the
+/// holder a fraction of a point on the small share of swings that both
+/// crit and carry one of those riders, and the alternative is holding
+/// the whole damage pipeline open for a clause about one die.
 ///
 /// **Weapon attacks only**, which is a narrowing: RAW says "an attack",
 /// and a spell attack that dealt Piercing damage would qualify. The
