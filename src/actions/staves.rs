@@ -65,13 +65,22 @@
 //! to every swing rather than to swings with the staff. See each item's
 //! docstring in [`crate::items::item_template`].
 //!
-//! **Two of the nine staves cast nothing**, and take a second chassis.
-//! The Staff of Striking and the Staff of Withering spend their charges
-//! sweetening a melee swing, which is the on-hit-rider lane in
+//! **Not every staff casts**, and the ones that do not take other
+//! chassis. The Staff of Striking and the Staff of Withering spend their
+//! charges sweetening a melee swing, which is the on-hit-rider lane in
 //! `engine::attack`: [`StaffPrime`] is the Bonus Action that puts the
 //! marker up, and the row in `ON_HIT_RIDERS` that reads it is what pays
 //! out. Same pool, same `Resource::ItemCharges`, different half of the
 //! engine.
+//!
+//! Two more shelves sit outside this file entirely, and are registered
+//! here so the sweeps can still see them. The Staff of Thunder and
+//! Lightning's line and emanation are `item_actions::AreaSaveDamageItem`
+//! rows — [`STAFF_AREAS`] — because an area is not a spell and not a
+//! prime; the Staff of the Python's charge buys a *body*, so it is a
+//! `SummonItem` filed with the figurines. Both are staff rows all the
+//! same: billed in charges, offered off a staff's `on_use`, and checked
+//! by `every_staff_row_is_wired_to_the_staff_it_names`.
 
 use std::collections::HashSet;
 
