@@ -5728,8 +5728,19 @@ const WATER_ELEMENTAL_GEM_NAME: &str = "Water Elemental Gem";
 const HORN_OF_VALHALLA_NAME: &str = "Horn of Valhalla";
 const BAG_OF_TRICKS_NAME: &str = "Bag of Tricks";
 const OATHBOW_NAME: &str = "Oathbow";
+// The figurine shelf. RAW prints one item with nine statuettes under
+// it; the engine files each statuette as its own object, because an
+// inventory line that says "Figurine of Wondrous Power" tells a player
+// nothing about what is going to land on the board.
 const BRONZE_GRIFFON_FIGURINE_NAME: &str = "Bronze Griffon Figurine";
 const ONYX_DOG_FIGURINE_NAME: &str = "Onyx Dog Figurine";
+const EBONY_FLY_FIGURINE_NAME: &str = "Ebony Fly Figurine";
+const GOLDEN_LIONS_FIGURINE_NAME: &str = "Golden Lions Figurine";
+const IVORY_GOAT_FIGURINE_NAME: &str = "Ivory Goat of Travail";
+const MARBLE_ELEPHANT_FIGURINE_NAME: &str = "Marble Elephant Figurine";
+const OBSIDIAN_STEED_FIGURINE_NAME: &str = "Obsidian Steed Figurine";
+const SERPENTINE_OWL_FIGURINE_NAME: &str = "Serpentine Owl Figurine";
+const SILVER_RAVEN_FIGURINE_NAME: &str = "Silver Raven Figurine";
 // The vessels. RAW's four elemental-commanding wonders are the same
 // four bodies the gems above hold and the opposite bargain: the gem is
 // Uncommon and gone, the vessel is Rare and still in the pack at dawn.
@@ -6325,6 +6336,13 @@ pub static ALL_SUMMON_ITEMS: &[&SummonItem] = &[
     &REACH_INTO_BAG_OF_TRICKS,
     &SET_DOWN_BRONZE_GRIFFON,
     &SET_DOWN_ONYX_DOG,
+    &SET_DOWN_EBONY_FLY,
+    &SET_DOWN_GOLDEN_LIONS,
+    &SET_DOWN_IVORY_GOAT,
+    &SET_DOWN_MARBLE_ELEPHANT,
+    &SET_DOWN_OBSIDIAN_STEED,
+    &SET_DOWN_SERPENTINE_OWL,
+    &SET_DOWN_SILVER_RAVEN,
     &FILL_BOWL_OF_WATER_ELEMENTALS,
     &LIGHT_BRAZIER_OF_FIRE_ELEMENTALS,
     &SWING_CENSER_OF_AIR_ELEMENTALS,
@@ -6509,19 +6527,32 @@ pub static REACH_INTO_BAG_OF_TRICKS: SummonItem = SummonItem {
 };
 
 /// **Figurine of Wondrous Power, Bronze Griffon** (Wondrous item,
-/// Rare) — *"If you use an action to speak the command word and throw
-/// the figurine to a point on the ground within 60 feet of you, the
-/// figurine becomes a living creature. … The creature is friendly to
-/// you and your companions."*
+/// Rare) — *"If you take a Magic action to throw the figurine to a point
+/// on the ground within 60 feet of yourself, the figurine becomes a
+/// living creature … The creature is Friendly to you and your allies."*
 ///
-/// The griffon is the flier on this lane, which is the whole reason it
-/// is here rather than one of RAW's other six figurines: every other
-/// body an item can put on the board walks.
+/// The head of the family, and the one the other eight are documented
+/// against — every clause the whole shelf shares is written down here
+/// once rather than nine times.
 ///
-/// One use, because the engine's clock is one fight long and RAW's
-/// "once every 5 days" is a restriction on the calendar rather than on
-/// the encounter. What it costs is the figurine, which is the honest
-/// translation of a restriction the engine has no days to count.
+/// **One use apiece.** RAW rations each statuette by the calendar (five
+/// days for the griffon, thirty for the Goat of Travail, two for the
+/// raven), and the engine's clock is one fight long. A restriction
+/// measured in days is one this engine cannot charge, so the figurine is
+/// `ItemUseBilling::Consumed` instead: what a use costs is the object.
+/// That is the honest translation, and it also keeps the rarity ladder
+/// RAW prints legible — a figurine and an elemental gem are now the same
+/// bargain, and the *body* is what separates them.
+///
+/// **The duration is not modeled** and needs no excuse: RAW's shortest
+/// is the Golden Lions' one hour, and no encounter in this engine runs
+/// that long. Neither is the revert-at-0-HP clause, for the same reason
+/// every other summon's death is not special-cased — a body at 0 hit
+/// points is out of the fight whatever it turns back into.
+///
+/// **The griffon is a predator that flies**, which is what separates it
+/// from the Ebony Fly below: both put a Large flier on the board, and
+/// only one of them has a stat block worth spending.
 pub static SET_DOWN_BRONZE_GRIFFON: SummonItem = SummonItem {
     action_name: "set down bronze griffon",
     action_aliases: &["griffon figurine", "bronze griffon"],
@@ -6550,6 +6581,237 @@ pub static SET_DOWN_ONYX_DOG: SummonItem = SummonItem {
     count: 1,
     search_radius: 3,
     base_instance_id: 211,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Ebony Fly** (Wondrous item, Rare) —
+/// *"This ebony statuette, carved in the likeness of a horsefly, can
+/// become a Giant Fly … and can be ridden as a mount."*
+///
+/// The only summon in the engine that cannot fight, and the only one
+/// whose point is the *rider*. SRD 5.2 prints the Giant Fly's stat block
+/// inside this very item entry and gives it no Actions block at all — no
+/// bite, no trait, no reaction — so what lands on the board is nineteen
+/// hit points of Large flier with a saddle. See
+/// `creatures::giant_flies::GIANT_FLY_TEMPLATE`.
+///
+/// `SummonItem::summons_combatants` reads `CANNOT_ATTACK_TAG` off that
+/// template and answers `false`, which is what stops the AI's summon rung
+/// from pricing this as a second sword. What it *is* worth is altitude:
+/// `engine::mounts` hands the rider the fly's 60 ft of flight, and
+/// nothing else a party can loot does that for somebody who is not
+/// already a caster.
+///
+/// Radius 4 like every other Large body on this shelf.
+pub static SET_DOWN_EBONY_FLY: SummonItem = SummonItem {
+    action_name: "set down ebony fly",
+    action_aliases: &["fly figurine", "ebony fly"],
+    item_name: EBONY_FLY_FIGURINE_NAME,
+    log_label: "ebony fly",
+    template: &crate::actors::creatures::giant_flies::GIANT_FLY_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 219,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Golden Lions** (Wondrous item, Rare) —
+/// *"These gold statuettes of lions are always created in pairs. You can
+/// use one figurine or both simultaneously. Each can become a Lion."*
+///
+/// The only figurine RAW prints as a *pair*, and the only row on this
+/// whole shelf that puts two bodies down for one Action. `count: 2` is
+/// that sentence, and the pair is what makes it the shelf's best combat
+/// payout: two CR 1 lions with Pack Tactics have advantage on every
+/// swing they make while they stand together, so the second lion is
+/// worth more than the first.
+///
+/// **Both at once, always.** RAW lets the holder set down one and keep
+/// the other; the engine spends the object whole, because a
+/// half-used pair would need the inventory to carry a count per figurine
+/// and the choice is one no AI would ever make differently — a lion held
+/// back is a lion that did nothing.
+///
+/// The spawn loop is best-effort about room (see `SummonItem::count`), so
+/// a pair set down in a corridor that fits one lion is spent on one lion.
+/// That is the same bargain the Horn of Valhalla's three berserkers take.
+pub static SET_DOWN_GOLDEN_LIONS: SummonItem = SummonItem {
+    action_name: "set down golden lions",
+    action_aliases: &["lion figurine", "golden lions", "lions"],
+    item_name: GOLDEN_LIONS_FIGURINE_NAME,
+    log_label: "golden lions",
+    template: &crate::actors::creatures::lions::LION_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 2,
+    search_radius: 4,
+    // 220–221: the pair claims two ids, so "Lion 220" and "Lion 221"
+    // are two creatures on the map rather than one name twice.
+    base_instance_id: 220,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Ivory Goats** (Wondrous item, Rare) —
+/// the **Goat of Travail**: *"This figurine can become a Giant Goat for
+/// up to 3 hours."*
+///
+/// One of RAW's three ivory goats, and the only one of the three this
+/// engine can carry:
+///
+///   - the **Goat of Traveling** is a Riding Horse with a charge
+///     economy measured in hours, which is a travel item and not a
+///     combat one;
+///   - the **Goat of Terror** is a Giant Goat that *cannot attack*,
+///     whose value is a 30-foot fear emanation that only fires **while
+///     you ride it**, plus two weapons pulled off its head. Three
+///     subsystems (a rider-gated emanation, a detachable weapon, a
+///     stat-block-level attack ban) for one statuette, and the middle
+///     one is the same "which object is in whose hand" lane
+///     `conditions::Condition::DragonSlaying` is still waiting on;
+///   - the **Goat of Travail** is a Giant Goat and nothing else, which
+///     is a row on this table.
+///
+/// So the item's name here is the goat rather than the set. A player who
+/// finds "Ivory Goat of Travail" knows what is about to be standing next
+/// to them, which is the same reason the four elemental gems are named
+/// after their elementals instead of after their gemstones.
+pub static SET_DOWN_IVORY_GOAT: SummonItem = SummonItem {
+    action_name: "set down ivory goat",
+    action_aliases: &["goat figurine", "ivory goat", "goat of travail"],
+    item_name: IVORY_GOAT_FIGURINE_NAME,
+    log_label: "ivory goat of travail",
+    template: &crate::actors::creatures::giant_goats::GIANT_GOAT_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 222,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Marble Elephant** (Wondrous item,
+/// Rare) — *"This marble statuette resembles a trumpeting elephant. It
+/// can become an Elephant for up to 24 hours."*
+///
+/// The **Huge** body, and the only one on this shelf. That is most of
+/// what it is: a 3×3 footprint is a wall as much as it is a creature,
+/// and setting one down in a doorway is a use of the item that has
+/// nothing to do with its tusks.
+///
+/// Radius 5 rather than the Large shelf's 4, because a Huge footprint
+/// needs a wider ring to find nine free tiles in at all — the same
+/// scaling reason `SummonItem::search_radius` documents for 3 versus 4.
+pub static SET_DOWN_MARBLE_ELEPHANT: SummonItem = SummonItem {
+    action_name: "set down marble elephant",
+    action_aliases: &["elephant figurine", "marble elephant", "elephant"],
+    item_name: MARBLE_ELEPHANT_FIGURINE_NAME,
+    log_label: "marble elephant",
+    template: &crate::actors::creatures::elephants::ELEPHANT_TEMPLATE,
+    size: crate::engine::types::Size::Huge,
+    count: 1,
+    search_radius: 5,
+    base_instance_id: 223,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Obsidian Steed** (Wondrous item, Very
+/// Rare) — *"This polished obsidian horse can become a Nightmare for up
+/// to 24 hours."*
+///
+/// The **Very Rare** row, and the strongest body the shelf puts down: a
+/// CR 3 fiend that flies at 90 feet, carries a rider, and sets what it
+/// hits on fire.
+///
+/// **Two RAW clauses are absent, and both are the same absence.**
+/// *"The nightmare fights only to defend itself"* and *"the figurine has
+/// a 10 percent chance each time you use it to ignore your orders"* are
+/// both instructions to the creature's *controller*, and a summoned body
+/// in this engine has exactly one controller — the AI that drives its
+/// team. There is no channel for "on your side but unwilling", and the
+/// nearest thing the engine has (a hostile spawn) is a different item
+/// entirely: it would turn a Very Rare find into a coin flip on whether
+/// the party just summoned a monster onto themselves, which is a much
+/// worse object than the one RAW prints. The clause that follows the
+/// failed roll — being carried off to Hades — has no plane to be carried
+/// to.
+///
+/// Named as absent rather than dropped, which is this file's standing
+/// policy, and the direction the omission errs in is *toward the
+/// holder*: the steed as shipped is RAW's best case every time.
+pub static SET_DOWN_OBSIDIAN_STEED: SummonItem = SummonItem {
+    action_name: "set down obsidian steed",
+    action_aliases: &["steed figurine", "obsidian steed", "nightmare figurine"],
+    item_name: OBSIDIAN_STEED_FIGURINE_NAME,
+    log_label: "obsidian steed",
+    template: &crate::actors::creatures::nightmares::NIGHTMARE_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 224,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Serpentine Owl** (Wondrous item,
+/// Rare) — *"This serpentine statuette of an owl can become a Giant Owl
+/// for up to 8 hours."*
+///
+/// The second flier on the shelf and the one that is *also* a mount, so
+/// it sits between the griffon (a flier that fights) and the ebony fly
+/// (a flier that cannot). A giant owl's Flyby is the clause that makes
+/// it worth a slot: it swoops, strikes and leaves without provoking,
+/// which is the one thing none of the ground bodies here can do.
+///
+/// **Telepathy is not modeled**, and costs nothing: RAW's clause lets
+/// the owl talk to its owner at any range, and every summon in this
+/// engine already takes its orders from the same AI that gives them.
+pub static SET_DOWN_SERPENTINE_OWL: SummonItem = SummonItem {
+    action_name: "set down serpentine owl",
+    action_aliases: &["owl figurine", "serpentine owl"],
+    item_name: SERPENTINE_OWL_FIGURINE_NAME,
+    log_label: "serpentine owl",
+    template: &crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    base_instance_id: 225,
+    concentration: None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Figurine of Wondrous Power, Silver Raven** (Wondrous item,
+/// Uncommon) — *"This silver statuette of a raven can become a Raven for
+/// up to 12 hours."*
+///
+/// The **Uncommon** row and the shelf's floor: one hit point of beak on
+/// fifty feet of flight. It is deliberately here rather than skipped,
+/// and the reason is the same one the plain Shield is on the loot table
+/// for — a family whose cheapest member is missing reads as a family of
+/// treasures, and the point of a rarity ladder is that its bottom rung
+/// is disappointing.
+///
+/// What a raven actually buys on this engine's boards is a **Tiny body
+/// in the way**: it occupies a tile, it draws an attack that was aimed at
+/// somebody who matters, and it can be set down in a five-foot gap
+/// nothing else on this shelf fits through. Radius 3, the Medium ring —
+/// a Tiny footprint has never had trouble finding room.
+///
+/// *"Grants you the ability to cast Animal Messenger on it"* is not
+/// modeled: the spell is not in the engine and has no combat surface.
+pub static SET_DOWN_SILVER_RAVEN: SummonItem = SummonItem {
+    action_name: "set down silver raven",
+    action_aliases: &["raven figurine", "silver raven"],
+    item_name: SILVER_RAVEN_FIGURINE_NAME,
+    log_label: "silver raven",
+    template: &crate::actors::creatures::ravens::RAVEN_TEMPLATE,
+    size: crate::engine::types::Size::Tiny,
+    count: 1,
+    search_radius: 3,
+    base_instance_id: 226,
     concentration: None,
     billing: ItemUseBilling::Consumed,
 };

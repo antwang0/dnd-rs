@@ -18,6 +18,7 @@ pub mod eagles;
 pub mod elephants;
 pub mod flying_snakes;
 pub mod giant_elks;
+pub mod giant_flies;
 pub mod hippopotamuses;
 pub mod octopuses;
 pub mod owls;
@@ -1432,6 +1433,9 @@ mod tests {
         (&*elephants::ELEPHANT_TEMPLATE, 12, "8d12+24", [22, 9, 17, 3, 11, 6], 40, 0, 4.0),
         (&*flying_snakes::FLYING_SNAKE_TEMPLATE, 14, "2d4", [4, 15, 11, 2, 12, 5], 30, 60, 0.125),
         (&*giant_elks::GIANT_ELK_TEMPLATE, 14, "5d12+10", [19, 18, 14, 7, 14, 10], 60, 0, 2.0),
+        // Printed inside the Figurine of Wondrous Power entry rather
+        // than in the monster chapter — the Ebony Fly's body.
+        (&*giant_flies::GIANT_FLY_TEMPLATE, 11, "3d10+3", [14, 13, 13, 2, 10, 3], 30, 60, 0.0),
         (&*seahorses::GIANT_SEAHORSE_TEMPLATE, 14, "3d10", [15, 12, 11, 2, 12, 5], 5, 0, 0.5),
         (&*hippopotamuses::HIPPOPOTAMUS_TEMPLATE, 14, "11d10+22", [21, 7, 15, 2, 12, 4], 30, 0, 4.0),
         (&*octopuses::OCTOPUS_TEMPLATE, 12, "1d6", [4, 15, 11, 3, 10, 4], 5, 0, 0.0),

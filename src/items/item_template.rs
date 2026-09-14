@@ -4500,6 +4500,107 @@ pub static ONYX_DOG_FIGURINE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Figurine of Wondrous Power, Ebony Fly** (Wondrous item, Rare) — a
+/// Giant Fly, which is a saddle with wings and no teeth. The one item in
+/// the file whose payout is somebody *else's* mobility; see
+/// `item_actions::SET_DOWN_EBONY_FLY`.
+pub static EBONY_FLY_FIGURINE: Item = Item {
+    name: "Ebony Fly Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_EBONY_FLY],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Golden Lions** (Wondrous item, Rare) —
+/// two Lions for one Action, and the only object in the file that puts a
+/// *pair* on the board. Pack Tactics is why the pair is worth more than
+/// twice one lion; see `item_actions::SET_DOWN_GOLDEN_LIONS`.
+pub static GOLDEN_LIONS_FIGURINE: Item = Item {
+    name: "Golden Lions Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_GOLDEN_LIONS],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Ivory Goats** (Wondrous item, Rare) —
+/// the Goat of Travail, which is the one of RAW's three ivory goats that
+/// is a stat block rather than a subsystem. See
+/// `item_actions::SET_DOWN_IVORY_GOAT` for the other two and why they
+/// are not here.
+pub static IVORY_GOAT_FIGURINE: Item = Item {
+    name: "Ivory Goat of Travail",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_IVORY_GOAT],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Marble Elephant** (Wondrous item,
+/// Rare) — the Huge body, and therefore a portable wall as much as a
+/// creature. See `item_actions::SET_DOWN_MARBLE_ELEPHANT`.
+pub static MARBLE_ELEPHANT_FIGURINE: Item = Item {
+    name: "Marble Elephant Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_MARBLE_ELEPHANT],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Obsidian Steed** (Wondrous item, Very
+/// Rare) — a Nightmare: the shelf's one Very Rare row and the best body
+/// it can put down. See `item_actions::SET_DOWN_OBSIDIAN_STEED` for the
+/// two clauses of RAW's that have nowhere to land.
+pub static OBSIDIAN_STEED_FIGURINE: Item = Item {
+    name: "Obsidian Steed Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_OBSIDIAN_STEED],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Serpentine Owl** (Wondrous item,
+/// Rare) — a Giant Owl, which is the shelf's flier that both fights and
+/// carries. See `item_actions::SET_DOWN_SERPENTINE_OWL`.
+pub static SERPENTINE_OWL_FIGURINE: Item = Item {
+    name: "Serpentine Owl Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_SERPENTINE_OWL],
+    ..Item::DEFAULTS
+};
+
+/// **Figurine of Wondrous Power, Silver Raven** (Wondrous item,
+/// Uncommon) — the family's bottom rung, deliberately kept. See
+/// `item_actions::SET_DOWN_SILVER_RAVEN`.
+pub static SILVER_RAVEN_FIGURINE: Item = Item {
+    name: "Silver Raven Figurine",
+    glyph: '*',
+    on_use: &[&crate::actions::item_actions::SET_DOWN_SILVER_RAVEN],
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's Figurines of Wondrous Power, whole.
+///
+/// A cohort rather than nine loose statics, for the reason
+/// [`ARMORS_OF_VULNERABILITY`] and [`DRAGON_SCALE_MAILS`] are: the family
+/// has an invariant a copy-paste can break silently. Every figurine must
+/// name a distinct statuette, carry exactly one `on_use`, and that use
+/// must be the `SummonItem` whose `item_name` is this item's own name —
+/// a figurine wired to its neighbour's action would compile, drop, be
+/// used, and produce the wrong animal.
+///
+/// It is also what makes the *completeness* of the family checkable.
+/// RAW prints nine statuettes under one item entry, and a tenth added to
+/// the file without a line here is a figurine outside every sweep. See
+/// `the_figurine_family_is_wired_to_its_own_summons`.
+pub static FIGURINES_OF_WONDROUS_POWER: &[&Item] = &[
+    &BRONZE_GRIFFON_FIGURINE,
+    &EBONY_FLY_FIGURINE,
+    &GOLDEN_LIONS_FIGURINE,
+    &IVORY_GOAT_FIGURINE,
+    &MARBLE_ELEPHANT_FIGURINE,
+    &OBSIDIAN_STEED_FIGURINE,
+    &ONYX_DOG_FIGURINE,
+    &SERPENTINE_OWL_FIGURINE,
+    &SILVER_RAVEN_FIGURINE,
+];
+
 /// RAW's *"can't be used this way again until the next dawn"* — the
 /// recharge line the four elemental vessels below share, and the
 /// smallest pool in the file: one charge back, every rest, up to a
@@ -8884,18 +8985,31 @@ pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_WATER_WALKING,
     // The summoning shelf. Weighted by what one Action buys: the four
     // gems and the bag are Uncommon and get one entry apiece, and the
-    // three Rare rows — the horn's three berserkers and the two
-    // figurines — sit at the same single-entry weight as the premium
-    // trinkets. A party that finds any of these has an answer to being
-    // outnumbered that no amount of `+1` ever gave them.
+    // Rare rows — the horn's three berserkers and the figurines — sit at
+    // the same single-entry weight as the premium trinkets. A party that
+    // finds any of these has an answer to being outnumbered that no
+    // amount of `+1` ever gave them.
     &AIR_ELEMENTAL_GEM,
     &EARTH_ELEMENTAL_GEM,
     &FIRE_ELEMENTAL_GEM,
     &WATER_ELEMENTAL_GEM,
     &BAG_OF_TRICKS,
     &HORN_OF_VALHALLA,
+    // The figurine family, one entry apiece — see
+    // [`FIGURINES_OF_WONDROUS_POWER`]. Nine single entries rather than
+    // one entry for "a figurine" is what makes the family read as a
+    // ladder on the drop table as well as in the file: the raven is
+    // Uncommon and the steed is Very Rare, and a party that finds one
+    // figurine has no idea which.
     &BRONZE_GRIFFON_FIGURINE,
     &ONYX_DOG_FIGURINE,
+    &EBONY_FLY_FIGURINE,
+    &GOLDEN_LIONS_FIGURINE,
+    &IVORY_GOAT_FIGURINE,
+    &MARBLE_ELEPHANT_FIGURINE,
+    &OBSIDIAN_STEED_FIGURINE,
+    &SERPENTINE_OWL_FIGURINE,
+    &SILVER_RAVEN_FIGURINE,
     // The vessels — the same four elementals the gems above hold, on a
     // pool that survives the fight. One entry apiece and no more,
     // because a Rare that pays out again in the next room is the

@@ -57512,6 +57512,167 @@ fn every_summon_item_is_registered_and_reachable() {
     }
 }
 
+/// SRD 5.2's Figurine of Wondrous Power is one item entry with nine
+/// statuettes under it, and the engine files each statuette as its own
+/// object. Three invariants keep that filing honest, and all three are
+/// the kind a copy-paste breaks silently.
+///
+///   - **Every figurine offers exactly one use, and it is a figurine's
+///     use.** An `Item` wired to a neighbour's action compiles, drops,
+///     and produces the wrong animal.
+///   - **The wiring is reflexive.** The `SummonItem` an item offers must
+///     bill against *that item's* name, or the use validates against a
+///     figurine the holder does not have.
+///   - **No two statuettes call up the same body.** RAW's nine are nine
+///     different creatures, and two rows pointing at one template is
+///     exactly what a copied literal with one field forgotten looks
+///     like.
+///
+/// The fourth claim is the family's completeness: nine, because SRD 5.2
+/// prints nine. A tenth added to the file without a line on the cohort
+/// is a figurine outside every sweep above.
+#[test]
+fn the_figurine_family_is_wired_to_its_own_summons() {
+    use crate::actions::item_actions::{ALL_SUMMON_ITEMS, SummonItem};
+    use crate::items::item_template::FIGURINES_OF_WONDROUS_POWER;
+    use std::collections::HashSet;
+
+    assert_eq!(
+        FIGURINES_OF_WONDROUS_POWER.len(),
+        9,
+        "SRD 5.2 prints nine statuettes under Figurine of Wondrous Power"
+    );
+
+    let mut bodies: HashSet<usize> = HashSet::new();
+    for figurine in FIGURINES_OF_WONDROUS_POWER {
+        assert_eq!(
+            figurine.on_use.len(),
+            1,
+            "{} should offer exactly one use",
+            figurine.name
+        );
+        let offered = figurine.on_use[0].name();
+        let summon: &&SummonItem = ALL_SUMMON_ITEMS
+            .iter()
+            .find(|s| s.name() == offered)
+            .unwrap_or_else(|| {
+                panic!("{}'s use {:?} is not a registered summon", figurine.name, offered)
+            });
+        assert_eq!(
+            summon.item_name, figurine.name,
+            "{} offers a use billed against {:?}",
+            figurine.name, summon.item_name
+        );
+        assert!(
+            bodies.insert(std::ptr::from_ref(&**summon.template) as usize),
+            "{} calls up a body another figurine already calls",
+            figurine.name
+        );
+    }
+}
+
+/// The three figurines whose payout is something no other row on the
+/// summoning shelf produces.
+///
+/// **The Ebony Fly is the shelf's one non-combatant.** SRD 5.2 prints
+/// the Giant Fly's stat block inside the figurine entry with no Actions
+/// block at all, so what it buys is not a body that fights — it is a
+/// Large flier with a saddle, and `summons_combatants` has to say so or
+/// the AI's summon rung prices it as a second sword.
+///
+/// **The Golden Lions are the shelf's one pair.** `count: 2` is RAW's
+/// *"always created in pairs"*, and it is the only row in the engine
+/// where one Action puts down two of anything that is not a berserker.
+///
+/// **The Marble Elephant is the shelf's one Huge body**, which is what
+/// the wider `search_radius` is for: a 3×3 footprint needs a bigger ring
+/// to find room in, and an elephant that could not be set down would be
+/// a Rare item that does nothing on a busy board.
+#[test]
+fn the_new_figurines_put_down_what_their_stat_blocks_promise() {
+    use crate::actions::action_template::Action;
+    use crate::actions::item_actions::{
+        SET_DOWN_EBONY_FLY, SET_DOWN_GOLDEN_LIONS, SET_DOWN_MARBLE_ELEPHANT,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::types::Size;
+    use crate::items::item_template::{
+        EBONY_FLY_FIGURINE, GOLDEN_LIONS_FIGURINE, Item, MARBLE_ELEPHANT_FIGURINE,
+    };
+
+    let set_down = |item: &'static Item, action: &'static dyn Action| {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let user = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 12), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&user).unwrap().pickup_item(item);
+        let aei = ActionExecutionInfo::new(action, user, None, None, None);
+        assert!(
+            aei.validate(&e),
+            "{} would not open:\n{}",
+            item.name,
+            e.messages().join("\n")
+        );
+        e.push_action(aei);
+        e.process_stack();
+        let summoned: Vec<usize> = e.actors.keys().copied().filter(|id| *id != user).collect();
+        assert!(
+            !e.actors[&user].has_item_named(item.name),
+            "{} survived its own use",
+            item.name
+        );
+        (e, user, summoned)
+    };
+
+    // The fly: one Large body, on the user's team, that nothing prices
+    // as a combatant — and that the user can climb onto, which is the
+    // whole item.
+    let (e, user, summoned) = set_down(&EBONY_FLY_FIGURINE, &SET_DOWN_EBONY_FLY);
+    assert_eq!(summoned.len(), 1, "an ebony fly is one fly");
+    let fly = summoned[0];
+    assert!(e.actors[&fly].name().contains("Giant Fly"));
+    assert_eq!(e.actors[&fly].team(), e.actors[&user].team());
+    assert_eq!(e.actors[&fly].size(), Size::Large);
+    assert!(
+        !SET_DOWN_EBONY_FLY.summons_combatants(),
+        "a stat block with no Actions block is not a combatant"
+    );
+    assert!(
+        e.actors[&fly].base_fly_speed() > 0.0,
+        "the one thing an ebony fly is for"
+    );
+    // It lands adjacent (`find_adjacent_spawn`), so the saddle is
+    // already within reach on the turn it is thrown.
+    assert_eq!(
+        e.can_mount(user, fly),
+        Ok(()),
+        "a fly nobody can ride is a fly that does nothing:\n{}",
+        e.messages().join("\n")
+    );
+
+    // The lions: two bodies, two distinct instance names.
+    let (e, _user, summoned) = set_down(&GOLDEN_LIONS_FIGURINE, &SET_DOWN_GOLDEN_LIONS);
+    assert_eq!(summoned.len(), 2, "golden lions come in pairs");
+    let names: std::collections::HashSet<String> = summoned
+        .iter()
+        .map(|id| e.actors[id].name().to_string())
+        .collect();
+    assert_eq!(
+        names.len(),
+        2,
+        "the pair shares one name and is unreadable on the map: {:?}",
+        names
+    );
+    assert!(names.iter().all(|n| n.contains("Lion")));
+
+    // The elephant: one Huge body, which is the claim the wider search
+    // radius exists to keep true.
+    let (e, _user, summoned) = set_down(&MARBLE_ELEPHANT_FIGURINE, &SET_DOWN_MARBLE_ELEPHANT);
+    assert_eq!(summoned.len(), 1);
+    assert_eq!(e.actors[&summoned[0]].size(), Size::Huge);
+    assert!(e.actors[&summoned[0]].name().contains("Elephant"));
+}
+
 /// Scroll of Longstrider installs the Longstriding speed buff on
 /// a touched ally and refuses to refresh when the buff is already
 /// up, mirroring Scroll of Fly's reject-on-active gate.
@@ -61493,10 +61654,11 @@ fn a_fight_where_nobody_lands_anything_is_eventually_called_a_draw() {
 /// edit and so reintroduces the bug it would exist to catch.
 ///
 /// **How the reachable side is counted.** Pointer identity across the
-/// four registries a template can be reachable through, plus the
-/// short list below of templates reachable only through a class
-/// feature's own action — those have no registry to walk, so they are
-/// named here.
+/// five registries a template can be reachable through — the encounter
+/// generator's pool, the class picker, the summon *spells*, the summon
+/// *items* — plus the short list below of templates reachable only
+/// through a class feature's own action, which have no registry to walk
+/// and so are named here.
 #[test]
 fn every_creature_template_in_the_bestiary_is_reachable() {
     use crate::actors::creatures::pc_template_families;
@@ -61539,6 +61701,18 @@ fn every_creature_template_in_the_bestiary_is_reachable() {
     for spell in crate::actions::spells::all_summon_spells() {
         note(spell.template);
     }
+    // The item lane, which is a fifth road onto the board and was
+    // missing from this sweep for as long as every body an item could
+    // summon happened to also be in `template_pool`. The Ebony Fly's
+    // Giant Fly is the first that is not: SRD 5.2 prints its stat block
+    // inside the Figurine of Wondrous Power entry rather than in the
+    // monster chapter, and it has no attack, so it has no business in
+    // the hostile encounter generator. Without this loop the only way
+    // to make the sweep green would have been to put a creature that
+    // cannot fight into the pool of things that fight the party.
+    for item in crate::actions::item_actions::ALL_SUMMON_ITEMS {
+        note(item.template);
+    }
     for t in by_class_feature {
         note(t);
     }
@@ -61578,7 +61752,8 @@ fn every_creature_template_in_the_bestiary_is_reachable() {
          reachable — a template that no pool, no class picker, no summon and no \
          feature can produce is a stat block nobody will ever see. Add it to \
          `EncounterInstance::template_pool`, `pc_template_families`, \
-         `all_summon_spells`, or the by-class-feature list in this test.",
+         `all_summon_spells`, `ALL_SUMMON_ITEMS`, or the by-class-feature list in \
+         this test.",
         reachable.len()
     );
 }
