@@ -1317,6 +1317,29 @@ pub struct SimpleWeapon {
     /// is orthogonal to all four weapon shapes, and pairing it with
     /// each would be four more near-identical constructors.
     pub mastery: Option<WeaponMastery>,
+    /// True for the weapons the **Polearm Master** feat's Pole Strike
+    /// clause names — *"a Quarterstaff, a Spear, or a weapon that has
+    /// the Heavy and Reach properties"*, which on this roster is the
+    /// spear, the glaive, the lance and the centaur's pike.
+    ///
+    /// A declared flag rather than a derived one, and the reason is the
+    /// list: RAW's is a union of a two-weapon enumeration and a
+    /// two-property test, and the engine carries neither Heavy nor
+    /// Reach as a property — reach is a *number*, and a whip has 10
+    /// feet of it without being anything Pole Strike would recognise.
+    /// Deriving the gate from `reach > MELEE_REACH` would hand a
+    /// bonus-action butt-end swing to a whip and withhold it from a
+    /// spear, which is wrong in both directions at once.
+    ///
+    /// Read through `Action::is_polearm_melee_weapon`, which ands it
+    /// with `is_melee` so a *thrown* spear opens nothing: `thrown()`
+    /// carries this flag across untouched — it is a property of the
+    /// object — and the melee gate is what makes that harmless.
+    ///
+    /// Defaulted to `false` by every constructor and set with the
+    /// `polearm()` builder, for the reason `is_light` and `mastery`
+    /// are.
+    pub is_polearm: bool,
     /// The die this weapon rolls *instead of* `damage_dice` when the
     /// target is Bloodied, or `None` for the ordinary weapon that hits
     /// a wounded creature exactly as hard as a fresh one.
@@ -1446,6 +1469,7 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             mastery: None,
+            is_polearm: false,
             bloodied_dice: None,
             damage_type_menu: None,
         }
@@ -1490,6 +1514,7 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             mastery: None,
+            is_polearm: false,
             bloodied_dice: None,
             damage_type_menu: None,
         }
@@ -1531,6 +1556,7 @@ impl SimpleWeapon {
             min_effective_range: None,
             is_light: false,
             mastery: None,
+            is_polearm: false,
             bloodied_dice: None,
             damage_type_menu: None,
         }
@@ -1587,6 +1613,21 @@ impl SimpleWeapon {
     pub const fn mastery(self, mastery: WeaponMastery) -> Self {
         Self {
             mastery: Some(mastery),
+            ..self
+        }
+    }
+
+    /// Const builder that marks a weapon as one the **Polearm Master**
+    /// feat's Pole Strike clause names — `SimpleWeapon::reach_melee(...)
+    /// .polearm()`.
+    ///
+    /// A builder for the reason `light` and `mastery` are: the property
+    /// is orthogonal to all four weapon shapes, and RAW's list spans a
+    /// simple melee weapon (the spear), two martial reach weapons and a
+    /// mounted one.
+    pub const fn polearm(self) -> Self {
+        Self {
+            is_polearm: true,
             ..self
         }
     }
@@ -1738,6 +1779,13 @@ impl Action for SimpleWeapon {
     /// once as a toss — and only the swing opens the bonus attack.
     fn is_light_melee_weapon(&self) -> bool {
         self.is_light && self.is_melee
+    }
+    /// The same two halves, for the same reason: the spear is declared
+    /// twice — once as a thrust and once as a throw — and RAW's Pole
+    /// Strike is a *melee* attack with the opposite end of a weapon the
+    /// wielder is still holding.
+    fn is_polearm_melee_weapon(&self) -> bool {
+        self.is_polearm && self.is_melee
     }
     fn weapon_mastery(&self) -> Option<WeaponMastery> {
         self.mastery
@@ -3900,6 +3948,7 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: true,
     mastery: Some(WeaponMastery::Nick),
+    is_polearm: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -3922,6 +3971,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     mastery: Some(WeaponMastery::Vex),
+    is_polearm: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -4052,7 +4102,13 @@ const SPEAR_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Piercing,
 )
-.mastery(WeaponMastery::Sap);
+.mastery(WeaponMastery::Sap)
+// RAW names the spear in Pole Strike's weapon list outright, without
+// asking anything about its properties. The flag rides across
+// `thrown()` onto `THROWN_SPEAR` untouched — it belongs to the object
+// — and `Action::is_polearm_melee_weapon` ands it with `is_melee`, so
+// a spear that left the wielder's hand opens nothing.
+.polearm();
 
 pub static SPEAR: SimpleWeapon = SPEAR_PROFILE;
 
@@ -6285,6 +6341,7 @@ pub static LANCE: SimpleWeapon = SimpleWeapon {
         2,
     )
     .mastery(WeaponMastery::Topple)
+    .polearm()
 };
 
 /// Knight's double-longsword multiattack — two swings per Action,
@@ -11198,7 +11255,8 @@ pub static GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
     DamageType::Slashing,
     2,
 )
-.mastery(WeaponMastery::Graze);
+.mastery(WeaponMastery::Graze)
+.polearm();
 
 /// Gnoll Pack Lord multiattack — 2 glaive swings per Action. The pack
 /// lord's signature move: two reach-2 slashing strikes that let it
@@ -11415,7 +11473,8 @@ pub static CENTAUR_PIKE: SimpleWeapon = SimpleWeapon::reach_melee(
     Dice::new(1, 10),
     DamageType::Piercing,
     2,
-);
+)
+.polearm();
 
 /// Centaur hooves — STR-based 2d6 bludgeoning melee. The kicker
 /// follow-up to the pike thrust; pairs with `CENTAUR_PIKE` in the multi.
@@ -20118,6 +20177,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     mastery: None,
+    is_polearm: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };
@@ -21512,6 +21572,7 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     min_effective_range: None,
     is_light: false,
     mastery: None,
+    is_polearm: false,
     bloodied_dice: None,
     damage_type_menu: None,
 };

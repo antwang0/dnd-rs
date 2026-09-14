@@ -59836,10 +59836,27 @@ fn cavalier_ships_its_kit_and_inherits_the_fighter_chassis() {
         CAVALIER_FIGHTER_TEMPLATE.constitution > FIGHTER_TEMPLATE.constitution,
         "the Cavalier's CON rises above the baseline to size Warding Maneuver"
     );
+    // Both *subclass* features the Cavalier ships are passive rows on
+    // shared engine cohorts, so the only things it adds to the baseline
+    // fighter's action list are its weapon and the feat swing that
+    // weapon opens: the lance, and Polearm Master's butt-end strike.
     assert_eq!(
         CAVALIER_FIGHTER_TEMPLATE.actions.len(),
-        FIGHTER_TEMPLATE.actions.len(),
-        "the Cavalier's shipped features are passive, not actions"
+        FIGHTER_TEMPLATE.actions.len() + 2,
+        "the lance and the pole strike, and nothing else"
+    );
+    for name in ["lance", "pole strike"] {
+        assert!(
+            CAVALIER_FIGHTER_TEMPLATE
+                .actions
+                .iter()
+                .any(|a| a.name() == name),
+            "the Cavalier should carry the {name}"
+        );
+    }
+    assert!(
+        e.actors[&cav].has_passive_feature(crate::actions::feats::POLEARM_MASTER_TAG),
+        "and the feat that makes the second of those legal"
     );
 }
 
@@ -107706,4 +107723,254 @@ fn a_bard_without_the_feat_takes_the_blow() {
             "seed {seed}: the baseline bard has no guard to raise"
         );
     }
+}
+
+// ---------------------------------------------------------------
+// The **Polearm Master** feat — Pole Strike.
+//
+// The gate is the same gate two-weapon fighting uses, one row over:
+// an Action-cost swing with the right kind of weapon stamps a per-turn
+// ledger, and the bonus-action follow-up reads it back. So the tests
+// are the two-weapon tests' siblings, and the thing worth pinning is
+// the same thing — that the ledger is what opens the window, and not
+// an empty Action slot.
+// ---------------------------------------------------------------
+
+/// The opening clause: *"immediately after you take the Attack action
+/// and attack with a Quarterstaff, a Spear, or a weapon that has the
+/// Heavy and Reach properties, you can use a Bonus Action to make a
+/// melee attack with the opposite end of the weapon."*
+#[test]
+fn pole_strike_needs_a_polearm_swing_first() {
+    use crate::actions::feats::{POLEARM_MASTER_TAG, POLE_STRIKE_LANCE, POLE_STRIKE_OPENING_TAG};
+    use crate::actions::monster_attacks::{LANCE, SCIMITAR};
+    use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cav = e
+        .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    assert!(e.actors[&cav].has_passive_feature(POLEARM_MASTER_TAG));
+
+    // Nothing swung yet: the shaft has nothing to follow.
+    let strike =
+        ActionExecutionInfo::new(&POLE_STRIKE_LANCE, cav, Some(vec![target]), None, None);
+    assert!(
+        !strike.validate(&e),
+        "the pole strike should be illegal before the point goes in"
+    );
+
+    // The scimitar spends the Action and opens nothing — which is the
+    // half of RAW's clause an `action_slots() == 0` gate would miss.
+    e.push_action(ActionExecutionInfo::new(
+        &SCIMITAR,
+        cav,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        !e.actors[&cav].once_per_turn_used(POLE_STRIKE_OPENING_TAG),
+        "a scimitar swing is not a pole strike opening"
+    );
+
+    // The lance is. Refund the Action so the swing can be declared.
+    e.actors.get_mut(&cav).unwrap().reset_for_new_round();
+    e.push_action(ActionExecutionInfo::new(
+        &LANCE,
+        cav,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        e.actors[&cav].once_per_turn_used(POLE_STRIKE_OPENING_TAG),
+        "a lance thrust at Action cost opens the shaft swing"
+    );
+    let strike =
+        ActionExecutionInfo::new(&POLE_STRIKE_LANCE, cav, Some(vec![target]), None, None);
+    assert!(
+        strike.validate(&e),
+        "the pole strike should be legal once the point has gone in"
+    );
+}
+
+/// The opening is good for one turn only, and the ledger it rides is
+/// the one `reset_for_new_round` already clears.
+#[test]
+fn the_pole_strike_opening_does_not_survive_the_turn() {
+    use crate::actions::feats::POLE_STRIKE_OPENING_TAG;
+    use crate::actions::monster_attacks::LANCE;
+    use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cav = e
+        .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.push_action(ActionExecutionInfo::new(
+        &LANCE,
+        cav,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(e.actors[&cav].once_per_turn_used(POLE_STRIKE_OPENING_TAG));
+    e.actors.get_mut(&cav).unwrap().reset_for_new_round();
+    assert!(
+        !e.actors[&cav].once_per_turn_used(POLE_STRIKE_OPENING_TAG),
+        "the opening clears with the rest of the per-turn ledgers"
+    );
+}
+
+/// The feat, not the weapon, is what makes the swing legal. A creature
+/// that opened the window without the feat has nothing to cash it with
+/// — which is the difference between `POLE_STRIKE_OPENING_TAG` and
+/// `POLEARM_MASTER_TAG` being two keys rather than one.
+#[test]
+fn a_spear_without_the_feat_opens_nothing_to_cash() {
+    use crate::actions::feats::{POLEARM_MASTER_TAG, POLE_STRIKE_LANCE, POLE_STRIKE_OPENING_TAG};
+    use crate::actions::monster_attacks::SPEAR;
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let guard = e
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    assert!(!e.actors[&guard].has_passive_feature(POLEARM_MASTER_TAG));
+    e.push_action(ActionExecutionInfo::new(
+        &SPEAR,
+        guard,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        e.actors[&guard].once_per_turn_used(POLE_STRIKE_OPENING_TAG),
+        "the spear opens the window for anybody holding one"
+    );
+    let strike =
+        ActionExecutionInfo::new(&POLE_STRIKE_LANCE, guard, Some(vec![target]), None, None);
+    assert!(
+        !strike.validate(&e),
+        "but only a holder of the feat can swing the shaft"
+    );
+}
+
+/// A *thrown* spear opens nothing. RAW's Pole Strike is a melee attack
+/// with the opposite end of a weapon the wielder is still holding, and
+/// `is_polearm` rides across `thrown()` untouched — the `is_melee` half
+/// of `Action::is_polearm_melee_weapon` is what makes that harmless.
+#[test]
+fn a_thrown_spear_is_not_a_pole_strike_opening() {
+    use crate::actions::feats::POLE_STRIKE_OPENING_TAG;
+    use crate::actions::monster_attacks::THROWN_SPEAR;
+    use crate::actors::creatures::guards::GUARD_TEMPLATE;
+    use crate::actions::action_template::Action;
+
+    assert!(
+        crate::actions::monster_attacks::SPEAR.is_polearm_melee_weapon(),
+        "the spear in hand is on RAW's Pole Strike list"
+    );
+    assert!(
+        !THROWN_SPEAR.is_polearm_melee_weapon(),
+        "and the same spear in flight is not"
+    );
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let guard = e
+        .instantiate_creature(&GUARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    e.push_action(ActionExecutionInfo::new(
+        &THROWN_SPEAR,
+        guard,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        !e.actors[&guard].once_per_turn_used(POLE_STRIKE_OPENING_TAG),
+        "a spear that has left the hand has no opposite end to swing"
+    );
+}
+
+/// The swing itself: a bonus action, a d4 of bludgeoning, the
+/// wielder's Strength modifier, and the polearm's reach rather than
+/// five feet.
+#[test]
+fn the_pole_strike_is_a_bonus_action_d4_at_the_lance_s_reach() {
+    use crate::actions::action_template::Action;
+    use crate::actions::feats::{POLE_STRIKE_DICE, POLE_STRIKE_LANCE};
+    use crate::actions::monster_attacks::LANCE;
+    use crate::actors::creatures::fighters::CAVALIER_FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cav = e
+        .instantiate_creature(&CAVALIER_FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // Two tiles of gap — inside the lance's reach and outside a
+    // five-foot one, which is the placement the reach field is for.
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+        .unwrap();
+    assert_eq!(
+        POLE_STRIKE_LANCE.reach_tiles(),
+        LANCE.reach_tiles(),
+        "the shaft covers what the point does"
+    );
+    assert_eq!(POLE_STRIKE_DICE, Dice::new(1, 4));
+    assert_eq!(
+        POLE_STRIKE_LANCE.cost(&e, cav, None, None, None),
+        vec![Resource::BonusAction]
+    );
+    assert_eq!(
+        POLE_STRIKE_LANCE.damage_types(),
+        vec![DamageType::Bludgeoning],
+        "the butt end is a club whatever the point is"
+    );
+
+    e.push_action(ActionExecutionInfo::new(
+        &LANCE,
+        cav,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    let before = e.messages().len();
+    e.push_action(ActionExecutionInfo::new(
+        &POLE_STRIKE_LANCE,
+        cav,
+        Some(vec![target]),
+        None,
+        None,
+    ));
+    e.process_stack();
+    assert!(
+        e.messages()[before..]
+            .iter()
+            .any(|l| l.contains("pole strike")),
+        "the shaft swing should reach a target three tiles out"
+    );
+    assert!(
+        !e.actors[&cav].can_consume_resource(Resource::BonusAction),
+        "and it costs the bonus action"
+    );
 }

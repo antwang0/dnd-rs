@@ -26,6 +26,7 @@
 //! | Piercer | General | the weakest damage die, and one more on a crit |
 //! | Slasher | General | ten feet of speed, and the swings of what it crit |
 //! | Defensive Duelist | General | one swing a round, off the armour class |
+//! | Polearm Master | General | a bonus-action swing with the other end |
 //! | Boon of Combat Prowess | Epic Boon | one miss a turn becomes a hit |
 //! | Boon of Dimensional Travel | Epic Boon | thirty feet after the swing |
 //! | Boon of Fate | Epic Boon | 2d4 onto a d20 that came up short |
@@ -82,17 +83,23 @@
 //! now, not one: the reaction dispatcher, and `REACTIVE_AC_GUARDS`,
 //! which is where Defensive Duelist lands. Neither generalises to a
 //! clause the *attacker* decides mid-swing, which is what the three
-//! above are. **A swing bound to a weapon** — Polearm Master, Dual
-//! Wielder — needs the attack pipeline to know which *object* made the
-//! attack, and it does not: see `conditions::Condition::DragonSlaying`
-//! for the same absence viewed from the magic armoury.
+//! above are. **A swing bound to a weapon** — Dual Wielder's
+//! second-blade clause — needs the attack pipeline to know which
+//! *object* made the attack, and it does not: see
+//! `conditions::Condition::DragonSlaying` for the same absence viewed
+//! from the magic armoury.
 //!
-//! Crusher, Piercer and Slasher used to be listed in that second group
-//! and are not any more, because the group was drawn one notch too
-//! wide. None of the three asks which object swung — each asks what
-//! *type* the swing dealt, and `AttackParams::damage_type` has always
-//! carried that. Polearm Master genuinely needs the object (a
-//! quarterstaff's opposite end is not a damage type) and stays.
+//! That second group used to be much longer, and it was wrong. Crusher,
+//! Piercer and Slasher were on it: none of the three asks which object
+//! swung — each asks what *type* the swing dealt, and
+//! `AttackParams::damage_type` has always carried that. Polearm Master
+//! was on it: Pole Strike does not ask what swung either, it asks what
+//! the holder took the **Attack action** with, which is a fact about
+//! the action and which `EncounterInstance::mark_weapon_openings` has
+//! read since two-weapon fighting shipped. What is genuinely out of
+//! reach is a clause that must distinguish two weapons the same
+//! creature is holding *at the moment of the roll*, and only one feat
+//! left on the list needs that.
 //!
 //! ## Why tags rather than fields
 //!
@@ -616,6 +623,238 @@ pub const SLASHER_TAG: &str = "feat.slasher";
 /// twice.
 pub const DEFENSIVE_DUELIST_TAG: &str = "feat.defensive_duelist";
 
+/// **Polearm Master** (General feat) — of whose two clauses the engine
+/// carries the one that adds a swing.
+///
+/// *"Pole Strike. Immediately after you take the Attack action and
+/// attack with a Quarterstaff, a Spear, or a weapon that has the Heavy
+/// and Reach properties, you can use a Bonus Action to make a melee
+/// attack with the opposite end of the weapon. The weapon deals
+/// Bludgeoning damage, and the weapon's damage die for this attack is a
+/// d4."*
+///
+/// This feat spent a long time on this module's "what is still not
+/// here" list, filed under *needs the attack pipeline to know which
+/// object made the attack*. That was the wrong diagnosis, and the same
+/// wrong one the damage-type trio was given. Pole Strike does not ask
+/// what swung — it asks **what you took the Attack action with**, which
+/// is a fact about the action and not about the attack roll it
+/// resolves into. The engine has read exactly that fact since
+/// two-weapon fighting shipped: `EncounterInstance::mark_weapon_openings`
+/// stamps a per-turn ledger when an Action-cost swing carries the right
+/// weapon property, and `OffHandAttack` gates on it. Pole Strike is the
+/// second row through the same gate.
+///
+/// **What is not here is Reactive Strike** — *"you can take an
+/// Opportunity Attack when a creature enters the reach you have with
+/// that weapon."* The engine's opportunity-attack dispatcher triggers
+/// on a creature **leaving** a threatened square, which is RAW's
+/// ordinary trigger; a second trigger on *entering* one would need the
+/// mover's whole path re-examined against every polearm on the board at
+/// each step, and the dispatcher walks the endpoint. The same absence
+/// is written down on the Cavalier's Hold the Line, which wants the
+/// identical hook.
+///
+/// Ships on `fighters::CAVALIER_FIGHTER_TEMPLATE`, which also gains the
+/// lance it had been fighting without — see that template.
+pub const POLEARM_MASTER_TAG: &str = "feat.polearm_master";
+
+/// Per-turn ledger key stamped when a Pole Strike-eligible weapon is
+/// swung at Action cost, and read back by `PoleStrike` as its gate.
+///
+/// A key on the shared `once_per_turn_marks` set rather than a field on
+/// `ActorInstance`, which is where two-weapon fighting's identical
+/// opening lives. The set is already cleared by `reset_for_new_round`,
+/// and the alternative would be one more boolean the struct, its
+/// `defaults()` and its instantiation copy all have to know about for a
+/// flag exactly one action reads.
+///
+/// Deliberately **not** the feat's own tag. `POLEARM_MASTER_TAG` says
+/// the holder took the feat; this says they opened the window this
+/// turn, and a creature that swung a spear without the feat still
+/// stamps it. Sharing one key would make "has the feat" and "has
+/// swung" the same question, which they are not.
+pub const POLE_STRIKE_OPENING_TAG: &str = "feat.polearm_master.opening";
+
+/// The damage die RAW gives the opposite end of a polearm, whatever the
+/// business end rolls: *"the weapon's damage die for this attack is a
+/// d4."*
+pub const POLE_STRIKE_DICE: crate::engine::dice::Dice = crate::engine::dice::Dice::new(1, 4);
+
+/// The butt-end swing `POLEARM_MASTER_TAG` buys.
+///
+/// Data-only, in the shape of `two_weapon::OffHandAttack` beside it and
+/// for the same reason: everything that makes this swing a *pole
+/// strike* — the die, the damage type, the cost, the gate — is fixed by
+/// RAW and lives on the impl, and what differs between one holder and
+/// the next is which pole they are holding. Two fields carry that: the
+/// ability the shaft is swung with, and how far it reaches.
+///
+/// **The reach is the polearm's, not five feet.** RAW's swing is made
+/// with the opposite end of the same weapon, so a glaive's butt covers
+/// the glaive's ten feet. The engine cannot ask the ledger *which*
+/// polearm opened the window — it is a flag, not an inventory — so the
+/// reach is declared per static instead, and the static a chassis ships
+/// is the one that matches the pole on its sheet.
+pub struct PoleStrike {
+    /// Display name — action list entry, prompt parser's canonical
+    /// name, and the attack log's subject.
+    pub display_name: &'static str,
+    /// Alias set for the prompt parser.
+    pub aliases: &'static [&'static str],
+    /// Ability the shaft is swung with. RAW is *"the same ability
+    /// modifier as the primary attack"*, and every weapon on the Pole
+    /// Strike list is a Strength weapon on this roster.
+    pub attack_ability: crate::engine::types::AbilityScoreType,
+    /// Reach in tile-gap units — the polearm's own.
+    pub reach: isize,
+}
+
+impl crate::actions::action_template::Action for PoleStrike {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> crate::actions::action_template::TargetingSchema {
+        crate::actions::action_template::TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        false
+    }
+
+    fn is_melee_attack(&self) -> bool {
+        true
+    }
+
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+
+    /// Deliberately **not** an opening itself, for the reason
+    /// `OffHandAttack::is_light_melee_weapon` is not: RAW's opening is
+    /// the *Attack action*, and a swing that re-armed its own gate
+    /// would become a second free strike the moment anything handed out
+    /// a second bonus action. The write site gates on Action cost too,
+    /// so this is belt and braces; both are cheap.
+    fn is_polearm_melee_weapon(&self) -> bool {
+        false
+    }
+
+    fn damage_types(&self) -> Vec<crate::engine::types::DamageType> {
+        vec![crate::engine::types::DamageType::Bludgeoning]
+    }
+
+    fn cost(
+        &self,
+        _e: &crate::engine::encounter::EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<crate::engine::types::Coordinate>>,
+        _o: Option<&std::collections::HashSet<crate::engine::action_overrides::ActionOverride>>,
+    ) -> Vec<crate::engine::side_effects::Resource> {
+        crate::actions::action_template::bonus_action_only()
+    }
+
+    /// RAW's opening clause, and the reason the ledger exists.
+    ///
+    /// Two gates, and the second is not redundant: the feat says the
+    /// holder *may* do this at all, and the ledger says they have
+    /// actually put a pole into somebody this turn. Gating on the
+    /// ledger rather than on an empty Action slot is what stops a
+    /// cavalier who Dashed to close from swinging a shaft they never
+    /// raised — the same distinction `OffHandAttack` draws one module
+    /// over.
+    fn custom_validate_input(
+        &self,
+        encounter: &crate::engine::encounter::EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<crate::engine::types::Coordinate>>,
+        _o: Option<&std::collections::HashSet<crate::engine::action_overrides::ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.has_passive_feature(POLEARM_MASTER_TAG)
+                && a.once_per_turn_used(POLE_STRIKE_OPENING_TAG)
+        })
+    }
+
+    /// `extra_swings: 0` and a `BonusAction` cost between them keep
+    /// Extra Attack out of the estimate, which is RAW: Extra Attack
+    /// multiplies the Attack action, and this is not it.
+    fn expected_damage(
+        &self,
+        encounter: &crate::engine::encounter::EncounterInstance,
+        caster_id: usize,
+    ) -> Option<f32> {
+        crate::actions::action_template::weapon_expected_damage_named(
+            encounter,
+            caster_id,
+            self.display_name,
+            POLE_STRIKE_DICE,
+            Some(self.attack_ability),
+            crate::engine::side_effects::Resource::BonusAction,
+            0,
+        )
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut crate::engine::encounter::EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<crate::engine::types::Coordinate>>,
+        _o: Option<&std::collections::HashSet<crate::engine::action_overrides::ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = crate::actions::action_template::first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(self.attack_ability);
+        let damage_bonus = caster.ability_modifier(self.attack_ability);
+        crate::engine::attack::resolve_attack(
+            encounter,
+            crate::engine::attack::AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.display_name,
+                attack_bonus,
+                damage_dice: POLE_STRIKE_DICE,
+                damage_bonus,
+                damage_type: crate::engine::types::DamageType::Bludgeoning,
+                is_melee: true,
+                long_range: None,
+                // The butt end is not the business end: RAW's lance
+                // disadvantage-within-5-feet clause belongs to the point.
+                min_range: None,
+                is_spell: false,
+            },
+        )
+        // No mastery rider. RAW's mastery property is printed beside
+        // the weapon's own damage line, and this swing is explicitly
+        // not that line — a lance topples with its point.
+    }
+}
+
+/// The Cavalier's lance, swung by the shaft — reach 2 (RAW's 10 ft),
+/// Strength, 1d4 bludgeoning.
+pub static POLE_STRIKE_LANCE: PoleStrike = PoleStrike {
+    display_name: "pole strike",
+    aliases: &["polestrike", "butt-end", "shaft"],
+    attack_ability: crate::engine::types::AbilityScoreType::Strength,
+    reach: 2,
+};
+
 pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 
 /// **Boon of Dimensional Travel** (Epic Boon) — *"Blink Steps.
@@ -847,6 +1086,7 @@ pub const FEAT_TAGS: &[&str] = &[
     PIERCER_TAG,
     SLASHER_TAG,
     DEFENSIVE_DUELIST_TAG,
+    POLEARM_MASTER_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,

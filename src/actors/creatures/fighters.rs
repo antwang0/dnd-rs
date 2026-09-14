@@ -747,8 +747,25 @@ pub static PSI_WARRIOR_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 /// from baseline Fighter 'F', Champion 'C', Samurai 'S', Eldritch Knight
 /// 'E' and Psi Warrior 'P'.
 pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    // Two tags and a CON bump; no new actions, since both shipped
-    // features are passive rows on shared engine cohorts.
+    // The lance the Cavalier had been riding without. Every other piece
+    // of this build points at one — Mounted Combatant below, Ferocious
+    // Charger's twenty-foot run-up, and RAW's own Born to the Saddle —
+    // and the chassis was inheriting the baseline fighter's scimitar
+    // and nothing longer. The lance's `min_effective_range` is what
+    // makes it a mounted weapon rather than a strictly better sword: a
+    // cavalier jabbing at contact rolls at disadvantage, and the AI's
+    // attack picker reads that through `Action::min_effective_reach`,
+    // so the scimitar stays on the sheet as the thing to use when
+    // something has closed.
+    let mut actions = FIGHTER_TEMPLATE.actions.clone();
+    actions.push(&crate::actions::monster_attacks::LANCE);
+    // And the **Polearm Master** feat's butt-end swing, which the lance
+    // is what opens — RAW's Pole Strike list is "a Quarterstaff, a
+    // Spear, or a weapon that has the Heavy and Reach properties", and
+    // a lance is the third. See `crate::actions::feats::POLEARM_MASTER_TAG`.
+    actions.push(&crate::actions::feats::POLE_STRIKE_LANCE);
+    // Two tags and a CON bump; no other new actions, since both shipped
+    // subclass features are passive rows on shared engine cohorts.
     let mut features = FIGHTER_TEMPLATE.features.clone();
     features.insert(UNWAVERING_MARK_TAG);
     features.insert(WARDING_MANEUVER_TAG);
@@ -766,9 +783,15 @@ pub static CAVALIER_FIGHTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     // has thirty in a turn; a warhorse has sixty. See
     // `feats::MOUNTED_COMBATANT_TAG`.
     features.insert(crate::actions::feats::MOUNTED_COMBATANT_TAG);
+    // The Polearm Master feat, for the same reason and on the same
+    // reading: RAW makes it a feat, and the lancer is who the feat is
+    // written about. It buys the shaft swing pushed onto the action
+    // list above, gated on the lance actually having gone in this turn.
+    features.insert(crate::actions::feats::POLEARM_MASTER_TAG);
     CreatureTemplate {
         name: "Cavalier",
         glyph: 'V',
+        actions,
         // CON 16 (+3): RAW sizes Warding Maneuver by CON modifier, and
         // the build's whole plan is to be the one getting hit.
         constitution: 16,

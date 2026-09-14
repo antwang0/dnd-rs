@@ -1545,6 +1545,28 @@ pub trait Action {
         false
     }
 
+    /// True if this action is a swing with one of the weapons the
+    /// **Polearm Master** feat's Pole Strike clause names — RAW's *"a
+    /// Quarterstaff, a Spear, or a weapon that has the Heavy and Reach
+    /// properties"*.
+    ///
+    /// The exact sibling of `is_light_melee_weapon` above, and read at
+    /// the same chokepoint for the same reason: what opens a
+    /// bonus-action follow-up is a fact about the *action* — which
+    /// weapon, at what cost — and `AttackParams` knows neither. See
+    /// `EncounterInstance::mark_weapon_openings`, which stamps both
+    /// ledgers in one pass, and `feats::PoleStrike`, which reads this
+    /// one back.
+    ///
+    /// **Defaults to `false`**, the conservative direction, exactly as
+    /// its sibling does: a missing `true` costs a holder their butt-end
+    /// swing, where a wrong `true` would hand one out for a mace.
+    /// `SimpleWeapon` overrides it from `is_polearm`, anded with
+    /// `is_melee` so a thrown spear opens nothing.
+    fn is_polearm_melee_weapon(&self) -> bool {
+        false
+    }
+
     /// True if this action is the two-weapon-fighting **off-hand
     /// swing** — `actions::two_weapon::OffHandAttack` and nothing else.
     ///

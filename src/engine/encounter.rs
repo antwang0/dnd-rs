@@ -2898,35 +2898,64 @@ impl EncounterInstance {
             .is_some_and(|t| t.effectively_immune_to_condition(c))
     }
 
-    /// Stamp the swinger's two-weapon ledger if `aei` is the swing RAW
-    /// asks for: "the Attack action … with a light melee weapon that
-    /// you're holding in one hand".
+    /// Stamp whichever bonus-action *openings* this swing buys.
     ///
-    /// Both halves are checked here, and both are facts about the
-    /// action rather than about the attack it resolves into — which is
-    /// why the write lives at this chokepoint and not in
+    /// Two rules in the engine are worded the same way — "when you take
+    /// the Attack action and attack with «a weapon of this kind», you
+    /// can use a bonus action to …" — and both need the same two facts
+    /// about the swing:
+    ///
+    ///   - **Two-weapon fighting**: a light melee weapon opens the
+    ///     off-hand swing (`OffHandAttack`).
+    ///   - **Polearm Master**: a spear, glaive, lance or pike opens the
+    ///     butt-end swing (`feats::PoleStrike`).
+    ///
+    /// Both halves of each are checked here, and all four are facts
+    /// about the action rather than about the attack it resolves into —
+    /// which is why the write lives at this chokepoint and not in
     /// `engine::attack`. `AttackParams` knows the die, the reach and
     /// the damage type; it does not know whether the swing cost an
     /// Action or which weapon on the sheet produced it, and both of
     /// those are load-bearing. A bonus-action shortbow shot and an
     /// opportunity attack are melee-or-not by the same resolver and
-    /// neither opens a second swing.
+    /// neither opens anything.
     ///
-    /// Runs before `execute` rather than after, so the ledger is
+    /// The two share the `Resource::Action` test rather than each
+    /// asking for the cost, which is the whole reason this is one
+    /// function: `aei.cost(self)` walks the action's cost lane, and a
+    /// weapon that is both light and a polearm (none today, and RAW
+    /// prints no such weapon) would otherwise walk it twice.
+    ///
+    /// Runs before `execute` rather than after, so the ledgers are
     /// already stamped for anything the swing itself enqueues. Nothing
-    /// today reads it that early — the off-hand swing is declared on a
+    /// today reads them that early — both follow-ups are declared on a
     /// later pass through the stack — but the ordering costs nothing
     /// and the other order would be a latent trap.
-    fn mark_two_weapon_opening(&mut self, aei: &ActionExecutionInfo) {
+    fn mark_weapon_openings(&mut self, aei: &ActionExecutionInfo) {
         use crate::engine::side_effects::Resource;
-        if !aei.action().is_light_melee_weapon() {
+        let light = aei.action().is_light_melee_weapon();
+        let polearm = aei.action().is_polearm_melee_weapon();
+        if !(light || polearm) {
             return;
         }
         if !aei.cost(self).contains(&Resource::Action) {
             return;
         }
-        if let Some(caster) = self.actors.get_mut(&aei.caster_id()) {
+        let Some(caster) = self.actors.get_mut(&aei.caster_id()) else {
+            return;
+        };
+        if light {
             caster.mark_light_weapon_swing_this_turn();
+        }
+        if polearm {
+            // The shared per-turn ledger rather than a second boolean
+            // field beside `light_weapon_swing_this_turn`, for the
+            // reason `mark_offhand_swing` below already uses it: the set
+            // is cleared by `reset_for_new_round` along with every other
+            // per-turn mark, and a field would be one more thing
+            // `defaults()` and the instantiation copy have to know
+            // about for a flag one action reads.
+            caster.mark_once_per_turn_used(crate::actions::feats::POLE_STRIKE_OPENING_TAG);
         }
     }
 
@@ -2944,7 +2973,7 @@ impl EncounterInstance {
     ///
     /// Runs *after* `execute` rather than before, and that ordering is
     /// the whole reason this is a separate hook from
-    /// `mark_two_weapon_opening` directly above it. `Action::execute`
+    /// `mark_weapon_openings` directly above it. `Action::execute`
     /// asks for `cost` twice — once through `validate_input` and once
     /// to build the `ConsumeResource` — and a ledger stamped before
     /// those two calls would answer them differently: the swing would
@@ -20802,7 +20831,7 @@ impl EncounterInstance {
                 }
                 StackElementEntry::Action(a) => {
                     self.log_action_use(&a);
-                    self.mark_two_weapon_opening(&a);
+                    self.mark_weapon_openings(&a);
                     // Asked *before* the swing, because it is a
                     // question about the swing happening at all —
                     // `execute` re-validates and quietly does nothing
