@@ -1631,6 +1631,108 @@ mod tests {
         );
     }
 
+    /// What SRD 5.2 prints on the **Attack Roll** line of a natural
+    /// weapon, for the stat blocks where that number was the only thing
+    /// that could say the engine had keyed the swing on the wrong
+    /// ability.
+    ///
+    /// A monster's attack bonus is its proficiency bonus plus one
+    /// ability modifier, and the book prints the total. That makes the
+    /// printed number a *check digit* on a choice nothing else in the
+    /// engine validates: `SimpleWeapon::attack_ability` is a declaration,
+    /// the drift table above checks the ability scores it reads from,
+    /// and between those two there was no test at all. Five stat blocks
+    /// had drifted, all in the same direction — a Dexterity creature
+    /// swinging off its Strength — and the worst of them could not deal
+    /// damage at all: a giant rat's Strength is 7, so `1d4 + STR`
+    /// averaged half a point and the book's +5 landed on the die as +0.
+    ///
+    /// **Deliberately partial.** The bestiary's damage *dice* are a
+    /// separate and much larger migration — many stat blocks still carry
+    /// their 2014 attack lines under 5.2 headline numbers — and a table
+    /// that tried to pin every attack in the file would be asserting the
+    /// outcome of that migration rather than guarding this one. What is
+    /// listed is what this check was written for, plus room to grow: a
+    /// row added here is a row checked, and no row is checked twice.
+    ///
+    /// The ability is read through `SimpleWeapon::swing_ability`, so a
+    /// Finesse weapon is asked the same question its wielder answers.
+    fn srd_attack_bonus_table() -> Vec<(
+        &'static CreatureTemplate,
+        &'static crate::actions::monster_attacks::SimpleWeapon,
+        i32,
+    )> {
+        use super::*;
+        use crate::actions::monster_attacks as w;
+        vec![
+            // The five that were keyed on an ability the printed bonus
+            // rules out. Each reads +N = PB + the *other* modifier.
+            (&air_elementals::AIR_ELEMENTAL_TEMPLATE, &w::AIR_ELEMENTAL_SLAM, 8),
+            (&awakened_shrubs::AWAKENED_SHRUB_TEMPLATE, &w::AWAKENED_SHRUB_RAKE, 1),
+            (&doppelgangers::DOPPELGANGER_TEMPLATE, &w::DOPPELGANGER_SLAM, 6),
+            (&giant_rats::GIANT_RAT_TEMPLATE, &w::GIANT_RAT_BITE, 5),
+            (&vultures::VULTURE_TEMPLATE, &w::VULTURE_BEAK, 2),
+            // The Finesse cohort, which is the other half of the same
+            // question: the armoury's scimitar is *declared* Strength,
+            // and a goblin's printed +4 is the check digit that says who
+            // actually swings it.
+            (&goblins::GOBLIN_TEMPLATE, &w::SCIMITAR, 4),
+            (&bandits::BANDIT_TEMPLATE, &w::SCIMITAR, 3),
+            (&scouts::SCOUT_TEMPLATE, &w::SHORTSWORD, 4),
+            (&kobolds::KOBOLD_TEMPLATE, &w::DAGGER, 4),
+            // …and a Strength chassis holding the same blade, so the
+            // sweep is not just "always take Dexterity".
+            (&yuan_ti::YUAN_TI_MALISON_TEMPLATE, &w::SCIMITAR, 5),
+        ]
+    }
+
+    /// Every row of [`srd_attack_bonus_table`] resolves to the number
+    /// the book prints.
+    ///
+    /// Instantiates rather than reading the template, because the
+    /// proficiency bonus comes off the actor's effective level and the
+    /// Finesse choice comes off the actor's ability scores — both of
+    /// which are what a swing will actually see.
+    #[test]
+    fn the_bestiary_agrees_with_the_srd_about_what_it_takes_to_hit() {
+        use crate::actors::actor_template::ActorInstance;
+        use crate::engine::dice::FastRandRoller;
+        use crate::engine::types::Coordinate;
+
+        let wrong: Vec<String> = srd_attack_bonus_table()
+            .into_iter()
+            .filter_map(|(t, weapon, printed)| {
+                let a = ActorInstance::from_creature_template(
+                    t,
+                    Coordinate::new(0, 0),
+                    0,
+                    &mut FastRandRoller::with_seed(1),
+                    0,
+                )
+                .expect("every template instantiates");
+                let got = a.spell_attack_modifier(weapon.swing_ability(&a));
+                (got != printed).then(|| {
+                    format!(
+                        "{}'s {}: SRD prints +{}, the engine rolls {:+} ({:?} {:+} and PB {:+})",
+                        t.name,
+                        weapon.display_name,
+                        printed,
+                        got,
+                        weapon.swing_ability(&a),
+                        a.ability_modifier(weapon.swing_ability(&a)),
+                        a.proficiency_bonus(),
+                    )
+                })
+            })
+            .collect();
+        assert!(
+            wrong.is_empty(),
+            "{} attack bonuses disagree with SRD 5.2:\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+    }
+
     /// Every stat block SRD 5.2 prints a Long Jump clause on, and what
     /// it says — the table `the_bestiary_agrees_with_the_srd_about_leaps`
     /// checks in both directions.

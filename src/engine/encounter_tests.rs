@@ -35306,6 +35306,85 @@ fn the_summon_registry_lists_every_summon_spell_declared() {
     );
 }
 
+/// SRD 5.2's **Finesse** property: *"use your choice of your Strength
+/// or Dexterity modifier for the attack and damage rolls. You must use
+/// the same modifier for both rolls."*
+///
+/// Three claims, and the first is the one that made the property worth
+/// building rather than continuing to guess the likely ability per
+/// object.
+///
+///   - **The wielder decides, not the object.** The armoury's scimitar
+///     is declared Strength and a Goblin Warrior swings it at Dexterity,
+///     because a goblin's Strength is 8 and its Dexterity 15. SRD 5.2
+///     prints that scimitar at *"+4, Hit: 5 (1d6 + 2)"*; the engine
+///     swung it at +1 for 2.5 — three points of accuracy and half the
+///     damage, on the most common monster in the game.
+///   - **The choice is "your choice", so it is the better one.** A
+///     Strength chassis holding the same blade keeps Strength: nothing
+///     about the property costs a fighter their 16.
+///   - **One modifier, both rolls.** RAW's second sentence, enforced by
+///     `swing_damage_ability` deriving from `swing_ability` rather than
+///     resolving a second time.
+///
+/// The fourth claim is the negative one: a weapon RAW does not mark
+/// Finesse is unmoved, whoever picks it up. A greataxe in a rogue's
+/// hands is still a Strength weapon and still a bad idea.
+#[test]
+fn a_finesse_weapon_is_swung_with_the_ability_its_wielder_actually_has() {
+    use crate::actions::monster_attacks::{
+        DAGGER, GREATAXE, LONGSWORD, SCIMITAR, SHORTSWORD, SimpleWeapon,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::types::AbilityScoreType::{Dexterity, Strength};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
+
+    // The goblin is the case. Its scimitar is declared Strength and it
+    // has none; the book's printed +4 can only come from Dexterity.
+    let gob = &e.actors[&goblin];
+    assert!(gob.ability_modifier(Strength) < gob.ability_modifier(Dexterity));
+    assert_eq!(SCIMITAR.swing_ability(gob), Dexterity);
+    assert_eq!(SCIMITAR.swing_damage_ability(gob), Some(Dexterity));
+    assert_eq!(
+        gob.spell_attack_modifier(SCIMITAR.swing_ability(gob)),
+        4,
+        "SRD 5.2 prints the Goblin Warrior's scimitar at +4"
+    );
+
+    // …and the same blade in a Strength chassis's hand stays Strength.
+    let ftr = &e.actors[&fighter];
+    assert!(ftr.ability_modifier(Strength) > ftr.ability_modifier(Dexterity));
+    assert_eq!(SCIMITAR.swing_ability(ftr), Strength);
+
+    // Every Finesse weapon in the armoury answers the same way; every
+    // weapon RAW leaves alone answers the declared ability whoever holds
+    // it. The negative half is what keeps the property from becoming
+    // "monsters use their best stat".
+    for finesse in [&DAGGER, &SCIMITAR, &SHORTSWORD] {
+        assert!(finesse.is_finesse, "{} should be Finesse", finesse.name());
+        assert_eq!(finesse.swing_ability(&e.actors[&goblin]), Dexterity);
+        assert_eq!(finesse.swing_ability(&e.actors[&fighter]), Strength);
+    }
+    for heavy in [&GREATAXE, &LONGSWORD] {
+        let w: &SimpleWeapon = heavy;
+        assert!(!w.is_finesse, "{} is not a Finesse weapon", w.name());
+        assert_eq!(
+            w.swing_ability(&e.actors[&goblin]),
+            w.attack_ability,
+            "{} moved for a wielder RAW gives no choice",
+            w.name()
+        );
+    }
+}
+
 /// A weapon whose printed Hit line is a bare number adds no ability
 /// modifier to it.
 ///

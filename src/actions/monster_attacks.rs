@@ -910,9 +910,13 @@ fn simple_weapon_swing(
     let Some(caster) = encounter.actors.get(&caster_id) else {
         return Vec::new();
     };
-    let attack_bonus = caster.spell_attack_modifier(weapon.attack_ability);
+    // SRD 5.2's **Finesse** property resolves here, once, and both rolls
+    // read the answer — see `SimpleWeapon::swing_ability`. For every
+    // other weapon this is the declared ability and nothing has changed.
+    let swing_ability = weapon.swing_ability(caster);
+    let attack_bonus = caster.spell_attack_modifier(swing_ability);
     let damage_bonus = weapon
-        .damage_ability
+        .swing_damage_ability(caster)
         .map(|a| caster.ability_modifier(a))
         .unwrap_or(0);
     // SRD 5.2's "or N (XdY + mod) damage if the target is Bloodied"
@@ -960,8 +964,11 @@ fn simple_weapon_swing(
         },
         // The reach the rider needs is Cleave's "within your reach",
         // which is the weapon's own — a glaive carries further into the
-        // second creature than a greataxe does.
-        &MasteryRider::with_reach(weapon.mastery, weapon.attack_ability, weapon.reach),
+        // second creature than a greataxe does. The ability is the
+        // *resolved* one, so a Finesse weapon's Topple DC is set by the
+        // modifier that actually swung it: RAW's save DC is "8 plus the
+        // ability modifier used to make the attack roll".
+        &MasteryRider::with_reach(weapon.mastery, swing_ability, weapon.reach),
     )
 }
 
@@ -1336,6 +1343,38 @@ pub struct SimpleWeapon {
     /// it, and pairing it with each would be four more near-identical
     /// constructors to keep in step.
     pub is_light: bool,
+    /// SRD 5.2's **Finesse** weapon property — *"When making an attack
+    /// with a Finesse weapon, use your choice of your Strength or
+    /// Dexterity modifier for the attack and damage rolls. You must use
+    /// the same modifier for both rolls."*
+    ///
+    /// The armoury's six: dagger, dart, rapier, scimitar, shortsword,
+    /// whip. It is the one weapon property that changes a *number* on
+    /// every swing rather than opening a lane or capping one, and it is
+    /// the reason `attack_ability` is a declaration rather than an
+    /// answer: a finesse weapon's ability belongs to whoever picked it
+    /// up, not to the object.
+    ///
+    /// **What it replaces is a guess.** The engine used to pin the
+    /// likely ability per weapon — the dagger DEX because a rogue
+    /// carries it, the scimitar STR because a goblin does — and the
+    /// guesses were right often enough to look like a policy and wrong
+    /// where it mattered most. A Goblin Warrior's Strength is 8 and its
+    /// Dexterity 15; SRD 5.2 prints its scimitar at *"+4, Hit: 5 (1d6 +
+    /// 2)"*, and the engine swung it at +1 for 2.5. The most common
+    /// monster in the game was fighting at a three-point deficit and
+    /// half damage.
+    ///
+    /// Resolved per wielder at the swing (`SimpleWeapon::swing_ability`)
+    /// and at the estimate the AI ranks on, so the two agree; RAW's
+    /// *"the same modifier for both rolls"* falls out of there being one
+    /// resolution rather than two. `damage_ability: None` still means a
+    /// bare printed number and stays bare — the choice RAW offers is
+    /// between two modifiers, not between a modifier and none.
+    ///
+    /// Defaulted to `false` by every constructor and turned on with the
+    /// `finesse()` builder, for the reason `is_light` is.
+    pub is_finesse: bool,
     /// 5e (2024 / SRD 5.2) **weapon mastery** property — the one clause
     /// printed beside this weapon in the armoury table, or `None` for
     /// the natural weapons and improvised objects RAW never lists.
@@ -1557,6 +1596,7 @@ impl SimpleWeapon {
             requires_condition: None,
             min_effective_range: None,
             is_light: false,
+            is_finesse: false,
             mastery: None,
             is_polearm: false,
             is_loading: false,
@@ -1603,6 +1643,7 @@ impl SimpleWeapon {
             requires_condition: None,
             min_effective_range: None,
             is_light: false,
+            is_finesse: false,
             mastery: None,
             is_polearm: false,
             is_loading: false,
@@ -1646,6 +1687,7 @@ impl SimpleWeapon {
             requires_condition: None,
             min_effective_range: None,
             is_light: false,
+            is_finesse: false,
             mastery: None,
             is_polearm: false,
             is_loading: false,
@@ -1691,6 +1733,72 @@ impl SimpleWeapon {
             is_light: true,
             ..self
         }
+    }
+
+    /// Const builder that marks an already-constructed weapon SRD 5.2
+    /// **Finesse** — `SimpleWeapon::melee(...).finesse()`.
+    ///
+    /// A builder for the same reason `light` is: the property is
+    /// orthogonal to every constructor shape above it, and the two
+    /// travel together on four of the armoury's six finesse weapons.
+    /// See `is_finesse` for what reads it.
+    pub const fn finesse(self) -> Self {
+        Self {
+            is_finesse: true,
+            ..self
+        }
+    }
+
+    /// Which ability `wielder` actually swings this weapon with.
+    ///
+    /// The declared `attack_ability` for everything in the armoury, and
+    /// for a **Finesse** weapon the better of the wielder's Strength and
+    /// Dexterity — SRD 5.2's *"use your choice of your Strength or
+    /// Dexterity modifier"*, resolved the way every other choice the
+    /// engine makes for a player is: take the one nobody would decline.
+    ///
+    /// **One resolution, read by both rolls**, which is RAW's second
+    /// sentence (*"you must use the same modifier for both"*) getting
+    /// itself enforced by construction rather than by a rule anybody has
+    /// to remember. `damage_ability: None` is untouched — a weapon whose
+    /// Hit line prints a bare number has no modifier for the choice to
+    /// be between.
+    ///
+    /// Ties go to the declared ability, which keeps the log reading the
+    /// way the stat block does for a creature whose two scores are
+    /// equal.
+    pub fn swing_ability(
+        &self,
+        wielder: &crate::actors::actor_template::ActorInstance,
+    ) -> AbilityScoreType {
+        if !self.is_finesse {
+            return self.attack_ability;
+        }
+        let str_mod = wielder.ability_modifier(AbilityScoreType::Strength);
+        let dex_mod = wielder.ability_modifier(AbilityScoreType::Dexterity);
+        match self.attack_ability {
+            AbilityScoreType::Dexterity if str_mod > dex_mod => AbilityScoreType::Strength,
+            AbilityScoreType::Strength if dex_mod > str_mod => AbilityScoreType::Dexterity,
+            declared => declared,
+        }
+    }
+
+    /// The ability the *damage* roll adds, once the Finesse choice has
+    /// been made — `None` for a weapon that prints a bare number.
+    ///
+    /// Derived from [`Self::swing_ability`] rather than resolved a
+    /// second time, so the two rolls can never disagree.
+    pub fn swing_damage_ability(
+        &self,
+        wielder: &crate::actors::actor_template::ActorInstance,
+    ) -> Option<AbilityScoreType> {
+        self.damage_ability.map(|declared| {
+            if self.is_finesse {
+                self.swing_ability(wielder)
+            } else {
+                declared
+            }
+        })
     }
 
     /// Const builder that stamps a weapon with its 5e mastery property
@@ -1948,13 +2056,20 @@ impl Action for SimpleWeapon {
             .get(&caster_id)
             .is_some_and(|a| a.has_condition(required))
     }
+    /// The picker's estimate, resolved through the same Finesse choice
+    /// the swing makes — a rogue weighing a scimitar has to be told what
+    /// *they* will roll with it, not what the object's declaration says.
     fn expected_damage(&self, encounter: &EncounterInstance, caster_id: usize) -> Option<f32> {
+        let damage_ability = encounter
+            .actors
+            .get(&caster_id)
+            .map_or(self.damage_ability, |a| self.swing_damage_ability(a));
         crate::actions::action_template::weapon_expected_damage_named(
             encounter,
             caster_id,
             self.display_name,
             self.damage_dice,
-            self.damage_ability,
+            damage_ability,
             self.cost_resource,
             0,
             self.is_loading,
@@ -4153,9 +4268,19 @@ pub static SLAM: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
-/// Scimitar — generic STR-based 1d6 slashing melee attack. Used by
-/// goblins and other light melee creatures that don't have a flashy
-/// rider effect.
+/// Scimitar — the armoury's 1d6 slashing sidearm: **Finesse**, Light,
+/// Nick. Carried by goblins, drow, bandits and by half the player
+/// chassis in the file.
+///
+/// The declared ability is Strength and is now only a default, because
+/// the weapon is Finesse and `SimpleWeapon::swing_ability` hands the
+/// choice to whoever is holding it. That is not a refinement — it is
+/// the fix for the worst arithmetic error in the bestiary. A Goblin
+/// Warrior has Strength 8 and Dexterity 15, and SRD 5.2 prints its
+/// scimitar at *"+4, Hit: 5 (1d6 + 2)"*; the engine swung it at **+1
+/// for 2.5**, which is three points of accuracy and half the damage,
+/// on the most common monster in the game. The sorcerer and the bard
+/// were swinging theirs at −1.
 pub static SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
     "scimitar",
     &["sc"],
@@ -4163,6 +4288,7 @@ pub static SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Slashing,
 ).light()
+.finesse()
 .mastery(WeaponMastery::Nick);
 
 /// **Scimitar of Speed** (Weapon, Scimitar; Very Rare) — the swing its
@@ -4209,6 +4335,10 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     requires_condition: None,
     min_effective_range: None,
     is_light: true,
+    // A scimitar, so RAW's Finesse property travels with it — which is
+    // what lets a Dexterity chassis that finds this blade swing it with
+    // the ability it actually has.
+    is_finesse: true,
     mastery: Some(WeaponMastery::Nick),
     is_polearm: false,
     is_loading: false,
@@ -4233,6 +4363,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     requires_condition: None,
     min_effective_range: None,
     is_light: false,
+    is_finesse: false,
     mastery: Some(WeaponMastery::Vex),
     is_polearm: false,
     is_loading: false,
@@ -4266,6 +4397,7 @@ const DAGGER_PROFILE: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 4),
     DamageType::Piercing,
 ).light()
+.finesse()
 .mastery(WeaponMastery::Nick);
 
 pub static DAGGER: SimpleWeapon = DAGGER_PROFILE;
@@ -4417,6 +4549,7 @@ pub static SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Piercing,
 ).light()
+.finesse()
 .mastery(WeaponMastery::Vex);
 
 /// Club — STR-based 1d4 bludgeoning simple weapon. The peasant's only
@@ -7137,13 +7270,20 @@ pub static HIPPOGRIFF_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
-/// Doppelganger Slam — melee, STR-based, 1d6+4 bludgeoning. Used as
-/// the basic at-will attack; pairs with the multiattack for the
-/// signature double-slam pattern.
+/// Doppelganger Slam — melee, **DEX**-based 1d6 + DEX bludgeoning.
+/// RAW's slam is *"+6 to hit, Hit: 7 (1d6 + 4)"*, and the +6 is the
+/// doppelganger's Dexterity of 18: its Strength is 11, so the engine's
+/// declared ability put the swing at **+2 for 3.5** — four points of
+/// accuracy and half the damage on a CR 3 shapeshifter whose whole
+/// design is that it gets the first round.
+///
+/// The die stays `1d6`, which is what the docstring's own `1d6+4`
+/// always said; with the right modifier the line reads as printed.
+/// Pairs with the multiattack for the signature double-slam pattern.
 pub static DOPPELGANGER_SLAM: SimpleWeapon = SimpleWeapon::melee(
     "slam",
     &["dslam"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(1, 6),
     DamageType::Bludgeoning,
 );
@@ -10507,13 +10647,23 @@ pub static BONE_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     parts: vec![(&BONE_DEVIL_CLAWS, 2), (&*BONE_DEVIL_STING, 1)],
 });
 
-/// Air Elemental Slam — STR-based 2d8 + STR bludgeoning melee, reach 1.
+/// Air Elemental Slam — **DEX**-based 2d8 + DEX bludgeoning melee.
+/// SRD 5.2: *"Thunderous Slam. Melee Attack Roll: +8, reach 10 ft. Hit:
+/// 14 (2d8 + 5) Thunder damage."*
+///
+/// The ability was Strength, and an air elemental's is 14 against a
+/// Dexterity of 20 — so the swing landed at +5 for 11 where every
+/// printing of the creature puts it at +8 for 14. A body made of moving
+/// air is the last thing on the roster that should have been swinging
+/// off its Strength, and the die was right the whole time: `2d8` plus
+/// the *right* modifier is the book's own number exactly.
+///
 /// Distinct damage envelope from the fire elemental's burn-touch — air
 /// elementals hit harder per swing but lack the ignition rider.
 pub static AIR_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon::melee(
     "air slam",
     &["aslam"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(2, 8),
     DamageType::Bludgeoning,
 );
@@ -12720,17 +12870,25 @@ pub static GIANT_HYENA_BITE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Giant Rat Bite — STR-based 1d4 + STR piercing melee. The CR-⅛ vermin
-/// pack scavenger's only swing. The bite is the lowest dice tier in the
-/// monster pool (1d4 — same as a Dagger). Combined with the giant rat's
-/// `has_pack_tactics: true` template flag, the bite goes to advantage
-/// whenever an ally rat is adjacent — the canonical "swarm in the
-/// sewers" multiplier. Standalone the swing is trivial; the swarm IS the
-/// threat profile.
+/// Giant Rat Bite — **DEX**-based 1d4 + DEX piercing melee. SRD 5.2:
+/// *"Bite. Melee Attack Roll: +5, reach 5 feet. Hit: 5 (1d4 + 3)
+/// Piercing damage."*
+///
+/// The plain rat's fault one size up: a giant rat's Strength is 7, so
+/// the Strength keying put the printed +5 on the die as **+0** and then
+/// took two points off a `1d4`, leaving a bite that averaged half a
+/// point. Pack Tactics was handing advantage to a swing that could not
+/// hurt anybody — which is the worst shape a bug can take here, because
+/// the swarm still *looked* dangerous on the board.
+///
+/// Dexterity 16 is the ability the book's +5 names, and it makes the
+/// damage line `1d4 + 3` exactly as printed. Standalone the swing is
+/// still trivial; the swarm is still the threat profile. It just works
+/// now.
 pub static GIANT_RAT_BITE: SimpleWeapon = SimpleWeapon::melee(
     "giant rat bite",
     &["grb", "rat-bite", "nibble"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(1, 4),
     DamageType::Piercing,
 );
@@ -16115,7 +16273,8 @@ pub static SPRITE_SHORTSWORD: SimpleWeapon = SimpleWeapon::flat_melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 1),
     DamageType::Piercing,
-);
+)
+.finesse();
 
 /// Sprite Longbow — DEX-based ranged arrow with a sleep-poison rider. On
 /// a confirmed hit the target makes a CON save (DC 10); on fail they fall
@@ -16594,7 +16753,8 @@ pub static WERERAT_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 6),
     DamageType::Piercing,
-);
+)
+.finesse();
 
 /// Wererat Multiattack — 1 bite + 1 shortsword per Action via
 /// `CompoundAttack`. Same chassis as Wereboar / Werewolf — bite carries
@@ -19449,20 +19609,26 @@ pub static WEASEL_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
 
 // ─── Awakened Shrub ─────────────────────────────────────────────────
 
-/// Awakened Shrub Rake — STR-based 1d4-1 slashing melee. RAW: "+1 to
-/// hit, reach 5 ft, one target. Hit: 1 (1d4 - 1) slashing damage." The
-/// CR-0 small-plant variant of `AWAKENED_TREE_SLAM` — the sapling
-/// cousin of the awakened tree. The RAW 1d4-1 die expression makes
-/// the floored-at-1 (engine's `max(1)` damage gate) the typical
-/// per-swing yield on this CR-0 tier; a confirmed crit doubles the
-/// underlying 1d4-1 cleanly through the engine's uniform crit chassis.
-/// Vanilla `SimpleWeapon` — no rider; the awakened shrub's threat
-/// profile is mobility + plant-resistance envelope, not the swing.
-pub static AWAKENED_SHRUB_RAKE: SimpleWeapon = SimpleWeapon::melee(
+/// Awakened Shrub Rake — a flat 1 slashing, **DEX** to hit. SRD 5.2:
+/// *"Rake. Melee Attack Roll: +1, reach 5 ft. Hit: 1 Slashing
+/// damage."*
+///
+/// Two faults, and between them the shrub could not scratch anybody. It
+/// was keyed on a Strength of 3, which put the book's +1 on the die as
+/// **−2**; and the `1d4` then had that −4 subtracted from it, so every
+/// hit that did land dealt nothing. Dexterity 8 is the only ability that
+/// produces the printed +1, and `flat_melee` with a `1d4` of one face is
+/// the bare number the book actually prints — the same cohort the
+/// badger, the crab and the raven sit in.
+///
+/// The CR-0 small-plant variant of `AWAKENED_TREE_SLAM`. No rider; the
+/// awakened shrub's threat profile is its plant-resistance envelope,
+/// not the swing.
+pub static AWAKENED_SHRUB_RAKE: SimpleWeapon = SimpleWeapon::flat_melee(
     "shrub rake",
     &["asr", "rake", "scratch"],
-    AbilityScoreType::Strength,
-    Dice::new(1, 4),
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 1),
     DamageType::Slashing,
 );
 
@@ -19959,7 +20125,8 @@ pub static CULTIST_SCIMITAR: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Slashing,
 )
-.light();
+.light()
+.finesse();
 
 // ─── Noble ──────────────────────────────────────────────────────────
 
@@ -19978,7 +20145,8 @@ pub static NOBLE_RAPIER: SimpleWeapon = SimpleWeapon::melee(
     AbilityScoreType::Dexterity,
     Dice::new(1, 8),
     DamageType::Piercing,
-);
+)
+.finesse();
 
 // ─── Spy ────────────────────────────────────────────────────────────
 
@@ -19992,7 +20160,8 @@ pub static SPY_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Piercing,
 )
-.light();
+.light()
+.finesse();
 
 /// Spy Hand Crossbow — DEX-based 1d6+DEX piercing shot. RAW: "Hand
 /// Crossbow. Ranged Weapon Attack: +4 to hit, range 30/120 ft., one
@@ -20214,7 +20383,8 @@ pub static ARCHMAGE_DAGGER: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 4),
     DamageType::Piercing,
 )
-.light();
+.light()
+.finesse();
 
 // ─── Azer ───────────────────────────────────────────────────────────
 
@@ -20458,7 +20628,8 @@ pub static SATYR_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 6),
     DamageType::Piercing,
 )
-.light();
+.light()
+.finesse();
 
 /// Satyr Shortbow — DEX-based 1d6+DEX piercing shot. RAW: "+5 to hit,
 /// range 80/320 ft., one target. Hit: 5 (1d6 + 2) piercing damage."
@@ -20518,6 +20689,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     requires_condition: None,
     min_effective_range: None,
     is_light: false,
+    is_finesse: false,
     mastery: None,
     is_polearm: false,
     is_loading: false,
@@ -20564,7 +20736,8 @@ pub static WINGED_KOBOLD_DAGGER: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(1, 4),
     DamageType::Piercing,
 )
-.light();
+.light()
+.finesse();
 
 /// Winged Kobold Dropped Rock — DEX-based 1d6 bludgeoning shot, flat
 /// damage. RAW: "Dropped Rock. Ranged Weapon Attack: +5 to hit, one
@@ -20855,13 +21028,19 @@ pub static RAVEN_BEAK: SimpleWeapon = SimpleWeapon::flat_melee(
 
 // ─── Vulture ────────────────────────────────────────────────────────
 
-/// Vulture Beak — STR-based 1d4 piercing melee, flat damage. RAW:
-/// "Beak. Melee Weapon Attack: +2 to hit, reach 5 ft., one target. Hit:
-/// 2 (1d4) piercing damage."
+/// Vulture Beak — **DEX**-based 1d4 piercing melee, flat damage. SRD
+/// 5.2: *"Beak. Melee Attack Roll: +2, reach 5 ft. Hit: 2 (1d4)
+/// Piercing damage."*
+///
+/// The damage was already right — `flat_melee` keeps the printed `1d4`
+/// bare — and the roll was not: a vulture's Strength is 7, so the
+/// printed +2 resolved as **+0**. Dexterity 10 is the ability that
+/// produces it, which is also the only reading under which Pack Tactics
+/// is worth anything to the bird.
 pub static VULTURE_BEAK: SimpleWeapon = SimpleWeapon::flat_melee(
     "vulture beak",
     &["vl-beak", "vulture-beak"],
-    AbilityScoreType::Strength,
+    AbilityScoreType::Dexterity,
     Dice::new(1, 4),
     DamageType::Piercing,
 );
@@ -21957,6 +22136,7 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     requires_condition: None,
     min_effective_range: None,
     is_light: false,
+    is_finesse: false,
     mastery: None,
     is_polearm: false,
     is_loading: false,
@@ -22688,6 +22868,7 @@ pub static PIRATE_CAPTAIN_RAPIER: SimpleWeapon = SimpleWeapon::melee(
     Dice::new(2, 8),
     DamageType::Piercing,
 )
+.finesse()
 .mastery(WeaponMastery::Vex);
 
 /// Pirate Captain Pistol — DEX-based 2d10+DEX piercing at range.

@@ -9059,11 +9059,7 @@ fn try_teleport_escape(
     /// escape is the better answer anyway.
     const MAX_VALIDATIONS_PER_ACTION: usize = 8;
 
-    // Same gate as the kite rung above, and for the same reason: a
-    // blink is a more expensive way of giving up contact than a step
-    // is, so a creature that should not be stepping away certainly
-    // should not be spending a slot to teleport away.
-    if !ranged_lane_beats_staying(encounter, actor_id) || !under_melee_threat(encounter, actor_id) {
+    if !under_melee_threat(encounter, actor_id) {
         return None;
     }
     // Two conditions, either of which makes leaving worth an action:
@@ -9072,9 +9068,31 @@ fn try_teleport_escape(
     // of 0 — touching — which the AI's approach never produces, so the
     // whole clause was dead and a full-health caster with two enemies
     // on it stood and took the round.
-    let pinned = is_low_hp(encounter, actor_id, 0.5)
-        || n_actors_within(encounter, actor_id, MELEE_REACH, false, 2) >= 2;
+    let hurt = is_low_hp(encounter, actor_id, 0.5);
+    let pinned = hurt || n_actors_within(encounter, actor_id, MELEE_REACH, false, 2) >= 2;
     if !pinned {
+        return None;
+    }
+    // The kite rung's gate, and for the same reason: a blink is a more
+    // expensive way of giving up contact than a step is, so a creature
+    // that should not be stepping away certainly should not be spending
+    // a slot to teleport away.
+    //
+    // **It does not apply to a creature that is already hurt**, and the
+    // carve-out is the difference between the two questions the gate
+    // gets asked. `ranged_lane_beats_staying` compares one swing against
+    // one shot, which is exactly the right test for "would I rather
+    // fight here or there" — and exactly the wrong one for a caster at
+    // half hit points with two enemies on it, who is not choosing
+    // between damage lanes at all. That one is choosing between taking
+    // the next two attacks and not taking them, and a blade that
+    // out-damages their cantrip by a point does not answer it.
+    //
+    // Left in place for the *crowded but healthy* caster, which is the
+    // case the gate was written for: two goblins on a druid who is fine
+    // is a fight the druid can have, and a subclass charge is not worth
+    // spending to avoid it.
+    if !hurt && !ranged_lane_beats_staying(encounter, actor_id) {
         return None;
     }
 
@@ -18758,15 +18776,44 @@ mod tests {
     /// and the slot that would replace it if the only exits are Misty
     /// Step and Dimension Door; Hidden Paths costs neither, which is
     /// why it sits above both in `SELF_TELEPORT_ESCAPES`.
+    ///
+    /// **The druid has to be hurt for the rung to open**, and it did not
+    /// used to be. The lane gate compares the melee swing being given up
+    /// against the ranged shot being kept, and a druid's scimitar used
+    /// to be rolled at Strength — which for a Dexterity chassis meant
+    /// 1d6 and nothing, below the cantrip, so the gate waved every druid
+    /// through. The scimitar is a Finesse weapon and is swung at
+    /// Dexterity now, which puts it *above* Starry Wisp; a healthy druid
+    /// crowded by two goblins consequently stands and swings, which is
+    /// what the gate is for. Half hit points is the other half of the
+    /// rung's own trigger and is the case the gate is carved out for —
+    /// see `try_teleport_escape`.
     #[test]
     fn the_dreams_druid_blinks_out_without_spending_a_slot() {
         use crate::actions::class_features::HIDDEN_PATHS_TAG;
         use crate::actors::creatures::druids::DREAMS_DRUID_TEMPLATE;
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
-        let (e, druid) = pinned_caster(&DREAMS_DRUID_TEMPLATE, 2);
+        let hurt_and_pinned = || {
+            let (mut e, druid) = pinned_caster(&DREAMS_DRUID_TEMPLATE, 2);
+            let max = e.actors[&druid].max_hitpoints();
+            e.actors
+                .get_mut(&druid)
+                .unwrap()
+                .take_damage(max - (max / 4).max(1));
+            (e, druid)
+        };
+
+        // Healthy, and the blade is the better lane: the druid stays.
+        let (healthy, hale_druid) = pinned_caster(&DREAMS_DRUID_TEMPLATE, 2);
+        assert!(
+            try_teleport_escape(&healthy, hale_druid).is_none(),
+            "a druid whose scimitar out-damages its cantrip has no reason to blink"
+        );
+
+        let (e, druid) = hurt_and_pinned();
         let slots_before = e.actors[&druid].lowest_available_spell_slot();
-        let aei = try_teleport_escape(&e, druid).expect("two adjacent hostiles is pinned");
+        let aei = try_teleport_escape(&e, druid).expect("hurt and pinned");
         assert_eq!(aei.action().name(), "hidden paths");
 
         let dest = aei.target_locations().as_ref().unwrap()[0];
@@ -18797,7 +18844,7 @@ mod tests {
         // list has neither Misty Step nor Dimension Door. So the whole
         // subclass feature is one press per rest, and the AI does not
         // pretend otherwise by re-proposing a spent charge.
-        let (mut e, druid) = pinned_caster(&DREAMS_DRUID_TEMPLATE, 2);
+        let (mut e, druid) = hurt_and_pinned();
         e.actors
             .get_mut(&druid)
             .unwrap()
