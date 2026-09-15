@@ -111365,3 +111365,71 @@ fn an_ai_glamour_bard_raises_the_mantle_and_keeps_commanding() {
         "the first press is the one that raises it"
     );
 }
+
+/// Every spell that prices a repeat says the repeat is a repeat.
+///
+/// The sustain family is defined by its `cost()`: an action whose price
+/// changes depending on whether its own effect is already up reads one
+/// of three helpers to find out — `steered_zone_cost` for a placed area
+/// (Moonbeam, Dawn, Flaming Sphere), `sustained_condition_cost` for a
+/// held marker (Melf's Minute Meteors, Far Step, Blade of Disaster), or
+/// `blade_cost` for a weapon in the air (Spiritual Weapon, Arcane Sword,
+/// the Dancing Sword). Writing one of those is what a spell author does
+/// when they are implementing a repeat.
+///
+/// The declaration that has to keep step is
+/// `Action::sustains_its_own_concentration`, and the AI is what reads
+/// it: `pick_from_cohort` drops every concentration action while the
+/// caster is already holding something, which is right for a trade and
+/// wrong for a repeat. A family member that forgets to declare it is a
+/// spell the AI can cast exactly once and then never touch again — a
+/// failure with no symptom except an absence in a log, which is how
+/// Mantle of Majesty shipped invisible.
+///
+/// Gated on `holds_concentration`, which is what makes the rule exact
+/// rather than approximate: the flag only matters to an action that
+/// concentrates, and the Dancing Sword — the one member of the family
+/// that needs no concentration at all — is correctly silent.
+///
+/// A source-text sweep, the same blunt instrument
+/// `every_spell_that_prices_an_upcast_declares_it` uses and for the same
+/// reason.
+#[test]
+fn every_action_that_prices_a_repeat_declares_it_sustains_itself() {
+    const SUSTAIN_HELPERS: &[&str] = &[
+        "steered_zone_cost(",
+        "sustained_condition_cost(",
+        "blade_cost(",
+    ];
+    let sources: &[(&str, &str)] = &[
+        ("actions/spells.rs", include_str!("../actions/spells.rs")),
+        ("actions/class_features.rs", include_str!("../actions/class_features.rs")),
+        ("actions/item_actions.rs", include_str!("../actions/item_actions.rs")),
+    ];
+    let mut missing: Vec<String> = Vec::new();
+    for (path, source) in sources {
+        for block in source.split("\nimpl Action for ") {
+            let Some((head, body)) = block.split_once(" {\n") else {
+                continue;
+            };
+            // One impl block: stop at the next top-level item so a
+            // neighbouring spell's declaration cannot cover for this
+            // one.
+            let body = body.split("\nimpl ").next().unwrap_or(body);
+            if !SUSTAIN_HELPERS.iter().any(|h| body.contains(h)) {
+                continue;
+            }
+            if !body.contains("fn holds_concentration") {
+                continue;
+            }
+            if !body.contains("fn sustains_its_own_concentration") {
+                missing.push(format!("{path}: {head}"));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these price a repeat and do not declare one, so the AI will cast \
+         them once and forget them: {missing:#?}"
+    );
+}

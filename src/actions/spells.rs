@@ -14875,6 +14875,12 @@ impl Action for Moonbeam {
     fn holds_concentration(&self) -> bool {
         true
     }
+    /// A repeat press continues the concentration the opening cast
+    /// took rather than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -20195,6 +20201,12 @@ impl Action for Dawn {
     fn holds_concentration(&self) -> bool {
         true
     }
+    /// A repeat press continues the concentration the opening cast
+    /// took rather than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -20636,6 +20648,12 @@ impl Action for FlamingSphere {
     /// trading a landed concentration effect for an unlanded one
     /// — and so the assertion in `Action::execute` stays quiet.
     fn holds_concentration(&self) -> bool {
+        true
+    }
+    /// A repeat press continues the concentration the opening cast
+    /// took rather than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
         true
     }
     fn school(&self) -> Option<SpellSchool> {
@@ -35544,6 +35562,12 @@ impl Action for MinuteMeteors {
     fn holds_concentration(&self) -> bool {
         true
     }
+    /// A repeat press continues the concentration the opening cast
+    /// took rather than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
@@ -35683,6 +35707,12 @@ impl Action for FarStep {
     fn holds_concentration(&self) -> bool {
         true
     }
+    /// A repeat press continues the concentration the opening cast
+    /// took rather than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Conjuration)
     }
@@ -35820,6 +35850,12 @@ impl BladeOfDisaster {
 
 impl Action for BladeOfDisaster {
     fn holds_concentration(&self) -> bool {
+        true
+    }
+    /// A repeat press continues the concentration the opening cast
+    /// took rather than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
         true
     }
     fn school(&self) -> Option<SpellSchool> {
