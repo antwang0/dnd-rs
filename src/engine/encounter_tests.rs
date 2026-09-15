@@ -113213,3 +113213,151 @@ fn every_spirit_in_the_bestiary_can_actually_cross_a_wall() {
         "the roster carries the spirits this lane was built for, found {seen}"
     );
 }
+
+/// Total Cover keeps an area off the creatures it separates, whichever
+/// collector the area happens to use.
+///
+/// The engine has two, and for most of its history only one of them
+/// knew the rule. `actors_in_burst` carries the swallow filter and
+/// says in its own docstring that it is "the one place every area in
+/// the engine collects its hit list"; it has a single caller.
+/// `area_targets_with` — which backs `enemy_burst_targets`,
+/// `ally_burst_targets`, `enemy_area_targets` and every cone, line and
+/// emanation in the game — had no filter at all, so a Fireball on a
+/// purple worm cooked the gladiator inside it, and a Spirit Guardians
+/// pulse reached a creature under ten feet of earth.
+#[test]
+fn total_cover_keeps_an_area_off_whoever_it_separates() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let caster = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+
+    // A gladiator inside a worm, both within the blast.
+    let worm = e
+        .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    let eaten = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(14, 2), 1, 1)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        eaten,
+        worm,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.swallow(worm, eaten).is_ok());
+
+    // …and an ankheg under the floor beside them.
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(10, 2), 1, 2)
+        .unwrap();
+    assert!(e.submerge(ankheg));
+
+    let caught = e.enemy_burst_targets(caster, Coordinate::new(6, 3), 12);
+    assert!(caught.contains(&worm), "the worm is in the blast");
+    assert!(
+        !caught.contains(&eaten),
+        "and the creature inside it is not: {caught:?}"
+    );
+    assert!(
+        !caught.contains(&ankheg),
+        "and neither is the one under the floor: {caught:?}"
+    );
+
+    // The older collector agrees, which is the point of there being one
+    // rule rather than two.
+    let caught = e.actors_in_burst(Coordinate::new(6, 3), 12);
+    assert!(caught.contains(&worm));
+    assert!(!caught.contains(&eaten));
+    assert!(!caught.contains(&ankheg));
+
+    // And the cover is a fact about the *pair*: a burrower's own area
+    // reaches the creature in the tunnel beside it and nothing on the
+    // surface.
+    let second = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(18, 2), 0, 3)
+        .unwrap();
+    assert!(e.submerge(second));
+    let caught = e.enemy_burst_targets(second, Coordinate::new(12, 3), 12);
+    assert!(
+        caught.contains(&ankheg),
+        "two creatures in the same earth reach each other: {caught:?}"
+    );
+    assert!(
+        !caught.contains(&worm),
+        "and neither reaches the surface: {caught:?}"
+    );
+}
+
+/// A tunnel under a patch of thorns is a tunnel.
+///
+/// The zone layer is the third way an effect reaches a creature — after
+/// a declared target list and an aimed area — and it is the one that
+/// bites without a caster: a web, a grease slick, a bank of gas and a
+/// column of moonlight all sit on the board and charge whoever walks
+/// in. A burrower is under all of them, and both halves of that have to
+/// hold: it is not caught by the contact, and it does not pay the
+/// surcharge for crossing.
+#[test]
+fn a_burrower_is_under_the_zone_layer_and_pays_it_nothing() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::engine::zones::{Zone, ZoneEffect, ZoneMotion};
+
+    // A band of bad ground the ankheg starts inside and has to cross
+    // to get east. The same walk, three ways.
+    let walk = |burrowed: bool, thorns: bool| -> f32 {
+        let mut e = ei_with_terrain(40, 20, &[]);
+        if thorns {
+            e.install_zone(Zone {
+                id: 0,
+                name: "spike growth",
+                owner_id: 0,
+                origin: Coordinate::new(10, 8),
+                radius: 6,
+                effect: ZoneEffect::ROUGH,
+                rounds_remaining: 10,
+                concentration: false,
+                motion: ZoneMotion::Fixed,
+                revealed: true,
+            });
+        }
+        let ankheg = e
+            .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+            .unwrap();
+        if burrowed {
+            assert!(e.submerge(ankheg));
+        }
+        assert_eq!(
+            !e.zones_covering_actor(ankheg).is_empty(),
+            thorns && !burrowed,
+            "the thorns catch what is standing in them and nothing under them"
+        );
+        e.actors
+            .get_mut(&ankheg)
+            .unwrap()
+            .set_movement_budget(400.0);
+        e.path_cost_to(ankheg, Coordinate::new(16, 8))
+            .expect("the far side is reachable")
+    };
+
+    // The premise: on the surface, thorns really do cost more.
+    assert!(
+        walk(false, true) > walk(false, false),
+        "walking through them costs"
+    );
+    // And the tunnel underneath is priced at the earth's rate.
+    assert_eq!(
+        walk(true, true),
+        walk(true, false),
+        "the thorns are on the floor and the ankheg is not"
+    );
+}

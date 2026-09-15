@@ -9961,12 +9961,24 @@ impl EncounterInstance {
     /// True if any tile of `actor_id`'s footprint is inside `zone`.
     ///
     /// Footprint rather than origin tile, so a Huge creature standing
-    /// with one corner in a web is caught by it — the same rule
-    /// `actors_in_burst` applies to every other area in the engine.
+    /// with one corner in a web is caught by it — the same rule every
+    /// other area in the engine applies.
+    ///
+    /// A **burrowed** creature is in nothing. Every zone the engine can
+    /// lay is something on the floor or in the air above it — a web, a
+    /// grease slick, a bank of gas, a column of moonlight — and a
+    /// creature that is under the floor has Total Cover against all of
+    /// it, which is the same sentence `total_cover_separates` reads for
+    /// the areas a caster aims. This is the persistent half: a zone has
+    /// no caster to pair against on the turn it *bites*, so the gate is
+    /// unpaired here, and a tunnel under a patch of thorns is a tunnel.
     fn actor_in_zone(&self, actor_id: usize, zone: &Zone) -> bool {
         let Some(a) = self.actors.get(&actor_id) else {
             return false;
         };
+        if a.is_burrowed() {
+            return false;
+        }
         footprint_chebyshev(
             a.location(),
             get_tiles_from_size(a.size()),
@@ -12465,11 +12477,30 @@ impl EncounterInstance {
     }
 
     /// Sorted ids of every combat-active actor whose footprint lies
-    /// within `radius` (footprint-Chebyshev gap) of `point`. Used by
-    /// AoE / burst actions to find their hit list. Sorted by id so save
-    /// rolls happen in deterministic order — the encounter roller is
-    /// shared, and HashMap iteration order would otherwise leak through
-    /// individual saves.
+    /// within `radius` (footprint-Chebyshev gap) of `point`. Sorted by
+    /// id so save rolls happen in deterministic order — the encounter
+    /// roller is shared, and HashMap iteration order would otherwise
+    /// leak through individual saves.
+    ///
+    /// The **ownerless** burst collector, and the rare one: an area
+    /// with nobody behind it. One caller today — the Wild Magic Surge
+    /// table's pyrotechnic burst, which goes off around its own caster
+    /// and catches them too, so there is no "caster" to measure cover
+    /// or teams from. Everything else in the engine casts an area *at*
+    /// something and goes through `area_targets_with`, which is
+    /// pair-aware and is where `total_cover_separates` belongs.
+    ///
+    /// Its docstring used to say this was *"the one place every area in
+    /// the engine collects its hit list"*, and the swallow filter was
+    /// put here on the strength of that sentence. It was not true when
+    /// it was written: the hundred-odd other areas came through
+    /// `area_targets_with`, which had no filter at all. The rule is
+    /// there now and the claim is gone from here.
+    ///
+    /// What stays is the *unpaired* reading of the same clause — a
+    /// creature sealed away from the open board is not in an area that
+    /// belongs to nobody — because that is the only reading this
+    /// signature can express.
     pub fn actors_in_burst(&self, point: Coordinate, radius: isize) -> Vec<usize> {
         let mut ids: Vec<usize> = self
             .actors
@@ -12478,29 +12509,15 @@ impl EncounterInstance {
                 if !a.is_combat_active() {
                     return None;
                 }
-                // 5e Swallow: a creature inside another one "has Total
-                // Cover against attacks and other effects outside" it,
-                // and an area effect is the *other effects* half of
-                // that sentence. Filtered here rather than at each
-                // burst's own site because this is the one place every
-                // area in the engine collects its hit list — and
-                // because a swallowed creature's `location` is mirrored
-                // onto its swallower's, so without the gate a Fireball
-                // aimed at a purple worm would cook the person inside
-                // it for free.
-                if a.swallowed_by().is_some() {
-                    return None;
-                }
-                // …and the same clause read off the floor. A creature
-                // under the ground has Total Cover against *effects*
-                // on the surface as well as against attacks, and an
-                // area is the effects half. Without the row, a Fireball
-                // aimed at the churned earth a bulette is under would
-                // cook it through ten feet of rock — and would do it
-                // for free, because nothing on the surface can be
-                // targeted by the bulette in return. See
-                // `crate::engine::burrowing`.
-                if a.is_burrowed() {
+                // Sealed away from the open board: inside a stomach
+                // (`crate::engine::swallow`) or under the floor
+                // (`crate::engine::burrowing`). Both mirror or keep a
+                // `location` that an area would otherwise measure
+                // against, so without the gate a burst aimed at a
+                // purple worm would cook the person inside it and one
+                // aimed at churned earth would cook the bulette under
+                // it.
+                if a.swallowed_by().is_some() || a.is_burrowed() {
                     return None;
                 }
                 let dist = footprint_chebyshev(
@@ -12637,6 +12654,15 @@ impl EncounterInstance {
             .iter()
             .filter_map(|(id, a)| {
                 if !a.is_combat_active() {
+                    return None;
+                }
+                // Total Cover, which an area obeys as firmly as an
+                // attack does — see `total_cover_separates`. This is
+                // the gate `Action::validate` cannot supply: it checks
+                // a *declared* target list, and an area has none. Every
+                // burst, cone, line and emanation in the engine builds
+                // its own list here.
+                if self.total_cover_separates(caster_id, *id) {
                     return None;
                 }
                 if !keep(*id, a, caster_team) {
@@ -13711,14 +13737,49 @@ impl EncounterInstance {
     /// it gets here. The overlap is intentional: this list stays
     /// complete for the three callers that have no other gate to lean
     /// on.
+    /// **Is there something solid between these two?** — 5e's Total
+    /// Cover, and the complete list of the ways this board can produce
+    /// it between a *pair* of creatures.
+    ///
+    /// Two today, and they are the same sentence written about two
+    /// different walls: a stomach's (`crate::engine::swallow`) and the
+    /// floor's (`crate::engine::burrowing`). Both read *"has Total
+    /// Cover against attacks **and other effects** outside"*, and the
+    /// second half is why this is not folded into `hostility_blocked`
+    /// one method down: that one answers "may A swing at B", and Total
+    /// Cover stops a Cure Wounds and a Fireball exactly as firmly.
+    ///
+    /// Three lanes ask it, and the third is why it exists as a named
+    /// predicate rather than two calls at two sites:
+    ///
+    ///   - `hostility_blocked`, for the reaction dispatchers.
+    ///   - `Action::validate`, for a declared target list.
+    ///   - **`area_targets_with`**, for the areas that have no declared
+    ///     target list at all — and which had no gate whatsoever. That
+    ///     was the drift worth fixing: `actors_in_burst` carried the
+    ///     swallow filter and claimed in its own docstring to be *"the
+    ///     one place every area in the engine collects its hit list"*,
+    ///     and it had a single caller. The hundred-odd others came
+    ///     through `area_targets_with`, so a Fireball on a purple worm
+    ///     cooked the person inside it.
+    ///
+    /// Pair-scoped rather than a property of one actor, which is what
+    /// makes the answers right in both directions: two creatures in the
+    /// same tunnel reach each other, a swallowed creature can still
+    /// carve at the thing around it, and neither of them reaches the
+    /// open board.
+    pub fn total_cover_separates(&self, actor_id: usize, target_id: usize) -> bool {
+        self.swallow_blocks_targeting(actor_id, target_id)
+            || self.burrow_blocks_targeting(actor_id, target_id)
+    }
+
     pub fn hostility_blocked(&self, actor_id: usize, target_id: usize) -> bool {
         self.actors
             .get(&actor_id)
             .is_some_and(|a| a.blocked_from_attacking())
             || self.charm_blocks_hostility(actor_id, target_id)
             || self.attachment_blocks_hostility(actor_id, target_id)
-            || self.swallow_blocks_targeting(actor_id, target_id)
-            || self.burrow_blocks_targeting(actor_id, target_id)
+            || self.total_cover_separates(actor_id, target_id)
     }
 
     /// Walk every ally-team actor that's `is_combat_active` OR `is_dying`
@@ -14353,12 +14414,20 @@ impl EncounterInstance {
                     } else {
                         ignores_rough
                     };
-                    let terrain_mult = if waived {
-                        self.zone_movement_multiplier(next)
+                    // …and the zone layer, which a burrower is under.
+                    // Web, Entangle and Spike Growth are all things
+                    // lying on the floor; a tunnel beneath one pays the
+                    // earth's price and not the thorns'. The same
+                    // reading `actor_in_zone` gives the biting half.
+                    let zone_mult = if burrowing {
+                        1.0
                     } else {
-                        tile.map(|t| t.movement_cost())
-                            .unwrap_or(1.0)
-                            .max(self.zone_movement_multiplier(next))
+                        self.zone_movement_multiplier(next)
+                    };
+                    let terrain_mult = if waived {
+                        zone_mult
+                    } else {
+                        tile.map(|t| t.movement_cost()).unwrap_or(1.0).max(zone_mult)
                     };
                     // SRD 5.2 **Incorporeal Movement** — *"as if they
                     // were Difficult Terrain"*. The surcharge the tile

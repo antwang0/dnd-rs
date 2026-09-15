@@ -2379,30 +2379,19 @@ pub trait Action {
             {
                 return false;
             }
-            // 5e's Swallow clause: a creature inside another one "has
-            // Total Cover against attacks and other effects outside"
-            // it, in both directions. Asked separately from the
-            // hostility list above — which already contains it — because
-            // it is the one rule there that is *not* about hostility:
-            // Total Cover stops a Cure Wounds from reaching somebody
-            // inside a kraken exactly as firmly as it stops an arrow, so
-            // this arm runs whether the action is harmful or not.
+            // 5e's Total Cover, from both walls that can produce it
+            // between a pair of creatures on this board — a stomach's
+            // and the floor's. Asked separately from the hostility list
+            // above — which already contains it — because it is the one
+            // rule there that is *not* about hostility: Total Cover
+            // stops a Cure Wounds from reaching somebody inside a
+            // kraken, or under ten feet of earth, exactly as firmly as
+            // it stops an arrow. So this arm runs whether the action is
+            // harmful or not. See
+            // `EncounterInstance::total_cover_separates`.
             if targets
                 .iter()
-                .any(|&tid| encounter.swallow_blocks_targeting(caster_id, tid))
-            {
-                return false;
-            }
-            // …and the same sentence read off the floor rather than off
-            // a stomach wall: a burrowed creature has Total Cover
-            // against everything on the surface and everything on the
-            // surface has Total Cover against it. Its own arm for the
-            // reason the swallow's has one — it is not a rule about
-            // hostility, and a cleric cannot heal downwards through ten
-            // feet of earth either. See `crate::engine::burrowing`.
-            if targets
-                .iter()
-                .any(|&tid| encounter.burrow_blocks_targeting(caster_id, tid))
+                .any(|&tid| encounter.total_cover_separates(caster_id, tid))
             {
                 return false;
             }
