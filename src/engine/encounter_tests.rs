@@ -113452,3 +113452,54 @@ fn total_cover_stops_an_aura_and_a_stench() {
         "…and the worm is the one thing it still reaches"
     );
 }
+
+/// A creature under the floor is not a body in the way, and is not
+/// something anybody can see.
+///
+/// Two consequences of the same fact, and both of them read a stamp on
+/// the occupancy grid that is deliberately still there: a burrowed
+/// creature keeps its tiles (see `crate::engine::burrowing` for why),
+/// which is what makes it a candidate for both mistakes. The first is
+/// an arrow that a tunnelling ankheg shields its enemy from; the
+/// second is a sight-gated reaction — a Warding Flare, a Cutting Word,
+/// a Portent — drawn by something nobody can see.
+#[test]
+fn a_creature_under_the_floor_is_neither_cover_nor_a_sight() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let archer = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 8), 0, 0)
+        .unwrap();
+    // Squarely on the line between the two, and wide enough that a
+    // shot cannot go round it.
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(10, 7), 1, 0)
+        .unwrap();
+    let mark = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 8), 1, 1)
+        .unwrap();
+
+    assert_eq!(
+        e.cover_ac_bonus(archer, mark),
+        EncounterInstance::HALF_COVER_AC,
+        "the premise: a body in the way is half cover"
+    );
+    assert!(e.viewer_can_see(archer, ankheg));
+
+    assert!(e.submerge(ankheg));
+    assert_eq!(
+        e.cover_ac_bonus(archer, mark),
+        0,
+        "and a body ten feet below the arrow is not"
+    );
+    assert!(
+        !e.viewer_can_see(archer, ankheg),
+        "nor is it anything the archer can see"
+    );
+    assert!(
+        !e.viewer_can_see(ankheg, archer),
+        "and it cannot see out either"
+    );
+}

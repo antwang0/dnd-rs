@@ -5148,6 +5148,14 @@ impl EncounterInstance {
         if concealed {
             return false;
         }
+        // Total Cover, which is the solid thing in between that the
+        // terrain walk below cannot see: a stomach wall and ten feet of
+        // earth are both between two creatures without being on the
+        // line between their tiles. Cheap flag reads, so ahead of the
+        // Bresenham walk. See `total_cover_separates`.
+        if self.total_cover_separates(viewer_id, subject_id) {
+            return false;
+        }
         if !self.actor_has_line_of_sight(viewer_id, subject_id) {
             return false;
         }
@@ -11723,7 +11731,14 @@ impl EncounterInstance {
                 && self
                     .actors
                     .get(&blocker_id)
-                    .is_some_and(|a| a.is_combat_active())
+                    // …and standing on the floor rather than under it.
+                    // A burrowed creature keeps its stamp on the
+                    // occupancy grid (see `crate::engine::burrowing` for
+                    // why), so without this an ankheg tunnelling between
+                    // an archer and its target would be shielding the
+                    // target with a body that is ten feet below the
+                    // arrow.
+                    .is_some_and(|a| a.is_combat_active() && !a.is_burrowed())
                 && last_hit != Some(blocker_id)
             {
                 last_hit = Some(blocker_id);
@@ -11813,7 +11828,9 @@ impl EncounterInstance {
                 && self
                     .actors
                     .get(&blocker_id)
-                    .is_some_and(|a| a.is_combat_active())
+                    // …and on the floor rather than under it, for the
+                    // reason its attacker-side twin says.
+                    .is_some_and(|a| a.is_combat_active() && !a.is_burrowed())
                 && last_hit != Some(blocker_id)
             {
                 last_hit = Some(blocker_id);
