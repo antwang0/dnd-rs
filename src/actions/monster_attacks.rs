@@ -6156,6 +6156,100 @@ impl Action for LifeDrain {
 
 pub static LIFE_DRAIN: LazyLock<LifeDrain> = LazyLock::new(|| LifeDrain {});
 
+/// SRD 5.2 Shadow **Strength Drain** — *"Melee Weapon Attack … 9 (2d6 +
+/// 2) Necrotic damage, and the target's Strength score is reduced by
+/// 1d4. The target dies if this reduces its Strength to 0. Otherwise,
+/// the reduction lasts until the target finishes a Short or Long
+/// Rest."*
+///
+/// The shadow's whole stat block, and it had been swinging the
+/// **wraith's** Life Drain instead — a CR-½ creature borrowing a CR-5
+/// one's 4d8+3 and its max-HP drain, because the engine had a lane for
+/// max hit points and none for an ability score. Now it has one; see
+/// `ActorInstance::ability_drain`.
+///
+/// The difference is not the dice. A max-HP drain is a bigger version
+/// of the damage that came with it and a shadow's drain is a different
+/// axis entirely: it takes the *modifier* off every attack roll,
+/// damage roll, Strength save and grapple its victim makes for the rest
+/// of the fight, and it compounds — two shadows on one fighter are
+/// eight points between them, and the eighth kills. That is what a
+/// pack of shadows is for, and the reason RAW gives them a death clause
+/// at CR ½.
+///
+/// **No save**, which is RAW and is the clause that makes the trait
+/// frightening: the only defence is not being hit.
+pub struct StrengthDrain {}
+
+impl Action for StrengthDrain {
+    fn name(&self) -> &str {
+        "strength drain"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["sdrain", "sap"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MELEE_REACH)
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Necrotic]
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // RAW's *"+4 to hit"* on a creature with Strength 6 is the
+        // shadow's Dexterity, which is what an incorporeal thing swings
+        // with. Read off the sheet rather than written down, so a
+        // Bless or a buff reaches it like any other swing.
+        let attack_mod = caster.ability_modifier(AbilityScoreType::Dexterity)
+            + caster.proficiency_bonus();
+        let (mut effects, damage) = crate::engine::attack::resolve_attack_outcome(
+            encounter,
+            AttackParams {
+                caster_id,
+                target_id,
+                action_name: "strength drain",
+                attack_bonus: attack_mod,
+                damage_dice: Dice::new(2, 6),
+                damage_bonus: 2,
+                damage_type: DamageType::Necrotic,
+                ..AttackParams::DEFAULTS
+            },
+        );
+        // A miss queues nothing, and the drain is on the hit — RAW's
+        // clause is a rider on "Hit:". Measured off the *queued* damage
+        // rather than off the roll, for the reason `LifeDrain` measures
+        // its own: an empty effect list is a swing that did not land.
+        if effects.is_empty() && damage == 0 {
+            return effects;
+        }
+        let points = encounter.roll(&Dice::new(1, 4));
+        effects.push(Box::new(crate::engine::side_effects::DrainAbility {
+            actor_id: target_id,
+            ability: AbilityScoreType::Strength,
+            amount: points,
+            label: "strength drain",
+        }));
+        effects
+    }
+}
+
+pub static STRENGTH_DRAIN: LazyLock<StrengthDrain> = LazyLock::new(|| StrengthDrain {});
+
 /// Vampiric Bite — Vampire Spawn signature attack. Melee weapon attack
 /// (STR + prof to hit), 1d6+STR piercing plus 3d6 necrotic. The Vampire
 /// Spawn regains HP equal to the necrotic damage dealt. Distinct from

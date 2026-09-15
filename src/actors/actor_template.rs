@@ -5653,6 +5653,32 @@ pub struct ActorInstance {
     /// the attacker is the natural chokepoint, whereas a target-side
     /// set would need per-attacker turn-tracking to know when to clear.
     hit_targets_this_turn: HashSet<usize>,
+    /// Points taken off an ability score and not yet rested off — SRD
+    /// 5.2's **Strength Drain**, *"the target's Strength score is
+    /// reduced by 1d4 … the reduction lasts until the target finishes a
+    /// Short or Long Rest."*
+    ///
+    /// The **fourth** way an ability score moves in this engine, and
+    /// the first that moves it *down*. The other three all raise it: a
+    /// floor while you carry something (the Gauntlets of Ogre Power), a
+    /// bonus while you carry something (the Ioun Stones), and a floor
+    /// while a condition holds (the Potions of Giant Strength). Every
+    /// one of those is something a creature chose; this is something
+    /// done to it.
+    ///
+    /// Not a condition, which is the design decision worth naming.
+    /// A condition is a flag with a timer, and a drain is neither — it
+    /// is a *quantity* that accumulates across hits from the same
+    /// shadow and from two different shadows, and it ends on a rest
+    /// rather than on a clock. `Feebled` is what the condition lane
+    /// looks like for the same idea, and it is right for Feeblemind
+    /// (one score, pinned to 1, ends on a save) and wrong for this.
+    ///
+    /// Subtracted at `ability_score`, last and saturating, so it
+    /// composes with the three raising lanes the only way it can: a
+    /// fighter who drank the storm giant's potion is drained from 29.
+    /// Cleared by both rests.
+    ability_drain: HashMap<AbilityScoreType, u32>,
     /// The Stealth total that hid this creature, per SRD 5.2's "make
     /// note of your check's total, which is the DC for a creature to
     /// find you". Written by `resolve_hide_attempt`, read by the Search
@@ -6288,6 +6314,8 @@ impl ActorInstance {
             languages: ct.languages.clone(),
             cr: ct.cr,
             hitpoints: hp_roll_val,
+            // Nothing arrives drained.
+            ability_drain: HashMap::new(),
             movement: 0.0,
             action_slots: 0,
             restricted_action_slots: 0,
@@ -8855,6 +8883,10 @@ impl ActorInstance {
     /// concentration and any temp HP. 5e long rest semantics.
     pub fn long_rest(&mut self) {
         self.hp_state = HpState::Active;
+        // …and the longer rest gives it back too. Both, rather than
+        // only the long one, because RAW names both — see
+        // `ability_drain`.
+        self.clear_ability_drain();
         // A creature that has slept for eight hours has been breathing
         // for eight hours, so RAW's "when a creature can breathe again,
         // it removes all levels of Exhaustion it gained from
@@ -8973,6 +9005,11 @@ impl ActorInstance {
         if !matches!(self.hp_state, HpState::Active) {
             return;
         }
+        // RAW's *"until the target finishes a Short or Long Rest"* —
+        // the shorter of the two rests is enough, which is what makes a
+        // shadow's drain a fight-scoped wound rather than a campaign
+        // one. See `ability_drain`.
+        self.clear_ability_drain();
         // An hour of sitting down is an hour of breathing. Same clause
         // and same reason as the long rest's — see there — minus the
         // exhaustion rung, which RAW does not grant for a short rest.
@@ -10879,7 +10916,53 @@ impl ActorInstance {
             .fold((0, u32::MAX), |(sum, cap), (_, bonus, ceiling)| {
                 (sum + bonus, cap.min(*ceiling))
             });
-        floored.max((floored + bonus).min(ceiling))
+        let raised = floored.max((floored + bonus).min(ceiling));
+        // …and the one lane that takes points *off*, applied last and
+        // saturating. Last, because a drain is a subtraction from
+        // whatever the creature actually has: the fighter who drank the
+        // storm giant's potion is drained from 29, not from 16 and then
+        // raised back up. See `ability_drain`.
+        //
+        // The map is empty for every creature in almost every fight, so
+        // the common path is one `is_empty` and no hashing at all —
+        // which matters, because this accessor sits under
+        // `ability_modifier` and is read on every roll in the game.
+        if self.ability_drain.is_empty() {
+            return raised;
+        }
+        raised.saturating_sub(self.ability_drain.get(&ast).copied().unwrap_or(0))
+    }
+
+    /// Take `amount` points off `ast` — SRD 5.2's **Strength Drain**,
+    /// and the only thing in the engine that lowers an ability score.
+    ///
+    /// Returns `true` when the score is now **0**, which is RAW's own
+    /// next sentence: *"The target dies if this reduces its Strength to
+    /// 0."* The caller owns what to do about that, because the clause
+    /// belongs to the attack rather than to the number — see
+    /// `side_effects::DrainAbility`, which is the one caller and does
+    /// the slaying.
+    ///
+    /// Accumulates rather than replaces: two shadows draining the same
+    /// knight are eight points between them, and that is the whole
+    /// tactical shape of a pack of them.
+    pub fn drain_ability(&mut self, ast: AbilityScoreType, amount: u32) -> bool {
+        *self.ability_drain.entry(ast).or_insert(0) += amount;
+        self.ability_score(ast) == 0
+    }
+
+    /// How many points are currently drained off `ast`. Read by the
+    /// panel, which is the only place a player can find out why their
+    /// Strength modifier moved.
+    pub fn ability_drain_of(&self, ast: AbilityScoreType) -> u32 {
+        self.ability_drain.get(&ast).copied().unwrap_or(0)
+    }
+
+    /// Give back everything a drain has taken — RAW's *"the reduction
+    /// lasts until the target finishes a Short or Long Rest"*, which is
+    /// why both rests call it and neither has to know what was drained.
+    fn clear_ability_drain(&mut self) {
+        self.ability_drain.clear();
     }
 
     /// True if any active condition's `blocks_action_economy` clause

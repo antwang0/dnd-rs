@@ -1073,6 +1073,46 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
+    // SRD 5.2 **Strength Drain**, and the one thing on this panel that
+    // explains a number the player has already noticed going wrong.
+    //
+    // A drain moves the *modifier*, so what it changes is every attack
+    // roll, damage roll, Strength save and grapple the holder makes —
+    // none of which this panel prints, and all of which the player is
+    // about to see get worse. Without a line here the only account of
+    // it is a log entry that has scrolled away.
+    //
+    // Rendered only when something is drained, which is almost never,
+    // and naming every drained score rather than only the first: a
+    // second shadow drains the same Strength, and a future drain on a
+    // different axis would otherwise be silently folded in with it.
+    {
+        let drained: Vec<String> = [
+            crate::engine::types::AbilityScoreType::Strength,
+            crate::engine::types::AbilityScoreType::Dexterity,
+            crate::engine::types::AbilityScoreType::Constitution,
+            crate::engine::types::AbilityScoreType::Intelligence,
+            crate::engine::types::AbilityScoreType::Wisdom,
+            crate::engine::types::AbilityScoreType::Charisma,
+        ]
+        .into_iter()
+        .filter(|a| curr_actor.ability_drain_of(*a) > 0)
+        .map(|a| {
+            format!(
+                "{} -{} (now {})",
+                a,
+                curr_actor.ability_drain_of(a),
+                curr_actor.ability_score(a)
+            )
+        })
+        .collect();
+        if !drained.is_empty() {
+            stats_lines.push(Line::from(Span::styled(
+                format!("Drained: {}", drained.join(", ")),
+                Style::default().fg(Color::LightRed),
+            )));
+        }
+    }
     // …and the third state a body can be in that the Movement number
     // does not account for: inside the stone. The row a player needs is
     // the price, because the price is the whole counterplay — a spirit
@@ -1997,6 +2037,34 @@ mod tests {
         assert!(
             !rendered_panel(&e).contains("Phasing"),
             "a goblin has a wall like everybody else"
+        );
+    }
+
+    /// A drained score is named on the panel, and nothing else is.
+    ///
+    /// The line exists because a drain moves the *modifier*, so what it
+    /// changes is every attack roll, damage roll and Strength save the
+    /// holder makes — none of which the panel prints, and all of which
+    /// the player is about to watch get worse. Without it the only
+    /// account is a log entry that has scrolled away.
+    #[test]
+    fn the_panel_names_a_drained_score_and_only_a_drained_one() {
+        use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+        use crate::engine::types::AbilityScoreType::Strength;
+
+        let mut e = encounter_with(&[(&GLADIATOR_TEMPLATE, 0), (&GLADIATOR_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel(&e).contains("Drained"),
+            "an undrained creature gets no line"
+        );
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        let full = e.actors[&id].ability_score(Strength);
+        e.actors.get_mut(&id).unwrap().drain_ability(Strength, 4);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains(&format!("Drained: STR -4 (now {})", full - 4)),
+            "the panel says how much and what is left:\n{panel}"
         );
     }
 

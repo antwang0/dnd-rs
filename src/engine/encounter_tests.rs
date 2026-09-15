@@ -114012,3 +114012,149 @@ fn a_vampire_familiar_reaches_for_the_dash_that_costs_it_a_bonus_action() {
     assert_eq!(dashes.first(), Some(&"step of the wind"));
     assert_eq!(disengages.first(), Some(&"step of the wind"));
 }
+
+/// SRD 5.2 **Strength Drain** — the shadow takes points off a score,
+/// they stay off until a rest, they stack, and the last one kills.
+///
+/// The fourth way an ability score moves in this engine and the first
+/// that moves it down, so what is pinned here is that it reaches the
+/// number every other lane reads — `ability_score`, and through it
+/// `ability_modifier` and every roll behind that.
+#[test]
+fn a_shadows_drain_takes_a_score_down_and_a_rest_gives_it_back() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DrainAbility};
+    use crate::engine::types::AbilityScoreType::Strength;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let knight = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let full = e.actors[&knight].ability_score(Strength);
+    let full_mod = e.actors[&knight].ability_modifier(Strength);
+    assert!(full >= 14, "the premise: a gladiator is strong ({full})");
+
+    let drain = |e: &mut EncounterInstance, amount: u32| {
+        DrainAbility {
+            actor_id: knight,
+            ability: Strength,
+            amount,
+            label: "strength drain",
+        }
+        .apply(e);
+    };
+
+    drain(&mut e, 3);
+    assert_eq!(e.actors[&knight].ability_score(Strength), full - 3);
+    assert_eq!(e.actors[&knight].ability_drain_of(Strength), 3);
+    // …and it stacks, which is what a pack of shadows is for.
+    drain(&mut e, 2);
+    assert_eq!(e.actors[&knight].ability_score(Strength), full - 5);
+    // The modifier is what the rest of the engine actually reads, so it
+    // has to have moved too.
+    assert!(
+        e.actors[&knight].ability_modifier(Strength) < full_mod,
+        "the drain reaches the modifier, not just the score"
+    );
+
+    // An hour of sitting down gives it all back — RAW names the short
+    // rest, not only the long one.
+    e.actors
+        .get_mut(&knight)
+        .unwrap()
+        .short_rest(&mut crate::engine::dice::FastRandRoller::with_seed(0));
+    assert_eq!(e.actors[&knight].ability_score(Strength), full);
+    assert_eq!(e.actors[&knight].ability_drain_of(Strength), 0);
+
+    // And the clause the trait is famous for: the drain that empties
+    // the score kills.
+    assert!(e.actors[&knight].is_combat_active());
+    drain(&mut e, full);
+    assert!(
+        !e.actors.get(&knight).is_some_and(|a| a.is_combat_active()),
+        "the target dies if this reduces its Strength to 0"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("strength drain")),
+        "and the log names what did it:\n{}",
+        e.messages().join("\n")
+    );
+}
+
+/// The shadow swings its own attack rather than the wraith's.
+///
+/// The bug this pins is a stat block borrowing another one's: a CR-½
+/// shadow was rolling 4d8+3 and draining hit-point maxima because the
+/// engine had a lane for that and none for a drained ability score.
+#[test]
+fn a_shadow_drains_strength_and_not_hit_points() {
+    use crate::actions::action_template::Action;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
+    use crate::engine::types::AbilityScoreType::Strength;
+
+    assert!(
+        SHADOW_TEMPLATE
+            .actions
+            .iter()
+            .any(|a| a.name() == "strength drain"),
+        "the shadow's own attack is on its sheet"
+    );
+    assert!(
+        !SHADOW_TEMPLATE
+            .actions
+            .iter()
+            .any(|a| a.name() == "life drain"),
+        "and the wraith's is not"
+    );
+
+    // Swings across fresh turns until one lands — a miss drains
+    // nothing, which is RAW's "Hit:".
+    let mut e = ei_with_terrain(20, 20, &[]);
+    e.roller = crate::engine::dice::FastRandRoller::with_seed(2);
+    let shadow = e
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let knight = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+    let full = e.actors[&knight].ability_score(Strength);
+    let max_hp = e.actors[&knight].max_hitpoints();
+    let drain = crate::actions::monster_attacks::STRENGTH_DRAIN
+        .name()
+        .to_string();
+    let mut drained = false;
+    for _ in 0..20 {
+        let aei = ActionExecutionInfo::new(
+            &*crate::actions::monster_attacks::STRENGTH_DRAIN,
+            shadow,
+            Some(vec![knight]),
+            None,
+            None,
+        );
+        assert!(aei.validate(&e), "{drain} reaches from next door");
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+        if e.actors
+            .get(&knight)
+            .is_some_and(|a| a.ability_drain_of(Strength) > 0)
+        {
+            drained = true;
+            break;
+        }
+        // Topped up so the sweep ends on a drain rather than a corpse.
+        e.actors.get_mut(&knight).unwrap().heal(200);
+        e.actors.get_mut(&shadow).unwrap().reset_for_new_round();
+    }
+    assert!(drained, "a landed swing takes Strength off");
+    assert!(
+        e.actors[&knight].ability_score(Strength) < full,
+        "and the score says so"
+    );
+    assert_eq!(
+        e.actors[&knight].max_hitpoints(),
+        max_hp,
+        "…and the hit point maximum is untouched: that is the wraith's clause"
+    );
+}

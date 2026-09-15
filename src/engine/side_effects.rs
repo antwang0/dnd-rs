@@ -2294,6 +2294,59 @@ impl ApplicableSideEffect for SlayActor {
     }
 }
 
+/// SRD 5.2 **Strength Drain** — *"the target's Strength score is reduced
+/// by 1d4. The target dies if this reduces its Strength to 0."*
+///
+/// The Shadow's whole stat block, and the one thing in the engine that
+/// takes points off an ability score. See
+/// `ActorInstance::ability_drain` for why that is a quantity rather
+/// than a condition.
+///
+/// Two things happen here and the second is the reason this is a side
+/// effect rather than a call: a drain can **kill**, and a kill owes the
+/// encounter the same bookkeeping every other death does. Routed
+/// through `SlayActor` so it gets it — the death burst, the loot, the
+/// experience, Death Ward's "an effect that would kill it instantly
+/// without dealing damage" — rather than by zeroing a field.
+///
+/// Silent about a drain that lands on something already dead or gone,
+/// for the reason every other side effect on this file is: the stack is
+/// resolved after the swing, and the swing can have finished the
+/// target.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct DrainAbility {
+    pub actor_id: usize,
+    pub ability: crate::engine::types::AbilityScoreType,
+    pub amount: u32,
+    /// What did it, for the log — "strength drain".
+    pub label: &'static str,
+}
+
+impl ApplicableSideEffect for DrainAbility {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        if !actor.is_combat_active() {
+            return;
+        }
+        let name = actor.name().to_string();
+        let emptied = actor.drain_ability(self.ability, self.amount);
+        let left = actor.ability_score(self.ability);
+        ei.log(format!(
+            "  {}: {}'s {} drops by {} (now {}).",
+            self.label, name, self.ability, self.amount, left
+        ));
+        if emptied {
+            SlayActor {
+                actor_id: self.actor_id,
+                label: self.label,
+            }
+            .apply(ei);
+        }
+    }
+}
+
 /// Bring a flying actor down **under control** — take away every source
 /// of flight and set the actor on the floor, with no fall damage and no
 /// Prone.
