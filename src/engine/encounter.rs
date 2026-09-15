@@ -9418,10 +9418,9 @@ impl EncounterInstance {
     /// blade cannot reach, which is the correct answer and a genuinely
     /// interesting one.
     ///
-    /// Ties are broken toward the blade's current position by
-    /// `rings_outward`, which walks the closest ring first — so a blade
-    /// that does not need to move does not move, and one that does
-    /// spends as little of its leash as it can.
+    /// The tile chosen is the one closest to where the blade already is,
+    /// so a blade that does not need to move does not move, and one that
+    /// does spends as little of its leash as it can.
     pub fn blade_strike_anchor(
         &self,
         caster_id: usize,
@@ -9436,12 +9435,9 @@ impl EncounterInstance {
             Some(blade) => (blade.origin, blade.step),
             None => (self.actors.get(&caster_id)?.location(), profile.cast_reach),
         };
-        // The search only ever has to look as far as the leash allows,
-        // and every candidate must also be next to the target — so the
-        // ring walk is the cheaper of the two envelopes to walk.
-        // …and how far from its owner it is ever allowed to be. The
-        // Dancing Sword's last sentence; `None` for the two spells,
-        // which leave a blade where they left it. See
+        // And how far from its *owner* the blade may ever be: the
+        // Dancing Sword's last sentence. `None` for the two spells,
+        // which leave a blade where they left it — see
         // `BladeProfile::tether`.
         let within_tether = |tile: Coordinate| match profile.tether {
             None => true,
@@ -9449,19 +9445,46 @@ impl EncounterInstance {
                 .footprint_distance_to_point(caster_id, tile)
                 .is_some_and(|gap| gap <= tether),
         };
-        let reachable = |tile: &Coordinate| {
-            self.is_spawnable(*tile)
-                && footprint_chebyshev(*tile, 1, target_loc, target_span)
-                    <= crate::actions::action_template::MELEE_REACH
-                && within_tether(*tile)
-        };
-        // `rings_outward` skips the centre, which would otherwise be the
-        // answer whenever the blade is already parked in reach and has
-        // no need to move at all.
-        if reachable(&from) {
-            return Some(from);
+        // The candidates are enumerated around the **target**, not
+        // around the blade, and the difference is the whole cost of this
+        // function. Every legal answer has to be within melee reach of
+        // the target, which is a box of about thirty tiles whatever the
+        // leash is; walking outward from the blade instead means
+        // `(2·leash + 1)²` tiles — five thousand of them for an Arcane
+        // Sword's thirty-six — of which all but those thirty are
+        // rejected by the same adjacency test. The leash becomes a
+        // filter on a small set rather than the size of the search.
+        //
+        // The box is the target's footprint grown by `reach + 1` on each
+        // side, which is exactly the envelope `footprint_chebyshev`
+        // admits: a gap of `r` means `r` empty tiles between the bodies,
+        // so the furthest legal tile is `r + 1` beyond the block's edge.
+        // The exact test still runs per candidate — the box is a bound,
+        // not the answer.
+        let reach = crate::actions::action_template::MELEE_REACH;
+        let span = target_span as isize;
+        let mut best: Option<(isize, Coordinate)> = None;
+        for dy in -(reach + 1)..=(span + reach) {
+            for dx in -(reach + 1)..=(span + reach) {
+                let tile = Coordinate::new(target_loc.x + dx, target_loc.y + dy);
+                if footprint_chebyshev(tile, 1, target_loc, target_span) > reach {
+                    continue;
+                }
+                let flight = from.chebyshev_to(tile);
+                if flight > leash || !self.is_spawnable(tile) || !within_tether(tile) {
+                    continue;
+                }
+                // Closest to where the blade already is, so a blade that
+                // needs no move does not make one and a blade that does
+                // spends as little of its leash as it can. Ties break on
+                // the scan order, which is row-major and therefore the
+                // same on every run of the same seed.
+                if best.is_none_or(|(d, _)| flight < d) {
+                    best = Some((flight, tile));
+                }
+            }
         }
-        rings_outward(from, leash).find(reachable)
+        best.map(|(_, tile)| tile)
     }
 
     /// Expire one round off every blade and take down the ones that ran

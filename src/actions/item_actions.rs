@@ -11113,11 +11113,13 @@ impl Action for DancingSwordItem {
     /// the question the AI's positioning rungs ask — *do I have to be
     /// standing next to something for this to be worth anything* — and
     /// for a sword that flies thirty feet the answer is no. The default
-    /// derivation (`requires_los() && reach > MELEE_BAND_REACH`) already
-    /// gets it right, and an override saying "melee" would put this item
-    /// in the same bucket as an ogre's greatclub: a creature holding one
-    /// would count itself as having no ranged option and back away from
-    /// fights it could have reached into.
+    /// derivation answers it already: it reads `!requires_los()` and a
+    /// reach inside `MELEE_BAND_REACH`, and this item declares sight and
+    /// twelve tiles, so it comes out `false` without being told. An
+    /// override saying "melee" would put it in the same bucket as an
+    /// ogre's greatclub: a creature holding one would count itself as
+    /// having no ranged option and back away from fights it could have
+    /// reached into.
     fn damage_types(&self) -> Vec<DamageType> {
         vec![self.weapon.damage_type]
     }
