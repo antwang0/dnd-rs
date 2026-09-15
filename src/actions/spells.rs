@@ -222,6 +222,12 @@ pub fn spell_attack_roll(
         tally.add(crate::engine::dice::RollMode::Disadvantage);
     }
     let mode = encounter.resolve_attack_mode_against(target_id, tally);
+    // The roll-mode cancel lane, the same call the weapon chokepoint
+    // makes one line after resolving its own tally. A spell attack is an
+    // attack roll, which is one of Drunkard's Luck's three RAW contexts,
+    // and it is a d20, which is the whole of Restore Balance's trigger.
+    // See `EncounterInstance::steady_the_d20`.
+    let mode = encounter.steady_the_d20(caster_id, mode);
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks
     // get via `resolve_attack`. This keeps spell-attack rolls

@@ -3873,11 +3873,20 @@ impl EncounterInstance {
     ///
     /// Two rows today — Drunkard's Luck on the roller's own sheet and
     /// Restore Balance from up to 60 ft away — and the wrapper exists
-    /// so the two d20 sites that can still hold `&mut` when they know
-    /// the mode (`engine::attack::resolve_attack_outcome` and
-    /// `roll_save_with_extra_mode_and_bonus`) each call one function
-    /// rather than accumulating a line per feature. A third canceller
-    /// is a call added here and nowhere else.
+    /// so every d20 site that knows the mode before the die lands calls
+    /// one function rather than accumulating a line per feature. A
+    /// third canceller is a call added here and nowhere else.
+    ///
+    /// **Four callers, which is all of them**: the weapon attack roll
+    /// (`engine::attack::resolve_attack_outcome`), the spell attack roll
+    /// (`actions::spells::spell_attack_roll`), the saving throw
+    /// (`roll_save_with_extra_mode_and_bonus`) and the ability check
+    /// (`roll_ability_check_with_extra_mode`). It used to be two, and
+    /// the two that were missing are exactly the two RAW is loudest
+    /// about: Drunkard's Luck lists the ability check first of its three
+    /// contexts, and Restore Balance names no context at all — *"a
+    /// creature … is about to roll a d20"* — so a Clockwork Soul could
+    /// flatten a lich's longsword and not its Fire Bolt.
     ///
     /// Self-lane first: it costs the roller a charge and nobody a
     /// reaction, where Restore Balance costs a bystander both. When
@@ -7633,6 +7642,18 @@ impl EncounterInstance {
         tally.add(extra);
         tally.add_if(carried, RollMode::Advantage);
         let mode = tally.resolve();
+        // The roll-mode cancel lane — Drunkard's Luck and Restore
+        // Balance. RAW names the ability check first of Drunkard's
+        // Luck's three contexts ("an ability check, an attack roll, or
+        // a saving throw") and Restore Balance names no context at all,
+        // just "a d20". This site had neither, under a docstring on
+        // `DRUNKARDS_LUCK_TAG` claiming ability checks were "the third
+        // RAW context and the engine rolls none" — which was true when
+        // it was written and has not been since: a grapple, a shove, an
+        // escape, a Search and a Hide are all ability checks, and every
+        // one of them is a d20 a Drunken Master monk may be rolling at
+        // disadvantage while holding a charge they cannot spend.
+        let mode = self.steady_the_d20(actor_id, mode);
         let raw = self.roll_d20_lucky(actor_id, mode) as i32;
         let Some(actor) = self.actors.get(&actor_id) else {
             return raw;

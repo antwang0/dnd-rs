@@ -110750,3 +110750,106 @@ fn a_spiritual_weapon_is_not_tethered_to_the_cleric_who_cast_it() {
         "the mace stays where the spell left it"
     );
 }
+
+/// Drunkard's Luck reaches the ability check, which is the context RAW
+/// names *first* and the engine reached last.
+///
+/// The feature's own docstring used to close the door on this: *"ability
+/// checks are the third RAW context and the engine rolls none."* True
+/// when it was written; false from the moment Grapple, Shove, Escape,
+/// Search and Hide were built on `roll_ability_check` — five of the most
+/// disadvantage-prone rolls in the game, on the one chassis whose
+/// subclass is about being knocked around.
+#[test]
+fn drunkards_luck_answers_a_disadvantaged_ability_check() {
+    use crate::actions::class_features::{DRUNKARDS_LUCK_TAG, KI_POINTS_TAG};
+    use crate::actors::creatures::monks::DRUNKEN_MASTER_MONK_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::engine::types::AbilityScoreType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let monk = e
+        .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let before = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
+    assert!(before > 0, "the chassis ships with a pool");
+
+    // A straight check spends nothing — the charge answers the one case
+    // the feature names and no other.
+    e.roll_ability_check_with_extra_mode(monk, AbilityScoreType::Strength, None, RollMode::Normal);
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        before,
+        "an even roll is not what the ki is for"
+    );
+
+    e.roll_ability_check_with_extra_mode(
+        monk,
+        AbilityScoreType::Strength,
+        None,
+        RollMode::Disadvantage,
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("drunkard's luck")),
+        "the monk never shrugged off the disadvantage: {:?}",
+        e.messages()
+    );
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        before - 1,
+        "one check, one point of ki"
+    );
+    assert!(!e.actors[&monk].feature_available(DRUNKARDS_LUCK_TAG) || before > 1);
+}
+
+/// Restore Balance reaches the *spell* attack roll.
+///
+/// RAW's trigger names no context — *"a creature you can see within 60
+/// feet of you is about to roll a d20 with advantage or disadvantage"* —
+/// and the engine had it on the weapon chokepoint only, so a Clockwork
+/// Soul could flatten a lich's longsword and not its Fire Bolt.
+#[test]
+fn restore_balance_evens_out_a_hostiles_spell_attack() {
+    use crate::actions::class_features::RESTORE_BALANCE_TAG;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::archmages::ARCHMAGE_TEMPLATE;
+    use crate::actors::creatures::sorcerers::CLOCKWORK_SOUL_SORCERER_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let sorcerer = e
+        .instantiate_creature(&CLOCKWORK_SOUL_SORCERER_TEMPLATE, Coordinate::new(24, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 2), 0, 1)
+        .unwrap();
+    let mage = e
+        .instantiate_creature(&ARCHMAGE_TEMPLATE, Coordinate::new(12, 2), 1, 0)
+        .unwrap();
+    // Restrained hands every attacker advantage, which is the mode the
+    // sorcerer is here to take away — and unlike Prone it does so at
+    // range as well as in contact, which is what a Fire Bolt needs.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .add_condition(Condition::Restrained, ConditionTimer::Rounds(5));
+
+    let charges = e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG);
+    assert!(charges > 0, "the origin ships with a pool");
+
+    let bolt = e.actors[&mage]
+        .find_action("fire bolt")
+        .expect("the mage has a cantrip to throw");
+    for eff in bolt.side_effects(&mut e, mage, Some(&vec![fighter]), None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        e.messages().iter().any(|m| m.contains("restore balance")),
+        "the sorcerer never evened the cast: {:?}",
+        e.messages()
+    );
+    assert_eq!(
+        e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG),
+        charges - 1,
+        "one roll, one charge"
+    );
+}

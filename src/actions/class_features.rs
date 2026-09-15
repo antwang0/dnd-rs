@@ -4954,11 +4954,20 @@ pub const MISDIRECTION_TAG: &str = "rogue.misdirection";
 ///
 /// One charge per short rest, which is the engine's usual stand-in for a
 /// ki cost (see Shadow Arts' slot table for the other one). The charge
-/// is spent by the engine rather than by the player, at the two d20
-/// chokepoints that can see a disadvantaged roll coming and still have
-/// `&mut` in hand: the attack roll in `resolve_attack_outcome` and the
-/// save in `EncounterInstance::roll_save_with_extra_mode_and_bonus`.
-/// Ability checks are the third RAW context and the engine rolls none.
+/// is spent by the engine rather than by the player, at every d20 site
+/// that can see a disadvantaged roll coming and still has `&mut` in
+/// hand — all four of them reach it through
+/// `EncounterInstance::steady_the_d20`.
+///
+/// RAW's three contexts are all covered now, and two of them arrived
+/// late. This docstring used to end *"ability checks are the third RAW
+/// context and the engine rolls none"*, which was true when it was
+/// written and stopped being true the moment Grapple, Shove, Escape,
+/// Search and Hide were built on `roll_ability_check` — five of the
+/// most disadvantage-prone rolls in the game, on the one chassis that
+/// spends its subclass being knocked around. The spell attack roll was
+/// missing for the same reason and is now on the lane beside the
+/// weapon one.
 ///
 /// **Cancel, not upgrade.** RAW says the disadvantage goes away, leaving
 /// whatever the roll would otherwise have been — so a monk who is both
