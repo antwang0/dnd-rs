@@ -262,6 +262,28 @@ pub fn render_map(
                 if actor.has_condition(crate::conditions::Condition::Prone) {
                     s = s.to_lowercase();
                 }
+                // …and a burrowed one draws as the churned earth over
+                // the top of it rather than as itself. See
+                // `crate::engine::burrowing`: the creature is under the
+                // floor, unreachable and unable to reach, and drawing
+                // the ankheg's own glyph there would say the opposite.
+                //
+                // Drawn at all — rather than hidden the way an unfound
+                // trap is — because a tunnel this shallow is a mound
+                // moving across the room, and because the tile is still
+                // occupied: something that vanished from the map and
+                // then refused to be walked through would read as a
+                // bug. The team colour stays, so a player can still
+                // tell whose burrower it is.
+                //
+                // '∩' rather than something from the shade ramp or the
+                // water's '≈': a mound is neither a cost to cross nor a
+                // liquid, and reusing either mark would teach a player
+                // the wrong rule about the tile.
+                if actor.is_burrowed() {
+                    s = "∩".to_string();
+                    style = style.add_modifier(Modifier::DIM);
+                }
                 // Downed actors render dimmed (stable as `+`, dying as `x`)
                 // so the player can read the battlefield at a glance instead
                 // of relying on the side-panel HP bar.
@@ -1023,6 +1045,32 @@ pub fn render_sideinfo(
                 reason
             ),
             Style::default().fg(Color::LightBlue),
+        )));
+    }
+    // …and the same account for the third layer. The Movement number
+    // has changed meaning again — a bulette tunnels at 40 and an ankheg
+    // at 10, having walked at 30 — and the row a player most needs is
+    // the one that says *nothing can reach you and you can reach
+    // nothing*, because that is what every other row on this panel has
+    // stopped being about.
+    //
+    // Rendered on both sides of the surface, for the reason the
+    // Grounded line above is: the burrower standing on the floor is
+    // being offered a choice the panel should name, and the burrower
+    // under it needs to know what it bought. Nothing is rendered for
+    // the rest of the roster.
+    if curr_actor.is_burrowed() {
+        stats_lines.push(Line::from(Span::styled(
+            format!(
+                "Burrowed: {:.0} ft through earth (unreachable, and reaching nothing)",
+                curr_actor.base_burrow_speed()
+            ),
+            Style::default().fg(Color::Yellow),
+        )));
+    } else if curr_actor.can_burrow() {
+        stats_lines.push(Line::from(Span::styled(
+            format!("Burrow: {:.0} ft", curr_actor.base_burrow_speed()),
+            Style::default().fg(Color::Yellow),
         )));
     }
     // SRD 5.2 **Long Jump**, rendered only on a board that has
@@ -1858,6 +1906,64 @@ mod tests {
     /// it is read straight off the same `fall_damage_dice` the fall
     /// itself rolls so the panel can never promise a softer landing than
     /// the engine delivers.
+    /// A burrower's two states both reach the screen, and they say
+    /// different things.
+    ///
+    /// The panel is the only place a player can learn what the Movement
+    /// number one row up has quietly started meaning — a bulette
+    /// tunnels at 40 and an ankheg at 10, having walked at 30 — and the
+    /// map is the only place they can learn that the thing they were
+    /// aiming at is no longer there to aim at. A burrowed creature that
+    /// kept drawing its own glyph would be the worst of both: a target
+    /// on the screen that every attack silently refuses.
+    #[test]
+    fn a_burrowed_creature_is_drawn_as_the_ground_over_it() {
+        use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+
+        let mut e = encounter_with(&[(&ANKHEG_TEMPLATE, 0), (&ANKHEG_TEMPLATE, 1)]);
+        e.process_stack();
+        let id = e.current_turn_actor_id().expect("somebody is up");
+
+        // On the surface: its own glyph on the map, and the burrow
+        // speed offered on the panel.
+        assert!(rendered_map(&e).contains('å'), "the ankheg is on the map");
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Burrow: 10 ft"),
+            "the second speed line is offered:\n{panel}"
+        );
+
+        assert!(e.submerge(id), "there is floor under it");
+        let map = rendered_map(&e);
+        assert!(
+            map.contains('∩'),
+            "churned earth where it went down:\n{map}"
+        );
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Burrowed: 10 ft through earth"),
+            "and the panel says what that bought:\n{panel}"
+        );
+        assert!(
+            !panel.contains("Burrow: 10 ft"),
+            "…without also offering the trip it has already taken:\n{panel}"
+        );
+    }
+
+    /// Nothing without a burrow speed grows a burrow line.
+    #[test]
+    fn the_panel_names_a_burrow_speed_only_for_something_that_has_one() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        let panel = rendered_panel(&e);
+        assert!(
+            !panel.contains("Burrow"),
+            "a goblin has no claws for it:\n{panel}"
+        );
+    }
+
     /// A ward against one damage type says which one.
     ///
     /// The three conditions that carry a chosen element — Resistance's

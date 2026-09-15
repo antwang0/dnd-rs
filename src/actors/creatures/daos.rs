@@ -45,9 +45,10 @@ use std::sync::LazyLock;
 /// Grappled / Restrained) via the shared `ELEMENTAL_CONDITION_IMMUNITIES`.
 ///
 /// Stat shape: AC 18, ~187 HP (15d10+105), STR 23, DEX 12, CON 24,
-/// INT 12, WIS 17, CHA 18. Speed 30 (RAW also grants burrow 30 and fly
-/// 30 hover which we don't model — the earth glide / hover envelope is
-/// 3D positioning the engine doesn't surface). Senses: Darkvision
+/// INT 12, WIS 17, CHA 18. Speed 30, burrow 30, fly 30 (hover) — the
+/// one creature on the roster that carries all three speed lines, and
+/// so the one that can answer a fight by leaving it in either
+/// direction. Senses: Darkvision
 /// 120ft. Languages: Terran collapsed to Primordial in this engine
 /// (matching the marid / djinni / efreeti rollup of the four
 /// elemental tongues into the umbrella language). Size Large. CR 11.
@@ -72,6 +73,7 @@ pub static DAO_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
         speed: 30.0,
         fly_speed: 30.0,
+        burrow_speed: 30.0,
         hovers: true,
         strength: 23,
         intelligence: 12,

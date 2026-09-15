@@ -1,6 +1,8 @@
 use std::sync::LazyLock;
 
-use crate::actions::action_template::{Action, ActionExecutionInfo, MELEE_REACH, TargetingSchema};
+use crate::actions::action_template::{
+    Action, ActionExecutionInfo, MELEE_BAND_REACH, MELEE_REACH, TargetingSchema,
+};
 use crate::actions::class_features::{
     ARCANE_ABJURATION, ASPECT_OF_THE_WYRM, CHAMPION_CHALLENGE, CHARM_ANIMALS_AND_PLANTS,
     CONQUERING_PRESENCE, DREADFUL_ASPECT, ENTHRALLING_PERFORMANCE,
@@ -9,11 +11,12 @@ use crate::actions::class_features::{
 };
 use crate::ai::{Controller, ControllerDecision};
 use crate::conditions::Condition;
+use crate::engine::burrowing::BURROW_TRANSIT_TAG;
 use crate::engine::dice::RollMode;
 use crate::engine::encounter::EncounterInstance;
-use crate::engine::types::AbilityScoreType;
+use crate::engine::types::{AbilityScoreType, Coordinate};
 use crate::engine::underwater::UnderwaterVerdict;
-use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
+use crate::engine::util::{TILE_FEET, footprint_chebyshev, get_tiles_from_size};
 
 /// Tactical heuristic AI. The decision pipeline runs in priority order:
 /// 1. **Kite**: if I have a ranged attack and an enemy is in melee reach
@@ -41,6 +44,16 @@ impl Controller for SimpleAi {
         //    otherwise. Costs half-speed; the rest of the turn still has
         //    resources to act.
         if let Some(aei) = try_stand_up(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
+        // 1a. Come up out of the ground. The burrower's version of the
+        //     rung directly above — a creature under the floor can
+        //     reach nothing and nothing can reach it, so every lane
+        //     below this one is a lane it cannot use. Its own gates
+        //     decide *when*: something in reach, or a tunnel with no
+        //     earth left in front of it. See `try_surface`.
+        if let Some(aei) = try_surface(encounter, actor_id) {
             return ControllerDecision::Act(aei);
         }
 
@@ -1846,6 +1859,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 7c'. Dig in and cross underground. Immediately above the
+        //      walk because it is the same decision made by a creature
+        //      with a better way to make it, and below the leap for the
+        //      reason the leap is above it: a chasm is the one gap a
+        //      tunnel cannot cross. See `try_burrow`.
+        if let Some(aei) = try_burrow(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -2392,6 +2414,164 @@ fn try_stand_up(
         return None;
     }
     try_self_action(encounter, actor_id, "stand")
+}
+
+/// The nearest combat-active hostile to `actor_id`, with the
+/// footprint-Chebyshev gap to it.
+///
+/// Ties broken by id so two enemies at the same distance are chosen
+/// between deterministically — the same reason every other picker in
+/// this file sorts before it minimises.
+fn nearest_hostile(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<(usize, isize)> {
+    let me = encounter.actors.get(&actor_id)?;
+    let my_team = me.team();
+    let my_loc = me.location();
+    let my_size = get_tiles_from_size(me.size());
+    encounter
+        .sorted_actor_ids()
+        .into_iter()
+        .filter_map(|id| {
+            let other = encounter.actors.get(&id)?;
+            if id == actor_id || other.team() == my_team || !other.is_combat_active() {
+                return None;
+            }
+            Some((
+                id,
+                footprint_chebyshev(
+                    my_loc,
+                    my_size,
+                    other.location(),
+                    get_tiles_from_size(other.size()),
+                ),
+            ))
+        })
+        .min_by_key(|&(id, gap)| (gap, id))
+}
+
+/// **Come up.** The burrower's half of `try_stand_up`, and slotted
+/// beside it for the same reason: a creature in the wrong posture can
+/// do nothing else until it fixes that, so every rung below is wasted
+/// on it.
+///
+/// Fires on two triggers, and they are the only two that matter:
+///
+///   - **Something is in reach.** The tunnel has arrived; coming up is
+///     what it was for. Measured against `MELEE_BAND_REACH` rather than
+///     `MELEE_REACH`, because a purple worm's bite is fifteen feet and
+///     it should surface at fifteen feet.
+///   - **The tunnel has run out of earth.** `step_toward_actor` reads
+///     the pathfinder, which refuses undiggable tiles for a burrowed
+///     mover — so a `None` here means there is no route underground
+///     toward the target at all, and staying down is staying stuck.
+///     Coming up costs half a move and hands the rest to the walk lane
+///     at rung 8, which can route round the pool the tunnel could not.
+///
+/// The transit mark is what keeps the second trigger from oscillating
+/// with `try_burrow` inside one turn — see `BURROW_TRANSIT_TAG`.
+fn try_surface(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    if !actor.is_burrowed() || actor.once_per_turn_used(BURROW_TRANSIT_TAG) {
+        return None;
+    }
+    let (target_id, gap) = nearest_hostile(encounter, actor_id)?;
+    let arrived = gap <= MELEE_BAND_REACH;
+    if !arrived && encounter.step_toward_actor(actor_id, target_id).is_some() {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "surface")
+}
+
+/// **Dig in.** The approach lane for the eleven stat blocks that can
+/// cross a room where nothing can touch them.
+///
+/// Sits immediately above the walk at rung 8 because it is the same
+/// decision — *nobody is in reach, close the distance* — made by a
+/// creature that has a better way to do it. Four gates, and each one
+/// exists to refuse a turn that would be worse than walking:
+///
+///   1. **Nothing in contact.** A creature already in a fight should
+///      finish it; diving away from an adjacent knight hands them the
+///      room and costs half a move to do it.
+///   2. **The walk could not have arrived anyway.** Measured in feet
+///      against the actor's own speed, so a bulette forty feet from its
+///      target runs at it and a bulette a hundred feet away tunnels.
+///      Burrowing is strictly worse than arriving, and this is the gate
+///      that says so.
+///   3. **There is earth in the direction it wants to go** — see
+///      `earth_lies_toward`. Without it a creature ringed by water
+///      would dig into a hole it cannot move in, and spend the fight
+///      surfacing and re-submerging in the same tile.
+///   4. **It has not already changed layers this turn.** The other half
+///      of that oscillation, and the one `try_surface` cannot see.
+fn try_burrow(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !encounter.can_submerge(actor_id) {
+        return None;
+    }
+    let actor = encounter.actors.get(&actor_id)?;
+    if actor.once_per_turn_used(BURROW_TRANSIT_TAG) {
+        return None;
+    }
+    let (target_id, gap) = nearest_hostile(encounter, actor_id)?;
+    if gap <= MELEE_BAND_REACH || gap as f32 * TILE_FEET <= actor.speed() {
+        return None;
+    }
+    if !earth_lies_toward(encounter, actor_id, target_id) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "burrow")
+}
+
+/// True when at least one of the eight tiles a step could take
+/// `actor_id` to is **closer to `target_id` and made of earth** — the
+/// local check that stops `try_burrow` from digging into a dead end.
+///
+/// Local rather than a full search on purpose. The pathfinder cannot
+/// answer this question, because the actor is still on the surface when
+/// it is asked and the burrowed passability rules are not yet in force;
+/// running a second Dijkstra under hypothetical conditions to plan one
+/// half-move would cost more than the whole rung is worth. What this
+/// asks is the thing a tunnelling animal would know — *is the ground
+/// that way* — and a tunnel that dead-ends later is caught the turn it
+/// does, by `try_surface`'s second trigger.
+///
+/// Occupancy counts: `can_move_to` refuses a tile somebody else is
+/// standing on, because a burrower keeps its footprint on the grid and
+/// cannot pass under them.
+fn earth_lies_toward(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    target_id: usize,
+) -> bool {
+    let (Some(me), Some(target)) = (
+        encounter.actors.get(&actor_id),
+        encounter.actors.get(&target_id),
+    ) else {
+        return false;
+    };
+    let here = me.location();
+    let there = target.location();
+    let size = me.size();
+    let now = here.chebyshev_to(there);
+    (-1..=1).any(|dx| {
+        (-1..=1).any(|dy| {
+            if dx == 0 && dy == 0 {
+                return false;
+            }
+            let cand = here + Coordinate::new(dx, dy);
+            cand.chebyshev_to(there) < now
+                && encounter.can_move_to(actor_id, cand)
+                && encounter.footprint_is_diggable(cand, size)
+        })
+    })
 }
 
 /// Dodge if the actor still has an Action available and reached this
@@ -12130,8 +12310,6 @@ fn skip_or_await(encounter: &EncounterInstance, caster_id: usize) -> ControllerD
     }
     ControllerDecision::AwaitInput
 }
-
-use crate::engine::types::Coordinate;
 
 #[cfg(test)]
 mod tests {
@@ -24782,9 +24960,198 @@ mod tests {
             "a held concentration reads the same at every level"
         );
     }
+
+    /// True for a pick that is an attack rather than footwork — the
+    /// burrowing tests' way of saying "and then it did something to
+    /// somebody" without naming a stat block's action.
+    fn is_an_attack(pick: &str) -> bool {
+        !matches!(pick, "move" | "dash" | "skip" | "burrow" | "surface" | "dodge")
+    }
+
+    /// The land shark's whole turn sequence: dig in across the room, tunnel
+    /// toward the party where nothing can touch it, come up in reach,
+    /// and bite.
+    ///
+    /// The integration this pins is the pair of rungs at the two ends
+    /// of `decide` — `try_burrow` just above the walk, `try_surface`
+    /// just below standing up — working as one loop. Either alone is
+    /// worse than neither: a burrower that digs in and never comes up
+    /// is a fight that does not end, and one that surfaces the moment
+    /// it arrives but never dug in has bought nothing.
+    #[test]
+    fn a_burrower_crosses_the_room_underground_and_comes_up_to_bite() {
+        use crate::actors::creatures::bulettes::BULETTE_TEMPLATE;
+        use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+
+        let mut e = open_field(60, 20);
+        // The bulette rather than the ankheg, for one reason: it has no
+        // ranged option. An ankheg that surfaces beside somebody spits
+        // acid at them and then kites, which is rung 2 doing its job
+        // and would make this test about that instead. The land shark
+        // arrives or it does nothing.
+        let ankheg = e
+            .instantiate_creature(&BULETTE_TEMPLATE, Coordinate::new(2, 8), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(50, 8), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+
+        // Every pick, with the gap to the gladiator at the moment it
+        // was made — the second number is what says the tunnel arrived
+        // somewhere rather than merely ran.
+        let mut picks: Vec<(String, isize)> = Vec::new();
+        for _ in 0..40 {
+            let Some(a) = e.actors.get_mut(&ankheg) else {
+                break;
+            };
+            a.reset_for_new_round();
+            for _ in 0..8 {
+                let Some((_, gap)) = nearest_hostile(&e, ankheg) else {
+                    break;
+                };
+                let ControllerDecision::Act(aei) = SimpleAi.decide(&e, ankheg) else {
+                    break;
+                };
+                picks.push((aei.action().name().to_string(), gap));
+                e.push_action(aei);
+                e.process_stack();
+            }
+            if picks.iter().any(|(p, _)| is_an_attack(p)) {
+                break;
+            }
+        }
+
+        let names: Vec<&str> = picks.iter().map(|(p, _)| p.as_str()).collect();
+        let dug = names.iter().position(|p| *p == "burrow");
+        let up = names.iter().position(|p| *p == "surface");
+        // "The first thing it did that was not footwork" rather than a
+        // named attack: the picker reaches for the bulette's
+        // Multiattack rather than a bare Bite, which is correct and is
+        // not what this test is about.
+        let bit = names.iter().position(|p| is_an_attack(p));
+        assert!(dug.is_some(), "it dug in: {names:?}");
+        assert!(up.is_some(), "…and came back up: {names:?}");
+        assert!(bit.is_some(), "…and swung at something: {names:?}");
+        assert!(dug < up && up < bit, "in that order: {names:?}");
+        // Every step between the two transits was taken underground,
+        // which is the thing the lane is for.
+        assert!(
+            names[dug.unwrap()..up.unwrap()]
+                .iter()
+                .all(|p| *p == "burrow" || *p == "move" || *p == "dash"),
+            "the crossing spends its turns tunnelling and nothing else: {names:?}"
+        );
+        // It went under at the far end of the room and came up on top
+        // of somebody, which is the whole trade the lane buys.
+        assert!(picks[dug.unwrap()].1 > MELEE_BAND_REACH * 4, "{picks:?}");
+        assert!(picks[up.unwrap()].1 <= MELEE_BAND_REACH, "{picks:?}");
+    }
+
+    /// A burrower with nowhere to tunnel does not spend the fight
+    /// diving into the same tile.
+    ///
+    /// `try_burrow`'s third gate — `earth_lies_toward` — is what refuses
+    /// the dig, and `try_surface`'s second trigger is what would undo it
+    /// if the dig happened anyway. The failure this pins is not a wrong
+    /// answer but a fight that never ends: without either, a creature
+    /// ringed by water alternates burrow and surface forever while the
+    /// party waits.
+    #[test]
+    fn a_burrower_with_no_earth_ahead_of_it_walks_instead() {
+        use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = open_field(60, 20);
+        // Water from x = 8 east. A Large body is four tiles wide, so the
+        // ankheg anchored at x = 4 has its eastern column on the shore
+        // and *no* anchor closer to the target has four dry columns
+        // under it — which is exactly the state `earth_lies_toward`
+        // exists to notice.
+        for y in 0..20isize {
+            for x in 8..60isize {
+                e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water);
+            }
+        }
+        let ankheg = e
+            .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 8), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(50, 8), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+
+        assert!(
+            try_burrow(&e, ankheg).is_none(),
+            "there is no earth in the direction it wants to go"
+        );
+
+        // …and over a run of turns it never digs in at all.
+        let mut picks = Vec::new();
+        for _ in 0..6 {
+            e.actors.get_mut(&ankheg).unwrap().reset_for_new_round();
+            for _ in 0..6 {
+                let ControllerDecision::Act(aei) = SimpleAi.decide(&e, ankheg) else {
+                    break;
+                };
+                picks.push(aei.action().name().to_string());
+                e.push_action(aei);
+                e.process_stack();
+            }
+        }
+        assert!(
+            !picks.iter().any(|p| p == "burrow"),
+            "it walks the long way round instead: {picks:?}"
+        );
+    }
+
+    /// A burrower already in contact finishes the fight rather than
+    /// diving out of it.
+    #[test]
+    fn a_burrower_in_reach_does_not_dig_away_from_the_fight() {
+        use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = open_field(30, 20);
+        let ankheg = e
+            .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 8), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        assert!(e.can_submerge(ankheg), "the floor would take it");
+        assert!(
+            try_burrow(&e, ankheg).is_none(),
+            "but there is something in reach to bite"
+        );
+    }
+
+    /// …and a burrower whose target is close enough to simply run at
+    /// runs at it. Burrowing is strictly slower than arriving.
+    #[test]
+    fn a_burrower_that_could_reach_its_target_this_turn_does_not_dig() {
+        use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+        let mut e = open_field(60, 20);
+        let ankheg = e
+            .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 8), 1, 0)
+            .unwrap();
+        // Eight tiles of gap is twenty feet — inside the ankheg's
+        // thirty-foot walk, and well outside its bite.
+        let near = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(16, 8), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+        assert!(
+            try_burrow(&e, ankheg).is_none(),
+            "it can be there this turn on its legs"
+        );
+
+        // Move the same fighter out past the walk and the answer flips.
+        e.place_actor_at(near, Coordinate::new(50, 8)).unwrap();
+        assert!(
+            try_burrow(&e, ankheg).is_some(),
+            "and tunnels once the run would not have arrived"
+        );
+    }
 }
-
-
-
-
-

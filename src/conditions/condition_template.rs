@@ -833,6 +833,36 @@ pub enum Condition {
     /// drops the buff when concentration ends. Joins `is_dispellable_buff`
     /// so Dispel Magic / Counterspell can rip it.
     Flying,
+    /// **Burrowed** — the holder is under the floor rather than on it.
+    /// See `crate::engine::burrowing` for the whole model; this is the
+    /// flag every gate in it reads.
+    ///
+    /// Not a condition RAW names, and on the same footing as `Flying`
+    /// one line up, which is not one either: both are *where a creature
+    /// is*, written as a condition because a condition is the engine's
+    /// only per-actor state that every lane already consults. What the
+    /// flag buys is the four rules that a body under the ground obeys
+    /// and a body on it does not:
+    ///
+    ///   - **Total Cover, both ways.** Nothing on the surface can
+    ///     target it and it can target nothing on the surface — the
+    ///     same sentence a swallowed creature lives under, and read at
+    ///     the same gates (see `burrow_blocks_targeting`).
+    ///   - **No area effect reaches it.** One row in `actors_in_burst`,
+    ///     beside the swallow's.
+    ///   - **It moves at its burrow speed**, through earth only. See
+    ///     `ActorInstance::base_speed_now` and the pathfinder's
+    ///     `burrowing` gate.
+    ///   - **Tremorsense still finds it**, and nothing else does. That
+    ///     one falls out for free: `nonvisual_sense_reaches` already
+    ///     gates tremorsense on the subject being grounded, and a
+    ///     burrower is as grounded as a creature gets.
+    ///
+    /// `Permanent`, always. A creature underground stays there until it
+    /// digs out, which is the `Surface` action and nothing else — no
+    /// timer, no save, and not a thing Dispel Magic has any business
+    /// with, so this is deliberately off `is_dispellable_buff`.
+    Burrowed,
     /// Feathered (5e **Feather Fall**, level-1 transmutation, reaction).
     /// RAW: *"the creature's rate of descent slows to 60 feet per round
     /// until the spell ends. If the creature lands before the spell ends,
@@ -3919,6 +3949,7 @@ impl Condition {
             Condition::Confused => "confused",
             Condition::Entangled => "entangled",
             Condition::Flying => "flying",
+            Condition::Burrowed => "burrowed",
             Condition::Feathered => "feather-falling",
             Condition::SpiderClimbing => "spider-climbing",
             Condition::Dominated => "dominated",

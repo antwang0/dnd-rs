@@ -843,6 +843,38 @@ impl ApplicableSideEffect for PryAttachment {
     }
 }
 
+/// Dig in — put a burrower under the floor. See
+/// `crate::engine::burrowing`.
+///
+/// The engine call is re-checked rather than assumed to still be legal,
+/// for the reason `ReleaseAttachment` above is: validation ran when the
+/// action was declared, and the tile under the actor can have been
+/// turned to water, stone or a hole by something resolving earlier on
+/// the same stack.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct Submerge {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for Submerge {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.submerge(self.actor_id);
+    }
+}
+
+/// …and back out again. The inverse of `Submerge`, and the only way out
+/// of `Condition::Burrowed`.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct Surface {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for Surface {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.surface(self.actor_id);
+    }
+}
+
 /// Move an actor to `dest` without firing per-step opportunity attacks.
 /// 5e teleports (Misty Step, Dimension Door, fey step abilities) bypass
 /// the normal "movement leaving threatened squares" trigger because the

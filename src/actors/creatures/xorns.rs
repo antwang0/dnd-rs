@@ -23,8 +23,11 @@ use std::sync::LazyLock;
 /// Petrified / Unconscious conditions (elemental physiology).
 ///
 /// Stats track MM Xorn at CR 5 — high STR for the heavy claw + bite
-/// combo, decent CON for the HP pool, low CHA. Senses include
-/// Tremorsense for the burrowing flavor.
+/// combo, decent CON for the HP pool, low CHA. Speed 20, burrow 20 —
+/// the xorn's earth glide, which is the thing it does instead of
+/// fighting a losing fight. Tremorsense 60 is the other half of that:
+/// it is how one buried creature finds another. See
+/// `crate::engine::burrowing`.
 pub static XORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&XORN_CLAW);
@@ -39,6 +42,7 @@ pub static XORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 19,
         hitpoints: "8d8+48".parse().unwrap(),
         speed: 20.,
+        burrow_speed: 20.,
         strength: 17,
         intelligence: 11,
         dexterity: 10,

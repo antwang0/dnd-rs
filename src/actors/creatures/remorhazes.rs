@@ -49,8 +49,8 @@ pub static REMORHAZ_HEATED_BODY: MeleeReflect = MeleeReflect {
 /// `REMORHAZ_SWALLOW`.
 ///
 /// Stat shape per the SRD: AC 17 (natural armor), 195 HP (17d12+85),
-/// STR 24 / DEX 13 / CON 21 / INT 4 / WIS 10 / CHA 5. Speed 40 (plus a
-/// 20 ft burrow RAW, which the engine has no vertical axis for).
+/// STR 24 / DEX 13 / CON 21 / INT 4 / WIS 10 / CHA 5. Speed 40,
+/// burrow 20 — see `crate::engine::burrowing`.
 /// Darkvision 60, Tremorsense 60 — the sense that matters, since a
 /// remorhaz hunts through solid ice and does not need to see. CR 11.
 pub static REMORHAZ_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -66,6 +66,7 @@ pub static REMORHAZ_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 17d12+85 ≈ 195 average per the SRD (CR 11).
         hitpoints: "17d12+85".parse().unwrap(),
         speed: 40.,
+        burrow_speed: 20.,
         strength: 24,
         dexterity: 13,
         constitution: 21,

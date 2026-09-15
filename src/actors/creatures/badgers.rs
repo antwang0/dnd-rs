@@ -15,9 +15,10 @@ use std::sync::LazyLock;
 ///   die rather than a literal so a crit doubles it through the shared
 ///   crit chassis; the badger will not be killing anything either way.
 ///
-/// **Burrow 5** is not modeled — the engine's board has no third
-/// dimension for a burrower to use, and five feet of it would not
-/// change a turn even if it did.
+/// **Burrow 5** is on the sheet, and it is the slowest one in the
+/// game: a badger that digs in spends half a move to do it and can
+/// then cross two tiles a turn. It is still the badger's best answer
+/// to being noticed. See `crate::engine::burrowing`.
 ///
 /// Defensive identity: AC 11, ~5 HP (1d4+3), poison resistance, and
 /// darkvision 30. The resistance is the only combat-relevant line, and
@@ -37,6 +38,7 @@ pub static BADGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 11,
         hitpoints: "1d4+3".parse().unwrap(),
         speed: 20.,
+        burrow_speed: 5.,
         strength: 10,
         intelligence: 2,
         dexterity: 11,

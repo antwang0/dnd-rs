@@ -2063,6 +2063,156 @@ impl Action for PryLoose {
 
 pub static PRY_LOOSE: LazyLock<PryLoose> = LazyLock::new(|| PryLoose {});
 
+/// **Burrow** — dig into the ground, and out of the fight.
+///
+/// Offered only to the eleven stat blocks that print a burrow speed,
+/// and only while they are standing on earth with room to go down. See
+/// `crate::engine::burrowing` for what being under the floor costs and
+/// buys, and for why the price is half a move rather than nothing.
+///
+/// Priced in movement rather than in an action, which is the choice
+/// that makes the lane worth having: a bulette that spent its Action
+/// digging in would be a bulette that never bit anything, and RAW is
+/// unambiguous that burrowing is movement. Half a move is what the
+/// engine charges for the other posture change it prices this way —
+/// see `StandUp` — and it leaves a creature that dives in able to
+/// tunnel the rest of its round.
+pub struct Burrow {}
+
+impl Action for Burrow {
+    fn name(&self) -> &str {
+        "burrow"
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dig", "submerge"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        match encounter.actors.get(&caster_id) {
+            // The *walking* speed, because that is what `speed()`
+            // reports for a creature still on the surface — which is
+            // the only creature this action is ever offered to. Digging
+            // out costs half the burrowing speed instead, and the
+            // asymmetry is the right way round: coming up through ten
+            // feet of earth is the slow half.
+            Some(a) => vec![Resource::Movement(
+                a.speed() * crate::engine::burrowing::BURROW_TRANSIT_FRACTION,
+            )],
+            None => Vec::new(),
+        }
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.can_submerge(caster_id)
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::Submerge {
+            actor_id: caster_id,
+        })]
+    }
+}
+
+pub static BURROW: LazyLock<Burrow> = LazyLock::new(|| Burrow {});
+
+/// **Surface** — come back up. The inverse of `Burrow`, and the only
+/// way out of `Condition::Burrowed`.
+///
+/// Priced off the speed the actor has *right now*, which underground is
+/// the burrow speed — so an ankheg pays five feet to come up and
+/// fifteen to go down, and a bulette pays twenty either way.
+pub struct Surface {}
+
+impl Action for Surface {
+    fn name(&self) -> &str {
+        "surface"
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["emerge", "erupt"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn cost(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        match encounter.actors.get(&caster_id) {
+            Some(a) => vec![Resource::Movement(
+                a.speed() * crate::engine::burrowing::BURROW_TRANSIT_FRACTION,
+            )],
+            None => Vec::new(),
+        }
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.is_burrowed(caster_id)
+    }
+
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        vec![Box::new(crate::engine::side_effects::Surface {
+            actor_id: caster_id,
+        })]
+    }
+}
+
+pub static SURFACE: LazyLock<Surface> = LazyLock::new(|| Surface {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
     || {
         vec![
@@ -2086,6 +2236,8 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*SEARCH,
             &*WIPE_ACID,
             &*DROP_AND_ROLL,
+            &*BURROW,
+            &*SURFACE,
         ]
     },
 );

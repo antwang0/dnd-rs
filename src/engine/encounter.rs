@@ -12435,6 +12435,18 @@ impl EncounterInstance {
                 if a.swallowed_by().is_some() {
                     return None;
                 }
+                // …and the same clause read off the floor. A creature
+                // under the ground has Total Cover against *effects*
+                // on the surface as well as against attacks, and an
+                // area is the effects half. Without the row, a Fireball
+                // aimed at the churned earth a bulette is under would
+                // cook it through ten feet of rock — and would do it
+                // for free, because nothing on the surface can be
+                // targeted by the bulette in return. See
+                // `crate::engine::burrowing`.
+                if a.is_burrowed() {
+                    return None;
+                }
                 let dist = footprint_chebyshev(
                     a.location(),
                     get_tiles_from_size(a.size()),
@@ -13605,13 +13617,13 @@ impl EncounterInstance {
     /// **May `actor_id` swing at `target_id` at all?** — the complete
     /// list of rules that say no, in one place.
     ///
-    /// Three rules qualify today and they arrive from three different
+    /// Four rules qualify today and they arrive from four different
     /// modules: the charm's *"can't attack the charmer"*, the attach
-    /// clause's *"can attack only the target"*, and a swallow's Total
-    /// Cover. What they have in common is not their source but their
-    /// shape — each is a fact about a *pair* of creatures that no die
-    /// roll can change, and each has to hold on four lanes that reach
-    /// hostility by four different routes.
+    /// clause's *"can attack only the target"*, a swallow's Total
+    /// Cover, and a burrow's. What they have in common is not their
+    /// source but their shape — each is a fact about a *pair* of
+    /// creatures that no die roll can change, and each has to hold on
+    /// four lanes that reach hostility by four different routes.
     ///
     /// Only one of those four goes through `Action::validate`. The other
     /// three — the opportunity-attack dispatcher, Riposte, and the
@@ -13623,10 +13635,11 @@ impl EncounterInstance {
     /// hold a readied swing for a passer-by, and a swallowed creature
     /// could take opportunity attacks through the stomach wall.
     ///
-    /// A fourth rule lands here as one line rather than as four edits in
-    /// four modules, which is the point.
+    /// A fifth rule lands here as one line rather than as four edits in
+    /// four modules, which is the point — the burrow's Total Cover is
+    /// the most recent one to have done so.
     ///
-    /// A fourth rule is not pair-scoped at all and belongs here anyway:
+    /// One rule here is not pair-scoped at all and belongs here anyway:
     /// 5e's flat *"the target can't attack"*, which Gaseous Form prints
     /// beside "or cast spells". `Action::validate` asks it separately —
     /// it has to, because it must also refuse a no-target AoE — but the
@@ -13637,10 +13650,11 @@ impl EncounterInstance {
     ///
     /// Deliberately *not* the whole targeting gate. Total Cover also
     /// stops a Cure Wounds, and this predicate is about hostility, so
-    /// `Action::validate` asks `swallow_blocks_targeting` separately and
-    /// unconditionally before it gets here. The overlap is intentional:
-    /// this list stays complete for the three callers that have no other
-    /// gate to lean on.
+    /// `Action::validate` asks `swallow_blocks_targeting` and
+    /// `burrow_blocks_targeting` separately and unconditionally before
+    /// it gets here. The overlap is intentional: this list stays
+    /// complete for the three callers that have no other gate to lean
+    /// on.
     pub fn hostility_blocked(&self, actor_id: usize, target_id: usize) -> bool {
         self.actors
             .get(&actor_id)
@@ -13648,6 +13662,7 @@ impl EncounterInstance {
             || self.charm_blocks_hostility(actor_id, target_id)
             || self.attachment_blocks_hostility(actor_id, target_id)
             || self.swallow_blocks_targeting(actor_id, target_id)
+            || self.burrow_blocks_targeting(actor_id, target_id)
     }
 
     /// Walk every ally-team actor that's `is_combat_active` OR `is_dying`
@@ -14088,6 +14103,16 @@ impl EncounterInstance {
         // being there. Resolved once out here for the same reason the
         // two surcharge waivers are.
         let water_bound = body.breathes_only_underwater() && self.is_immersed(body_id);
+        // …and its mirror underground. A creature that is *in* the
+        // ground moves through ground: every tile of the walk has to
+        // have earth in it, which rules out water and nothing else on
+        // a passable board. Resolved once out here for the same reason
+        // the three waivers above are — it cannot change while a single
+        // path is being searched — and gated on the condition rather
+        // than on the speed, so a bulette that has surfaced walks over
+        // the same pool it could not tunnel under. See
+        // `crate::engine::burrowing`.
+        let burrowing = body.is_burrowed();
         let body_size = body.size();
         // SRD 5.2 **Long Jump**, resolved once per path for the reason
         // every other waiver above is: neither number can change while a
@@ -14263,6 +14288,13 @@ impl EncounterInstance {
                     if water_bound && !self.footprint_is_water(next, body_size) {
                         continue;
                     }
+                    // The tunnel's edge, measured over the whole
+                    // footprint for the reason the lake's is: a Huge
+                    // worm allowed to put one corner under a pool would
+                    // be half swimming.
+                    if burrowing && !self.footprint_is_diggable(next, body_size) {
+                        continue;
+                    }
                     let waived = if tile.is_some_and(|t| t.is_water()) {
                         swims
                     } else {
@@ -14322,7 +14354,13 @@ impl EncounterInstance {
             // shark that must stay in its pool is not offered a leap out
             // of it. The walk lane makes the same refusal one tile at a
             // time; here it is one check for the whole lane.
-            if board_has_gaps && !water_bound && (airborne || running_jump_mft > 0) {
+            // …and a burrower is excluded for the mirror of the shark's
+            // reason: every landing is *dry* by construction and none
+            // of them has earth over it, so a creature underground is
+            // not offered a leap across a hole in the floor it is
+            // beneath. The walk lane makes the same refusal one tile at
+            // a time.
+            if board_has_gaps && !water_bound && !burrowing && (airborne || running_jump_mft > 0) {
                 for (dx, dy) in jumping::JUMP_DIRECTIONS {
                     // RAW's ten feet, measured backwards along the tree
                     // this search has already built. A hop that

@@ -173,6 +173,43 @@ impl TerrainType {
         matches!(self, TerrainType::Water)
     }
 
+    /// True if there is **earth under this tile** for a burrower to
+    /// move through — see `crate::engine::burrowing`.
+    ///
+    /// The three tiles a creature can dig into are the three that are
+    /// floor with ground beneath them: bare `Floor`, the rubble and
+    /// undergrowth of `DifficultTerrain`, and the heaped stone of a
+    /// `LowWall`. What that list leaves out is the whole of the rule:
+    ///
+    ///   - **`Water`** is the one passable tile with no ground in it. A
+    ///     burrow speed is not a swim speed and RAW never lets one
+    ///     stand in for the other — an ankheg at the bottom of a pool
+    ///     is swimming badly, not tunnelling.
+    ///   - **`Chasm`** is the floor's absence, so there is nothing to
+    ///     tunnel through and nothing to come up out of.
+    ///   - **`Wall`** is solid rock, and RAW gates it behind a clause
+    ///     of its own — *"the worm can burrow through solid rock at
+    ///     half its burrow speed"* — that only two stat blocks print.
+    ///     Excluded deliberately rather than by oversight: letting
+    ///     burrowers through walls would hand the pathfinder a second
+    ///     passability model and let a bulette tunnel out of a sealed
+    ///     room, and the clause is named as unmodelled in
+    ///     `burrowing`'s own module docs.
+    ///   - **`ForceWall`** and **`Empty`** are not tiles anything
+    ///     occupies by any means.
+    ///
+    /// Deliberately *not* `is_passable() && !is_water()`, though that
+    /// is the same set today. The two questions diverge the moment a
+    /// tile is added that is walkable over a void — a catwalk, a
+    /// floating disc — and a predicate spelled as the property it means
+    /// is the one that keeps answering correctly when it does.
+    pub fn is_diggable(self) -> bool {
+        matches!(
+            self,
+            TerrainType::Floor | TerrainType::DifficultTerrain | TerrainType::LowWall
+        )
+    }
+
     /// True if this tile is a gap a creature could *leap over* rather
     /// than an obstruction it has to go round.
     ///

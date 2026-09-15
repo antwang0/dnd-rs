@@ -3361,6 +3361,31 @@ pub struct CreatureTemplate {
     /// `ActorInstance::from_creature_template` — a template that hovers without
     /// flying is a typo, not a creature.
     pub hovers: bool,
+    /// 5e's **third** speed line — "Speed 30 ft., burrow 10 ft." — in
+    /// feet, and `0.0` for everything that cannot dig.
+    ///
+    /// Eleven stat blocks in the roster print one and every one of them
+    /// used to carry an apology in its docstring instead: the Giant
+    /// Badger's said *"the engine doesn't track separate burrow speed
+    /// (no underground-terrain awareness), so the burrow half is
+    /// collapsed to the walking value"*, the Remorhaz's named *"20 ft
+    /// burrow RAW, which the engine has no vertical axis for"*, and the
+    /// Purple Worm's folded 30 feet of tunnelling onto a surface speed
+    /// of 50. All three roundings did the same thing — turned the
+    /// slowest number on the stat block into part of the fastest — and
+    /// what they threw away was not the speed. It was the *position*: a
+    /// burrowing monster's whole tactical shape is that you cannot
+    /// reach it while it is down there, and it cannot reach you.
+    ///
+    /// Kept separate from `speed` for the reason `fly_speed` is, and
+    /// read the same way: `ActorInstance::base_speed_now` returns this
+    /// number while the creature is `Burrowed` and the walking one
+    /// while it is not, so a bulette really does tunnel at 40 and walk
+    /// at 40, and an ankheg tunnels at 10 having walked at 30.
+    ///
+    /// See `crate::engine::burrowing` for what being under the floor
+    /// costs and buys.
+    pub burrow_speed: f32,
     pub strength: u32,
     pub intelligence: u32,
     pub dexterity: u32,
@@ -4741,6 +4766,7 @@ impl CreatureTemplate {
             speed: 30.0,
             fly_speed: 0.0,
             hovers: false,
+            burrow_speed: 0.0,
             strength: 10,
             intelligence: 10,
             dexterity: 10,
@@ -5222,6 +5248,14 @@ pub struct ActorInstance {
     /// Whether this creature's flight is the hovering kind. See
     /// `CreatureTemplate::hovers`.
     hovers: bool,
+    /// The creature's own burrowing speed in feet, copied from
+    /// `CreatureTemplate::burrow_speed`. `0.0` for everything that
+    /// cannot dig, which is all but eleven of the roster.
+    ///
+    /// Immutable for the life of the actor, for the same reason
+    /// `base_fly_speed` is: what stops a burrower is a condition or a
+    /// tile, never the loss of its claws.
+    base_burrow_speed: f32,
     base_size: Size,
     initiative: Option<i32>,
     strength: u32,
@@ -6239,6 +6273,7 @@ impl ActorInstance {
             base_speed: ct.speed,
             base_fly_speed: ct.fly_speed,
             hovers: ct.hovers,
+            base_burrow_speed: ct.burrow_speed,
             base_size: ct.size,
             initiative: None,
             strength: ct.strength,
@@ -10520,6 +10555,32 @@ impl ActorInstance {
         self.base_fly_speed > 0.0 && !self.has_condition(Condition::Earthbound)
     }
 
+    /// This creature's own burrowing speed in feet — the third number
+    /// on its 5e speed line, `0.0` for everything that cannot dig.
+    ///
+    /// The unconditional reading, exactly as `base_fly_speed` above is:
+    /// it answers *"does this thing tunnel"*, not *"may it tunnel from
+    /// where it is standing right now"*. The second question is
+    /// `EncounterInstance::can_submerge`, which needs the board.
+    pub fn base_burrow_speed(&self) -> f32 {
+        self.base_burrow_speed
+    }
+
+    /// True when this creature is built to dig at all — the cheap
+    /// half of every burrow gate, asked before anything looks at the
+    /// floor. See `crate::engine::burrowing`.
+    pub fn can_burrow(&self) -> bool {
+        self.base_burrow_speed > 0.0
+    }
+
+    /// True while this creature is **under the floor** rather than on
+    /// it. The one read of `Condition::Burrowed`, given a name because
+    /// a dozen gates ask it and *"has the burrowed condition"* is not
+    /// what any of them mean.
+    pub fn is_burrowed(&self) -> bool {
+        self.has_condition(Condition::Burrowed)
+    }
+
     /// True when this creature's flight is the hovering kind — 5e's
     /// "(hover)" annotation. See `CreatureTemplate::hovers`.
     ///
@@ -10550,7 +10611,18 @@ impl ActorInstance {
     /// otherwise deprived of the ability to move, the creature falls,
     /// unless it has the ability to hover."* See `flight_is_disabled`.
     pub fn is_airborne(&self) -> bool {
-        (self.has_magical_flight() || self.has_innate_flight()) && !self.flight_is_disabled()
+        // Nothing is in the air while it is in the ground. Asked ahead
+        // of the hover exemption rather than as a row on
+        // `flight_is_disabled`, because this is not the general flying
+        // rule knocking something out of the sky — it is a creature
+        // that was never up there. The gate matters for one reachable
+        // case: a burrower that picks up `Flying` from an ally's spell
+        // while it is down a hole, whose altitude, terrain waiver and
+        // speed pick would otherwise all start answering as though the
+        // floor were below it.
+        !self.is_burrowed()
+            && (self.has_magical_flight() || self.has_innate_flight())
+            && !self.flight_is_disabled()
     }
 
     /// 5e's general flying rule, the falling half: *"if a flying
@@ -10639,6 +10711,17 @@ impl ActorInstance {
         // replaces the line the pick is choosing between.
         if let Some(fixed) = self.overridden_base_speed() {
             return fixed;
+        }
+        // Under the floor, the burrow speed is the *only* speed — and
+        // unlike the flight pick below it, it is not a `max`. A wyvern
+        // in the air moves at the better of its two numbers because
+        // nothing about being aloft costs it its legs; a bulette in the
+        // ground is moving through rock, and its walking speed is not
+        // available to it there. Eight of the eleven burrowers tunnel
+        // slower than they walk, and that gap is the price the lane
+        // charges for being unreachable.
+        if self.is_burrowed() {
+            return self.base_burrow_speed;
         }
         if self.is_airborne() {
             self.base_speed.max(self.base_fly_speed)

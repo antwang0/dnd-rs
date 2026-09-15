@@ -2393,6 +2393,19 @@ pub trait Action {
             {
                 return false;
             }
+            // …and the same sentence read off the floor rather than off
+            // a stomach wall: a burrowed creature has Total Cover
+            // against everything on the surface and everything on the
+            // surface has Total Cover against it. Its own arm for the
+            // reason the swallow's has one — it is not a rule about
+            // hostility, and a cleric cannot heal downwards through ten
+            // feet of earth either. See `crate::engine::burrowing`.
+            if targets
+                .iter()
+                .any(|&tid| encounter.burrow_blocks_targeting(caster_id, tid))
+            {
+                return false;
+            }
         } else if let Some(locs) = target_locations
             && let Some(&point) = locs.first()
         {

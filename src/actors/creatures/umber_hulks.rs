@@ -25,6 +25,7 @@ pub static UMBER_HULK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'U',
         ac: 18,
         hitpoints: "12d10+48".parse().unwrap(),
+        burrow_speed: 30.,
         strength: 20,
         dexterity: 13,
         constitution: 18,

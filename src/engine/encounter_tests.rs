@@ -111120,6 +111120,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/banishment.rs", include_str!("banishment.rs")),
         ("engine/board.rs", include_str!("board.rs")),
         ("engine/breath.rs", include_str!("breath.rs")),
+        ("engine/burrowing.rs", include_str!("burrowing.rs")),
         ("engine/conjured_terrain.rs", include_str!("conjured_terrain.rs")),
         ("engine/criticals.rs", include_str!("criticals.rs")),
         ("engine/dice.rs", include_str!("dice.rs")),
@@ -112626,5 +112627,299 @@ fn a_paladins_own_greatsword_collects_the_great_weapon_master_bonus() {
         saw_bonus,
         "the paladin's own greatsword pays the feat out:\n{}",
         e.messages().join("\n")
+    );
+}
+
+// ── Burrowing ────────────────────────────────────────────────────────
+//
+// See `crate::engine::burrowing` for the model these pin.
+
+/// The whole of RAW's Total Cover, in one test: a creature under the
+/// floor cannot be reached, cannot reach out, and is not in the
+/// fireball.
+///
+/// Written against the three gates rather than against one, because the
+/// three are reached by three different routes and the engine has been
+/// bitten before by a rule that held on the one path anybody tested.
+/// `hostility_blocked` is what the reaction dispatchers read,
+/// `Action::validate` is what a declared action reads, and
+/// `actors_in_burst` is what every area in the game collects its hit
+/// list from.
+#[test]
+fn earth_over_a_creature_is_total_cover_in_both_directions() {
+    use crate::actions::monster_attacks::ANKHEG_BITE;
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let knight = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+
+    // On the surface the two can reach each other, and the bite
+    // validates.
+    assert!(!e.hostility_blocked(ankheg, knight));
+    assert!(!e.hostility_blocked(knight, ankheg));
+    let bite = ActionExecutionInfo::new(&*ANKHEG_BITE, ankheg, Some(vec![knight]), None, None);
+    assert!(bite.validate(&e), "the bite reaches on the surface");
+
+    assert!(e.submerge(ankheg), "earth under it, so it digs in");
+
+    // …and neither can, once there is a floor between them.
+    assert!(e.hostility_blocked(ankheg, knight), "it cannot reach out");
+    assert!(e.hostility_blocked(knight, ankheg), "and cannot be reached");
+    let bite = ActionExecutionInfo::new(&*ANKHEG_BITE, ankheg, Some(vec![knight]), None, None);
+    assert!(!bite.validate(&e), "the bite no longer validates");
+
+    // The cover is not about hostility: a heal aimed down there is
+    // refused by the same gate. Asked through the predicate, which is
+    // what `Action::validate`'s unconditional arm reads.
+    assert!(e.burrow_blocks_targeting(knight, ankheg));
+
+    // And an area centred on the churned earth catches the knight
+    // standing beside it and nothing under it.
+    let caught = e.actors_in_burst(Coordinate::new(5, 4), 4);
+    assert!(caught.contains(&knight), "the burst reaches the surface");
+    assert!(
+        !caught.contains(&ankheg),
+        "and stops at the floor: {caught:?}"
+    );
+
+    // Two creatures in the same tunnel are not separated by it.
+    let second = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(10, 4), 1, 0)
+        .unwrap();
+    assert!(e.submerge(second));
+    assert!(
+        !e.burrow_blocks_targeting(ankheg, second),
+        "earth between two buried creatures is not between them"
+    );
+}
+
+/// Who may dig in, and from where. Four gates, one test each way.
+#[test]
+fn only_a_burrower_standing_on_earth_can_dig_in() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::conditions::ConditionTimer;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    // A pool for the ankheg to fail to dig into, well clear of the
+    // Large footprint's other corners.
+    for x in 10..16isize {
+        for y in 2..8isize {
+            let idx = e.idx(Coordinate::new(x, y)).unwrap();
+            e.terrain[idx].terrain_type = TerrainType::Water;
+        }
+    }
+
+    // Nothing without a burrow speed digs, however much floor it is on.
+    let knight = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(!e.can_submerge(knight), "a gladiator has no claws for it");
+    assert!(!e.submerge(knight));
+
+    // A burrower on floor does.
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    assert!(e.can_submerge(ankheg));
+
+    // …and from the air too, landing on the way and paying nothing for
+    // it. The Dao is the creature this arm is really about — it both
+    // flies and digs, and the engine has no landing lane for wings — so
+    // the condition stands in for those wings here.
+    e.actors
+        .get_mut(&ankheg)
+        .unwrap()
+        .add_condition(Condition::Flying, ConditionTimer::Rounds(10));
+    e.reconcile_altitudes();
+    assert!(e.actors[&ankheg].altitude_ft() > 0, "it is up there");
+    let hp = e.actors[&ankheg].hitpoints();
+    assert!(e.submerge(ankheg), "a flier may dive straight into the floor");
+    e.reconcile_altitudes();
+    assert_eq!(
+        e.actors[&ankheg].altitude_ft(),
+        0,
+        "and is on the ground when it gets there"
+    );
+    assert_eq!(
+        e.actors[&ankheg].hitpoints(),
+        hp,
+        "a landing it chose costs nothing — this is not a fall"
+    );
+    assert!(e.surface(ankheg));
+    e.actors
+        .get_mut(&ankheg)
+        .unwrap()
+        .remove_condition(Condition::Flying);
+    e.reconcile_altitudes();
+    assert!(e.can_submerge(ankheg));
+
+    // …and not from a lake. Measured over the whole footprint, so an
+    // anchor one tile short of the water still fails — a Large ankheg
+    // at (9, 4) has its far column in it.
+    let swimmer = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+        .unwrap();
+    assert!(!e.can_submerge(swimmer), "a burrow speed is not a swim speed");
+
+    // Digging twice is not a thing.
+    assert!(e.submerge(ankheg));
+    assert!(!e.can_submerge(ankheg));
+    assert!(!e.submerge(ankheg));
+
+    // And coming up is available only to something that is down.
+    assert!(e.surface(ankheg));
+    assert!(!e.surface(ankheg));
+}
+
+/// Under the floor a creature moves at its **burrow** speed, and only
+/// through earth.
+///
+/// Both halves matter and they fail differently: the speed is a wrong
+/// number, and the terrain is a wrong route. The ankheg is the clearest
+/// case for the first — 30 walking, 10 tunnelling — and a pool across
+/// its path is the clearest case for the second.
+#[test]
+fn a_tunnel_runs_at_the_burrow_speed_and_only_through_earth() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    // A wall of water from top to bottom, across the ankheg's path
+    // east. One column is enough: a Large body is four tiles wide on
+    // this grid, so no anchor east of it has four dry columns under it.
+    for y in 0..20isize {
+        let idx = e.idx(Coordinate::new(20, y)).unwrap();
+        e.terrain[idx].terrain_type = TerrainType::Water;
+    }
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 8), 1, 0)
+        .unwrap();
+
+    assert_eq!(e.actors[&ankheg].speed(), 30.0, "it walks at 30");
+    assert!(e.submerge(ankheg));
+    assert_eq!(
+        e.actors[&ankheg].speed(),
+        10.0,
+        "and tunnels at 10 — not at the better of the two, the way a \
+         flier moves at the better of its two"
+    );
+
+    // The pathfinder will not take it through the water…
+    e.actors.get_mut(&ankheg).unwrap().set_movement_budget(200.0);
+    assert!(
+        e.path_to(ankheg, Coordinate::new(24, 8)).is_none(),
+        "no tunnel crosses a lake"
+    );
+    // …though it reaches the near shore happily.
+    assert!(e.path_to(ankheg, Coordinate::new(14, 8)).is_some());
+
+    // On the surface the same walk is fine: water is passable, it is
+    // just not diggable.
+    assert!(e.surface(ankheg));
+    e.actors.get_mut(&ankheg).unwrap().set_movement_budget(200.0);
+    assert!(
+        e.path_to(ankheg, Coordinate::new(24, 8)).is_some(),
+        "the gate is the condition, not the creature"
+    );
+}
+
+/// Digging in and back out each cost half a move, and the half is read
+/// off the speed the actor has *at the time* — so the two prices differ
+/// for every burrower whose two speed lines differ.
+#[test]
+fn changing_layers_costs_half_a_move_each_way() {
+    use crate::actions::default_actions::{BURROW, SURFACE};
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ankheg = e
+        .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&ankheg).unwrap().set_movement_budget(30.0);
+
+    // Down: half of the walking 30.
+    let dig = ActionExecutionInfo::new(&*BURROW, ankheg, None, None, None);
+    assert!(dig.validate(&e));
+    e.pop_prompt();
+    e.push_action(dig);
+    e.process_stack();
+    assert!(e.actors[&ankheg].is_burrowed());
+    let left = e.actors[&ankheg].remaining_movement();
+    assert!(
+        (left - 15.0).abs() < 0.01,
+        "fifteen of the thirty spent going down, not {left}"
+    );
+
+    // Up: half of the burrowing 10, which is the cheaper half and the
+    // slower one — the asymmetry is the point.
+    let up = ActionExecutionInfo::new(&*SURFACE, ankheg, None, None, None);
+    assert!(up.validate(&e));
+    e.push_action(up);
+    e.process_stack();
+    assert!(!e.actors[&ankheg].is_burrowed());
+    let left = e.actors[&ankheg].remaining_movement();
+    assert!(
+        (left - 10.0).abs() < 0.01,
+        "five more for the climb out, not {left}"
+    );
+
+    // And a creature with nothing left to spend stays where it is.
+    e.actors.get_mut(&ankheg).unwrap().set_movement_budget(1.0);
+    assert!(
+        !e.actors[&ankheg].can_consume_resource(Resource::Movement(15.0)),
+        "one foot does not buy a dig"
+    );
+    let dig = ActionExecutionInfo::new(&*BURROW, ankheg, None, None, None);
+    assert!(!dig.validate(&e));
+}
+
+/// Every burrow speed in the bestiary is reachable: the creature that
+/// prints one can dig in on open floor, and nothing else can.
+///
+/// The sweep is what keeps the lane honest as the roster grows. A
+/// burrow speed added to a stat block and nowhere else would otherwise
+/// be a number on a sheet that no turn could ever spend, which is
+/// exactly the state all eleven of them were in before
+/// `crate::engine::burrowing` existed.
+#[test]
+fn every_burrower_in_the_bestiary_can_actually_dig() {
+    let mut seen = 0;
+    for template in EncounterInstance::template_pool() {
+        let mut e = ei_with_terrain(40, 40, &[]);
+        let Ok(id) = e.instantiate_creature(template, Coordinate::new(4, 4), 0, 0) else {
+            continue;
+        };
+        let digs = template.burrow_speed > 0.0;
+        assert_eq!(
+            e.can_submerge(id),
+            digs,
+            "{} prints burrow {} and answers can_submerge {}",
+            template.name,
+            template.burrow_speed,
+            e.can_submerge(id)
+        );
+        if !digs {
+            continue;
+        }
+        seen += 1;
+        assert!(e.submerge(id), "{} digs in", template.name);
+        assert_eq!(
+            e.actors[&id].speed(),
+            template.burrow_speed,
+            "{} tunnels at its printed burrow speed",
+            template.name
+        );
+        assert!(e.surface(id), "{} comes back up", template.name);
+    }
+    assert!(
+        seen >= 10,
+        "the roster carries the burrowers this lane was built for, found {seen}"
     );
 }

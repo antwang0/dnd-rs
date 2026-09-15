@@ -38,10 +38,12 @@ use std::sync::LazyLock;
 /// Defensive identity: AC 18 (natural armor — the thick chitinous
 /// segments of an underground giant), 247 HP (15d20+90 ≈ 247). No
 /// damage resistance / immunity — RAW the purple worm is a pure brute,
-/// not a magical / elemental holdover. Tunneler trait (RAW: "the worm
-/// can burrow through solid rock at half its burrow speed") lives as
-/// flavor on the template only — the engine isn't 3D and collapses
-/// burrow movement onto the surface speed.
+/// not a magical / elemental holdover. The **burrow 30** is real and
+/// carries the whole ambush — see `crate::engine::burrowing`. Its
+/// Tunneler trait (RAW: "the worm can burrow through solid rock at
+/// half its burrow speed") is the one half that stays flavor: walls
+/// stop a burrower here exactly as they stop a walker, for the reason
+/// that module's docs give.
 ///
 /// **Swallow** is the clause the whole creature is built around, and it
 /// is here: the bite grapples, the Bonus Action eats what the bite is
@@ -54,8 +56,7 @@ use std::sync::LazyLock;
 /// and `PURPLE_WORM_SWALLOW` for this worm's numbers.
 ///
 /// Stat shape: AC 18, ~247 HP (15d20+90), STR 28, DEX 7, CON 22,
-/// INT 1, WIS 8, CHA 4. Speed 50 (RAW 50 ft + 30 ft burrow — we collapse
-/// to the faster of the two since the engine isn't 3D). Senses:
+/// INT 1, WIS 8, CHA 4. Speed 50, burrow 30. Senses:
 /// Blindsight 30, Tremorsense 60 (the worm "sees" through ground
 /// vibrations). Languages: none (CR-15 dumb brute). Size Gargantuan.
 /// CR 15. XP: 13,000 per RAW.
@@ -80,6 +81,7 @@ pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 15d20+90 ≈ 247 average per MM (CR 15).
         hitpoints: "15d20+90".parse().unwrap(),
         speed: 50.,
+        burrow_speed: 30.,
         strength: 28,
         intelligence: 1,
         dexterity: 7,

@@ -42,9 +42,9 @@ use std::sync::LazyLock;
 /// dual-typed damage spread (bypasses most single-type resistances).
 ///
 /// Stat shape: AC 13, ~15 HP (2d8+6), STR 15, DEX 10, CON 17, INT 2,
-/// WIS 12, CHA 5. Speed 30 — RAW: 30 walking + burrow 10. The engine
-/// doesn't track separate burrow speed (no underground-terrain
-/// awareness), so the burrow half is collapsed to the walking value.
+/// WIS 12, CHA 5. Speed 30, burrow 10 — see
+/// `crate::engine::burrowing`, which is what makes the second number a
+/// different kind of number rather than a smaller one.
 /// Senses: Darkvision 30. Size Medium. CR ¼. XP: 50 per RAW.
 pub static GIANT_BADGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
@@ -63,6 +63,7 @@ pub static GIANT_BADGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // 2d8+6 = 15 average per MM (CR ¼).
         hitpoints: "2d8+6".parse().unwrap(),
         speed: 30.,
+        burrow_speed: 10.,
         strength: 13,
         intelligence: 2,
         dexterity: 10,

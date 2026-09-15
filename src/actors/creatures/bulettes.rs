@@ -17,6 +17,11 @@ use std::sync::LazyLock;
 /// No languages (non-sentient predator); no spell slots. The bulette's
 /// signature MM stat is its high CON / HP pool — RAW: 9d10+45 = ~94 HP,
 /// which we adopt directly. AC 17 mirrors the natural armor envelope.
+///
+/// Speed 40, **burrow 40** — alone in the bestiary in tunnelling as
+/// fast as it runs, which is why the land shark is the one creature
+/// for whom digging in costs nothing but the half-move down. See
+/// `crate::engine::burrowing`.
 pub static BULETTE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&BULETTE_BITE);
@@ -31,6 +36,7 @@ pub static BULETTE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 17,
         hitpoints: "9d10+45".parse().unwrap(),
         speed: 40.,
+        burrow_speed: 40.,
         // SRD 5.2 **Leap** (Bonus Action): *"The bulette jumps up to 30
         // feet by spending 10 feet of movement."* Priced here at the
         // foot-per-foot the Long Jump rule charges everybody rather than

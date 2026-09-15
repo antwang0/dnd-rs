@@ -15,6 +15,11 @@ use std::sync::LazyLock;
 /// (RAW: shatters stone). Immune to poison; resistant to mundane
 /// physical attacks. Elemental condition envelope identical to the
 /// fire / air variants.
+///
+/// **Burrow 30** — RAW's Earth Glide, and the answer to the thunder
+/// vulnerability directly above it: a wizard who has found the right
+/// damage type gets one round to use it before the elemental is under
+/// the floor. See `crate::engine::burrowing`.
 pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&EARTH_ELEMENTAL_SLAM);
@@ -27,7 +32,8 @@ pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ac: 17,
         // 14d10+70 = ~147 average per MM (CR 5, heavier HP pool).
         hitpoints: "14d10+70".parse().unwrap(),
-        speed: 30., // burrow + walk, no flight
+        speed: 30.,
+        burrow_speed: 30.,
         strength: 20,
         intelligence: 5,
         dexterity: 8,
