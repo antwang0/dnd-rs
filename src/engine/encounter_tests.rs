@@ -4478,8 +4478,12 @@ fn the_picker_ranks_a_drunk_element_below_a_merely_resisted_one() {
         .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 6), 0, 0)
         .unwrap();
 
-    let fire = matchup_penalty_vs_magic(&e, golem, &[DamageType::Fire]);
-    let force = matchup_penalty_vs_magic(&e, golem, &[DamageType::Force]);
+    // The wizard is the attacker throughout — a caster with no
+    // attacker-side resistance bypass on its sheet, so every rung below
+    // is the target's verdict and nothing else. See
+    // `simple::bypassed_resistances`.
+    let fire = matchup_penalty_vs_magic(&e, wizard, golem, &[DamageType::Fire], true);
+    let force = matchup_penalty_vs_magic(&e, wizard, golem, &[DamageType::Force], true);
     assert!(
         fire > force,
         "fire against a fire-drinker should rank worse than force: {} vs {}",
@@ -4490,14 +4494,20 @@ fn the_picker_ranks_a_drunk_element_below_a_merely_resisted_one() {
     // flaming sword still lands its slashing, but the fire on it is a
     // gift, and the picker has an unenchanted blade on the same list.
     assert_eq!(
-        matchup_penalty_vs_magic(&e, golem, &[DamageType::Slashing, DamageType::Fire]),
+        matchup_penalty_vs_magic(
+            &e,
+            wizard,
+            golem,
+            &[DamageType::Slashing, DamageType::Fire],
+            true
+        ),
         fire,
         "one absorbed type is enough to condemn the whole swing"
     );
     // The ranking is about the target, not about fire: the same element
     // against somebody who merely burns is unremarkable.
     assert!(
-        matchup_penalty_vs_magic(&e, wizard, &[DamageType::Fire]) < fire,
+        matchup_penalty_vs_magic(&e, wizard, wizard, &[DamageType::Fire], true) < fire,
         "a wizard is a perfectly good thing to aim fire at"
     );
 }
@@ -112365,4 +112375,112 @@ fn the_physical_damage_types_are_the_three_a_weapon_deals() {
             "{dt} is neither physical nor one of the ten that are not"
         );
     }
+}
+
+/// The picker learning what the resolver already knew: an attacker-side
+/// resistance bypass changes which target a matchup rung should steer
+/// toward.
+///
+/// `matchup_penalty` reads the target's sheet, which was the whole truth
+/// while every resistance in the engine was a fact about the creature
+/// being hit. Elemental Adept and Boon of Irresistible Offense are not:
+/// both are damage the holder deals in full through a resistance that is
+/// still printed on the target. A picker that did not know would steer
+/// an adept away from the exact spell the feat exists to make good.
+#[test]
+fn the_picker_discounts_a_resistance_the_attacker_pays_through() {
+    use crate::actions::feats::{
+        BOON_OF_IRRESISTIBLE_OFFENSE_TAG, ELEMENTAL_ADEPT_FIRE_TAG,
+    };
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::ai::simple::{matchup_penalty_against, matchup_penalty_vs_magic};
+    use crate::engine::types::DamageModifier;
+
+    const NEUTRAL: u8 = 1;
+    const RESISTED: u8 = 2;
+    const USELESS: u8 = 3;
+
+    let mut e = ei_with_terrain(14, 14, &[]);
+    let plain = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let adept = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    e.actors
+        .get_mut(&adept)
+        .unwrap()
+        .grant_feature_for_test(ELEMENTAL_ADEPT_FIRE_TAG);
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    {
+        let t = e.actors.get_mut(&target).unwrap();
+        t.set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+        t.set_damage_modifier(DamageType::Cold, DamageModifier::Resistance);
+    }
+
+    let fire = |e: &EncounterInstance, who: usize| {
+        matchup_penalty_vs_magic(e, who, target, &[DamageType::Fire], true)
+    };
+    assert_eq!(
+        fire(&e, plain),
+        RESISTED,
+        "a plain caster sees the resistance"
+    );
+    assert_eq!(
+        fire(&e, adept),
+        NEUTRAL,
+        "and the adept sees a target it deals full damage to"
+    );
+    assert_eq!(
+        matchup_penalty_vs_magic(&e, adept, target, &[DamageType::Cold], true),
+        RESISTED,
+        "the feat names one element, and cold is not it"
+    );
+    // Spells only, which is RAW and is the `is_spell` flag: the same
+    // adept swinging a flaming blade is swinging into the resistance.
+    assert_eq!(
+        matchup_penalty_vs_magic(&e, adept, target, &[DamageType::Fire], false),
+        RESISTED,
+        "a flaming blade is not a spell"
+    );
+    // Immunity is untouched: the clause names Resistance and nothing
+    // else, so a fire-immune target stays the worst rung there is.
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .set_damage_modifier(DamageType::Fire, DamageModifier::Immunity);
+    assert_eq!(
+        fire(&e, adept),
+        USELESS,
+        "an adept has nothing to say to something that takes no fire at all"
+    );
+
+    // The weapon lane's bypass, on the same mechanism and with no
+    // `is_spell` gate — RAW's "always ignores Resistance".
+    let slasher = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 6), 0, 2)
+        .unwrap();
+    e.actors
+        .get_mut(&slasher)
+        .unwrap()
+        .grant_feature_for_test(BOON_OF_IRRESISTIBLE_OFFENSE_TAG);
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .set_damage_modifier(DamageType::Slashing, DamageModifier::Resistance);
+    let slash = |e: &EncounterInstance, who: usize| {
+        matchup_penalty_against(e, who, target, &[DamageType::Slashing])
+    };
+    assert_eq!(
+        slash(&e, plain),
+        RESISTED,
+        "a target that halves slashing reads as resisted"
+    );
+    assert_eq!(
+        slash(&e, slasher),
+        NEUTRAL,
+        "and the boon's holder deals it whole"
+    );
 }

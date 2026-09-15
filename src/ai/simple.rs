@@ -11113,22 +11113,80 @@ pub fn matchup_penalty_against(
     target_id: usize,
     damage_types: &[crate::engine::types::DamageType],
 ) -> u8 {
+    let bypassed = bypassed_resistances(encounter, attacker_id, false);
     if crate::engine::magic::resistance_bypass(encounter, attacker_id, target_id, false).is_some()
     {
-        return matchup_penalty_vs_magic(encounter, target_id, damage_types);
+        return matchup_penalty(encounter, target_id, damage_types, true, bypassed);
     }
-    matchup_penalty(encounter, target_id, damage_types, false)
+    matchup_penalty(encounter, target_id, damage_types, false, bypassed)
 }
 
 /// `matchup_penalty_against` for a source that is magical whoever holds
 /// it — every spell, and every weapon in a hand the magic axis has
 /// already answered for.
+///
+/// Still takes the attacker, and has to: the magic axis is not the only
+/// attacker-side thing that can make a resistance stop mattering. See
+/// `bypassed_resistances`.
 pub fn matchup_penalty_vs_magic(
     encounter: &EncounterInstance,
+    attacker_id: usize,
     target_id: usize,
     damage_types: &[crate::engine::types::DamageType],
+    is_spell: bool,
 ) -> u8 {
-    matchup_penalty(encounter, target_id, damage_types, true)
+    let bypassed = bypassed_resistances(encounter, attacker_id, is_spell);
+    matchup_penalty(encounter, target_id, damage_types, true, bypassed)
+}
+
+/// The damage types whose **Resistance** `actor_id` pays through
+/// regardless of what the target's sheet says — the attacker-side
+/// bypasses, as a set the matchup lane can discount.
+///
+/// The picker sorts on `matchup_penalty`, which reads the target's sheet
+/// and nothing else. That was the whole truth while every resistance in
+/// the engine was a fact about the creature being hit. It is not: two
+/// features make one irrelevant from the other side of the swing, and
+/// both of them are damage the holder will deal in full.
+///
+///   - **Boon of Irresistible Offense** — *"the Bludgeoning, Piercing,
+///     and Slashing damage you deal always ignores Resistance"*, on any
+///     source, which is why `is_spell` does not gate it.
+///   - **Elemental Adept** — *"spells you cast ignore Resistance to
+///     damage of the chosen type"*, spells only, which is why it does.
+///
+/// Both are already honoured at the damage chokepoints
+/// (`attack::restore_resisted_physical_damage`,
+/// `EncounterInstance::apply_elemental_adept`); this is the *picker*
+/// learning what the resolver already knows, so an adept stops steering
+/// around the resistance it is built to ignore.
+///
+/// Immunity is deliberately not included, because neither clause names
+/// it: a fire adept still has nothing to say to a Fire Elemental, and
+/// the picker should go on saying so.
+pub fn bypassed_resistances(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    is_spell: bool,
+) -> crate::engine::types::DamageTypeSet {
+    use crate::engine::types::DamageTypeSet;
+    let mut set = DamageTypeSet::EMPTY;
+    let Some(actor) = encounter.actors.get(&actor_id) else {
+        return set;
+    };
+    if actor.has_passive_feature(crate::actions::feats::BOON_OF_IRRESISTIBLE_OFFENSE_TAG) {
+        for dt in crate::engine::types::DamageType::PHYSICAL {
+            set.insert(dt);
+        }
+    }
+    if is_spell {
+        for (tag, dt) in crate::actions::feats::ELEMENTAL_ADEPT_TAGS {
+            if actor.has_passive_feature(tag) {
+                set.insert(*dt);
+            }
+        }
+    }
+    set
 }
 
 /// The matchup rung for one whole *action* — which of the two tables
@@ -11167,7 +11225,7 @@ pub fn action_matchup_penalty(
     // action rides the creature's own verdict.
     let rung = |types: &[crate::engine::types::DamageType]| -> u8 {
         if action.school().is_some() {
-            return matchup_penalty_vs_magic(encounter, target_id, types);
+            return matchup_penalty_vs_magic(encounter, actor_id, target_id, types, true);
         }
         matchup_penalty_against(encounter, actor_id, target_id, types)
     };
@@ -11187,6 +11245,7 @@ fn matchup_penalty(
     target_id: usize,
     damage_types: &[crate::engine::types::DamageType],
     magical: bool,
+    bypassed: crate::engine::types::DamageTypeSet,
 ) -> u8 {
     use crate::engine::types::DamageModifier;
     if damage_types.is_empty() {
@@ -11213,6 +11272,17 @@ fn matchup_penalty(
                 target.nonmagical_damage_modifier(*dt)
             }
         });
+        // A resistance the *attacker's* own features pay through is
+        // not a resistance to this attacker, and a picker that read it
+        // as one would steer an Elemental Adept away from the exact
+        // spell the feat exists to make good. Immunity, absorption and
+        // vulnerability are untouched: no bypass in the engine names
+        // any of the three, and a Fire Elemental is still a bad target
+        // for a fire adept's Fireball.
+        let modifier = match modifier {
+            Some(DamageModifier::Resistance) if bypassed.contains(*dt) => None,
+            other => other,
+        };
         match modifier {
             Some(DamageModifier::Immunity) => {}
             Some(DamageModifier::Absorption) => has_absorbed = true,
@@ -23256,7 +23326,13 @@ mod tests {
         // Read as a bundle, the burst's menu scores "resisted" — one of
         // its seven is on the sheet.
         assert_eq!(
-            matchup_penalty_vs_magic(&e, target, &SORCEROUS_BURST.damage_types()),
+            matchup_penalty_vs_magic(
+                &e,
+                sorcerer,
+                target,
+                &SORCEROUS_BURST.damage_types(),
+                true
+            ),
             2,
             "the bundle reading sees the cold resistance"
         );
