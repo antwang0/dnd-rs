@@ -663,7 +663,7 @@ pub fn shared_pool_for(tag: &str) -> Option<&'static str> {
 
 /// Features whose RAW resource is a *pool* rather than a single use,
 /// and how many charges that pool holds here. Read once per actor at
-/// instantiation by `ActorInstance::from_template`, which seeds both
+/// instantiation by `ActorInstance::from_creature_template`, which seeds both
 /// `features_max` and `features_remaining` from it; every tag absent
 /// from this table gets exactly one charge, which is what every
 /// feature in the engine had before the table existed.
@@ -2461,7 +2461,7 @@ pub const UNARMORED_MOVEMENT_SPEED_BONUS: f32 = 10.0;
 /// **magnitude** — Elk is the bigger sprint (+15 vs. Tiger's +10),
 /// trading off against the Tiger's kit-shape identity in the
 /// codebase's totem lineup. Ships on `ELK_TOTEM_BARBARIAN_TEMPLATE`
-/// via the shared `totem_barbarian_template` helper — one-line entry
+/// via the shared `subclass_barbarian_template` helper — one-line entry
 /// alongside Bear / Wolf / Eagle / Tiger just as the helper's
 /// docstring promised.
 pub const ELK_TOTEM_TAG: &str = "barbarian.elk_totem";
@@ -2495,7 +2495,7 @@ pub const ELK_TOTEM_SPEED_BONUS: f32 = 15.0;
 /// Fast Movement), matching the Tiger totem's opening sprint.
 ///
 /// Ships on `WOLVERINE_TOTEM_BARBARIAN_TEMPLATE` via the shared
-/// `totem_barbarian_template` helper — one-line entry alongside Bear
+/// `subclass_barbarian_template` helper — one-line entry alongside Bear
 /// / Wolf / Eagle / Tiger / Elk, exactly as the helper's docstring
 /// promised. Glyph 'V' — distinct from the other totem glyphs
 /// (Berserker 'Z', baseline Barbarian 'B', Totem/Bear 'T', Wolf 'W',
@@ -2540,7 +2540,7 @@ pub const WOLVERINE_TOTEM_SPEED_BONUS: f32 = 10.0;
 /// The four flags never legally co-occur on a single PC per RAW (one
 /// totem pick per barbarian). Ships on
 /// `PANTHER_TOTEM_BARBARIAN_TEMPLATE` via the shared
-/// `totem_barbarian_template` helper — one-line entry alongside the
+/// `subclass_barbarian_template` helper — one-line entry alongside the
 /// other five totems. Glyph 'P' — distinct from every existing totem
 /// glyph (Berserker 'Z', baseline Barbarian 'B', Totem/Bear 'T',
 /// Wolf 'W', Eagle 'A', Tiger 'I', Elk 'E', Wolverine 'V', Zealot
@@ -18372,7 +18372,7 @@ pub const HOMING_STRIKES_TAG: &str = "rogue.homing_strikes";
 /// "you can use the bonus action granted by your Cunning Action to …
 /// use an object."
 ///
-/// Read at `EncounterInstance::uses_objects_as_a_bonus_action`, which
+/// Read at `EncounterInstance::handles_items_as_a_bonus_action`, which
 /// every item action's `cost()` consults through
 /// `item_actions::item_use_cost`. There is no action of its own and no
 /// charge — the whole feature is a change of price on a lane that

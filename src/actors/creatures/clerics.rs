@@ -442,7 +442,7 @@ pub static WAR_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// vulnerable or non-resistant to radiant).
 ///
 /// - **Potent Spellcasting** (lv8) — +WIS on every cleric cantrip,
-///   read at `EncounterInstance::potent_spellcasting_bonus`. RAW's
+///   read at `EncounterInstance::flat_spell_damage_bonus`. RAW's
 ///   level-8 feature for this domain, and it replaces rather than joins
 ///   the chassis's radiant Divine Strike: each Divine Domain gets
 ///   exactly one. The swap suits the build — Light's whole identity is
@@ -935,7 +935,7 @@ pub static TWILIGHT_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// **Potent Spellcasting** (lv8) ships as of the Knowledge Domain's
 /// arrival, which built the cantrip-damage-bonus lane this domain used
 /// to be waiting on: +WIS on every cleric cantrip, read at
-/// `EncounterInstance::potent_spellcasting_bonus`. It replaces rather
+/// `EncounterInstance::flat_spell_damage_bonus`. It replaces rather
 /// than joins the chassis's radiant Divine Strike — RAW gives each
 /// domain exactly one level-8 feature, and Arcana's is this one.
 ///

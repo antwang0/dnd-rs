@@ -3284,7 +3284,7 @@ pub struct CreatureTemplate {
     /// all of it; everything else pays the ground.
     ///
     /// Meaningless without `fly_speed`, and `debug_assert`ed as such in
-    /// `ActorInstance::from_template` — a template that hovers without
+    /// `ActorInstance::from_creature_template` — a template that hovers without
     /// flying is a typo, not a creature.
     pub hovers: bool,
     pub strength: u32,
@@ -3919,8 +3919,9 @@ pub struct CreatureTemplate {
     ///      only "two-condition immunity from one flag" template lane.
     pub has_natures_ward: bool,
     /// 5e Barbarian **Feral Instinct** (level 7 passive): advantage on
-    /// initiative rolls. Read by `ActorInstance::roll_initiative` — the
-    /// d20 is rolled twice and the higher result is kept. The classic
+    /// initiative rolls. Read by `ActorInstance::initiative_roll_mode`,
+    /// whose answer `EncounterInstance::roll_initiative_for` spends on
+    /// the die — two d20s, higher kept. The classic
     /// "barbarian goes first" tell: the raging bruiser opens the round
     /// before the fireball lands. Read on top of the DEX modifier so a
     /// barbarian with average DEX still opens the round competitively

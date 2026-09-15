@@ -444,7 +444,7 @@ pub struct ZoneEffect {
     /// `Action::validate_input`, in both directions. A caster inside
     /// cannot cast at all; a caster outside cannot reach a target
     /// inside. Both halves read one predicate,
-    /// `EncounterInstance::magic_suppressed_between`, so a spell aimed
+    /// `EncounterInstance::magic_suppressed_for_cast`, so a spell aimed
     /// at a point and a spell aimed at a creature are answered by the
     /// same sentence.
     pub suppresses_magic: bool,

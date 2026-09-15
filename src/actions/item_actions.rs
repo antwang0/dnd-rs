@@ -1371,7 +1371,7 @@ impl Action for DrinkAntitoxin {
     /// What the vial is *for* — and the declaration it shipped without.
     ///
     /// `side_effects` has removed `Poisoned` since the item was written
-    /// and nothing said so, which is the exact shape `try_self_cure`
+    /// and nothing said so, which is the exact shape `try_self_cleanse`
     /// exists to read: that rung walks the pack asking each action what
     /// it lifts, and an action that lifts something and declines to say
     /// is an action it steps over. So a creature standing there Poisoned

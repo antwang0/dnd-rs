@@ -4707,7 +4707,7 @@ impl Action for LesserRestoration {
     /// The four `CANDIDATES`, named for the lane that asks rather than
     /// left to the validator that already knows. The gate below is what
     /// stops the spell being *cast* on a clean ally; this is what lets
-    /// `try_self_cure` and the sweep over the loot table see that the
+    /// `try_self_cleanse` and the sweep over the loot table see that the
     /// spell — and the Staff of Healing's printing of it — is a cure at
     /// all.
     fn cures_conditions(&self) -> &'static [Condition] {
@@ -33996,7 +33996,7 @@ pub static IMMOLATION: LazyLock<Immolation> = LazyLock::new(|| Immolation {});
 /// ground, which for a creature that does not cast it is. What it does
 /// is close the casting gate at `Action::validate_input`, in both
 /// directions: a caster inside cannot cast, and a caster outside cannot
-/// reach in. See `EncounterInstance::magic_suppressed_between` for why
+/// reach in. See `EncounterInstance::magic_suppressed_for_cast` for why
 /// the predicate is "either end", not a walk of the line between them.
 ///
 /// The sphere is the engine's first `ZoneMotion::FollowsOwner` area —

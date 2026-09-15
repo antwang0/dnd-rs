@@ -933,7 +933,7 @@ pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 /// can teleport up to 30 feet to an unoccupied space you can see."*
 ///
 /// Fires from the end-of-action hook in
-/// `EncounterInstance::dispatch_blink_steps`, on any action whose cost
+/// `EncounterInstance::blink_step_destination`, on any action whose cost
 /// included an Action slot — which is the engine's spelling of "the
 /// Attack action or the Magic action", and is slightly *narrower* than
 /// RAW rather than wider: an action the engine bills as neither (a Dash,

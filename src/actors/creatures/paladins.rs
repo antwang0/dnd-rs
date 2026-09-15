@@ -428,7 +428,7 @@ pub static ANCIENTS_PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     //   - `UNDYING_SENTINEL_TAG` (lv15): once-per-long-rest "drop to 1
     //     HP instead of 0" cheat-death. Feature-set lane, refreshed on
     //     long rest via the `features_max` copy in
-    //     `ActorInstance::new_from_template`. Mechanically identical
+    //     `ActorInstance::from_creature_template`. Mechanically identical
     //     to Half-Orc Relentless Endurance — both route through the
     //     shared `LETHAL_DAMAGE_ABSORBER_FEATURES` cohort in
     //     `take_typed_damage` so a multiclass (half-orc Ancients

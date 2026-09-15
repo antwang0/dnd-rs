@@ -7908,7 +7908,7 @@ impl EncounterInstance {
     /// row's first tile*, which is a perfectly valid index into a
     /// perfectly wrong tile. Every reader built on this (`terrain_at`,
     /// `actor_id_at`, `set_terrain_at`) silently wrapped, and
-    /// `find_path` indexed its distance vector with the result, where
+    /// `dijkstra_path` indexed its distance vector with the result, where
     /// the bottom-right corner's overflow is one past the end of the
     /// vector.
     pub fn idx(&self, coord: Coordinate) -> Result<usize, OffMapCoord> {

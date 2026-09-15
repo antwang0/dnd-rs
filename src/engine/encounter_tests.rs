@@ -72,7 +72,7 @@ fn ei_with_terrain_seeded(
 /// edge" — the arithmetic lands on the next row's first tile. The
 /// bound on `x` is what stops every reader built on `idx` from
 /// answering a question about a tile nobody asked about, and stops
-/// `find_path` from indexing one past the end of its distance
+/// `dijkstra_path` from indexing one past the end of its distance
 /// vector at the bottom-right corner.
 #[test]
 fn a_coordinate_past_the_edge_of_a_row_is_off_the_map() {
@@ -111047,4 +111047,194 @@ fn a_dropped_mantle_takes_the_free_commands_with_it() {
         !MANTLE_OF_MAJESTY.custom_validate_input(&e, bard, Some(&vec![foe]), None, None),
         "and with the charge spent and the aspect gone there is nothing left to press"
     );
+}
+
+/// Every `Type::member` a doc comment names is a `Type::member` that
+/// exists.
+///
+/// This engine documents itself by cross-reference. A field's docstring
+/// says which helper reads it, a cohort's says which chokepoint walks
+/// it, and an approximation's says which lane would have to exist for it
+/// to stop being one — which is what makes the comments worth reading
+/// and is exactly what rots when a function is renamed. Fourteen of
+/// these had already gone stale when this sweep was written: a
+/// `from_template` that had been `from_creature_template` for a long
+/// time, an `is_ranged_engagement_option` that had become `can_engage`,
+/// a `magic_suppressed_between` that had never existed under that name.
+/// Three more were minted the same afternoon, by a commit that moved the
+/// initiative roll off `ActorInstance` — which is the case that argues
+/// for a sweep rather than for care: the rot arrives with the fix, in
+/// the same patch, from the author who knows best.
+///
+/// A source-text sweep, the same blunt instrument
+/// `every_spell_that_prices_an_upcast_declares_it` uses and for the same
+/// reason: the alternative is trusting a list.
+///
+/// **Scoped to a qualified name** — `` `EncounterInstance::foo` `` and
+/// not a bare `` `foo` `` — and the scope is what makes it usable. A
+/// bare backtick is used for locals, for RAW's own vocabulary, for
+/// hypothetical helpers a docstring is arguing against ("rather than a
+/// `has_elegant_courtier` field"), and for types, so a sweep over all of
+/// them is mostly noise. `Type::member` is an unambiguous claim about
+/// what the code contains, and a name nobody can find is a claim that
+/// has stopped being true.
+#[test]
+fn every_qualified_name_a_doc_comment_cites_still_exists() {
+    // The types whose members are cited often enough to be worth
+    // pinning. Adding one here is free; leaving one out only narrows
+    // the sweep.
+    const TYPES: &[&str] = &[
+        "EncounterInstance",
+        "ActorInstance",
+        "Action",
+        "Item",
+        "Zone",
+        "SimpleWeapon",
+        "CreatureTemplate",
+        "AttackParams",
+        "ItemBonuses",
+        "BladeProfile",
+        "HoveringBlade",
+        "ConjuredTerrain",
+        "LightSource",
+        "ZoneEffect",
+    ];
+    // Every module in the crate but this one, named rather than walked
+    // because `include_str!` needs a literal. All of them, and not just
+    // the big ones: `EncounterInstance`'s own `impl` blocks are spread
+    // across a dozen engine modules, so a sweep that read only
+    // `encounter.rs` would report `can_mount` and `swallowed_in` as
+    // missing when they are simply next door. The test file itself is
+    // left out — it declares nothing anybody cites, and it is a third of
+    // the crate.
+    let sources: &[(&str, &str)] = &[
+        ("actions/action_template.rs", include_str!("../actions/action_template.rs")),
+        ("actions/class_attacks.rs", include_str!("../actions/class_attacks.rs")),
+        ("actions/class_features.rs", include_str!("../actions/class_features.rs")),
+        ("actions/default_actions.rs", include_str!("../actions/default_actions.rs")),
+        ("actions/feats.rs", include_str!("../actions/feats.rs")),
+        ("actions/item_actions.rs", include_str!("../actions/item_actions.rs")),
+        ("actions/metamagic.rs", include_str!("../actions/metamagic.rs")),
+        ("actions/monster_attacks.rs", include_str!("../actions/monster_attacks.rs")),
+        ("actions/species.rs", include_str!("../actions/species.rs")),
+        ("actions/spells.rs", include_str!("../actions/spells.rs")),
+        ("actions/staves.rs", include_str!("../actions/staves.rs")),
+        ("actions/two_weapon.rs", include_str!("../actions/two_weapon.rs")),
+        ("actors/actor_template.rs", include_str!("../actors/actor_template.rs")),
+        ("conditions/condition_template.rs", include_str!("../conditions/condition_template.rs")),
+        ("engine/action_overrides.rs", include_str!("action_overrides.rs")),
+        ("engine/actor_gen.rs", include_str!("actor_gen.rs")),
+        ("engine/areas.rs", include_str!("areas.rs")),
+        ("engine/attachment.rs", include_str!("attachment.rs")),
+        ("engine/attack.rs", include_str!("attack.rs")),
+        ("engine/banishment.rs", include_str!("banishment.rs")),
+        ("engine/board.rs", include_str!("board.rs")),
+        ("engine/breath.rs", include_str!("breath.rs")),
+        ("engine/conjured_terrain.rs", include_str!("conjured_terrain.rs")),
+        ("engine/criticals.rs", include_str!("criticals.rs")),
+        ("engine/dice.rs", include_str!("dice.rs")),
+        ("engine/emanations.rs", include_str!("emanations.rs")),
+        ("engine/encounter.rs", include_str!("encounter.rs")),
+        ("engine/errors.rs", include_str!("errors.rs")),
+        ("engine/falling.rs", include_str!("falling.rs")),
+        ("engine/hovering_blade.rs", include_str!("hovering_blade.rs")),
+        ("engine/jumping.rs", include_str!("jumping.rs")),
+        ("engine/lair_actions.rs", include_str!("lair_actions.rs")),
+        ("engine/legendary_actions.rs", include_str!("legendary_actions.rs")),
+        ("engine/lighting.rs", include_str!("lighting.rs")),
+        ("engine/magic.rs", include_str!("magic.rs")),
+        ("engine/mastery.rs", include_str!("mastery.rs")),
+        ("engine/mounts.rs", include_str!("mounts.rs")),
+        ("engine/prompt.rs", include_str!("prompt.rs")),
+        ("engine/repeat_saves.rs", include_str!("repeat_saves.rs")),
+        ("engine/saves.rs", include_str!("saves.rs")),
+        ("engine/side_effects.rs", include_str!("side_effects.rs")),
+        ("engine/staged_saves.rs", include_str!("staged_saves.rs")),
+        ("engine/swallow.rs", include_str!("swallow.rs")),
+        ("engine/terrain.rs", include_str!("terrain.rs")),
+        ("engine/terrain_gen.rs", include_str!("terrain_gen.rs")),
+        ("engine/traps.rs", include_str!("traps.rs")),
+        ("engine/triggers.rs", include_str!("triggers.rs")),
+        ("engine/types.rs", include_str!("types.rs")),
+        ("engine/underwater.rs", include_str!("underwater.rs")),
+        ("engine/util.rs", include_str!("util.rs")),
+        ("engine/weather.rs", include_str!("weather.rs")),
+        ("engine/zones.rs", include_str!("zones.rs")),
+        ("items/item_template.rs", include_str!("../items/item_template.rs")),
+        ("app.rs", include_str!("../app.rs")),
+        ("ui.rs", include_str!("../ui.rs")),
+    ];
+
+    // What the crate actually declares: every `fn` name and every
+    // struct-field name, from the same texts. Deliberately not scoped
+    // per type — a sweep that tried to decide which impl block a name
+    // belongs to would need a parser, and the failure this catches is a
+    // name that exists nowhere at all.
+    let mut declared: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (_, text) in sources {
+        for line in text.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            if let Some(rest) = t.split(" fn ").nth(1).or_else(|| t.strip_prefix("fn ")) {
+                declared.insert(name_prefix(rest));
+            }
+            // A field declaration: `name: Type,` at any visibility.
+            let bare = t.strip_prefix("pub ").unwrap_or(t);
+            let bare = bare.split_once(") ").map_or(bare, |(_, r)| r);
+            if let Some((name, ty)) = bare.split_once(": ")
+                && !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+                && ty.starts_with(|c: char| c.is_ascii_alphabetic() || "&'<[(".contains(c))
+            {
+                declared.insert(name);
+            }
+        }
+    }
+
+    let mut stale: Vec<String> = Vec::new();
+    for (path, text) in sources {
+        for (n, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if !(t.starts_with("///") || t.starts_with("//!") || t.starts_with("//")) {
+                continue;
+            }
+            for ty in TYPES {
+                let needle = format!("`{}::", ty);
+                for (at, _) in line.match_indices(&needle) {
+                    let rest = &line[at + needle.len()..];
+                    let Some(end) = rest.find('`') else { continue };
+                    let member = &rest[..end];
+                    // Only lowercase members — an associated const or a
+                    // nested type is a different question.
+                    if member.is_empty()
+                        || !member
+                            .chars()
+                            .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+                    {
+                        continue;
+                    }
+                    if !declared.contains(member) {
+                        stale.push(format!("{}:{} — {}::{}", path, n + 1, ty, member));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        stale.is_empty(),
+        "these doc comments cite something the engine no longer has; a \
+         cross-reference nobody can follow is worse than none: {stale:#?}"
+    );
+}
+
+/// The identifier at the head of `rest`, stopping at the first character
+/// that cannot be part of one. Used by the doc-reference sweep to pull a
+/// function name off the tail of a `fn` declaration.
+fn name_prefix(rest: &str) -> &str {
+    let end = rest
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(rest.len());
+    &rest[..end]
 }

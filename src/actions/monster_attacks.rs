@@ -5358,7 +5358,7 @@ impl Action for Multiattack {
 ///
 /// The recharge machinery already existed on both ends: a template
 /// declares `recharge_abilities: vec![("rock", 6)]`, and
-/// `EncounterInstance::start_turn` rolls a d6 per spent entry and hands
+/// `EncounterInstance::start_turn_for` rolls a d6 per spent entry and hands
 /// it back on a qualifying roll. What was missing was the middle — the
 /// only things that consulted a recharge key were the two bespoke
 /// breath-weapon chassis, each of which open-codes the check inside its

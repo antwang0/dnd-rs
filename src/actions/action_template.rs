@@ -1243,7 +1243,7 @@ pub trait Action {
     /// The default is load-bearing rather than a convenience. An action
     /// with no reach at all is one nothing measures: it validates
     /// against a tile on the far side of the map, and — the reason this
-    /// was found — `EncounterInstance::is_ranged_engagement_option`
+    /// was found — `EncounterInstance::can_engage`
     /// reads `reach_tiles` *first*, so a wizard whose only ranged
     /// option was Lightning Bolt was marked stalemate-locked behind a
     /// wall it could have shot straight over.
