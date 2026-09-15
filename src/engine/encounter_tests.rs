@@ -112564,3 +112564,67 @@ fn the_picker_discounts_a_resistance_the_attacker_pays_through() {
         "and the boon's holder deals it whole"
     );
 }
+
+/// The **Great Weapon Master** bonus arriving through the real weapon
+/// rather than through a hand-built `AttackParams`.
+///
+/// The unit test above proves the cohort row fires on a swing that
+/// declares `heavy: true`. This proves the paladin's actual greatsword
+/// declares it — that `SimpleWeapon::is_heavy` reaches
+/// `AttackParams::heavy` across the armoury bridge, which is the one
+/// link in the chain a synthetic literal cannot exercise and the one a
+/// future weapon constructor could silently drop.
+///
+/// Read off the combat log rather than off a damage total, because the
+/// paladin chassis stacks Great Weapon Fighting, Improved Divine Smite
+/// and its own Strength modifier onto the same figure: the feat is +3 in
+/// a number that moves by more than that from the dice alone. The line
+/// the cohort logs is unambiguous where the total is not.
+#[test]
+fn a_paladins_own_greatsword_collects_the_great_weapon_master_bonus() {
+    use crate::actions::action_template::Action;
+    use crate::actions::monster_attacks::{GREATSWORD, LONGSWORD};
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+
+    assert!(GREATSWORD.is_heavy, "the armoury prints the greatsword Heavy");
+    assert!(
+        !LONGSWORD.is_heavy,
+        "and does not print the longsword Heavy — the feat must not follow the wielder"
+    );
+
+    // Swings across fresh turns until one connects. A miss queues no
+    // damage and so pays no bonus, which is RAW ("when you hit") and is
+    // why one swing is not enough to assert on.
+    let mut e = ei_with_terrain(15, 15, &[]);
+    e.roller = crate::engine::dice::FastRandRoller::with_seed(3);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    let targets = vec![target];
+    let mut saw_bonus = false;
+    for _ in 0..12 {
+        let before = e.messages().len();
+        let _ = GREATSWORD.side_effects(&mut e, paladin, Some(&targets), None, None);
+        if e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("great weapon master"))
+        {
+            saw_bonus = true;
+            break;
+        }
+        // A fresh turn, which is also what clears the once-per-turn
+        // ledger the feat spends.
+        e.actors.get_mut(&paladin).unwrap().reset_for_new_round();
+        // Topped up so the zombie survives the sweep — a dead target
+        // would end the loop for the wrong reason.
+        e.actors.get_mut(&target).unwrap().heal(50);
+    }
+    assert!(
+        saw_bonus,
+        "the paladin's own greatsword pays the feat out:\n{}",
+        e.messages().join("\n")
+    );
+}
