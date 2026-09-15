@@ -717,11 +717,24 @@ pub static ELOQUENCE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 /// spend the bonus action on the mantle, and still be holding every
 /// slot on the table.
 ///
-/// Left out: **Mantle of Majesty** (lv6) casts Command for free and then
-/// again as a bonus action every turn for a minute; the engine has no
-/// lane for a repeating slot-free cast, and shipping only the first
-/// cast would be a worse Command than the bard's own list already
-/// carries. **Unbreakable Majesty** (lv14) is a passive Sanctuary that
+/// **Mantle of Majesty** (lv6) is the third button and the one that
+/// ties the other two together: a Bonus Action, once per long rest,
+/// raises an unearthly aspect for a minute — and for that minute the
+/// bard casts Command every turn for a Bonus Action and no slot, with
+/// *"any creature charmed by you automatically fails its saving
+/// throw"*. Which is to say: open with Enthralling Performance, and
+/// every creature it caught spends the next minute doing what it is
+/// told, with no roll to make. The two features were printed to be
+/// pressed in that order.
+///
+/// It was written off here as unshippable — *"the engine has no lane
+/// for a repeating slot-free cast"* — and that had stopped being true:
+/// Melf's Minute Meteors, Far Step and Blade of Disaster are each a
+/// cast that opens a window and repeats inside it for a bonus action,
+/// and all three tell the two presses apart with a held condition. See
+/// `class_features::MANTLE_OF_MAJESTY` and `Condition::Majestic`.
+///
+/// Left out: **Unbreakable Majesty** (lv14) is a passive Sanctuary that
 /// each attacker saves against once and then is immune to for a day —
 /// the per-attacker immunity ledger is the part the engine has nowhere
 /// to keep, and without it the feature is simply Sanctuary that never
@@ -732,6 +745,7 @@ pub static ELOQUENCE_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
 pub static GLAMOUR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     use crate::actions::class_features::{
         ENTHRALLING_PERFORMANCE, ENTHRALLING_PERFORMANCE_TAG, MANTLE_OF_INSPIRATION,
+        MANTLE_OF_MAJESTY, MANTLE_OF_MAJESTY_TAG,
     };
     // Mantle of Inspiration carries no tag of its own — it draws on
     // `BARDIC_INSPIRATION_TAG`, which the baseline chassis already
@@ -742,7 +756,11 @@ pub static GLAMOUR_BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         'G',
         false,
         false,
-        &[&*MANTLE_OF_INSPIRATION, &*ENTHRALLING_PERFORMANCE],
-        &[ENTHRALLING_PERFORMANCE_TAG],
+        &[
+            &*MANTLE_OF_INSPIRATION,
+            &*ENTHRALLING_PERFORMANCE,
+            &*MANTLE_OF_MAJESTY,
+        ],
+        &[ENTHRALLING_PERFORMANCE_TAG, MANTLE_OF_MAJESTY_TAG],
     )
 });

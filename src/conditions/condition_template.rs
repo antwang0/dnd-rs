@@ -2853,6 +2853,27 @@ pub enum Condition {
     /// on the spell — three turns' worth of throwing — comes out
     /// exactly right.
     MinuteMeteors,
+    /// 5e College of Glamour Bard **Mantle of Majesty** (subclass level
+    /// 6, XGE). The bard takes on an unearthly appearance for a minute
+    /// and casts Command, free and as a Bonus Action, on every turn of
+    /// it.
+    ///
+    /// The third member of the held-condition-as-a-sustain cohort, and
+    /// it is on the lane for exactly the reason `MinuteMeteors` above
+    /// is: the feature's cost changes depending on whether it is already
+    /// up, and the condition is where "already up" is written down. The
+    /// first press spends the bard's one use of the feature and takes
+    /// their concentration; every press after it is a bonus action and
+    /// nothing else.
+    ///
+    /// The Glamour Bard's docstring used to name this feature as
+    /// unshippable — *"the engine has no lane for a repeating slot-free
+    /// cast, and shipping only the first cast would be a worse Command
+    /// than the bard's own list already carries"*. The first half had
+    /// stopped being true: Melf's Minute Meteors, Far Step and Blade of
+    /// Disaster are all repeating slot-free casts and all three sit on
+    /// this cohort.
+    Majestic,
     /// 5e **Far Step** (level-5 conjuration, XGE). The caster teleports
     /// 60 feet on the cast and may repeat the jump as a bonus action on
     /// each later turn for the duration.
@@ -3816,6 +3837,7 @@ impl Condition {
             Condition::Emboldened => "emboldened",
             Condition::IntellectFortified => "fortified in mind",
             Condition::MinuteMeteors => "orbited by minute meteors",
+            Condition::Majestic => "wearing an unearthly aspect",
             Condition::FarStepping => "far-stepping",
             Condition::BladeOfDisaster => "attended by a blade of disaster",
             Condition::ShieldOfFaith => "shield of faith",

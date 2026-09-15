@@ -110933,3 +110933,118 @@ fn a_hovering_blade_is_not_taxed_by_cover_its_caster_is_looking_past() {
     assert!(e.actors.contains_key(&screen));
     assert!(e.cover_ac_bonus(cleric, behind) > 0);
 }
+
+/// Mantle of Majesty: one use of the feature buys a minute of free
+/// Commands, and the bard's own charmed victims cannot refuse them.
+///
+/// Three clauses in one press, and the interesting one is the third.
+/// A Glamour bard opens with Enthralling Performance and then spends the
+/// rest of the minute telling everyone it caught what to do, with no
+/// roll to make — which is the pair of features read in the order they
+/// were printed.
+#[test]
+fn mantle_of_majesty_commands_for_a_minute_and_charmed_targets_cannot_refuse() {
+    use crate::actions::class_features::{MANTLE_OF_MAJESTY, MANTLE_OF_MAJESTY_TAG};
+    use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let bard = e
+        .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(4, 6), 0, 0)
+        .unwrap();
+    // A humanoid: the engine stands RAW's "undead … are immune" up as
+    // charm immunity, so a zombie would be refused before the save.
+    let charmed = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 6), 1, 0)
+        .unwrap();
+    // Charmed *by this bard*, which is what RAW's auto-fail names.
+    {
+        let z = e.actors.get_mut(&charmed).unwrap();
+        z.add_condition(Condition::Charmed, ConditionTimer::Rounds(10));
+        z.set_condition_link(Condition::Charmed, Some(bard));
+    }
+    assert!(e.actors[&bard].feature_available(MANTLE_OF_MAJESTY_TAG));
+    assert!(
+        MANTLE_OF_MAJESTY
+            .cost(&e, bard, Some(&vec![charmed]), None, None)
+            .iter()
+            .any(|c| matches!(c, Resource::BonusAction)),
+        "a Bonus Action, and no slot at either end"
+    );
+    assert!(
+        !MANTLE_OF_MAJESTY
+            .cost(&e, bard, Some(&vec![charmed]), None, None)
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(_)))
+    );
+
+    for ef in MANTLE_OF_MAJESTY.side_effects(&mut e, bard, Some(&vec![charmed]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&bard].has_condition(Condition::Majestic),
+        "the aspect is up"
+    );
+    assert!(e.actors[&bard].is_concentrating());
+    assert!(
+        !e.actors[&bard].feature_available(MANTLE_OF_MAJESTY_TAG),
+        "and the one use of the feature is spent"
+    );
+    assert!(
+        e.actors[&charmed].has_condition(Condition::Stunned),
+        "a creature this bard charmed does not get a save"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("cannot refuse")),
+        "and the log says why: {:?}",
+        e.messages()
+    );
+
+    // The second press is the whole feature: no charge left, and it
+    // still goes off.
+    let other = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(12, 6), 1, 1)
+        .unwrap();
+    assert!(
+        MANTLE_OF_MAJESTY.custom_validate_input(&e, bard, Some(&vec![other]), None, None),
+        "the aspect is still up, so the repeat needs nothing but a target"
+    );
+    for ef in MANTLE_OF_MAJESTY.side_effects(&mut e, bard, Some(&vec![other]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&bard].is_concentrating(),
+        "and re-announcing it does not tear down the aspect it is riding"
+    );
+}
+
+/// Letting go of the aspect ends it, and with it the free Commands.
+#[test]
+fn a_dropped_mantle_takes_the_free_commands_with_it() {
+    use crate::actions::class_features::MANTLE_OF_MAJESTY;
+    use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 15, &[]);
+    let bard = e
+        .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(4, 6), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 6), 1, 0)
+        .unwrap();
+    for ef in MANTLE_OF_MAJESTY.side_effects(&mut e, bard, Some(&vec![foe]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&bard].has_condition(Condition::Majestic));
+
+    e.drop_concentration(bard);
+    assert!(
+        !e.actors[&bard].has_condition(Condition::Majestic),
+        "the aspect is held up by the bard's concentration"
+    );
+    assert!(
+        !MANTLE_OF_MAJESTY.custom_validate_input(&e, bard, Some(&vec![foe]), None, None),
+        "and with the charge spent and the aspect gone there is nothing left to press"
+    );
+}

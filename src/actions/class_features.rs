@@ -16409,6 +16409,246 @@ impl Action for Shapechanger {
 
 pub static SHAPECHANGER: LazyLock<Shapechanger> = LazyLock::new(|| Shapechanger {});
 
+/// 5e College of Glamour Bard **Mantle of Majesty** (subclass level 6,
+/// XGtE) feature tag: *"As a Bonus Action, you cast Command without
+/// expending a spell slot, and you take on an unearthly appearance for
+/// 1 minute or until you lose your concentration. During this time, you
+/// can cast Command as a Bonus Action on each of your turns, without
+/// expending a spell slot. Any creature charmed by you automatically
+/// fails its saving throw against the Command you cast with this
+/// feature. Once you use this feature, you can't use it again until you
+/// finish a Long Rest."*
+///
+/// One charge per long rest, and it buys a minute rather than a cast —
+/// which is the whole feature and the reason it was written off. The
+/// Glamour Bard's own docstring listed it as absent because *"the
+/// engine has no lane for a repeating slot-free cast, and shipping only
+/// the first cast would be a worse Command than the bard's own list
+/// already carries."* The second half is still true; the first half
+/// stopped being true three spells ago. Melf's Minute Meteors, Far Step
+/// and Blade of Disaster are each a cast that opens a window and then
+/// repeats inside it for a bonus action and no slot, and all three read
+/// a held condition to tell the two presses apart — `sustained_condition_cost`
+/// is that lane and `Condition::Majestic` is this feature's row on it.
+pub const MANTLE_OF_MAJESTY_TAG: &str = "bard.mantle_of_majesty";
+
+/// The unearthly aspect, in rounds. RAW's one minute.
+const MANTLE_OF_MAJESTY_ROUNDS: u32 = 10;
+
+/// 60 ft on the 2.5 ft grid — Command's own range, which is what the
+/// feature is casting.
+const MANTLE_OF_MAJESTY_RANGE: isize = 24;
+
+/// **Mantle of Majesty** — Bonus Action, once per long rest, and then a
+/// Bonus Action every turn for a minute.
+///
+/// A single action rather than a buff plus a separate Command, because
+/// RAW's clause is not "your Commands get cheaper": it is one feature
+/// whose repeat *is* the cast. Pressing it the first time spends the
+/// charge, takes the bard's concentration and Commands somebody;
+/// pressing it again while the aspect holds Commands somebody else and
+/// costs nothing but the bonus action. The two presses are told apart by
+/// `Condition::Majestic`, exactly as Melf's Minute Meteors tells its
+/// opening Action from its volleys.
+///
+/// **The charm clause is the subclass.** RAW's *"any creature charmed by
+/// you automatically fails"* is what makes this the Glamour bard's
+/// feature rather than a generic one, and it reads the back-link on
+/// `Condition::Charmed` rather than the flag — so it is the creatures
+/// *this* bard charmed, with Enthralling Performance or anything else,
+/// and not whoever happens to be charmed by somebody across the room.
+/// A Glamour bard who opened with the performance has a room full of
+/// creatures who cannot save against this.
+///
+/// **What Command does** is the spell's own resolution and is
+/// deliberately not re-derived here: a Wisdom save against the bard's
+/// spell save DC, Charm-immunity as the stand-in for RAW's "undead and
+/// creatures that don't understand you", and `Stunned` until the start
+/// of the target's next turn as the stand-in for a one-word order. See
+/// `actions::spells::Command`, whose body this mirrors clause for
+/// clause; what is added is the auto-fail and what is removed is the
+/// slot.
+pub struct MantleOfMajesty {}
+
+impl Action for MantleOfMajesty {
+    /// Queues a `StartConcentration` on the press that raises the
+    /// aspect. Declared so the AI's area-control rungs can price it
+    /// before trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "mantle of majesty"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        // Not "mantle": Crusader's Mantle is a paladin spell and Mantle
+        // of Inspiration is this bard's own other feature. See
+        // `MantleOfInspiration::aliases`, which declined the same word
+        // for the same reason.
+        vec!["mom", "majesty", "unearthly"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(MANTLE_OF_MAJESTY_RANGE)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Stunned)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // A Bonus Action either way, and the one member of the
+        // sustained-condition cohort with no branch in its price. Melf's
+        // Minute Meteors and Far Step each charge an Action and a slot
+        // to open the window and a bonus action to use it; RAW prices
+        // this one identically at both ends — *"As a Bonus Action, you
+        // cast Command … during this time, you can cast Command as a
+        // Bonus Action on each of your turns"* — so what the first press
+        // costs on top is the feature's single use, and that is a gate
+        // in validation rather than a resource in a list.
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if !encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.is_combat_active())
+        {
+            return false;
+        }
+        // Already wearing it: the repeat needs nothing but a target.
+        // Asking `caster_can_concentrate` here would refuse a bard who
+        // is concentrating on this very feature — the same clause Melf's
+        // Minute Meteors spells out one lane over.
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::Majestic))
+        {
+            return true;
+        }
+        feature_ready(encounter, caster_id, MANTLE_OF_MAJESTY_TAG)
+            && encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let already_up = encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.has_condition(Condition::Majestic));
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        if !already_up {
+            if let Some(bard) = encounter.actors.get_mut(&caster_id) {
+                bard.spend_feature(MANTLE_OF_MAJESTY_TAG);
+            }
+            let name = encounter.actor_name(caster_id);
+            encounter.log(format!("{} takes on an unearthly aspect.", name));
+            effects.push(Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::Majestic,
+                timer: ConditionTimer::Rounds(MANTLE_OF_MAJESTY_ROUNDS),
+            }));
+            effects.push(Box::new(crate::engine::side_effects::StartConcentration {
+                caster_id,
+                data: crate::actors::actor_template::ConcentrationData::with_conditions(
+                    "Mantle of Majesty",
+                    vec![(caster_id, Condition::Majestic)],
+                ),
+            }));
+        }
+        effects.extend(command_one_creature(encounter, caster_id, target_id));
+        effects
+    }
+}
+
+pub static MANTLE_OF_MAJESTY: LazyLock<MantleOfMajesty> = LazyLock::new(|| MantleOfMajesty {});
+
+/// The Command spell's resolution, with Mantle of Majesty's one
+/// addition: *"any creature charmed by you automatically fails its
+/// saving throw."*
+///
+/// Split out so the auto-fail sits beside the save it replaces rather
+/// than inside a branch of `side_effects`, and so the shape of what the
+/// feature actually casts is readable in one screen. The three clauses
+/// are `actions::spells::Command`'s, and the reasoning behind each of
+/// them lives there.
+fn command_one_creature(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    target_id: usize,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(target) = encounter.actors.get(&target_id) else {
+        return Vec::new();
+    };
+    if target.effectively_immune_to_condition(Condition::Charmed) {
+        encounter.log("  mantle of majesty: target is immune".to_string());
+        return Vec::new();
+    }
+    // RAW's auto-fail, read off the back-link rather than the flag: the
+    // creatures *this* bard charmed, and nobody else's.
+    let charmed_by_the_bard = target.linked_by(Condition::Charmed) == Some(caster_id);
+    if !charmed_by_the_bard {
+        let Some(bard) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = bard.spellcasting_save_dc();
+        let save =
+            encounter.roll_save_against_caster(target_id, AbilityScoreType::Wisdom, dc, caster_id);
+        if save.passed() {
+            return Vec::new();
+        }
+    } else {
+        let name = encounter.actor_name(target_id);
+        encounter.log(format!(
+            "  mantle of majesty: {} is already charmed and cannot refuse",
+            name
+        ));
+    }
+    vec![Box::new(ApplyCondition {
+        actor_id: target_id,
+        condition: Condition::Stunned,
+        timer: ConditionTimer::UntilStartOfNextTurn,
+    })]
+}
+
+
+
 /// 5e Warlock — Otherworldly Patron **The Hexblade** (XGtE), subclass
 /// level 1: **Hexblade's Curse**. Bonus action, once per short rest.
 ///
