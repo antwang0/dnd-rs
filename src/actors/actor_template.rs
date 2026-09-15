@@ -10936,19 +10936,27 @@ impl ActorInstance {
     /// Take `amount` points off `ast` — SRD 5.2's **Strength Drain**,
     /// and the only thing in the engine that lowers an ability score.
     ///
-    /// Returns `true` when the score is now **0**, which is RAW's own
-    /// next sentence: *"The target dies if this reduces its Strength to
-    /// 0."* The caller owns what to do about that, because the clause
-    /// belongs to the attack rather than to the number — see
+    /// Returns `true` when **this** drain is the one that emptied the
+    /// score, which is RAW's own next sentence read precisely: *"The
+    /// target dies if **this** reduces its Strength to 0."* The caller
+    /// owns what to do about that, because the clause belongs to the
+    /// attack rather than to the number — see
     /// `side_effects::DrainAbility`, which is the one caller and does
     /// the slaying.
+    ///
+    /// The distinction between *"is now 0"* and *"was reduced to 0"* is
+    /// not pedantry, and it is reachable: Death Ward negates the first
+    /// killing drain and leaves the creature standing at Strength 0, so
+    /// a second drain that takes nothing off would otherwise re-fire the
+    /// death clause for a reduction that changed nothing.
     ///
     /// Accumulates rather than replaces: two shadows draining the same
     /// knight are eight points between them, and that is the whole
     /// tactical shape of a pack of them.
     pub fn drain_ability(&mut self, ast: AbilityScoreType, amount: u32) -> bool {
+        let before = self.ability_score(ast);
         *self.ability_drain.entry(ast).or_insert(0) += amount;
-        self.ability_score(ast) == 0
+        before > 0 && self.ability_score(ast) == 0
     }
 
     /// How many points are currently drained off `ast`. Read by the

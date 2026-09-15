@@ -24692,12 +24692,12 @@ fn rage_gated_broad_resistances_cohort_matches_prior_inline_behavior() {
 /// different cohort (AC bonuses here vs. broad resistances there).
 #[test]
 fn condition_ac_bonuses_cohort_matches_prior_inline_behavior() {
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::ConditionTimer;
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let a = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
     // Empty baseline — no AC-bump conditions held.
     assert_eq!(e.actors[&a].condition_ac_bonus(), 0);
@@ -31961,7 +31961,7 @@ fn a_readied_swing_is_never_something_the_readier_would_have_to_pay_for() {
 fn readying_needs_an_attack_a_reaction_and_an_unspent_hold() {
     use crate::actions::default_actions::READY;
     use crate::actions::action_template::Action;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::veterans::VETERAN_TEMPLATE;
     use crate::conditions::ConditionTimer;
     use crate::engine::side_effects::Resource;
@@ -31993,7 +31993,7 @@ fn readying_needs_an_attack_a_reaction_and_an_unspent_hold() {
 
     // Nothing to hold.
     let commoner = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(8, 8), 0, 1)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 8), 0, 1)
         .unwrap();
     if e.best_readyable_attack(commoner).is_none() {
         assert!(!READY.validate_input(&e, commoner, None, None, None));
@@ -69703,9 +69703,9 @@ fn superior_mobility_grants_scout_rogue_flat_speed_bump() {
 fn superior_mobility_stacks_with_fast_movement() {
     use crate::actions::class_features::{FAST_MOVEMENT_TAG, SUPERIOR_MOBILITY_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -69737,9 +69737,9 @@ fn superior_mobility_stacks_with_fast_movement() {
 fn superior_mobility_stacks_with_roving() {
     use crate::actions::class_features::{ROVING_TAG, SUPERIOR_MOBILITY_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -69765,9 +69765,9 @@ fn superior_mobility_stacks_with_roving() {
 fn roving_stacks_with_fast_movement() {
     use crate::actions::class_features::{FAST_MOVEMENT_TAG, ROVING_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -69852,9 +69852,9 @@ fn aura_of_alacrity_grants_glory_paladin_flat_speed_bump() {
 fn aura_of_alacrity_stacks_with_superior_mobility() {
     use crate::actions::class_features::{AURA_OF_ALACRITY_TAG, SUPERIOR_MOBILITY_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70153,9 +70153,9 @@ fn unarmored_movement_inherits_to_open_hand_monk() {
 fn unarmored_movement_stacks_with_fast_movement() {
     use crate::actions::class_features::{FAST_MOVEMENT_TAG, UNARMORED_MOVEMENT_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70244,10 +70244,10 @@ fn elk_totem_does_not_grant_speed_to_other_totems() {
 fn elk_totem_stacks_with_fast_movement_while_raging() {
     use crate::actions::class_features::{ELK_TOTEM_TAG, FAST_MOVEMENT_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70340,10 +70340,10 @@ fn wolverine_totem_does_not_grant_speed_to_other_totems() {
 fn wolverine_totem_stacks_with_fast_movement_while_raging() {
     use crate::actions::class_features::{FAST_MOVEMENT_TAG, WOLVERINE_TOTEM_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70410,10 +70410,10 @@ fn panther_totem_raging_adds_five_feet_of_speed() {
 fn panther_totem_stacks_with_fast_movement_while_raging() {
     use crate::actions::class_features::{FAST_MOVEMENT_TAG, PANTHER_TOTEM_TAG};
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70448,10 +70448,10 @@ fn panther_totem_stacks_with_fast_movement_while_raging() {
 #[test]
 fn fly_investiture_and_otherworldly_guise_do_not_stack_speed_bonus() {
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70484,10 +70484,10 @@ fn fly_investiture_and_otherworldly_guise_do_not_stack_speed_bonus() {
 #[test]
 fn condition_speed_bonus_rows_stack_additively() {
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -70523,10 +70523,10 @@ fn condition_speed_bonus_rows_stack_additively() {
 fn condition_and_passive_feature_speed_bonuses_compose() {
     use crate::actions::class_features::FAST_MOVEMENT_TAG;
     use crate::actors::actor_template::ActorInstance;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     let mut probe = ActorInstance::from_creature_template(
-        &COMMONER_TEMPLATE,
+        &FIGHTER_TEMPLATE,
         Coordinate::new(0, 0),
         0,
         &mut FastRandRoller::with_seed(0),
@@ -73337,12 +73337,12 @@ fn tundra_storm_herald_inherits_shared_barbarian_envelope() {
 /// alongside the cohort walk on the same call.
 #[test]
 fn condition_attack_bonus_cohort_preserves_behavior_after_promotion() {
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let a = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
     // Baseline: no attack-bump condition, no cohort bonus.
     assert_eq!(e.actors[&a].condition_attack_bonus(), 0);
@@ -73440,13 +73440,13 @@ fn condition_attack_bonus_sacred_stays_inline_with_charisma_scaling() {
 /// the sibling `CONDITION_AC_BONUSES` cohort.
 #[test]
 fn condition_save_bonus_cohort_preserves_behavior_after_promotion() {
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
     use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let a = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
     // Baseline: no save-bump condition, no cohort bonus.
     assert_eq!(e.actors[&a].condition_save_bonus(), 0);
@@ -73485,14 +73485,14 @@ fn condition_save_bonus_cohort_preserves_behavior_after_promotion() {
 ///     bounces.
 #[test]
 fn condition_driven_cohorts_preserve_behavior_after_struct_shape_refactor() {
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::ConditionTimer;
     use crate::engine::side_effects::{ApplicableSideEffect, ApplyCondition};
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let a = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
 
     // TYPED_IMMUNITY_CONDITIONS row: MindBlanked → immunity to psychic.
@@ -81717,7 +81717,7 @@ fn a_run_does_not_carry_into_the_next_turn() {
 #[test]
 fn a_run_that_went_the_other_way_is_not_a_charge() {
     use crate::actors::creatures::boars::BOAR_TEMPLATE;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     let mut e = ei_with_terrain(40, 20, &[]);
     let boar = e
         .instantiate_creature(&BOAR_TEMPLATE, Coordinate::new(20, 5), 1, 0)
@@ -81733,10 +81733,10 @@ fn a_run_that_went_the_other_way_is_not_a_charge() {
         run.x * to.x + run.y * to.y
     };
     let ahead = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
         .unwrap();
     let behind = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(21, 5), 0, 1)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(21, 5), 0, 1)
         .unwrap();
     assert!(
         dot(e.actors[&ahead].location()) > 0,
@@ -90431,7 +90431,7 @@ fn the_confusing_gaze_does_not_bend_around_a_wall() {
 #[test]
 fn a_landed_tendril_holds_and_names_its_holder() {
     use crate::actions::monster_attacks::ROPER_TENDRIL;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::ropers::ROPER_TEMPLATE;
     use crate::conditions::Condition;
 
@@ -90443,7 +90443,7 @@ fn a_landed_tendril_holds_and_names_its_holder() {
         // AC 10 and no armor: the tendril lands most of the time, so
         // the sweep converges fast.
         let prey = e
-            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(18, 4), 1, 0)
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(18, 4), 1, 0)
             .unwrap();
         for ef in ROPER_TENDRIL.side_effects(&mut e, roper, Some(&vec![prey]), None, None) {
             ef.apply(&mut e);
@@ -90472,7 +90472,7 @@ fn a_landed_tendril_holds_and_names_its_holder() {
 #[test]
 fn reel_hauls_in_what_the_tendrils_caught_and_nothing_else() {
     use crate::actions::monster_attacks::ROPER_REEL;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::ropers::ROPER_TEMPLATE;
     use crate::conditions::{Condition, ConditionTimer};
 
@@ -90481,10 +90481,10 @@ fn reel_hauls_in_what_the_tendrils_caught_and_nothing_else() {
         .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
     let caught = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
         .unwrap();
     let bystander = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(20, 8), 1, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 8), 1, 0)
         .unwrap();
     // Held by the roper, the way a landed tendril leaves things.
     for ef in crate::engine::side_effects::install_condition_with_link(
@@ -90521,14 +90521,14 @@ fn reel_hauls_in_what_the_tendrils_caught_and_nothing_else() {
 #[test]
 fn reel_declines_when_the_line_is_empty() {
     use crate::actions::monster_attacks::ROPER_REEL;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::ropers::ROPER_TEMPLATE;
 
     let mut e = ei_with_terrain(30, 30, &[]);
     let roper = e
         .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
-    e.instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
+    e.instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 4), 1, 0)
         .unwrap();
     let aei = ActionExecutionInfo::new(&*ROPER_REEL, roper, None, None, None);
     assert!(!aei.validate(&e), "nothing is caught, so there is no reel");
@@ -90544,7 +90544,7 @@ fn reel_declines_when_the_line_is_empty() {
 /// to say, nothing.
 #[test]
 fn the_ai_throws_a_tendril_and_then_reels() {
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::ropers::ROPER_TEMPLATE;
     use crate::ai::Controller as _;
     use crate::ai::{ControllerDecision, SimpleAi};
@@ -90555,7 +90555,7 @@ fn the_ai_throws_a_tendril_and_then_reels() {
         .instantiate_creature(&ROPER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
     let prey = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(16, 4), 1, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(16, 4), 1, 0)
         .unwrap();
     e.start_turn_for(roper);
     match SimpleAi.decide(&e, roper) {
@@ -90596,7 +90596,7 @@ fn the_ai_throws_a_tendril_and_then_reels() {
 /// the roper's own 4d6 bite at every distance, nose to nose included.
 #[test]
 fn a_roper_with_its_prey_in_reach_stops_throwing_strands_and_bites() {
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::actors::creatures::ropers::ROPER_TEMPLATE;
     use crate::ai::Controller as _;
     use crate::ai::{ControllerDecision, SimpleAi};
@@ -90608,7 +90608,7 @@ fn a_roper_with_its_prey_in_reach_stops_throwing_strands_and_bites() {
         .unwrap();
     // Large footprint spans four tiles, so this is nose to nose.
     let prey = e
-        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 4), 1, 0)
         .unwrap();
     // Already held, so the grab rung declines and the damage lane has
     // to make the call on its own merits.
@@ -90645,7 +90645,7 @@ fn a_roper_with_its_prey_in_reach_stops_throwing_strands_and_bites() {
 fn the_cloakers_moan_frightens_what_can_hear_it() {
     use crate::actions::monster_attacks::CLOAKER_MOAN;
     use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::Condition;
 
     for seed in 0..40u64 {
@@ -90654,7 +90654,7 @@ fn the_cloakers_moan_frightens_what_can_hear_it() {
             .instantiate_creature(&CLOAKER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
             .unwrap();
         let victim = e
-            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(12, 5), 1, 0)
             .unwrap();
         for ef in CLOAKER_MOAN.side_effects(&mut e, cloaker, None, None, None) {
             ef.apply(&mut e);
@@ -91026,7 +91026,7 @@ fn a_deafened_creature_is_outside_every_sound_in_the_engine() {
 fn a_moan_carries_through_a_wall_where_a_gaze_would_not() {
     use crate::actions::monster_attacks::CLOAKER_MOAN;
     use crate::actors::creatures::cloakers::CLOAKER_TEMPLATE;
-    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::conditions::Condition;
 
     let walls: Vec<(isize, isize)> = (0..20).map(|y| (10, y)).collect();
@@ -91036,7 +91036,7 @@ fn a_moan_carries_through_a_wall_where_a_gaze_would_not() {
             .instantiate_creature(&CLOAKER_TEMPLATE, Coordinate::new(2, 5), 0, 0)
             .unwrap();
         let victim = e
-            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(14, 5), 1, 0)
             .unwrap();
         for ef in CLOAKER_MOAN.side_effects(&mut e, cloaker, None, None, None) {
             ef.apply(&mut e);
@@ -114156,5 +114156,95 @@ fn a_shadow_drains_strength_and_not_hit_points() {
         e.actors[&knight].max_hitpoints(),
         max_hp,
         "…and the hit point maximum is untouched: that is the wraith's clause"
+    );
+}
+
+/// A drain is a rider on the hit, so a hit that downed its target still
+/// drained it — and a drain that takes nothing off does not kill.
+///
+/// Two ways the first spelling of `DrainAbility` was wrong, and both
+/// are invisible in a fight. It refused to apply to anything that was
+/// not `is_combat_active`, and the swing's own damage resolves from the
+/// same effect list *first* — so the shadow's whole stat block was
+/// silently skipped on exactly the hits that mattered most. And it read
+/// "the score is now 0" for RAW's "*this* reduces it to 0", so a
+/// creature left standing at Strength 0 by a Death Ward died to the
+/// next drain for a reduction that changed nothing.
+#[test]
+fn a_drain_follows_the_blow_that_downed_its_target_and_kills_only_once() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, DrainAbility};
+    use crate::engine::types::AbilityScoreType::Strength;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+
+    // Down, not dead: a commoner rolls death saves, so this is the
+    // state the shadow's own swing leaves its target in.
+    let hp = e.actors[&victim].hitpoints();
+    DealDamage {
+        actor_id: victim,
+        amount: hp,
+        damage_type: DamageType::Necrotic,
+    }
+    .apply(&mut e);
+    assert!(e.actors[&victim].is_dying(), "the premise: bleeding, not gone");
+    assert!(!e.actors[&victim].is_combat_active());
+
+    DrainAbility {
+        actor_id: victim,
+        ability: Strength,
+        amount: 2,
+        label: "strength drain",
+    }
+    .apply(&mut e);
+    assert_eq!(
+        e.actors[&victim].ability_drain_of(Strength),
+        2,
+        "the rider follows the blow that downed them"
+    );
+
+    // …and the death clause fires once. Empty the score, revive the
+    // body the way a Death Ward would have left it, and drain again:
+    // the second reduction takes nothing off and must not kill.
+    let left = e.actors[&victim].ability_score(Strength);
+    DrainAbility {
+        actor_id: victim,
+        ability: Strength,
+        amount: left,
+        label: "strength drain",
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&victim].ability_score(Strength), 0);
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let survivor = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let full = e.actors[&survivor].ability_score(Strength);
+    e.actors
+        .get_mut(&survivor)
+        .unwrap()
+        .drain_ability(Strength, full);
+    assert_eq!(e.actors[&survivor].ability_score(Strength), 0);
+    assert!(
+        e.actors[&survivor].is_combat_active(),
+        "the premise: standing at Strength 0, the way a Death Ward leaves you"
+    );
+    DrainAbility {
+        actor_id: survivor,
+        ability: Strength,
+        amount: 3,
+        label: "strength drain",
+    }
+    .apply(&mut e);
+    assert!(
+        e.actors
+            .get(&survivor)
+            .is_some_and(|a| a.is_combat_active()),
+        "a reduction that changed nothing does not kill"
     );
 }

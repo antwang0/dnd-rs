@@ -2327,7 +2327,15 @@ impl ApplicableSideEffect for DrainAbility {
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };
-        if !actor.is_combat_active() {
+        // A corpse has no score left to take points off, and nothing
+        // else is excluded — deliberately *not* `is_combat_active`,
+        // which was the first spelling and was wrong twice over. The
+        // drain is queued on the same effect list as the swing's own
+        // damage and resolves after it, so a hit that dropped its
+        // target to 0 would have lost the drain entirely; and a
+        // creature bleeding on the floor is exactly the one RAW's death
+        // clause is written about.
+        if matches!(actor.hp_state(), crate::actors::actor_template::HpState::Dead) {
             return;
         }
         let name = actor.name().to_string();
