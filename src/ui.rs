@@ -417,6 +417,7 @@ pub fn render_map(
 /// know before they step there:
 ///
 ///   - `☠` — it will hurt you (a cloud of daggers, a moonbeam).
+///   - `⊘` — your magic does not work here (an antimagic field).
 ///   - `≈` — it will hold you (a web, a patch of grease).
 ///   - `▚` — you cannot see through it (a fog cloud).
 ///
@@ -424,6 +425,19 @@ pub fn render_map(
 /// the checks are in that order rather than in the order the zones were
 /// installed: standing in a web inside a fog bank, the knives are still
 /// the news.
+///
+/// The `⊘` rung is the one that was missing, and its absence had a
+/// symptom worth naming. An Antimagic Field is the engine's only
+/// `ZoneEffect::NULLIFYING` area: it does no damage, does nothing to
+/// the ground and obscures nothing, so every branch below fell through
+/// to `continue` and a twenty-foot sphere that switches off every spell
+/// inside it was drawn as bare floor. The side panel listed it — by
+/// name, at its centre tile, under a `·` — which tells a player that
+/// one exists and not the only thing they need to know, which is
+/// whether they are standing in it. Ranked above the ground clauses
+/// and below the knives for the same reason the order exists at all:
+/// a field that has turned off your Shield changes what you can do,
+/// and a cloud of daggers changes whether you are alive to do it.
 fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> {
     let mut found: Option<char> = None;
     for zone in encounter.zones() {
@@ -453,6 +467,8 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
             '◈'
         } else if zone.effect.contact.is_some_and(|c| c.damage.is_some()) {
             '☠'
+        } else if zone.effect.suppresses_magic {
+            '⊘'
         } else if zone.deters_walkers() || zone.effect.difficult {
             '≈'
         } else if zone.effect.obscures {
@@ -461,8 +477,9 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
             continue;
         };
         let rank = |g: char| match g {
-            '◈' => 3,
-            '☠' => 2,
+            '◈' => 4,
+            '☠' => 3,
+            '⊘' => 2,
             '≈' => 1,
             _ => 0,
         };
@@ -2516,6 +2533,49 @@ mod tests {
             map.contains('◈'),
             "a ward is drawn, and outranks the skull under it:\n{}",
             map
+        );
+    }
+
+    /// An Antimagic Field is on the map.
+    ///
+    /// The engine's only `ZoneEffect::NULLIFYING` area, and the one
+    /// whose clause the map had no rung for: it deals no damage, does
+    /// nothing to the ground and obscures nothing, so every branch of
+    /// the glyph ladder fell through and a twenty-foot sphere that
+    /// switches off every spell inside it was drawn as bare floor. The
+    /// side panel named it, at its centre tile, which tells a caster
+    /// that one exists and not the only thing they need — whether they
+    /// are standing in it.
+    #[test]
+    fn an_antimagic_field_is_drawn_on_the_map() {
+        use crate::engine::zones::{Zone, ZoneEffect, ZoneMotion};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        assert!(
+            !rendered_map(&e).contains('⊘'),
+            "nothing is suppressed on a bare board"
+        );
+        e.install_zone(Zone {
+            id: 0,
+            name: "antimagic field",
+            owner_id: 0,
+            origin: Coordinate::new(4, 4),
+            radius: 2,
+            effect: ZoneEffect::NULLIFYING,
+            rounds_remaining: 10,
+            concentration: true,
+            motion: ZoneMotion::FollowsOwner,
+            revealed: true,
+        });
+        let map = rendered_map(&e);
+        assert!(
+            map.contains('⊘'),
+            "the sphere is drawn where it is:\n{}",
+            map
+        );
+        assert!(
+            rendered_panel(&e).contains("antimagic field"),
+            "…and still listed with its countdown"
         );
     }
 
