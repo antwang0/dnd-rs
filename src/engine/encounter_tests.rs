@@ -111238,3 +111238,130 @@ fn name_prefix(rest: &str) -> &str {
         .unwrap_or(rest.len());
     &rest[..end]
 }
+
+/// The AI can reach the blade lane, and — the half that matters — it
+/// comes back for the swing.
+///
+/// A new action the AI never picks is a feature nobody sees, and this
+/// one arrived with no rung of its own: what makes it reachable is that
+/// the blade's tile is derived from the target, so a cleric naming an
+/// enemy has said everything the spell needs and the generic
+/// single-target rungs can price it like any other cast. Pinning that
+/// here rather than trusting it, because the alternative failure is
+/// silent — the spell would simply never appear in a log.
+///
+/// Sixteen seeded encounters, and the assertion is on the *ratio*
+/// rather than the count. One cast per encounter would mean the AI
+/// treats it as a one-shot; several means it is spending the free bonus
+/// action every round, which is the whole reason the spell is worth a
+/// level-2 slot.
+#[test]
+fn the_ai_conjures_a_spiritual_weapon_and_keeps_swinging_it() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let ai = SimpleAi {};
+    let mut fights_with_a_mace = 0;
+    let mut swings = 0;
+    for seed in 0..16u64 {
+        let mut e = ei_with_terrain_seeded(30, 16, &[], seed);
+        e.instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 7), 0, 0)
+            .unwrap();
+        for i in 0..3usize {
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5 + i as isize), 1, i)
+                .unwrap();
+        }
+        let _ = e.initialize();
+        for _ in 0..400 {
+            e.process_stack();
+            if e.is_complete() {
+                break;
+            }
+            let Some(id) = e.current_turn_actor_id() else {
+                break;
+            };
+            match ai.decide(&e, id) {
+                ControllerDecision::Act(aei) => e.push_action(aei),
+                ControllerDecision::AwaitInput => break,
+            }
+        }
+        let n = e
+            .messages()
+            .iter()
+            .filter(|m| m.contains("spiritual weapon"))
+            .count();
+        if n > 0 {
+            fights_with_a_mace += 1;
+        }
+        swings += n;
+    }
+    assert!(
+        fights_with_a_mace > 0,
+        "no AI cleric in sixteen fights reached for the spell"
+    );
+    assert!(
+        swings >= fights_with_a_mace * 2,
+        "the mace was conjured and then forgotten: {swings} swings across          {fights_with_a_mace} fights"
+    );
+}
+
+/// The Glamour Bard's two buttons, pressed in the order they were
+/// printed in.
+///
+/// Enthralling Performance charms the room; Mantle of Majesty then
+/// spends the rest of the minute telling everyone it caught what to do,
+/// one free Command a turn, with no roll for them to make. The AI plays
+/// exactly that, and getting it to took two things beyond the feature
+/// itself — `Action::sustains_its_own_concentration`, without which the
+/// repeat was filtered out one turn after the aspect went up, and a
+/// rung above Cutting Words, which is the other thing the bard's bonus
+/// action could have bought.
+#[test]
+fn an_ai_glamour_bard_raises_the_mantle_and_keeps_commanding() {
+    use crate::actors::creatures::bards::GLAMOUR_BARD_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::ai::simple::SimpleAi;
+    use crate::ai::{Controller, ControllerDecision};
+
+    let ai = SimpleAi {};
+    let mut e = ei_with_terrain_seeded(30, 16, &[], 3);
+    let bard = e
+        .instantiate_creature(&GLAMOUR_BARD_TEMPLATE, Coordinate::new(4, 9), 0, 1)
+        .unwrap();
+    for i in 0..3usize {
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 5 + i as isize), 1, i)
+            .unwrap();
+    }
+    let _ = e.initialize();
+    let mut presses = 0;
+    for _ in 0..60 {
+        e.process_stack();
+        if e.is_complete() {
+            break;
+        }
+        let Some(id) = e.current_turn_actor_id() else {
+            break;
+        };
+        match ai.decide(&e, id) {
+            ControllerDecision::Act(aei) => {
+                if id == bard && aei.action().name() == "mantle of majesty" {
+                    presses += 1;
+                }
+                e.push_action(aei)
+            }
+            ControllerDecision::AwaitInput => break,
+        }
+    }
+    assert!(
+        presses >= 2,
+        "the bard raised the aspect and then forgot about it: {presses} presses"
+    );
+    assert!(
+        e.messages()
+            .iter()
+            .any(|m| m.contains("unearthly aspect")),
+        "the first press is the one that raises it"
+    );
+}

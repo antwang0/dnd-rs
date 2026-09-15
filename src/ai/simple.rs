@@ -932,6 +932,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3g'''a. Glamour Bard Mantle of Majesty — the other bonus
+        //         action the bard could spend here, and the bigger one.
+        //         Ahead of Cutting Words because a creature losing its
+        //         turn now *and* on every turn of the next minute beats
+        //         a die off one roll. See `MAJESTY`.
+        if let Some(aei) = try_mantle_of_majesty(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3g'''. Bard Cutting Words — bonus-action enemy debuff. Fire
         //        on the most threatening adjacent-to-an-ally enemy who
         //        isn't already Mocked, so the disadvantage lands before
@@ -2960,7 +2969,17 @@ fn pick_from_cohort(
         .iter()
         .filter_map(|row| {
             let action = find_printing(actor, row.name)?;
-            (!concentrating || !action.holds_concentration()).then_some((action, row.condition))
+            // The concentration pre-filter, and its one exemption. A
+            // caster already holding something should not trade it for
+            // an unlanded effect — but a spell whose second press *is*
+            // the effect they are holding trades nothing. See
+            // `Action::sustains_its_own_concentration`, and note that
+            // the exempted actions are not waved through: they fall to
+            // their own `custom_validate_input`, which refuses a caster
+            // concentrating on something else.
+            let self_sustaining = action.sustains_its_own_concentration();
+            (!concentrating || self_sustaining || !action.holds_concentration())
+                .then_some((action, row.condition))
         })
         .collect();
     if candidates.is_empty() {
@@ -3079,6 +3098,42 @@ fn try_attrition(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     pick_from_cohort(encounter, actor_id, ATTRITION)
+}
+
+/// The Glamour Bard's **Mantle of Majesty**, which is a cohort of one
+/// and needs a rung of its own rather than a row on `ATTRITION`.
+///
+/// What the feature *does* is attrition — it is Command, and Command is
+/// the first row on that list. What it *costs* is the reason it cannot
+/// live there. `ATTRITION` sits below every burst, because an Action
+/// spent on a penalty should lose to an Action spent on a blast; this
+/// costs a Bonus Action and no slot at all, so it is never competing
+/// with a Fireball. It competes with Cutting Words, which is the bard's
+/// other bonus action, and that is the comparison this rung exists to
+/// settle: one die off one roll, against a creature losing its turn now
+/// and every turn for the next minute.
+///
+/// Placed directly above Cutting Words for exactly that reason, and
+/// nowhere higher: it is still a bonus action the bard might want for
+/// Bardic Inspiration when an ally is about to swing at something that
+/// matters more.
+///
+/// The rung would do nothing without
+/// `Action::sustains_its_own_concentration`. The first press takes the
+/// bard's concentration, and `pick_from_cohort` drops every
+/// concentration action while the caster is holding one — so the
+/// feature's entire content, which is the repeat, would have been
+/// filtered out one turn after it started.
+const MAJESTY: &[LockdownPick] = &[LockdownPick {
+    name: "mantle of majesty",
+    condition: Some(Condition::Stunned),
+}];
+
+fn try_mantle_of_majesty(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    pick_from_cohort(encounter, actor_id, MAJESTY)
 }
 
 /// One row in the **concentration mark** cohort — a bonus-action spell

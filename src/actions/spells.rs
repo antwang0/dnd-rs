@@ -4249,8 +4249,15 @@ impl Action for SpiritualWeapon {
     /// conservative direction: a swing does not *start* concentration,
     /// but it only happens while the caster is already concentrating on
     /// this spell, so nothing that reads this flag is misled about what
-    /// the caster is holding.
+    /// the caster is holding. The half that separates the two branches
+    /// is `sustains_its_own_concentration` below.
     fn holds_concentration(&self) -> bool {
+        true
+    }
+    /// A later swing continues the concentration the cast opened rather
+    /// than starting a second one — see
+    /// `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
         true
     }
     /// *"The damage increases by 1d8 for every slot level above 2."*
@@ -19093,6 +19100,11 @@ impl Action for MordenkainensSword {
     /// an unlanded one — and so the assertion in `Action::execute`
     /// stays quiet.
     fn holds_concentration(&self) -> bool {
+        true
+    }
+    /// As Spiritual Weapon's — a later swing continues the
+    /// concentration the cast opened.
+    fn sustains_its_own_concentration(&self) -> bool {
         true
     }
     fn school(&self) -> Option<SpellSchool> {

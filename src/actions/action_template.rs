@@ -1918,6 +1918,37 @@ pub trait Action {
         false
     }
 
+    /// True when a press of this action *by a caster already
+    /// concentrating on it* continues that concentration rather than
+    /// starting a second one.
+    ///
+    /// The other half of `holds_concentration` above, and the half the
+    /// AI's cohort pickers were missing. That method asks whether an
+    /// action *starts* concentration, which is the right question when
+    /// the rung is deciding whether firing would trade a landed effect
+    /// for an unlanded one. It is the wrong question for the family of
+    /// spells whose second press is not a second cast: Moonbeam walked
+    /// to a new tile, a Minute Meteors volley, a Spiritual Weapon swung
+    /// again, a Mantle of Majesty's next Command. None of those trades
+    /// anything, because the thing being traded away is the thing being
+    /// used.
+    ///
+    /// `pick_from_cohort` in the AI is the reader. It pre-filters out
+    /// any concentration action while the caster is already holding
+    /// something, and this is the exemption — an action that declares
+    /// itself self-sustaining is passed through to its own
+    /// `custom_validate_input`, which is where the distinction actually
+    /// lives. Every member of the family already answers correctly
+    /// there: a caster concentrating on something *else* is refused,
+    /// and one concentrating on this is allowed.
+    ///
+    /// Defaults to `false`, and for an action that never concentrates
+    /// the flag is meaningless rather than wrong — the pre-filter it
+    /// exempts from is already not reached.
+    fn sustains_its_own_concentration(&self) -> bool {
+        false
+    }
+
     /// Damage types this action can deal (for actor-side resistance /
     /// immunity hints in the prompt UI). Empty for non-damaging actions
     /// or those whose typing depends on runtime data.

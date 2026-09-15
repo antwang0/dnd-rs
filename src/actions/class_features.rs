@@ -16478,6 +16478,12 @@ impl Action for MantleOfMajesty {
     fn holds_concentration(&self) -> bool {
         true
     }
+    /// Every press after the first continues the aspect rather than
+    /// raising a second one, which is what lets the AI's attrition rung
+    /// keep pressing it. See `Action::sustains_its_own_concentration`.
+    fn sustains_its_own_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "mantle of majesty"
     }
