@@ -4054,6 +4054,33 @@ impl EncounterInstance {
         if let Some(foretold) = self.try_substitute_portent(actor_id) {
             return foretold;
         }
+        self.roll_d20_unforetold(actor_id, mode)
+    }
+
+    /// `roll_d20_lucky` with the Portent hook taken off the front — the
+    /// Lucky reroll and nothing else.
+    ///
+    /// One caller, and it needs a reason rather than a convenience.
+    /// `roll_initiative_for` rolls what SRD 5.2 calls a Dexterity check,
+    /// so by the letter of Portent — *"any attack roll, saving throw, or
+    /// ability check"* — a diviner may spend a foretold face on it, and
+    /// at a real table they often do.
+    ///
+    /// The engine cannot, because the engine's spend decision is a fixed
+    /// threshold rather than a player. Initiative is rolled by every
+    /// body that arrives on the board, and most of them are not
+    /// characters: a conjured wolf, a summoned spirit, a Bag of Tricks
+    /// rabbit and an animated shield each roll one the moment they are
+    /// instantiated into a live encounter. A lane that offered Portent
+    /// there would spend the diviner's whole bank making other people's
+    /// summons go early — the one roll of the fight where "is this face
+    /// decisive?" cannot be asked, because nothing has happened yet.
+    ///
+    /// The other two lanes on the initiative roll have no such problem
+    /// and are not withheld: Lucky is triggered by a natural 1 rather
+    /// than chosen, and the cancel lane answers a disadvantage that is
+    /// already on the die.
+    fn roll_d20_unforetold(&mut self, actor_id: usize, mode: RollMode) -> u32 {
         let raw = self.roll_d20_with_mode(mode);
         if raw != 1 {
             return raw;
@@ -20891,26 +20918,39 @@ impl EncounterInstance {
             });
         }
 
-        if self.initialized {
-            actor.roll_initiative(&mut self.roller);
-            self.initiative_tracker.add_actor(
-                actor_id,
-                actor.initiative().unwrap(),
-                actor.initiative_mod(),
-            );
+        let joining_mid_fight = self.initialized;
+        self.actors.insert(actor_id, actor);
+        // A body that arrives after the bell rolls its way into the
+        // queue. After the insert rather than before it, because
+        // `roll_initiative_for` reaches the encounter's own check lane
+        // — Portent, Lucky, the roll-mode cancels — and every one of
+        // those wants to look the roller up in the actor table it is
+        // about to be rolling for.
+        if joining_mid_fight {
+            self.roll_initiative_for(actor_id);
+            let Some(arrival) = self
+                .actors
+                .get(&actor_id)
+                .and_then(|a| a.initiative().map(|i| (i, a.initiative_mod())))
+            else {
+                return Ok(actor_id);
+            };
+            self.initiative_tracker
+                .add_actor(actor_id, arrival.0, arrival.1);
             // A Thief who joins the fight while round 1 is still running
             // gets their extra slot on the same terms as one who was
             // there at the bell — RAW scopes Thief's Reflexes to "the
             // first round of any combat," not to being present for the
             // initiative roll. `grant_extra_turn_slot` is what enforces
             // the round gate, so a round-3 summon quietly gets nothing.
-            if actor.has_passive_feature(crate::actions::class_features::THIEFS_REFLEXES_TAG) {
-                let (init, dex) = (actor.initiative().unwrap(), actor.initiative_mod());
-                self.grant_extra_turn_slot(actor_id, actor.name().to_string(), init, dex);
+            let reflexes = self.actors.get(&actor_id).is_some_and(|a| {
+                a.has_passive_feature(crate::actions::class_features::THIEFS_REFLEXES_TAG)
+            });
+            if reflexes {
+                let name = self.actor_name(actor_id);
+                self.grant_extra_turn_slot(actor_id, name, arrival.0, arrival.1);
             }
         }
-
-        self.actors.insert(actor_id, actor);
         // A stat block that ships a glowing item arrives already
         // lighting the room. After the insert, because the lane reads
         // the actor's pack out of the table. See `Item::sheds_light`.
@@ -21520,6 +21560,50 @@ impl EncounterInstance {
         }
     }
 
+    /// Roll `actor_id`'s Initiative, through the same lanes every other
+    /// d20 in the engine goes through.
+    ///
+    /// SRD 5.2: *"When combat starts, every participant rolls
+    /// Initiative; they make a **Dexterity check** that determines
+    /// their place in the Initiative order."* That sentence is the
+    /// whole of this function's existence. The roll used to happen on
+    /// `ActorInstance` against a bare `Roller`, which is the one d20 in
+    /// the engine that had no encounter behind it — and so the one d20
+    /// that quietly opted out of everything an ability check is subject
+    /// to:
+    ///
+    ///   - **Halfling Lucky**, whose nat-1 reroll names exactly those
+    ///     three contexts, and whose holder rolled a 1 on Initiative
+    ///     with nothing to do about it.
+    ///   - **The roll-mode cancel lane** — Drunkard's Luck on a
+    ///     surprised creature's disadvantaged Initiative, Restore
+    ///     Balance on a Feral Instinct barbarian's advantaged one.
+    ///
+    /// **Portent is the one lane deliberately left off**, and
+    /// `roll_d20_unforetold` carries the reason: the engine spends a
+    /// foretold face on a fixed threshold, and initiative is rolled by
+    /// every summon and conjuration that arrives mid-fight, so offering
+    /// it here would empty a diviner's bank making other people's wolves
+    /// go early.
+    ///
+    /// Everything about *who* is rolling still lives on the actor: the
+    /// mode comes from `initiative_roll_mode` and the scalar bonuses
+    /// from `set_initiative_from_die`. What moved here is the die.
+    pub fn roll_initiative_for(&mut self, actor_id: usize) {
+        let Some(mode) = self
+            .actors
+            .get(&actor_id)
+            .map(|a| a.initiative_roll_mode())
+        else {
+            return;
+        };
+        let mode = self.steady_the_d20(actor_id, mode);
+        let face = self.roll_d20_unforetold(actor_id, mode) as i32;
+        if let Some(actor) = self.actors.get_mut(&actor_id) {
+            actor.set_initiative_from_die(face);
+        }
+    }
+
     pub fn initialize(&mut self) -> Result<(), &'static str> {
         if self.initialized {
             return Err("attempted to initialize already initialized encounter");
@@ -21528,9 +21612,7 @@ impl EncounterInstance {
         // HashMap iteration order is per-process random and would otherwise
         // assign different d20 rolls to the same actor across runs.
         for id in self.sorted_actor_ids() {
-            if let Some(actor) = self.actors.get_mut(&id) {
-                actor.roll_initiative(&mut self.roller);
-            }
+            self.roll_initiative_for(id);
         }
         self.initiative_tracker.initialize_actors(&self.actors);
         // Features whose RAW trigger is the words "when you roll

@@ -12396,37 +12396,33 @@ impl ActorInstance {
         prof_bonus_sum + ability_mod_sum
     }
 
-    pub fn roll_initiative(&mut self, roller: &mut impl Roller) {
+    pub fn set_initiative_from_die(&mut self, face: i32) {
         // Two passive-initiative-augment sources compose on the same
-        // roll: `rolls_initiative_with_advantage` picks the higher of
-        // two d20s (Feral Instinct — Barbarian lv7 struct-field flag,
-        // Vigilant Blessing — Twilight Cleric lv1 subclass-tag lookup;
-        // any row on `INITIATIVE_ADVANTAGE_SOURCES` suffices); then
-        // `initiative_flat_bonus` stacks a scalar bump on top —
-        // proficiency-bonus cohort (Remarkable Athlete — Champion
-        // Fighter lv7: half-prof rounded up; Aura of the Sentinel —
-        // Watchers Paladin lv7: full prof; every row sums additively
-        // via `PROFICIENCY_INITIATIVE_BONUSES`) plus ability-mod cohort
-        // (Rakish Audacity — Swashbuckler Rogue lv3: +CHA-mod; Dread
-        // Ambusher — Gloom Stalker Ranger lv3: +WIS-mod; Tactical Wit
-        // — War Magic Wizard lv2: +INT-mod; every ability-mod row
-        // sums additively via `ABILITY_MOD_INITIATIVE_BONUSES`).
-        // Adding a new source of any shape lands in the matching
-        // helper as a one-line entry without touching this body.
-        let rolled = match self.initiative_roll_mode() {
-            RollMode::Advantage => {
-                let a = roller.roll_d20() as i32;
-                let b = roller.roll_d20() as i32;
-                a.max(b)
-            }
-            RollMode::Disadvantage => {
-                let a = roller.roll_d20() as i32;
-                let b = roller.roll_d20() as i32;
-                a.min(b)
-            }
-            RollMode::Normal => roller.roll_d20() as i32,
-        };
-        self.initiative = Some(rolled + self.initiative_mod() + self.initiative_flat_bonus());
+        // roll, and only one of them lands here. The *mode* —
+        // `rolls_initiative_with_advantage` (Feral Instinct, Vigilant
+        // Blessing, any row on `INITIATIVE_ADVANTAGE_SOURCES`) — is
+        // read by `initiative_roll_mode` and spent on the die before it
+        // reaches this function; what this adds is the scalar half.
+        // That is the proficiency-bonus cohort (Remarkable Athlete —
+        // Champion Fighter lv7: half-prof rounded up; Aura of the
+        // Sentinel — Watchers Paladin lv7: full prof; every row sums
+        // additively via `PROFICIENCY_INITIATIVE_BONUSES`) plus the
+        // ability-mod cohort (Rakish Audacity — Swashbuckler Rogue lv3:
+        // +CHA-mod; Dread Ambusher — Gloom Stalker Ranger lv3: +WIS-mod;
+        // Tactical Wit — War Magic Wizard lv2: +INT-mod; every
+        // ability-mod row sums additively via
+        // `ABILITY_MOD_INITIATIVE_BONUSES`). Adding a new source of
+        // either shape lands in the matching helper as a one-line entry
+        // without touching this body.
+        //
+        // The die is not rolled here, and that split is the point. SRD
+        // 5.2 makes Initiative *"a Dexterity check"*, so the face has
+        // to come off the engine's own check lane — where a Halfling's
+        // Lucky reroll and a Divination Wizard's Portent substitution
+        // live — and that lane needs the whole encounter, which an
+        // `ActorInstance` has never had. See
+        // `EncounterInstance::roll_initiative_for`.
+        self.initiative = Some(face + self.initiative_mod() + self.initiative_flat_bonus());
     }
 
     /// Top-of-turn refresh: movement and action-economy slots regenerate,

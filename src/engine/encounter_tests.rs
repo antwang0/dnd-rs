@@ -59943,33 +59943,27 @@ fn elusive_suppressed_while_stunned() {
 fn feral_instinct_boosts_initiative() {
     use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
-    let mut roller = FastRandRoller::with_seed(12345);
+    // Driven through `EncounterInstance::roll_initiative_for`, which is
+    // where the d20 lives now: SRD 5.2 makes Initiative a Dexterity
+    // check, so it is rolled on the same lane every other check is and
+    // there is no bare-`Roller` path left to sample.
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 12345);
+    let barb = e
+        .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let gob = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
+        .unwrap();
     let mut barb_total = 0i64;
     let mut goblin_total = 0i64;
     let samples = 400;
     for _ in 0..samples {
-        let mut barb = ActorInstance::from_creature_template(
-            &BARBARIAN_TEMPLATE,
-            Coordinate::new(0, 0),
-            0,
-            &mut roller,
-            0,
-        )
-        .unwrap();
-        let mut gob = ActorInstance::from_creature_template(
-            &GOBLIN_TEMPLATE,
-            Coordinate::new(0, 0),
-            0,
-            &mut roller,
-            0,
-        )
-        .unwrap();
-        barb.roll_initiative(&mut roller);
-        gob.roll_initiative(&mut roller);
-        barb_total +=
-            (barb.initiative().unwrap() - barb.initiative_mod()) as i64;
+        e.roll_initiative_for(barb);
+        e.roll_initiative_for(gob);
+        barb_total += (e.actors[&barb].initiative().unwrap()
+            - e.actors[&barb].initiative_mod()) as i64;
         goblin_total +=
-            (gob.initiative().unwrap() - gob.initiative_mod()) as i64;
+            (e.actors[&gob].initiative().unwrap() - e.actors[&gob].initiative_mod()) as i64;
     }
     let barb_avg = barb_total as f64 / samples as f64;
     let gob_avg = goblin_total as f64 / samples as f64;
@@ -59996,36 +59990,28 @@ fn vigilant_blessing_boosts_initiative() {
     use crate::actors::creatures::clerics::{
         CLERIC_TEMPLATE, TWILIGHT_CLERIC_TEMPLATE,
     };
-    let mut roller = FastRandRoller::with_seed(54321);
+    // Through the encounter's own check lane — see
+    // `feral_instinct_boosts_initiative`, its sibling on the same shape.
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 54321);
+    let twilight = e
+        .instantiate_creature(&TWILIGHT_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let baseline = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(8, 8), 0, 1)
+        .unwrap();
     let mut twilight_total = 0i64;
     let mut baseline_total = 0i64;
     let samples = 400;
     for _ in 0..samples {
-        let mut twilight = ActorInstance::from_creature_template(
-            &TWILIGHT_CLERIC_TEMPLATE,
-            Coordinate::new(0, 0),
-            0,
-            &mut roller,
-            0,
-        )
-        .unwrap();
-        let mut baseline = ActorInstance::from_creature_template(
-            &CLERIC_TEMPLATE,
-            Coordinate::new(0, 0),
-            0,
-            &mut roller,
-            0,
-        )
-        .unwrap();
-        twilight.roll_initiative(&mut roller);
-        baseline.roll_initiative(&mut roller);
+        e.roll_initiative_for(twilight);
+        e.roll_initiative_for(baseline);
         // Both templates share DEX 10 (initiative_mod = 0) so the
         // subtraction just isolates the d20 half. Baseline rolls a
         // flat d20; twilight rolls with advantage.
-        twilight_total +=
-            (twilight.initiative().unwrap() - twilight.initiative_mod()) as i64;
-        baseline_total +=
-            (baseline.initiative().unwrap() - baseline.initiative_mod()) as i64;
+        twilight_total += (e.actors[&twilight].initiative().unwrap()
+            - e.actors[&twilight].initiative_mod()) as i64;
+        baseline_total += (e.actors[&baseline].initiative().unwrap()
+            - e.actors[&baseline].initiative_mod()) as i64;
     }
     let twilight_avg = twilight_total as f64 / samples as f64;
     let baseline_avg = baseline_total as f64 / samples as f64;
@@ -69443,24 +69429,18 @@ fn remarkable_athlete_grants_flat_initiative_bump() {
 /// ensure the raw d20 sweep hits the expected [3, 22] envelope.
 #[test]
 fn remarkable_athlete_stacks_with_dex_mod_on_initiative_roll() {
-    use crate::actors::actor_template::ActorInstance;
     use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
     // Sweep 50 seeds; every rolled initiative must lie inside
     // [DEX_mod + flat + 1, DEX_mod + flat + 20] = [3, 22].
     // Champion has DEX 12 (+1) + Remarkable Athlete +1 = +2 total.
     let (mut lo, mut hi) = (i32::MAX, i32::MIN);
     for seed in 0..50 {
-        let mut roller = FastRandRoller::with_seed(seed);
-        let mut champion = ActorInstance::from_creature_template(
-            &CHAMPION_TEMPLATE,
-            Coordinate::new(0, 0),
-            0,
-            &mut roller,
-            0,
-        )
-        .unwrap();
-        champion.roll_initiative(&mut roller);
-        let init = champion.initiative().unwrap();
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let champion = e
+            .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.roll_initiative_for(champion);
+        let init = e.actors[&champion].initiative().unwrap();
         assert!(
             (3..=22).contains(&init),
             "champion initiative {} out of expected [3,22] envelope (seed={})",
@@ -75350,6 +75330,15 @@ fn portent_is_dormant_until_the_first_d20() {
     );
 }
 
+/// Hand `diviner` a bank of known faces, so an assertion is about the
+/// spend policy rather than about what the seeded roller produced.
+fn seed_portent(e: &mut EncounterInstance, diviner: usize, faces: Vec<u32>) {
+    e.actors
+        .get_mut(&diviner)
+        .unwrap()
+        .set_portent_pool(faces);
+}
+
 /// A high foretold face is spent on a roll the diviner wants to
 /// succeed — their own, or an ally's — and the substituted value is
 /// returned verbatim in place of the d20. Also pins that the die
@@ -75369,10 +75358,7 @@ fn portent_substitutes_its_best_face_on_a_friendly_roll() {
     // Seed the bank directly rather than letting the lazy fill roll
     // it, so the assertion is about the spend policy and not about
     // what the seeded roller happened to produce.
-    e.actors
-        .get_mut(&diviner)
-        .unwrap()
-        .set_portent_pool(vec![11, 20, 18]);
+    seed_portent(&mut e, diviner, vec![11, 20, 18]);
 
     // The ally's roll takes the best face, not merely a good one.
     assert_eq!(e.roll_d20_lucky(ally, RollMode::Normal), 20);
@@ -75402,10 +75388,7 @@ fn portent_substitutes_its_worst_face_on_an_enemy_roll() {
     let goblin = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
         .unwrap();
-    e.actors
-        .get_mut(&diviner)
-        .unwrap()
-        .set_portent_pool(vec![4, 20, 1]);
+    seed_portent(&mut e, diviner, vec![4, 20, 1]);
 
     assert_eq!(e.roll_d20_lucky(goblin, RollMode::Normal), 1);
     assert_eq!(e.actors[&diviner].portent_pool(), &[4, 20]);
@@ -75441,10 +75424,7 @@ fn portent_needs_sight_of_anyone_but_the_diviner() {
         let goblin = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
             .unwrap();
-        e.actors
-            .get_mut(&diviner)
-            .unwrap()
-            .set_portent_pool(vec![2]);
+        seed_portent(&mut e, diviner, vec![2]);
         if blind_diviner {
             e.actors
                 .get_mut(&diviner)
@@ -75481,10 +75461,7 @@ fn portent_needs_sight_of_anyone_but_the_diviner() {
     let diviner = e
         .instantiate_creature(&DIVINATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    e.actors
-        .get_mut(&diviner)
-        .unwrap()
-        .set_portent_pool(vec![19]);
+    seed_portent(&mut e, diviner, vec![19]);
     e.actors
         .get_mut(&diviner)
         .unwrap()
@@ -75508,10 +75485,7 @@ fn portent_sinks_an_enemy_save_through_roll_save() {
     let goblin = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
         .unwrap();
-    e.actors
-        .get_mut(&diviner)
-        .unwrap()
-        .set_portent_pool(vec![1]);
+    seed_portent(&mut e, diviner, vec![1]);
     // A goblin's +2 DEX save clears DC 8 on any natural 6 or better,
     // so the failure is unlikely without the substitution — and the
     // emptied pool below is what actually proves the foretold 1 was
@@ -75586,7 +75560,7 @@ fn portent_substitution_does_not_advance_the_roller() {
         // Seeding the bank — even with an empty vec — latches the
         // forecast, so neither run pays for a lazy fill and the two
         // rollers stay in lockstep.
-        e.actors.get_mut(&diviner).unwrap().set_portent_pool(bank);
+        seed_portent(&mut e, diviner, bank);
         (0..4)
             .map(|_| e.roll_d20_lucky(diviner, RollMode::Normal))
             .collect()
@@ -75732,10 +75706,7 @@ fn viewer_can_see_is_blocked_by_walls() {
     assert!(!e.viewer_can_see(diviner, walled_off));
     assert!(e.viewer_can_see(diviner, in_the_open));
 
-    e.actors
-        .get_mut(&diviner)
-        .unwrap()
-        .set_portent_pool(vec![1]);
+    seed_portent(&mut e, diviner, vec![1]);
     // The goblin behind the wall rolls unmolested...
     let rolled = e.roll_d20_lucky(walled_off, RollMode::Normal);
     assert!((1..=20).contains(&rolled));
@@ -110851,5 +110822,62 @@ fn restore_balance_evens_out_a_hostiles_spell_attack() {
         e.actors[&sorcerer].feature_charges_remaining(RESTORE_BALANCE_TAG),
         charges - 1,
         "one roll, one charge"
+    );
+}
+
+/// Initiative is a Dexterity check, so it rolls on the lane every other
+/// check does.
+///
+/// SRD 5.2: *"When combat starts, every participant rolls Initiative;
+/// they make a Dexterity check."* The die used to be thrown on
+/// `ActorInstance` against a bare `Roller`, which made it the one d20 in
+/// the engine with no encounter behind it — and so the one that quietly
+/// opted out of the Lucky reroll and the roll-mode cancels.
+#[test]
+fn initiative_rolls_on_the_same_lane_every_other_check_does() {
+    use crate::actions::class_features::KI_POINTS_TAG;
+    use crate::actors::creatures::halflings::HALFLING_SCOUT_TEMPLATE;
+    use crate::actors::creatures::monks::DRUNKEN_MASTER_MONK_TEMPLATE;
+
+    // The cancel lane, deterministically: an incapacitated creature
+    // rolls Initiative at disadvantage, which is exactly what
+    // Drunkard's Luck exists to answer.
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 7);
+    let monk = e
+        .instantiate_creature(&DRUNKEN_MASTER_MONK_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&monk)
+        .unwrap()
+        .add_condition(Condition::Stunned, ConditionTimer::Rounds(3));
+    assert_eq!(
+        e.actors[&monk].initiative_roll_mode(),
+        RollMode::Disadvantage,
+        "the fixture's own premise"
+    );
+    let ki = e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG);
+    e.roll_initiative_for(monk);
+    assert!(
+        e.messages().iter().any(|m| m.contains("drunkard's luck")),
+        "the monk rolled Initiative at disadvantage with a charge in hand: {:?}",
+        e.messages()
+    );
+    assert_eq!(
+        e.actors[&monk].feature_charges_remaining(KI_POINTS_TAG),
+        ki - 1
+    );
+
+    // And the Lucky reroll, which needs a natural 1 to have something to
+    // say. Seeded, so "eventually" is the same sequence on every run.
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 11);
+    let halfling = e
+        .instantiate_creature(&HALFLING_SCOUT_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    for _ in 0..200 {
+        e.roll_initiative_for(halfling);
+    }
+    assert!(
+        e.messages().iter().any(|m| m.contains("lucky:")),
+        "two hundred Initiative rolls without a single halfling reroll"
     );
 }
