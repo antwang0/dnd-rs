@@ -305,7 +305,24 @@ pub static DASH: LazyLock<Dash> = LazyLock::new(|| Dash {});
 
 /// Stand up from being prone. 5e: standing up costs half your speed in
 /// movement. Only valid while the caster has the Prone condition.
+///
+/// The **Athlete** feat replaces the halving with a flat five feet —
+/// *"When you have the Prone condition, you can right yourself with only
+/// 5 feet of movement"* — which is the one clause in the game that
+/// changes this price. See `ATHLETE_STAND_UP_FEET` and
+/// `crate::actions::feats::ATHLETE_TAG`.
 pub struct StandUp {}
+
+/// What standing up costs a holder of the **Athlete** feat, in feet.
+///
+/// A constant rather than a literal in the `cost` body because it is
+/// RAW's own number and not a tuning dial, and because the halving it
+/// replaces is derived from the stander's speed while this is not: on a
+/// 30-ft chassis it saves ten feet, on a 40-ft monk fifteen, and on a
+/// creature slowed to 10 ft it saves nothing at all. Floored against the
+/// ordinary price so the feat can never make standing up *more*
+/// expensive for a creature whose speed has been cut below it.
+pub const ATHLETE_STAND_UP_FEET: f32 = 5.0;
 
 impl Action for StandUp {
     fn name(&self) -> &str {
@@ -338,7 +355,19 @@ impl Action for StandUp {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
         match encounter.actors.get(&caster_id) {
-            Some(a) => vec![Resource::Movement(a.speed() / 2.0)],
+            Some(a) => {
+                let ordinary = a.speed() / 2.0;
+                // The Athlete feat's flat price, taken only where it is
+                // actually cheaper: a creature whose speed has been cut
+                // to 8 ft already stands for 4, and RAW's "only 5 feet"
+                // is a discount rather than a floor to be raised to.
+                let price = if a.has_passive_feature(crate::actions::feats::ATHLETE_TAG) {
+                    ordinary.min(ATHLETE_STAND_UP_FEET)
+                } else {
+                    ordinary
+                };
+                vec![Resource::Movement(price)]
+            }
             None => Vec::new(),
         }
     }

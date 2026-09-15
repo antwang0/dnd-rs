@@ -112165,3 +112165,167 @@ fn elemental_adept_does_not_reach_a_flaming_sword() {
     e.apply_elemental_adept(adept, &mut loose);
     assert_eq!(amount_of(&loose), 9, "no frame, no spell, no bypass");
 }
+
+/// The **Athlete** feat's Stand Up clause: *"When you have the Prone
+/// condition, you can right yourself with only 5 feet of movement."*
+///
+/// Priced against the halving it replaces, which is what makes the feat
+/// worth something on a fast chassis and nothing on a crawling one — and
+/// the `min` is what keeps the second case from being a tax.
+#[test]
+fn athlete_rights_itself_for_five_feet_instead_of_half_its_speed() {
+    use crate::actions::default_actions::{ATHLETE_STAND_UP_FEET, STAND_UP};
+    use crate::actions::feats::ATHLETE_TAG;
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let barbarian = e
+        .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    assert!(
+        e.actors[&barbarian].has_passive_feature(ATHLETE_TAG),
+        "the barbarian chassis takes the feat"
+    );
+
+    let price = |e: &EncounterInstance, who: usize| -> f32 {
+        match STAND_UP.cost(e, who, None, None, None).first() {
+            Some(Resource::Movement(ft)) => *ft,
+            other => panic!("standing up is priced in movement, got {other:?}"),
+        }
+    };
+
+    assert_eq!(
+        price(&e, barbarian),
+        ATHLETE_STAND_UP_FEET,
+        "an athlete stands for five feet"
+    );
+    assert_eq!(
+        price(&e, fighter),
+        e.actors[&fighter].speed() / 2.0,
+        "and everybody else for half their speed"
+    );
+
+    // Below ten feet of speed the halving is already the cheaper of the
+    // two, and the feat must not raise the price back up to five. A
+    // violet fungus walks at 5 ft, so half of it is 2.5 — the side of
+    // the clamp no chassis that can take the feat ever reaches.
+    let crawler = e
+        .instantiate_creature(
+            &crate::actors::creatures::violet_fungi::VIOLET_FUNGUS_TEMPLATE,
+            Coordinate::new(6, 6),
+            1,
+            0,
+        )
+        .unwrap();
+    e.actors
+        .get_mut(&crawler)
+        .unwrap()
+        .grant_feature_for_test(ATHLETE_TAG);
+    assert_eq!(e.actors[&crawler].speed(), 5.0);
+    assert_eq!(
+        price(&e, crawler),
+        2.5,
+        "the discount is a discount, never a floor"
+    );
+}
+
+/// The **Athlete** feat's jump clause: *"You can make a running Long
+/// Jump or a running High Jump after moving only 5 feet instead of 10
+/// feet."*
+///
+/// Asserted at `running_start_tiles`, the one number the jump lane reads
+/// for this, and against the Thief Rogue's Second-Story Work — which is
+/// the same sentence from another book and now the other row on the same
+/// cohort.
+#[test]
+fn athlete_and_second_story_work_share_the_short_running_start() {
+    use crate::actors::creatures::barbarians::BARBARIAN_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::rogues::THIEF_ROGUE_TEMPLATE;
+    use crate::engine::jumping::{RUNNING_START_TILES, SHORT_RUNNING_START_TILES};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let barbarian = e
+        .instantiate_creature(&BARBARIAN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let thief = e
+        .instantiate_creature(&THIEF_ROGUE_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 6), 0, 2)
+        .unwrap();
+
+    assert_eq!(
+        e.actors[&barbarian].running_start_tiles(),
+        SHORT_RUNNING_START_TILES,
+        "the Athlete takes off after five feet"
+    );
+    assert_eq!(
+        e.actors[&thief].running_start_tiles(),
+        SHORT_RUNNING_START_TILES,
+        "and so does the thief, off the other row"
+    );
+    assert_eq!(
+        e.actors[&fighter].running_start_tiles(),
+        RUNNING_START_TILES,
+        "everybody else needs RAW's ten"
+    );
+}
+
+/// The **Resilient (Constitution)** feat: *"You gain proficiency in
+/// saving throws using the chosen ability."*
+///
+/// The concentration save is a Constitution save, so the interesting
+/// assertion is not that the flag reads true — it is that the
+/// proficiency bonus actually reaches the die a druid rolls to keep a
+/// spell up.
+#[test]
+fn resilient_constitution_puts_the_proficiency_bonus_on_a_druids_concentration_save() {
+    use crate::actions::feats::RESILIENT_CONSTITUTION_TAG;
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::druids::DRUID_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let druid = e
+        .instantiate_creature(&DRUID_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // A bard is the control: a full caster with the same
+    // Constitution-save exposure and — unlike a sorcerer, whose class
+    // list prints the proficiency outright — nothing on its sheet that
+    // grants it.
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+
+    assert!(
+        e.actors[&druid].has_passive_feature(RESILIENT_CONSTITUTION_TAG),
+        "the druid chassis takes the feat"
+    );
+    assert!(
+        e.actors[&druid].is_save_proficient(AbilityScoreType::Constitution),
+        "and the cohort promotes the Constitution save to proficient"
+    );
+    assert!(
+        !e.actors[&druid].is_save_proficient(AbilityScoreType::Strength),
+        "the feat names one ability and grants one"
+    );
+    assert!(
+        !e.actors[&bard].is_save_proficient(AbilityScoreType::Constitution),
+        "a caster without the feat still rolls its concentration save bare"
+    );
+
+    // The modifier the save actually rolls with moves by the whole
+    // proficiency bonus, which is the point of the feat.
+    let pb = e.actors[&druid].proficiency_bonus();
+    let con = e.actors[&druid].ability_modifier(AbilityScoreType::Constitution);
+    assert_eq!(
+        e.actors[&druid].save_modifier(AbilityScoreType::Constitution),
+        con + pb,
+        "the bonus reaches the die"
+    );
+}

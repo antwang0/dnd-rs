@@ -28,6 +28,8 @@
 //! | Defensive Duelist | General | one swing a round, off the armour class |
 //! | Polearm Master | General | a bonus-action swing with the other end |
 //! | Sentinel | General | a swing on somebody else's turn, and their feet |
+//! | Athlete | General | the price of standing up, and of a running start |
+//! | Resilient | General | the proficiency bonus, onto the save that is rolled most |
 //! | Great Weapon Master | General | the proficiency bonus, onto one Heavy swing a turn |
 //! | Heavy Armor Master | General | the proficiency bonus, off every physical blow |
 //! | Mobile | General | ten feet, and the swing of whoever you just swung at |
@@ -931,6 +933,75 @@ pub static POLE_STRIKE_LANCE: PoleStrike = PoleStrike {
 /// psi warrior has Protective Field, and a barbarian has a free hand.
 pub const SENTINEL_TAG: &str = "feat.sentinel";
 
+/// **Athlete** (General feat), two of whose four clauses move a number
+/// the engine already tracks:
+///
+///   - *"Stand Up. When you have the Prone condition, you can right
+///     yourself with only 5 feet of movement."* — a gate on
+///     `default_actions::StandUp::cost`, which otherwise bills half the
+///     stander's speed. On a 30-ft chassis that is a saving of ten feet
+///     and, more to the point, the difference between getting up and
+///     still being in reach of whatever put you down.
+///   - *"Long Jump and High Jump. You can make a running Long Jump or a
+///     running High Jump after moving only 5 feet instead of 10 feet."*
+///     — a row on `ActorInstance::running_start_tiles`, beside the Thief
+///     Rogue's Second-Story Work, which is the same sentence with a
+///     different book in front of it. `SHORT_RUNNING_START_TILES` has
+///     existed since that feature shipped and is the number both read.
+///
+/// **The Climb Speed clause has no surface**, and it is the one absence
+/// here that is structural rather than unimplemented: *"You gain a Climb
+/// Speed equal to your Speed"* is worth nothing on a board with no
+/// vertical axis, which is the same answer the engine gives Spider
+/// Climb and the Scout Rogue's Superior Mobility — both of whose
+/// docstrings fold their climb clause into the walking speed and say so.
+/// Granting a second speed here would be granting a second copy of the
+/// first.
+///
+/// **The Ability Score Increase is absent** for the reason every feat in
+/// this file's says so: the engine builds finished stat blocks and has
+/// no level-up lane to apply one in.
+///
+/// Ships on `barbarians::BARBARIAN_TEMPLATE`. The barbarian is the
+/// chassis that spends the most turns Prone — Reckless Attack invites
+/// every trip and shove on the board, and the Topple mastery on a
+/// greataxe means it gives as good as it gets — so the five-foot stand
+/// is worth more to it than to anybody, and it is also the only chassis
+/// whose Athletics is its own stat line.
+pub const ATHLETE_TAG: &str = "feat.athlete";
+
+/// **Resilient (Constitution)** (General feat) — *"You gain proficiency
+/// in saving throws using the chosen ability."*
+///
+/// One row on `FLAG_DRIVEN_SAVE_PROFICIENCIES`, the cohort whose own
+/// docstring has been inviting exactly this since it was written.
+///
+/// **Constitution, and only Constitution.** RAW's feat is chosen per
+/// ability and there are six of them; the engine ships the one whose
+/// save it actually rolls on a cadence where the proficiency bonus
+/// changes outcomes. Constitution is the concentration save, which every
+/// concentrating caster on the roster rolls every time they are hit —
+/// the single most-rolled saving throw in the game — and it is the one
+/// ability whose feat a real table takes. A second ability is one more
+/// constant here and one more row there; the axis is deliberately a tag
+/// per ability rather than one tag plus a stored choice, because the
+/// engine's passive-feature lane is a set of strings and a choice would
+/// have to live somewhere else.
+///
+/// Ships on `druids::DRUID_TEMPLATE` — the class whose entire
+/// contribution to a fight is a concentration spell that has been up for
+/// three rounds (Moonbeam, Call Lightning, Entangle, Spike Growth) and
+/// which prints no Constitution proficiency to hold it with.
+///
+/// **Not the wizard**, which is the chassis the feat reads as and is
+/// named after at most tables. Every wizard subclass inherits the
+/// baseline feature set, and the Transmutation Wizard's Transmuter's
+/// Stone ships its **Resilience** attunement — the same Constitution
+/// save proficiency, bought with an attunement slot. A feat on the
+/// chassis would have made that attunement unobservable on the one
+/// creature in the engine that carries it.
+pub const RESILIENT_CONSTITUTION_TAG: &str = "feat.resilient.constitution";
+
 /// **Great Weapon Master** (General feat), *Heavy Weapon Mastery* —
 /// *"When you hit a creature with a Heavy weapon as part of the Attack
 /// action on your turn, you can cause the attack to deal extra damage
@@ -1468,6 +1539,8 @@ pub const FEAT_TAGS: &[&str] = &[
     DEFENSIVE_DUELIST_TAG,
     POLEARM_MASTER_TAG,
     SENTINEL_TAG,
+    ATHLETE_TAG,
+    RESILIENT_CONSTITUTION_TAG,
     GREAT_WEAPON_MASTER_TAG,
     HEAVY_ARMOR_MASTER_TAG,
     MOBILE_TAG,

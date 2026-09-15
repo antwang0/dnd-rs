@@ -459,6 +459,26 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]),
+        // **Resilient (Constitution)** — the feat this chassis needs
+        // more than any other caster on the roster. Look at the spell
+        // list above: Moonbeam, Call Lightning, Entangle, Spike Growth,
+        // Flaming Sphere, Plant Growth, Ice Storm, Insect Plague. A
+        // druid's whole contribution to a fight is a concentration
+        // spell that has been up for three rounds, and the save that
+        // holds it is a Constitution save the class prints no
+        // proficiency in. Inherited by every circle below through
+        // `..DRUID_TEMPLATE.clone()`, which is where it belongs: it is
+        // a fact about being a druid rather than about a circle.
+        //
+        // Not on the wizard, which is the other chassis the feat reads
+        // as: every wizard subclass inherits the baseline set, and the
+        // Transmutation Wizard's Transmuter's Stone ships its
+        // **Resilience** attunement — the same Constitution-save
+        // proficiency, bought with an attunement slot. A feat on the
+        // chassis would have made that attunement unobservable on the
+        // one creature that carries it.
+        // See `crate::actions::feats::RESILIENT_CONSTITUTION_TAG`.
+        features: HashSet::from([crate::actions::feats::RESILIENT_CONSTITUTION_TAG]),
         skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }

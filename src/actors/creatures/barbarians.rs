@@ -117,6 +117,18 @@ fn subclass_barbarian_template(
             FAST_MOVEMENT_TAG,
             crate::actions::feats::SAVAGE_ATTACKER_TAG,
             crate::actions::feats::GRAPPLER_TAG,
+            //   - **Athlete** (General) — the five-foot stand, and the
+            //     running start off half the approach. The barbarian is
+            //     the chassis that spends the most turns Prone:
+            //     Reckless Attack invites every trip and shove on the
+            //     board, and the Topple mastery on its own greataxe
+            //     means it is trading them. Standing for five feet
+            //     instead of half its speed is the difference between
+            //     getting up *and* swinging and getting up instead of
+            //     swinging. Pairs with Grappler above rather than
+            //     repeating it — one is about the floor, the other
+            //     about what you do to somebody on it.
+            crate::actions::feats::ATHLETE_TAG,
         ]),
         has_danger_sense: true,
         has_extra_attack: true,
@@ -224,7 +236,7 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // AND on the shared totem helper below. +10 ft walking speed
         // always-on (RAW gates on "not wearing heavy armor" but our
         // engine doesn't model armor tiers).
-        // The same two feats the shared subclass chassis takes — see
+        // The same three feats the shared subclass chassis takes — see
         // `subclass_barbarian_template`. Spelled out again because the
         // Berserker builds its own literal rather than going through
         // that helper.
@@ -235,6 +247,7 @@ pub static BARBARIAN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             FAST_MOVEMENT_TAG,
             crate::actions::feats::SAVAGE_ATTACKER_TAG,
             crate::actions::feats::GRAPPLER_TAG,
+            crate::actions::feats::ATHLETE_TAG,
         ]),
         has_danger_sense: true,
         has_extra_attack: true,

@@ -1200,6 +1200,18 @@ const FLAG_DRIVEN_SAVE_PROFICIENCIES: &[FlagDrivenSaveProficiency] = &[
         flag: |a| a.has_slippery_mind,
         ability: AbilityScoreType::Wisdom,
     },
+    // The **Resilient (Constitution)** feat — the first row on this
+    // cohort that arrives as a *choice* rather than as a class feature,
+    // and the first on an ability other than Wisdom. The concentration
+    // save is a Constitution save, which is what makes this the row a
+    // caster notices. See
+    // `crate::actions::feats::RESILIENT_CONSTITUTION_TAG`.
+    FlagDrivenSaveProficiency {
+        flag: |a| {
+            a.has_passive_feature(crate::actions::feats::RESILIENT_CONSTITUTION_TAG)
+        },
+        ability: AbilityScoreType::Constitution,
+    },
     // 5e Zealot Barbarian Iron Mind (subclass lv7): proficiency in
     // Wisdom saves. Same mechanical grant as Slippery Mind — kept as
     // a distinct flag so a rogue / zealot-barbarian multiclass would
@@ -2163,6 +2175,39 @@ const MOVER_OA_SUPPRESSORS: &[ActorFlagRow] = &[
     // two rows rather than one tag read twice.
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::AGILE_TAG),
+    },
+];
+
+/// Features that let their holder take a **running** jump off a 5-ft
+/// approach instead of RAW's 10 — SRD 5.2's *"if you move at least 10
+/// feet immediately before the jump"*, halved.
+///
+/// Two rows, and they are the same sentence printed in two books:
+///
+///   - 5e Thief Rogue **Second-Story Work** (subclass level 3) — *"you
+///     can determine the distance of a running Long Jump after moving
+///     only 5 feet"*.
+///   - The **Athlete** feat — *"You can make a running Long Jump or a
+///     running High Jump after moving only 5 feet instead of 10 feet."*
+///
+/// Read by `ActorInstance::running_start_tiles`, which picks between
+/// `SHORT_RUNNING_START_TILES` and `RUNNING_START_TILES`. A cohort
+/// rather than the `if` it replaced for the reason every other cohort in
+/// this file exists: the second source of a rule is where an `if`
+/// becomes a table, and the alternative here was an `||` that would have
+/// grown a third term the next time somebody printed the clause.
+///
+/// Boolean rather than a magnitude: the halving is all-or-nothing in
+/// both printings, and a hypothetical third row that wanted its own
+/// number would be a different lane rather than a wider column here.
+const SHORT_RUNNING_START_FEATURES: &[ActorFlagRow] = &[
+    ActorFlagRow {
+        flag: |a| {
+            a.has_passive_feature(crate::actions::class_features::SECOND_STORY_WORK_TAG)
+        },
+    },
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::feats::ATHLETE_TAG),
     },
 ];
 
@@ -11647,17 +11692,14 @@ impl ActorInstance {
     /// in the Long Jump rule that is about the route rather than about
     /// the jumper.
     ///
-    /// A creature-scoped question rather than a constant, because one
-    /// feature changes it: the Thief Rogue's **Second-Story Work** —
-    /// *"you can determine the distance of a running Long Jump after
-    /// moving only 5 feet"* — halves it. See
-    /// `class_features::SECOND_STORY_WORK_TAG` for why halving the
-    /// approach is worth more than it sounds.
+    /// A creature-scoped question rather than a constant, because two
+    /// features change it — see `SHORT_RUNNING_START_FEATURES`, which
+    /// is the whole of the answer.
     ///
     /// Read once per path by the jump lane in
     /// `EncounterInstance::dijkstra_path`, beside the two distances.
     pub fn running_start_tiles(&self) -> isize {
-        if self.has_passive_feature(crate::actions::class_features::SECOND_STORY_WORK_TAG) {
+        if self.matches_any(SHORT_RUNNING_START_FEATURES) {
             crate::engine::jumping::SHORT_RUNNING_START_TILES
         } else {
             crate::engine::jumping::RUNNING_START_TILES
