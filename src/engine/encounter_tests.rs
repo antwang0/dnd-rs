@@ -110361,3 +110361,268 @@ fn step_of_the_wind_doubles_the_jump_it_is_named_for() {
         "…and twice twelve feet clears twelve and a half"
     );
 }
+
+// =====================================================================
+// The hovering-blade layer. See `engine::hovering_blade` for what a
+// blade is and why it is a board layer rather than a zone, an actor or
+// a patch of conjured map.
+// =====================================================================
+
+/// The whole point of Spiritual Weapon, and the thing the engine's old
+/// melee-reach printing could not do: the cleric stays where they are
+/// and the mace goes across the room.
+#[test]
+fn a_spiritual_weapon_strikes_something_its_caster_is_nowhere_near() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    assert!(
+        e.footprint_distance(cleric, zombie).unwrap() > 1,
+        "the two are nowhere near each other, which is the case under test"
+    );
+    assert!(
+        SPIRITUAL_WEAPON.validate_input(&e, cleric, Some(&vec![zombie]), None, None),
+        "sixty feet of range is sixty feet of range"
+    );
+    for ef in SPIRITUAL_WEAPON.side_effects(&mut e, cleric, Some(&vec![zombie]), None, None) {
+        ef.apply(&mut e);
+    }
+    let blade = &e.hovering_blades()[0];
+    assert_eq!(blade.owner_id, cleric);
+    assert!(
+        e.footprint_distance_to_point(zombie, blade.origin).unwrap() <= 1,
+        "the mace hangs next to what it is hitting, not next to the cleric"
+    );
+    assert!(
+        e.actors[&cleric].is_concentrating(),
+        "SRD 5.2 makes the spell a concentration one"
+    );
+}
+
+/// The second naming of the spell is the bonus-action swing, not a
+/// second mace: one blade on the board, one slot spent, and the
+/// concentration the first cast opened is still held.
+#[test]
+fn a_second_spiritual_weapon_swings_the_first_one_instead_of_casting_again() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+        .unwrap();
+    let also_near = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(15, 10), 1, 1)
+        .unwrap();
+    let cast = |e: &mut EncounterInstance, at: usize| {
+        for ef in SPIRITUAL_WEAPON.side_effects(e, cleric, Some(&vec![at]), None, None) {
+            ef.apply(e);
+        }
+    };
+    assert!(
+        SPIRITUAL_WEAPON
+            .cost(&e, cleric, Some(&vec![near]), None, None)
+            .iter()
+            .any(|c| matches!(c, Resource::SpellSlot(2))),
+        "the first cast is a level-2 slot"
+    );
+    cast(&mut e, near);
+    assert_eq!(e.hovering_blades().len(), 1);
+
+    let repeat = SPIRITUAL_WEAPON.cost(&e, cleric, Some(&vec![also_near]), None, None);
+    assert!(
+        !repeat.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+        "swinging the mace again costs no second slot"
+    );
+    assert!(repeat.iter().any(|c| matches!(c, Resource::BonusAction)));
+    cast(&mut e, also_near);
+    assert_eq!(
+        e.hovering_blades().len(),
+        1,
+        "one mace, moved — not two maces"
+    );
+    assert!(
+        e.actors[&cleric].is_concentrating(),
+        "the cleric never let go, so the mace being swung must survive"
+    );
+}
+
+/// The leash is the spell. Twenty feet is eight tiles *from where the
+/// mace is*, and a target the mace cannot get next to is a target the
+/// spell refuses — which is what stops it from being a 60-ft
+/// bonus-action attack that hits whatever the cleric likes.
+#[test]
+fn a_spiritual_weapon_cannot_be_swung_past_its_own_leash() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let near = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 10), 1, 0)
+        .unwrap();
+    let far = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(22, 10), 1, 1)
+        .unwrap();
+    // Both are inside the spell's own 60 ft, so the cast could have
+    // gone to either.
+    assert!(SPIRITUAL_WEAPON.validate_input(&e, cleric, Some(&vec![far]), None, None));
+    for ef in SPIRITUAL_WEAPON.side_effects(&mut e, cleric, Some(&vec![near]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        !SPIRITUAL_WEAPON.custom_validate_input(&e, cleric, Some(&vec![far]), None, None),
+        "fourteen tiles is well past the mace's eight-tile step"
+    );
+    assert!(
+        SPIRITUAL_WEAPON.custom_validate_input(&e, cleric, Some(&vec![near]), None, None),
+        "…and the one it is already standing on is still in reach"
+    );
+}
+
+/// A mace has to hang *somewhere*. RAW's "a space of your choice" is a
+/// space, so a target with no open tile beside it is a target the blade
+/// cannot reach — and the spell says so rather than swinging out of
+/// nowhere.
+#[test]
+fn a_blade_needs_an_empty_space_to_hang_in() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    // A pocket exactly the size of one Medium body, walled out to two
+    // tiles on every side — which is how far `MELEE_REACH` measures a
+    // point from a 2-tile footprint.
+    let pocket = [(20, 10), (21, 10), (20, 11), (21, 11)];
+    let mut walls: Vec<(isize, isize)> = Vec::new();
+    for x in 18..=23 {
+        for y in 8..=13 {
+            if !pocket.contains(&(x, y)) {
+                walls.push((x, y));
+            }
+        }
+    }
+    let mut e = ei_with_terrain(40, 20, &walls);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let boxed_in = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    assert_eq!(
+        e.actors[&boxed_in].location(),
+        Coordinate::new(20, 10),
+        "the body is in the pocket, which is the case under test"
+    );
+    assert!(
+        !SPIRITUAL_WEAPON.custom_validate_input(&e, cleric, Some(&vec![boxed_in]), None, None),
+        "every tile the mace could hang in is wall"
+    );
+}
+
+/// The blade is a concentration layer like the other two: letting go
+/// takes it out of the air.
+#[test]
+fn a_blade_falls_when_its_caster_stops_concentrating() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+        .unwrap();
+    for ef in SPIRITUAL_WEAPON.side_effects(&mut e, cleric, Some(&vec![zombie]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.hovering_blades().len(), 1);
+    e.drop_concentration(cleric);
+    assert!(
+        e.hovering_blades().is_empty(),
+        "the mace is held up by the same grip a Moonbeam is"
+    );
+    assert!(!e.actors[&cleric].is_concentrating());
+}
+
+/// Arcane Sword's action economy, which is RAW's and is the one thing
+/// it does not share with the mace: an Action and a seventh-level slot
+/// to conjure it, a Bonus Action and nothing else to swing it again.
+#[test]
+fn the_arcane_sword_costs_an_action_to_conjure_and_a_bonus_action_to_swing() {
+    use crate::actions::spells::MORDENKAINENS_SWORD;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 10), 1, 0)
+        .unwrap();
+    let first = MORDENKAINENS_SWORD.cost(&e, wiz, Some(&vec![zombie]), None, None);
+    assert!(first.iter().any(|c| matches!(c, Resource::Action)));
+    assert!(first.iter().any(|c| matches!(c, Resource::SpellSlot(7))));
+    for ef in MORDENKAINENS_SWORD.side_effects(&mut e, wiz, Some(&vec![zombie]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.hovering_blades().len(), 1);
+    let repeat = MORDENKAINENS_SWORD.cost(&e, wiz, Some(&vec![zombie]), None, None);
+    assert!(repeat.iter().any(|c| matches!(c, Resource::BonusAction)));
+    assert!(
+        !repeat.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+        "the sword is already out; swinging it buys nothing"
+    );
+}
+
+/// Fire Shield's own qualifier, which the engine had never read:
+/// *"whenever a creature **within 5 feet of you** hits you with a melee
+/// attack roll"*. A spectral mace swung from across the room is the
+/// case that made the omission visible, and reach weapons are the case
+/// it was always about.
+#[test]
+fn a_fire_shield_does_not_burn_an_attacker_it_cannot_reach() {
+    use crate::engine::attack::push_melee_reflect_riders;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let attacker = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    let shielded = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&shielded)
+        .unwrap()
+        .add_condition(Condition::FireShielded, ConditionTimer::Permanent);
+
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    push_melee_reflect_riders(&mut e, &mut effects, attacker, shielded);
+    assert!(
+        effects.is_empty(),
+        "eighteen tiles of air is not 'within 5 feet of you'"
+    );
+
+    // Walk the attacker into contact and the shield erupts as it always
+    // did — the gate narrows the rule, it does not remove it.
+    e.place_actor_at(attacker, Coordinate::new(18, 10)).unwrap();
+    push_melee_reflect_riders(&mut e, &mut effects, attacker, shielded);
+    assert!(
+        !effects.is_empty(),
+        "toe to toe, the flames still answer the swing"
+    );
+}

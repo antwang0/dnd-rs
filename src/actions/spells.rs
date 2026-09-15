@@ -13,13 +13,14 @@ use crate::{
         action_overrides::ActionOverride,
         conjured_terrain::{ConjuredTerrain, block_tiles, wall_tiles},
         dice::Dice,
+        hovering_blade::BladeProfile,
         lighting::{LightAnchor, LightSource, TORCH_BRIGHT_TILES, TORCH_DIM_TILES},
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
         side_effects::{
-            ApplicableSideEffect, ApplyCondition, ConjureTerrain, DealDamage, GainTempHp, Heal,
-            InstallZone, MoveZone, Resource, StartConcentration, install_condition_with_link,
-            install_fragile_condition,
+            ApplicableSideEffect, ApplyCondition, ConjureBlade, ConjureTerrain, DealDamage,
+            FlyBlade, GainTempHp, Heal, InstallZone, MoveZone, Resource, StartConcentration,
+            install_condition_with_link, install_fragile_condition,
         },
         terrain::TerrainType,
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
@@ -755,6 +756,97 @@ fn steered_zone_validate(
         return steered_zone_move(encounter, caster_id, zone_name, target_locations).is_some();
     }
     encounter.caster_can_concentrate(caster_id)
+}
+
+/// The hovering-blade cohort's shared resolution: put the blade where
+/// it has to be to reach `target_id`, then swing it.
+///
+/// One function, three callers — Spiritual Weapon, Arcane Sword and the
+/// Dancing Sword — because RAW writes the same two sentences for each
+/// of them and the only things that differ are the numbers on the
+/// `BladeProfile` and the dice. See `crate::engine::hovering_blade` for
+/// what the blade is and why it is a board layer of its own.
+///
+/// The branch is the whole idiom: a caster with no blade up is casting
+/// the spell, and one with a blade up is swinging it again. Neither
+/// branch is reachable by accident — `blade_strike_anchor` has already
+/// refused every target the blade cannot get to, and the action's
+/// `custom_validate_input` asks it the same question before a resource
+/// is spent.
+///
+/// Both halves of RAW's damage line read the *same* ability — *"Force
+/// damage equal to 1d8 plus your spellcasting ability modifier"* — so
+/// the attack and the bonus resolve it once and share it. Attacking off
+/// one stat and adding damage off another would be a caster with two
+/// spellcasting abilities, which is not a thing.
+///
+/// `is_melee: true`, because RAW calls it a melee spell attack and the
+/// blade really is standing next to what it is hitting. Two clauses
+/// downstream of that flag measure from the *caster* instead, and are
+/// wrong by the width of the room for as long as they do:
+/// **cover**, which a blade next to its target should never suffer and
+/// which `spell_cover_ac_bonus` reads off the caster's line of sight;
+/// and the **melee reflect** cohort (Fire Shield and its siblings),
+/// whose RAW trigger is "a creature *within 5 feet of you* that hits
+/// you" and which now asks exactly that question — see
+/// `engine::attack::push_melee_reflect_riders`, where the distance gate
+/// this spell needed turned out to be a rule the reach weapons had been
+/// missing all along. The cover half stays approximate: the attack
+/// pipeline is handed an attacker id and not an origin tile, and
+/// threading one through both chokepoints is a change to every swing in
+/// the engine rather than to this spell.
+fn blade_strike(
+    encounter: &mut EncounterInstance,
+    caster_id: usize,
+    profile: &BladeProfile,
+    target_id: usize,
+    dice: Dice,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    let Some(anchor) = encounter.blade_strike_anchor(caster_id, profile, target_id) else {
+        return Vec::new();
+    };
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return Vec::new();
+    };
+    let ability = caster.best_spellcasting_ability(
+        crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES,
+    );
+    let attack_bonus = caster.spell_attack_modifier(ability);
+    let damage_bonus = caster.ability_modifier(ability);
+    let existing = encounter
+        .blade_sustained_by(caster_id, profile.name)
+        .map(|b| (b.id, b.dice));
+    // The move goes in front of the damage so the two land in the order
+    // they happen — the blade arrives, and then the thing it arrived
+    // next to takes the hit.
+    let (mut effects, dice): (Vec<Box<dyn ApplicableSideEffect>>, Dice) = match existing {
+        // A blade already in the air keeps the dice it was conjured
+        // with. The slot that bought the upcast was spent on the cast
+        // and there is nothing in hand on a later turn to re-derive it
+        // from — see `BladeProfile::conjure`.
+        Some((blade_id, held)) => (
+            vec![Box::new(FlyBlade { blade_id, dest: anchor })],
+            held,
+        ),
+        None => (
+            vec![Box::new(ConjureBlade {
+                blade: profile.conjure(caster_id, anchor, dice),
+            })],
+            dice,
+        ),
+    };
+    effects.extend(spell_attack_with_bonus(
+        encounter,
+        caster_id,
+        target_id,
+        profile.name,
+        attack_bonus,
+        dice,
+        damage_bonus,
+        profile.damage_type,
+        true,
+    ));
+    effects
 }
 
 /// `steered_zone_cost` for a spell whose sustained thing is a held
@@ -4061,14 +4153,90 @@ impl Action for ChillTouch {
 
 pub static CHILL_TOUCH: LazyLock<ChillTouch> = LazyLock::new(|| ChillTouch {});
 
-/// Spiritual Weapon — level-2 evocation. Bonus action; the caster makes
-/// a melee spell attack (using WIS modifier + proficiency, no STR) against
-/// a target within reach (we collapse the floating-weapon range to
-/// melee reach since we don't yet model summoned terrain). On hit:
-/// 1d8 + WIS mod force damage. Reach 1 tile (5 ft). No concentration.
+/// Spiritual Weapon — SRD 5.2 level-2 evocation, Bonus Action, 60 ft,
+/// Concentration up to 1 minute.
+///
+/// > You create a floating, spectral force that resembles a weapon of
+/// > your choice and lasts for the duration. The force appears within
+/// > range in a space of your choice, and you can immediately make one
+/// > melee spell attack against one creature within 5 feet of the
+/// > force. On a hit, the target takes Force damage equal to 1d8 plus
+/// > your spellcasting ability modifier.
+/// >
+/// > As a Bonus Action on your later turns, you can move the force up
+/// > to 20 feet and repeat the attack against a creature within 5 feet
+/// > of it.
+///
+/// This used to be a melee spell attack **from the cleric's own hand**,
+/// under a docstring that said why: *"we collapse the floating-weapon
+/// range to melee reach since we don't yet model summoned terrain."*
+/// What that collapse threw away was the spell. A cleric who has to be
+/// adjacent to whatever the mace is hitting is a cleric standing in the
+/// front rank, which is the exact position Spiritual Weapon is cast to
+/// avoid — and the recurring bonus-action swing, the half of the spell
+/// that makes it the most-cast level-2 slot in the game, had nowhere to
+/// live at all.
+///
+/// It lives on `crate::engine::hovering_blade` now: the mace is a point
+/// on the board with an owner and a countdown, placed anywhere inside
+/// 60 ft on the cast and moved up to 20 ft on each later swing. Naming
+/// the spell again while the mace is up is the swing — a bonus action
+/// and no slot — which is the same idiom Moonbeam and Flaming Sphere
+/// reach their own repositioning through.
+///
+/// **The target is what the caster names, and the tile is derived.**
+/// A player who says "spiritual weapon, the ogre" has said everything
+/// they meant; `blade_strike_anchor` finds the closest unoccupied tile
+/// next to that ogre which the mace can reach from where it is, and
+/// refuses the swing when there isn't one. That refusal is the leash,
+/// and the leash is what keeps the spell honest: a mace parked on the
+/// ogre in the doorway cannot also answer the archer thirty feet
+/// behind it, and picking which of them to follow is the decision the
+/// spell asks every round.
+///
+/// **Upcast**: *"the damage increases by 1d8 for every slot level above
+/// 2."* Resolved once, at the cast, and remembered on the blade — the
+/// later swings are free and have no slot in hand to re-derive it from.
 pub struct SpiritualWeapon {}
 
+impl SpiritualWeapon {
+    /// The mace. 60 ft to place it (24 tiles), 20 ft a turn thereafter
+    /// (8), ten rounds of concentration, and no swing budget — this one
+    /// keeps hitting until the minute or the concentration runs out.
+    const BLADE: BladeProfile = BladeProfile {
+        name: "spiritual weapon",
+        glyph: '†',
+        cast_reach: 24,
+        step: 8,
+        rounds: 10,
+        concentration: true,
+        swings: None,
+        dice: Dice::new(1, 8),
+        damage_type: DamageType::Force,
+    };
+}
+
 impl Action for SpiritualWeapon {
+    /// Queues a `StartConcentration` on the branch that conjures the
+    /// mace. Declared so the AI's summon and area-control rungs can
+    /// price the cast before trading a landed concentration effect for
+    /// an unlanded one — and so the assertion in `Action::execute`
+    /// stays quiet.
+    ///
+    /// True on both branches, including the swing, which is the
+    /// conservative direction: a swing does not *start* concentration,
+    /// but it only happens while the caster is already concentrating on
+    /// this spell, so nothing that reads this flag is misled about what
+    /// the caster is holding.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    /// *"The damage increases by 1d8 for every slot level above 2."*
+    /// Declared rather than derived, and pinned against the `cast_level`
+    /// read in `cost` by `every_spell_that_prices_an_upcast_declares_it`.
+    fn scales_with_slot(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "spiritual weapon"
     }
@@ -4078,9 +4246,19 @@ impl Action for SpiritualWeapon {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
+    /// The spell's own 60 ft, and it is measured — as everything on this
+    /// lane is — from the caster to the *target* rather than from the
+    /// mace.
+    ///
+    /// What that buys is an engine-imposed leash RAW does not print: a
+    /// mace that has walked more than 60 ft from its cleric cannot be
+    /// swung at the thing it is standing next to. It is the
+    /// conservative direction, and the alternative is worse — a
+    /// declared reach of `None` takes the spell out of the AI's own
+    /// ranged-option sweep and off the UI's reach filter, which are the
+    /// two things that make a 60-ft bonus action worth having.
     fn reach_tiles(&self) -> Option<isize> {
-        // We model the floating weapon as caster-melee for now.
-        Some(crate::actions::action_template::MELEE_REACH)
+        Some(Self::BLADE.cast_reach)
     }
     /// Evocation, as written. Nothing reads the school of this spell
     /// for a school-gated feature; what reads it is
@@ -4093,18 +4271,44 @@ impl Action for SpiritualWeapon {
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
     }
+    fn requires_los(&self) -> bool {
+        true
+    }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Force]
     }
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        bonus_action_and_slot(2)
+        // A bonus action either way; the slot is what the first cast
+        // costs and the later swings do not.
+        crate::engine::hovering_blade::blade_cost(
+            e,
+            c,
+            &Self::BLADE,
+            bonus_action_only(),
+            bonus_action_and_slot(crate::engine::action_overrides::cast_level(overrides, 2)),
+        )
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        crate::engine::hovering_blade::blade_validate(
+            encounter,
+            caster_id,
+            &Self::BLADE,
+            target_ids,
+        )
     }
     fn side_effects(
         &self,
@@ -4112,35 +4316,31 @@ impl Action for SpiritualWeapon {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        // RAW: "a melee spell attack ... 1d8 force damage plus your
-        // spellcasting ability modifier." Both halves read the *same*
-        // ability, so they resolve it once and share it — attacking off
-        // one stat and adding damage off another would be a caster with
-        // two spellcasting abilities, which is not a thing.
-        let ability = caster.best_spellcasting_ability(
-            crate::actors::actor_template::ActorInstance::SPELLCASTING_ABILITIES,
+        let lvl = crate::engine::action_overrides::cast_level(overrides, 2);
+        let dice = Dice::new(
+            Self::BLADE.dice.count + lvl.saturating_sub(2),
+            Self::BLADE.dice.faces,
         );
-        let attack_bonus = caster.spell_attack_modifier(ability);
-        let damage_bonus = caster.ability_modifier(ability);
-        spell_attack_with_bonus(
-            encounter,
-            caster_id,
-            target_id,
-            "spiritual weapon",
-            attack_bonus,
-            Dice::new(1, 8),
-            damage_bonus,
-            DamageType::Force,
-            true,
-        )
+        let already_up = encounter
+            .blade_sustained_by(caster_id, Self::BLADE.name)
+            .is_some();
+        let mut effects = blade_strike(encounter, caster_id, &Self::BLADE, target_id, dice);
+        // No `StartConcentration` on the swing branch: the cleric never
+        // let go, and re-announcing the spell would tear down the mace
+        // being swung. The same clause, for the same reason, as
+        // Moonbeam's reposition branch.
+        if !already_up && !effects.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Spiritual Weapon"),
+            }));
+        }
+        effects
     }
 }
 
@@ -18797,24 +18997,75 @@ impl Action for MassPolymorph {
 
 pub static MASS_POLYMORPH: LazyLock<MassPolymorph> = LazyLock::new(|| MassPolymorph {});
 
-/// Mordenkainen's Sword — 5e level-7 evocation, concentration, action.
-/// RAW: a sword of force appears within range; on cast and then each
-/// subsequent turn as a bonus action you can swing it for 3d10 force
-/// damage on hit. The "bonus-action recurring attack" pattern is
-/// awkward in this engine's one-action-per-spell model, so we collapse
-/// to a heavier on-cast hit (5d10 force, melee spell attack) plus a
+/// Arcane Sword — SRD 5.2 level-7 evocation, Action, 90 ft,
+/// Concentration up to 1 minute. Printed as *Mordenkainen's Sword* in
+/// earlier editions, which is the name the engine still answers to.
+///
+/// > You create a spectral sword that hovers within range. It lasts for
+/// > the duration. When the sword appears, you make a melee spell attack
+/// > against a target within 5 feet of the sword. On a hit, the target
+/// > takes Force damage equal to 4d12 plus your spellcasting ability
+/// > modifier.
+/// >
+/// > On your later turns, you can take a Bonus Action to move the sword
+/// > up to 30 feet to a spot you can see and repeat the attack against
+/// > the same target or a different one.
+///
+/// The big brother of Spiritual Weapon, and the engine used to have the
+/// same hole in both of them. This one shipped as a single heavier hit
+/// under a docstring that said so — *"the 'bonus-action recurring
+/// attack' pattern is awkward in this engine's one-action-per-spell
+/// model, so we collapse to a heavier on-cast hit (5d10 force …) plus a
 /// concentration mark that the AI can drop and re-cast — close enough
-/// in damage budget to one cast + ~3-4 sustained sword swings RAW.
-/// The mark also primes the Slowed condition on a hit (force is
-/// gravitically dense in 5e flavor — RAW Mordenkainen's "sword" cuts
-/// motion as well as flesh). Single-target.
+/// in damage budget to one cast + ~3-4 sustained sword swings RAW."*
+///
+/// It is not close enough, and the reason is not the arithmetic. A
+/// seventh-level slot that buys one attack roll is a slot you spend on
+/// Finger of Death; a seventh-level slot that buys a bonus-action
+/// attack every round for a minute is a slot you spend on this, and
+/// what the collapse removed was the entire reason to cast it. Both
+/// halves are here now, on the shared blade lane — see
+/// `crate::engine::hovering_blade`.
+///
+/// Two further departures from the old printing, both toward the book:
+///
+///   - **4d12, not 5d10.** SRD 5.2 prints 4d12 plus the caster's
+///     spellcasting modifier; the 5d10 was the inflated one-shot
+///     standing in for the swings that are now real.
+///   - **No Slowed rider.** The old implementation primed one on the
+///     grounds that *"force is gravitically dense in 5e flavor"*. RAW
+///     says nothing of the kind, and a level-7 spell that hits every
+///     round for a minute does not need a save-less condition on top.
+///
+/// The action economy is RAW's and is the one asymmetry with Spiritual
+/// Weapon worth naming: the *cast* is an Action and the swings are
+/// Bonus Actions, where the mace is a Bonus Action throughout. That
+/// falls straight out of `blade_cost`, which prices the two branches
+/// separately.
 pub struct MordenkainensSword {}
 
+impl MordenkainensSword {
+    /// The sword. 90 ft to place it (36 tiles), 30 ft a turn thereafter
+    /// (12), ten rounds of concentration, and no swing budget.
+    const BLADE: BladeProfile = BladeProfile {
+        name: "mordenkainen's sword",
+        glyph: '†',
+        cast_reach: 36,
+        step: 12,
+        rounds: 10,
+        concentration: true,
+        swings: None,
+        dice: Dice::new(4, 12),
+        damage_type: DamageType::Force,
+    };
+}
+
 impl Action for MordenkainensSword {
-    /// Queues a `StartConcentration`. Declared so the AI's
-    /// summon and area-control rungs can price this cast before
-    /// trading a landed concentration effect for an unlanded one
-    /// — and so the assertion in `Action::execute` stays quiet.
+    /// Queues a `StartConcentration` on the branch that conjures the
+    /// sword. Declared so the AI's summon and area-control rungs can
+    /// price this cast before trading a landed concentration effect for
+    /// an unlanded one — and so the assertion in `Action::execute`
+    /// stays quiet.
     fn holds_concentration(&self) -> bool {
         true
     }
@@ -18830,10 +19081,12 @@ impl Action for MordenkainensSword {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
+    /// The spell's own 90 ft. Measured caster-to-target rather than
+    /// blade-to-target, for the reason `SpiritualWeapon::reach_tiles`
+    /// spells out — and at 36 tiles it is wider than the board is long,
+    /// so the bound this leaves on paper is one no encounter reaches.
     fn reach_tiles(&self) -> Option<isize> {
-        // 60ft to the conjure point + 5ft reach for the sword itself —
-        // we collapse to a flat 24-tile spell range.
-        Some(24)
+        Some(Self::BLADE.cast_reach)
     }
     fn requires_los(&self) -> bool {
         true
@@ -18843,13 +19096,36 @@ impl Action for MordenkainensSword {
     }
     fn cost(
         &self,
-        _e: &EncounterInstance,
-        _c: usize,
+        e: &EncounterInstance,
+        c: usize,
         _ti: Option<&Vec<usize>>,
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(7)
+        // RAW's asymmetry: an Action and a slot to conjure it, a Bonus
+        // Action and nothing else to swing it again.
+        crate::engine::hovering_blade::blade_cost(
+            e,
+            c,
+            &Self::BLADE,
+            bonus_action_only(),
+            action_and_slot(7),
+        )
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        crate::engine::hovering_blade::blade_validate(
+            encounter,
+            caster_id,
+            &Self::BLADE,
+            target_ids,
+        )
     }
     fn side_effects(
         &self,
@@ -18862,33 +19138,22 @@ impl Action for MordenkainensSword {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        // Spell uses the caster's best mental ability — wizards (INT),
-        // sorcerers (CHA), and warlocks (CHA) all get Mordenkainen's
-        // Sword on their published lists.
-        let attack_bonus = caster.spellcasting_attack_modifier();
-        // 5d10 force on hit — a melee spell attack, so reach + footprint
-        // adjacency apply via resolve_attack's melee path.
-        let mut effects = spell_attack_with_bonus(
+        let already_up = encounter
+            .blade_sustained_by(caster_id, Self::BLADE.name)
+            .is_some();
+        let mut effects = blade_strike(
             encounter,
             caster_id,
+            &Self::BLADE,
             target_id,
-            "mordenkainen's sword",
-            attack_bonus,
-            Dice::new(5, 10),
-            0,
-            DamageType::Force,
-            true,
+            Self::BLADE.dice,
         );
-        // Concentration mark — drops on damage / next concentration cast.
-        // We always install regardless of hit/miss (RAW: the sword
-        // persists for the duration even if the first swing whiffs).
-        effects.push(Box::new(StartConcentration {
-            caster_id,
-            data: ConcentrationData::new("Mordenkainen's Sword"),
-        }));
+        if !already_up && !effects.is_empty() {
+            effects.push(Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Mordenkainen's Sword"),
+            }));
+        }
         effects
     }
 }

@@ -294,6 +294,24 @@ pub fn render_map(
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD),
                 ));
+            } else if let Some(blade) =
+                encounter.hovering_blades().iter().find(|b| b.origin == coord)
+            {
+                // A spectral weapon draws above the ground and below
+                // anything standing on it, for the same reason a zone
+                // does — except that the blade is the rarer case of a
+                // thing whose *position* is the whole rule. A player who
+                // cannot see where their own Spiritual Weapon is has no
+                // way to work out what it can reach next round, which is
+                // the only decision the spell asks. Magenta rather than
+                // the zone layer's cyan, because it is the one thing on
+                // this layer that belongs to somebody and swings.
+                row.push(Span::styled(
+                    blade.glyph.to_string(),
+                    Style::default()
+                        .fg(Color::Magenta)
+                        .add_modifier(Modifier::BOLD),
+                ));
             } else if let Some(glyph) = zone_glyph(encounter, coord) {
                 // A persistent magical area draws over bare ground —
                 // above terrain (the fog is what matters about the tile
@@ -675,7 +693,10 @@ pub fn render_sideinfo(
     // a wall, which is the point — so the map is the one thing that
     // *cannot* tell a player that the corridor they are looking at is
     // going to reopen in four rounds.
-    if !encounter.zones().is_empty() || !encounter.conjured_terrain().is_empty() {
+    if !encounter.zones().is_empty()
+        || !encounter.conjured_terrain().is_empty()
+        || !encounter.hovering_blades().is_empty()
+    {
         initiative_lines.push(Line::from(""));
         let mut layer_line = |glyph: char, name: &str, detail: String| {
             initiative_lines.push(Line::from(vec![
@@ -721,6 +742,22 @@ pub fn render_sideinfo(
                     patch.restore.len(),
                     patch.rounds_remaining
                 ),
+            );
+        }
+        // And the blades, which carry one column the other two layers
+        // don't: a Dancing Sword ends on a count of swings rather than
+        // on its clock, so printing only the rounds would be the panel
+        // saying the sword has four more turns in it when it has one
+        // more swing. See `hovering_blade::BladeProfile::swings`.
+        for blade in encounter.hovering_blades() {
+            let clock = match blade.swings_remaining {
+                Some(swings) => format!("{} swings", swings),
+                None => format!("{}r", blade.rounds_remaining),
+            };
+            layer_line(
+                blade.glyph,
+                blade.name,
+                format!(" {} — {}", blade.origin, clock),
             );
         }
     }

@@ -309,6 +309,7 @@ use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::conjured_terrain::ConjuredTerrain;
+use crate::engine::hovering_blade::{BladeProfile, HoveringBlade};
 use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
 use crate::engine::weather::Weather;
 use crate::engine::zones::Zone;
@@ -2392,6 +2393,13 @@ pub struct EncounterInstance {
     /// of sight when no combination of `ZoneEffect` fields can.
     conjured_terrain: Vec<ConjuredTerrain>,
     conjured_terrain_id_next: usize,
+    /// Spectral weapons hanging in the air — see
+    /// `crate::engine::hovering_blade`. The fourth and smallest board
+    /// layer, and the one that is neither an overlay on the map nor a
+    /// replacement of it: a blade is a *point*, it changes nothing
+    /// about the tile under it, and it is not a body anybody can hit.
+    hovering_blades: Vec<HoveringBlade>,
+    hovering_blade_id_next: usize,
     /// The light the board has before anybody lights anything — see
     /// `crate::engine::lighting`. `BrightLight` by default, which is
     /// the fully-lit board every encounter behaved as before the
@@ -9252,6 +9260,213 @@ impl EncounterInstance {
         }
     }
 
+    /// Every spectral weapon in the air, in the order it was conjured.
+    pub fn hovering_blades(&self) -> &[HoveringBlade] {
+        &self.hovering_blades
+    }
+
+    /// The blade `owner_id` has up under `name`, if any — the handle a
+    /// blade-bearing action re-enters through.
+    ///
+    /// Matched on `(owner, name)` rather than on a remembered id for the
+    /// same reason `zone_sustained_by` is: the caller is a zero-sized
+    /// static with nowhere to keep one. Spiritual Weapon cast a second
+    /// time is not a second blade; it is the first one being swung
+    /// again, and this is how the spell tells those two cases apart.
+    pub fn blade_sustained_by(&self, owner_id: usize, name: &str) -> Option<&HoveringBlade> {
+        self.hovering_blades
+            .iter()
+            .find(|b| b.owner_id == owner_id && b.name == name)
+    }
+
+    /// Put a blade in the air and return the handle the teardown paths
+    /// key off.
+    pub fn conjure_blade(&mut self, mut blade: HoveringBlade) -> usize {
+        let id = self.hovering_blade_id_next;
+        self.hovering_blade_id_next += 1;
+        blade.id = id;
+        let (name, origin) = (blade.name, blade.origin);
+        self.hovering_blades.push(blade);
+        self.log(format!("  a {} hangs in the air at {}.", name, origin));
+        id
+    }
+
+    /// Fly a blade to `dest`. Returns false — and changes nothing — for
+    /// an unknown id.
+    ///
+    /// The leash is *not* checked here, and deliberately: this is the
+    /// write side, and the read side that owns the rule is
+    /// `blade_strike_anchor`, which never returns a tile the blade
+    /// cannot reach. Re-asking here would put the same clause in two
+    /// places and let them drift.
+    pub fn move_blade(&mut self, blade_id: usize, dest: Coordinate) -> bool {
+        let Some(blade) = self.hovering_blades.iter_mut().find(|b| b.id == blade_id) else {
+            return false;
+        };
+        blade.origin = dest;
+        true
+    }
+
+    /// Take a blade out of the air. Returns true if one was there.
+    pub fn dismiss_blade(&mut self, blade_id: usize) -> bool {
+        let Some(index) = self.hovering_blades.iter().position(|b| b.id == blade_id) else {
+            return false;
+        };
+        self.hovering_blades.remove(index);
+        true
+    }
+
+    /// Bill a blade for the swing it just made, and take it out of the
+    /// air if that was its last.
+    ///
+    /// Only the counted blades have anything to spend — see
+    /// `BladeProfile::swings`. The two spells return `None` here and
+    /// keep swinging until their timer runs out; the Dancing Sword is
+    /// the one RAW counts, *"after the hovering weapon attacks for the
+    /// fourth time, it flies back to you"*, and this is where the
+    /// fourth time is noticed.
+    pub fn blade_swung(&mut self, blade_id: usize) {
+        let Some(blade) = self.hovering_blades.iter_mut().find(|b| b.id == blade_id) else {
+            return;
+        };
+        let Some(left) = blade.swings_remaining else {
+            return;
+        };
+        let left = left.saturating_sub(1);
+        blade.swings_remaining = Some(left);
+        if left > 0 {
+            return;
+        }
+        let name = blade.name;
+        self.dismiss_blade(blade_id);
+        self.log(format!("  the {} flies back to its wielder's hand.", name));
+    }
+
+    /// Where a blade would have to hover to swing at `target_id`, or
+    /// `None` when it cannot get there.
+    ///
+    /// **The whole of the leash rule, and the whole of the validation**
+    /// the three blade-bearing actions need — the prompt, the UI target
+    /// filter and the AI all reach the answer through here rather than
+    /// each re-deriving it.
+    ///
+    /// Two cases, and they differ only in what the distance is measured
+    /// from:
+    ///
+    ///   - **No blade up yet.** This is the cast, so the tile has to be
+    ///     inside the spell's own range, measured from the caster's
+    ///     body: RAW's *"the force appears within range in a space of
+    ///     your choice"*.
+    ///   - **A blade already up.** This is a later turn, so the tile
+    ///     has to be inside `step` of *where the blade is* — not of
+    ///     where its owner is standing. A sword walked across the room
+    ///     travels its thirty feet from there, and that is the clause
+    ///     that makes the spell a decision every round.
+    ///
+    /// The tile must be somewhere a body could stand — in bounds, on
+    /// passable ground, and unoccupied. RAW says "a space of your
+    /// choice" and a space with an ogre in it is not one; the practical
+    /// effect is that a target ringed by its own allies is a target the
+    /// blade cannot reach, which is the correct answer and a genuinely
+    /// interesting one.
+    ///
+    /// Ties are broken toward the blade's current position by
+    /// `rings_outward`, which walks the closest ring first — so a blade
+    /// that does not need to move does not move, and one that does
+    /// spends as little of its leash as it can.
+    pub fn blade_strike_anchor(
+        &self,
+        caster_id: usize,
+        profile: &BladeProfile,
+        target_id: usize,
+    ) -> Option<Coordinate> {
+        let target = self.actors.get(&target_id)?;
+        let target_loc = target.location();
+        let target_span = get_tiles_from_size(target.size());
+        // Where the blade is flying from, and how far it may fly.
+        let (from, leash) = match self.blade_sustained_by(caster_id, profile.name) {
+            Some(blade) => (blade.origin, blade.step),
+            None => (self.actors.get(&caster_id)?.location(), profile.cast_reach),
+        };
+        // The search only ever has to look as far as the leash allows,
+        // and every candidate must also be next to the target — so the
+        // ring walk is the cheaper of the two envelopes to walk.
+        let reachable = |tile: &Coordinate| {
+            self.is_spawnable(*tile)
+                && footprint_chebyshev(*tile, 1, target_loc, target_span)
+                    <= crate::actions::action_template::MELEE_REACH
+        };
+        // `rings_outward` skips the centre, which would otherwise be the
+        // answer whenever the blade is already parked in reach and has
+        // no need to move at all.
+        if reachable(&from) {
+            return Some(from);
+        }
+        rings_outward(from, leash).find(reachable)
+    }
+
+    /// Expire one round off every blade and take down the ones that ran
+    /// out — or whose owner stopped being there to swing them. Called
+    /// from `round_end`, beside `tick_zones`.
+    ///
+    /// The second clause is the one the other two map layers don't
+    /// need. A zone and a wall are things that were *put somewhere* and
+    /// stay put whether or not anybody is left holding them (their
+    /// concentration-held members excepted, which `drop_concentration`
+    /// sweeps). A blade is being *swung*: every sentence RAW writes
+    /// about one is a sentence about its wielder, and a spectral mace
+    /// hanging over the corpse of the cleric who conjured it is nobody's
+    /// reading of the spell. So it falls when its owner does, whether or
+    /// not concentration was ever involved — which is also what makes
+    /// the Dancing Sword, the one blade on the layer that needs no
+    /// concentration at all, behave.
+    fn tick_hovering_blades(&mut self) {
+        let mut expired: Vec<(usize, &'static str)> = Vec::new();
+        let mut bereaved: Vec<usize> = Vec::new();
+        for blade in self.hovering_blades.iter_mut() {
+            blade.rounds_remaining = blade.rounds_remaining.saturating_sub(1);
+            if blade.rounds_remaining == 0 {
+                expired.push((blade.id, blade.name));
+                if blade.concentration {
+                    bereaved.push(blade.owner_id);
+                }
+            }
+        }
+        let orphaned: Vec<(usize, &'static str)> = self
+            .hovering_blades
+            .iter()
+            .filter(|b| {
+                !self
+                    .actors
+                    .get(&b.owner_id)
+                    .is_some_and(|a| a.is_combat_active())
+            })
+            .map(|b| (b.id, b.name))
+            .collect();
+        for (id, name) in expired.into_iter().chain(orphaned) {
+            if self.dismiss_blade(id) {
+                self.log(format!("The {} winks out.", name));
+            }
+        }
+        self.pending_concentration_review.append(&mut bereaved);
+    }
+
+    /// Take down every concentration-held blade `actor_id` is swinging.
+    /// The blade-layer twin of `remove_concentration_zones_of`, called
+    /// from the same chokepoint and for the same reason.
+    fn remove_concentration_blades_of(&mut self, actor_id: usize) {
+        let doomed: Vec<(usize, &'static str)> = self
+            .hovering_blades
+            .iter()
+            .filter(|b| b.concentration && b.owner_id == actor_id)
+            .map(|b| (b.id, b.name))
+            .collect();
+        for (id, name) in doomed {
+            self.dismiss_blade(id);
+            self.log(format!("The {} falls out of the air.", name));
+        }
+    }
+
     /// The area `owner_id` is sustaining under the given name, if any.
     ///
     /// The handle the steered cohort re-enters through: Moonbeam cast a
@@ -9570,6 +9785,7 @@ impl EncounterInstance {
     fn release_map_layers_of(&mut self, actor_id: usize) {
         self.remove_concentration_zones_of(actor_id);
         self.remove_concentration_terrain_of(actor_id);
+        self.remove_concentration_blades_of(actor_id);
     }
 
     fn remove_concentration_zones_of(&mut self, actor_id: usize) {
@@ -13951,6 +14167,8 @@ impl EncounterInstance {
             repeat_saves: std::collections::HashMap::new(),
             conjured_terrain: Vec::new(),
             conjured_terrain_id_next: 0,
+            hovering_blades: Vec::new(),
+            hovering_blade_id_next: 0,
             ambient_light: AmbientLight::default(),
             weather: Weather::default(),
             light_sources: Vec::new(),
@@ -20081,6 +20299,7 @@ impl EncounterInstance {
         // somebody's way.
         self.tick_zones();
         self.tick_conjured_terrain();
+        self.tick_hovering_blades();
         self.tick_light_sources();
         // Every timer has now ticked, so this is the first moment at
         // which "does this caster still have a spell up" has a stable
@@ -20184,6 +20403,10 @@ impl EncounterInstance {
                 .conjured_terrain
                 .iter()
                 .any(|p| p.concentration && p.owner_id == actor_id)
+            || self
+                .hovering_blades
+                .iter()
+                .any(|b| b.concentration && b.owner_id == actor_id)
     }
 
     /// Move `actor_id`'s stamp on the occupancy grid from wherever it is

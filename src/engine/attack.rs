@@ -4626,12 +4626,43 @@ pub fn push_on_hit_riders(
 /// "hits you with a melee attack", which a melee *spell* attack
 /// (Vampiric Touch, Shocking Grasp, Inflict Wounds) satisfies — so the
 /// caller gates only on `is_melee`, never on weapon-vs-spell.
+///
+/// ## The five feet nobody was measuring
+///
+/// Every source on both lanes prints the same qualifier and the engine
+/// read none of them: Fire Shield's *"whenever a creature **within 5
+/// feet of you** hits you with a melee attack roll"*, the Black
+/// Pudding's *"hits it with a melee attack **while within 5 feet of
+/// it**"*, the Salamander's identical sentence. What the clause is for
+/// is the reach weapon — a glaive, an ogre's greatclub, a hill giant's
+/// arm, a tarrasque's tail — and those are exactly the swings that were
+/// eating 2d8 fire for a blow struck from ten feet away.
+///
+/// It became visible rather than merely wrong when the hovering-blade
+/// lane arrived (`crate::engine::hovering_blade`): a spectral mace is a
+/// melee attack made by a cleric standing sixty feet from the thing it
+/// hits, so without the gate a Spiritual Weapon swung at a salamander
+/// set its own caster on fire across the room. The fix is the rule the
+/// book already printed, and it pays for itself on the reach weapons
+/// that were never the blade's problem.
+///
+/// Measured attacker-to-target rather than blade-to-target, which is
+/// the conservative direction for the case that motivated it: the
+/// distance that matters to RAW is the one to whoever the shield is
+/// erupting at, and for every swing but a blade's that is the same
+/// creature as the attacker.
 pub fn push_melee_reflect_riders(
     encounter: &mut EncounterInstance,
     effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
     attacker_id: usize,
     target_id: usize,
 ) {
+    if encounter
+        .footprint_distance(attacker_id, target_id)
+        .is_none_or(|gap| gap > crate::actions::action_template::MELEE_REACH)
+    {
+        return;
+    }
     for rider in MELEE_REFLECT_RIDERS.iter().copied() {
         if !encounter
             .actors

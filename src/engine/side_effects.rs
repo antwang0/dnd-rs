@@ -1982,6 +1982,59 @@ impl ApplicableSideEffect for MoveZone {
     }
 }
 
+/// Hang a spectral weapon in the air and bill it for the swing that put
+/// it there — see `crate::engine::hovering_blade`.
+///
+/// The conjuring half of the blade lane. Its sibling `FlyBlade` below is
+/// the other half, and which of the two an action emits is the whole
+/// difference between casting Spiritual Weapon and swinging one that is
+/// already up.
+///
+/// The swing is billed here rather than by a third effect because there
+/// is no such thing as placing a blade without swinging it: RAW's cast
+/// sentence ends *"and you can immediately make one melee spell attack"*,
+/// and the Dancing Sword's count starts at the toss.
+///
+/// No `extend_duration`: the blade's rounds are a property of the thing
+/// in the air rather than of the effect that put it there, and Extended
+/// Spell has never reached the other two map layers either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConjureBlade {
+    pub blade: crate::engine::hovering_blade::HoveringBlade,
+}
+
+impl ApplicableSideEffect for ConjureBlade {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let id = ei.conjure_blade(self.blade.clone());
+        ei.blade_swung(id);
+    }
+}
+
+/// Fly a blade that is already in the air to a new tile, and bill it for
+/// the swing.
+///
+/// Emitted by the repeat branch of every blade-bearing action, which
+/// reaches it by being used again while its own blade is still up — the
+/// same idiom the steered zones use, and for the same reason: the repeat
+/// is where the cost lives, so no action needs a second entry on the
+/// list to move its own weapon.
+///
+/// The destination is never checked here. It comes from
+/// `EncounterInstance::blade_strike_anchor`, which is the one place the
+/// leash rule is written down.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlyBlade {
+    pub blade_id: usize,
+    pub dest: crate::engine::types::Coordinate,
+}
+
+impl ApplicableSideEffect for FlyBlade {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.move_blade(self.blade_id, self.dest);
+        ei.blade_swung(self.blade_id);
+    }
+}
+
 /// Add a status condition to an actor with a given timer. No-op if the
 /// actor is missing; if the condition was already present its timer is
 /// replaced (no stacking semantics yet — revisit when needed).
