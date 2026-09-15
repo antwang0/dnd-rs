@@ -113387,8 +113387,7 @@ fn total_cover_stops_an_aura_and_a_stench() {
     use crate::engine::side_effects::install_condition_with_link;
 
     let mut e = ei_with_terrain(30, 20, &[]);
-    let paladin = e
-        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+    e.instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
         .unwrap();
     let ally = e
         .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 1)
