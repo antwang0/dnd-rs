@@ -62,28 +62,57 @@ pub struct AttackParams<'a> {
     /// engine grows (e.g. counterspell triggers, anti-magic field).
     pub is_spell: bool,
     /// True when the object that made this swing has SRD 5.2's
-    /// **Two-Handed** or **Versatile** property — the gate the **Great
-    /// Weapon Fighting** style names: *"the weapon must have the
-    /// Two-Handed or Versatile property to gain this benefit."*
+    /// **Two-Handed** property — *"this weapon requires two hands when
+    /// you attack with it"*.
     ///
-    /// The one field on this struct that is a fact about the *weapon*
-    /// rather than about the attack, and it is here because there is
-    /// nowhere else it can be: the style is applied at the damage roll,
-    /// the damage roll happens inside `resolve_attack_outcome`, and what
-    /// that function is handed is an `AttackParams`. `is_light_melee_weapon`
-    /// and its siblings answer the same shape of question one layer up
-    /// — at `mark_weapon_openings`, which sees the `Action` — and this
-    /// one cannot, because a bonus-action opening is a fact about the
-    /// turn and a damage floor is a fact about the swing.
+    /// **Strictly Two-Handed, and it used to be Two-Handed *or*
+    /// Versatile.** The union was the shape the field was born in,
+    /// because its one reader was the Great Weapon Fighting style, whose
+    /// clause names both properties — so the union was that clause
+    /// pre-computed, and nothing was lost until a second reader wanted
+    /// the other question. Dueling is that reader: *"when you are
+    /// wielding a Melee weapon in one hand and no other weapons"*, which
+    /// is not "is this weapon ever held in two hands" but "must it be".
+    /// A longsword is Versatile and answers those two differently.
     ///
-    /// Defaults to `false`, which is the conservative direction and the
-    /// reason a natural weapon needs to say nothing: a bear's claw is
-    /// not a greatsword, and a Great Weapon Fighter who grew claws
-    /// should not be floored. The only carrier of the style on the
-    /// roster swings a greatsword, so what this buys is the case the
-    /// loot table makes possible — a paladin who picks up a Scimitar of
-    /// Speed and keeps floorng its dice.
+    /// The engine has no hands, so neither question can be answered
+    /// outright — but the properties bound it from both sides, and each
+    /// clause gets the bound that errs its own way. A Two-Handed weapon
+    /// *cannot* be held in one, so Dueling is refused on this flag
+    /// alone; Versatile *may* be, so a longsword keeps the style, which
+    /// is what RAW would say for a holder carrying nothing else. Great
+    /// Weapon Fighting reads both through
+    /// [`Self::floors_great_weapon_dice`].
+    ///
+    /// One of three fields on this struct that are facts about the
+    /// *weapon* rather than about the attack, and they are here because
+    /// there is nowhere else they can be: the style is applied at the
+    /// damage roll, the damage roll happens inside
+    /// `resolve_attack_outcome`, and what that function is handed is an
+    /// `AttackParams`. `is_light_melee_weapon` and its siblings answer
+    /// the same shape of question one layer up — at
+    /// `mark_weapon_openings`, which sees the `Action` — and these
+    /// cannot, because a bonus-action opening is a fact about the turn
+    /// and a damage floor is a fact about the swing.
+    ///
+    /// Defaults to `false`, which is the conservative direction for the
+    /// style and the reason a natural weapon needs to say nothing: a
+    /// bear's claw is not a greatsword, and a Great Weapon Fighter who
+    /// grew claws should not be floored. It is the *generous* direction
+    /// for Dueling, and that is the right way round too — a creature
+    /// swinging something the armoury has no opinion about is not
+    /// swinging a maul.
     pub two_handed: bool,
+    /// True when the object that made this swing has SRD 5.2's
+    /// **Versatile** property — *"this weapon can be used with one or
+    /// two hands"*.
+    ///
+    /// The other half of what `two_handed` used to carry on its own.
+    /// Read only through [`Self::floors_great_weapon_dice`], because
+    /// Great Weapon Fighting is the only clause in the engine that names
+    /// the property — and read *separately* from Two-Handed because
+    /// Dueling names the other one and the two disagree exactly here.
+    pub versatile: bool,
     /// True when the object that made this swing has SRD 5.2's **Heavy**
     /// property — the gate the **Great Weapon Master** feat names:
     /// *"when you hit a creature with a Heavy weapon as part of the
@@ -142,8 +171,20 @@ impl AttackParams<'_> {
         min_range: None,
         is_spell: false,
         two_handed: false,
+        versatile: false,
         heavy: false,
     };
+
+    /// SRD 5.2 **Great Weapon Fighting**'s weapon clause — *"the weapon
+    /// must have the Two-Handed or Versatile property to gain this
+    /// benefit"*.
+    ///
+    /// The union the `two_handed` field used to be, restored as a
+    /// question rather than as a stored value, so the two properties
+    /// stay separable for the clauses that name only one of them.
+    pub fn floors_great_weapon_dice(&self) -> bool {
+        self.two_handed || self.versatile
+    }
 }
 
 /// An extra clause a specific action layers onto its own swing, run at
@@ -400,18 +441,16 @@ const MELEE_CASTER_BUMPS: &[MeleeCasterBump] = &[
     // The `swing` gate is that first clause, and it used to be a
     // paragraph conceding its absence: the style was paid out on every
     // melee swing the holder made, greatsword included, because a swing
-    // could not be asked which object made it. It can —
-    // `AttackParams::two_handed` is the union of Two-Handed and
-    // Versatile, and a weapon carrying either is not one being wielded
-    // "in one hand and no other weapons" in any reading of RAW that
-    // leaves the style meaning anything.
+    // could not be asked which object made it. It can now.
     //
-    // A Versatile weapon is the arguable half: RAW's longsword *can* be
-    // held in one hand, so a duellist holding one and nothing else does
-    // qualify at a real table. The engine has no hands to decide with
-    // (see `SimpleWeapon::is_versatile`, which says the same thing from
-    // the armoury's side), and between the two readings this takes the
-    // one that cannot pay the style out for a maul.
+    // **Two-Handed only, not Versatile**, and the distinction is the
+    // whole reason `AttackParams` carries the two properties apart. The
+    // engine has no hands, so "wielding in one hand" cannot be answered
+    // outright — but a Two-Handed weapon *cannot* be held in one, which
+    // settles the refusal, while a Versatile one *may* be, which leaves
+    // a longsword-and-nothing-else duellist exactly where RAW leaves
+    // them. Reading the union here would have taken +2 a swing off the
+    // Champion for carrying the wrong kind of sword.
     MeleeCasterBump {
         label: "dueling",
         amount: |a| {
@@ -3713,15 +3752,17 @@ pub fn resolve_attack_outcome_with_rider(
     //
     // Both halves of RAW's gate are asked. `p.is_melee` keeps a longbow
     // shot (and any spell attack routed through this chokepoint) out;
-    // `p.two_handed` is the weapon clause, which this used to collapse
-    // into "melee weapon attack" with a note conceding the collapse
-    // because the swing could not be asked which object made it. It can
-    // be now — see `AttackParams::two_handed`.
+    // `floors_great_weapon_dice()` is the weapon clause, which this used
+    // to collapse into "melee weapon attack" with a note conceding the
+    // collapse because the swing could not be asked which object made
+    // it. It can be now — see `AttackParams::two_handed`, whose
+    // docstring also says why the Two-Handed and Versatile halves are
+    // two fields rather than the one this used to read.
     //
     // Applied to BOTH the base damage roll AND the crit's doubled dice
     // so the floor holds uniformly across the swing's pool.
     let apply_gwf = p.is_melee
-        && p.two_handed
+        && p.floors_great_weapon_dice()
         && encounter
             .actors
             .get(&p.caster_id)

@@ -111686,12 +111686,21 @@ fn great_weapon_master_pays_the_proficiency_bonus_once_a_turn_for_a_heavy_weapon
 /// with the style swings a one-handed blade for +2 and a two-hander for
 /// nothing, which is the sentence RAW prints and the opposite of what
 /// the engine used to do.
+///
+/// **A Versatile weapon keeps the style**, and that is the reason
+/// `AttackParams` carries Two-Handed and Versatile as two fields rather
+/// than as the union it used to store. The engine has no hands, so
+/// "wielding in one hand" cannot be answered outright — but a
+/// Two-Handed weapon cannot be held in one, and a Versatile one may be,
+/// so each clause reads the bound that errs its own way. A longsword
+/// floats Great Weapon Fighting *and* Dueling, which is what RAW says
+/// for a holder carrying nothing else; a maul floats only the first.
 #[test]
 fn dueling_style_pays_out_for_one_hand_and_not_for_two() {
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
     use crate::engine::attack::{AttackParams, resolve_attack_outcome};
 
-    let swing = |two_handed: bool| -> u32 {
+    let swing = |two_handed: bool, versatile: bool| -> u32 {
         let mut e = ei_with_terrain(15, 15, &[]);
         let fighter = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -111714,16 +111723,87 @@ fn dueling_style_pays_out_for_one_hand_and_not_for_two() {
                 damage_bonus: 0,
                 damage_type: DamageType::Slashing,
                 two_handed,
+                versatile,
                 ..AttackParams::DEFAULTS
             },
         )
         .1
     };
 
+    let scimitar = swing(false, false);
+    let maul = swing(true, false);
+    let longsword = swing(false, true);
     assert_eq!(
-        swing(false) - swing(true),
+        scimitar - maul,
         2,
         "the style is worth +2 on a one-handed swing and nothing on a two-handed one"
+    );
+    assert_eq!(
+        longsword, scimitar,
+        "and a Versatile weapon is one the holder may be swinging one-handed"
+    );
+}
+
+/// The other side of the same split: Great Weapon Fighting's clause
+/// names *"the Two-Handed or Versatile property"*, so it reads both
+/// fields where Dueling reads one.
+///
+/// Summed over a seed sweep rather than asserted on one swing, because
+/// the paladin chassis carrying the style also carries Improved Divine
+/// Smite and its own damage bonus — so what is comparable is the
+/// difference between three runs of the same seeds, not any absolute
+/// number. The 2024 style takes no extra draw, so the two floored
+/// variants consume the roller identically and must come out *equal*,
+/// which is a sharper assertion than "both larger".
+#[test]
+fn great_weapon_fighting_reads_both_halves_of_its_weapon_clause() {
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    let run = |two_handed: bool, versatile: bool| -> u32 {
+        let mut total = 0u32;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let paladin = e
+                .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            assert!(e.actors[&paladin].has_great_weapon_fighting());
+            let target = e
+                .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: paladin,
+                    target_id: target,
+                    action_name: "blade",
+                    attack_bonus: 40,
+                    // d4s, where three of the four faces sit at or below
+                    // the floor — the widest gap the style can open.
+                    damage_dice: Dice::new(4, 4),
+                    damage_bonus: 0,
+                    damage_type: DamageType::Slashing,
+                    two_handed,
+                    versatile,
+                    ..AttackParams::DEFAULTS
+                },
+            );
+            total = total.saturating_add(dealt);
+        }
+        total
+    };
+
+    let two_handed = run(true, false);
+    let versatile = run(false, true);
+    let neither = run(false, false);
+    assert_eq!(
+        two_handed, versatile,
+        "RAW names both properties, and the style cannot tell them apart"
+    );
+    assert!(
+        two_handed > neither,
+        "a weapon with neither property is rolled bare ({two_handed} vs {neither})"
     );
 }
 

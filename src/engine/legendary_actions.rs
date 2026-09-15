@@ -272,6 +272,7 @@ fn legendary_attack(
             // nothing to open on, which is the same answer
             // `AttackParams::DEFAULTS` gives.
             two_handed: false,
+            versatile: false,
             heavy: false,
         },
     );

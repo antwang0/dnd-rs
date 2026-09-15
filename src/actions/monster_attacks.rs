@@ -960,9 +960,13 @@ fn simple_weapon_swing(
             is_melee: weapon.is_melee,
             long_range: weapon.normal_range,
             min_range: weapon.min_effective_range,
-            // RAW's Great Weapon Fighting gate, carried from the object
-            // to the damage roll — see `AttackParams::two_handed`.
-            two_handed: weapon.is_two_handed || weapon.is_versatile,
+            // The armoury's own property columns, carried from the
+            // object to the damage roll one-for-one — see
+            // `AttackParams::two_handed`, which used to store the union
+            // of these two and could not tell Dueling from Great Weapon
+            // Fighting because of it.
+            two_handed: weapon.is_two_handed,
+            versatile: weapon.is_versatile,
             // RAW's Great Weapon Master gate, carried the same way and
             // deliberately off its own column — see
             // `AttackParams::heavy`.
