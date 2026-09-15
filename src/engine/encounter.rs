@@ -9411,12 +9411,15 @@ impl EncounterInstance {
     ///     travels its thirty feet from there, and that is the clause
     ///     that makes the spell a decision every round.
     ///
-    /// The tile must be somewhere a body could stand — in bounds, on
-    /// passable ground, and unoccupied. RAW says "a space of your
-    /// choice" and a space with an ogre in it is not one; the practical
-    /// effect is that a target ringed by its own allies is a target the
-    /// blade cannot reach, which is the correct answer and a genuinely
-    /// interesting one.
+    /// The tile has to be one a blade could hang over — in bounds,
+    /// unoccupied, and not inside something solid. See
+    /// `blade_may_hover_over`, which is deliberately *not*
+    /// `is_spawnable`: a hole in the floor stops a body and does not
+    /// stop a thing that hovers. RAW says "a space of your choice" and a
+    /// space with an ogre in it is not one; the practical effect is that
+    /// a target ringed by its own allies is a target the blade cannot
+    /// reach, which is the correct answer and a genuinely interesting
+    /// one.
     ///
     /// The tile chosen is the one closest to where the blade already is,
     /// so a blade that does not need to move does not move, and one that
@@ -9471,7 +9474,7 @@ impl EncounterInstance {
                     continue;
                 }
                 let flight = from.chebyshev_to(tile);
-                if flight > leash || !self.is_spawnable(tile) || !within_tether(tile) {
+                if flight > leash || !self.blade_may_hover_over(tile) || !within_tether(tile) {
                     continue;
                 }
                 // Closest to where the blade already is, so a blade that
@@ -9485,6 +9488,33 @@ impl EncounterInstance {
             }
         }
         best.map(|(_, tile)| tile)
+    }
+
+    /// True if a spectral weapon could hang over `tile`.
+    ///
+    /// `is_spawnable` asks whether a *body* could stand there, and it is
+    /// the wrong question by exactly one terrain type. Walls, force
+    /// walls and off-map Empty stop a blade for the same reason they
+    /// stop everything else: they are solid, and RAW's floating weapon
+    /// appears "in a space of your choice" rather than inside masonry. A
+    /// **Chasm** is none of those things — it is a hole, and a thing
+    /// that hovers does not need floor under it.
+    ///
+    /// The distinction is not academic on a board cut by
+    /// `carve_rifts`: a creature fighting from the far lip of a rift can
+    /// have every tile around it be either its own body or open air, and
+    /// asking `is_spawnable` would make it the one target in the room a
+    /// Spiritual Weapon could not reach.
+    ///
+    /// Occupancy still applies. RAW's "space" is a space, and a blade
+    /// and an ogre do not share one — which is what makes a target
+    /// ringed by its own allies genuinely hard to get at.
+    fn blade_may_hover_over(&self, tile: Coordinate) -> bool {
+        self.in_bounds(tile)
+            && self.actor_id_at(tile).is_none()
+            && self
+                .terrain_at(tile)
+                .is_some_and(|t| t.terrain_type.is_passable() || t.terrain_type.is_gap())
     }
 
     /// Expire one round off every blade and take down the ones that ran

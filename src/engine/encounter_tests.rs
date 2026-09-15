@@ -111433,3 +111433,81 @@ fn every_action_that_prices_a_repeat_declares_it_sustains_itself() {
          them once and forget them: {missing:#?}"
     );
 }
+
+/// A spectral weapon does not need floor under it.
+///
+/// `is_spawnable` is the engine's "could a body stand here", and it is
+/// the wrong question for a blade by exactly one terrain type: a Chasm
+/// stops a creature and does not stop a thing that hovers. The case is
+/// real on any board `carve_rifts` has been at — a creature fighting
+/// from the far lip of a rift can have nothing around it but its own
+/// body and open air.
+#[test]
+fn a_blade_hangs_over_a_rift_but_not_inside_a_wall() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    // A goblin on a one-tile island: chasm on every side out to the two
+    // tiles `MELEE_REACH` measures, and stone beyond that.
+    let mut walls: Vec<(isize, isize)> = Vec::new();
+    for x in 16..=24 {
+        for y in 6..=14 {
+            walls.push((x, y));
+        }
+    }
+    let mut e = ei_with_terrain(40, 20, &walls);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    // The island itself, and the moat.
+    for x in 18..=22 {
+        for y in 8..=12 {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Chasm);
+        }
+    }
+    for x in 20..=21 {
+        for y in 10..=11 {
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+        }
+    }
+    let stranded = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    assert_eq!(e.actors[&stranded].location(), Coordinate::new(20, 10));
+    assert!(
+        !e.is_spawnable(Coordinate::new(19, 10)),
+        "the fixture's own premise: nobody could stand beside it"
+    );
+    assert!(
+        SPIRITUAL_WEAPON.custom_validate_input(&e, cleric, Some(&vec![stranded]), None, None),
+        "…and a mace does not need to stand"
+    );
+    for ef in SPIRITUAL_WEAPON.side_effects(&mut e, cleric, Some(&vec![stranded]), None, None) {
+        ef.apply(&mut e);
+    }
+    let over = e.hovering_blades()[0].origin;
+    assert!(
+        e.terrain_at(over)
+            .is_some_and(|t| t.terrain_type == TerrainType::Chasm),
+        "the only tiles in reach are the moat, so that is where it hangs: {over}"
+    );
+
+    // Stone is a different answer. Fill the moat in and the mace has
+    // nowhere left that is not solid.
+    let mut e2 = ei_with_terrain(40, 20, &walls);
+    let cleric2 = e2
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    for x in 20..=21 {
+        for y in 10..=11 {
+            e2.set_terrain_at(Coordinate::new(x, y), TerrainType::Floor);
+        }
+    }
+    let walled = e2
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    assert!(
+        !SPIRITUAL_WEAPON.custom_validate_input(&e2, cleric2, Some(&vec![walled]), None, None),
+        "a blade does not hang inside masonry"
+    );
+}
