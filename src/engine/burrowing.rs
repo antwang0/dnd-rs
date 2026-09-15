@@ -1,7 +1,7 @@
 //! **Burrowing** — the third number on a 5e speed line, and the third
 //! place a creature in this engine can be.
 //!
-//! *"Speed 30 ft., burrow 10 ft."* Eleven stat blocks in the roster
+//! *"Speed 30 ft., burrow 10 ft."* Ten stat blocks in the roster
 //! print one — the Ankheg, the Badger and its Giant cousin, the
 //! Bulette, the Dao, the Earth Elemental, the Purple Worm, the
 //! Remorhaz, the Umber Hulk and the Xorn — and until this module
@@ -86,7 +86,7 @@
 //!   - **Burrowing through solid rock.** RAW gives it to two stat
 //!     blocks with an explicit clause — *"the worm can burrow through
 //!     solid rock at half its burrow speed"* — and withholds it from
-//!     the other nine, who need *"loose earth, sand, or mud"*. Modelled
+//!     the other eight, who need *"loose earth, sand, or mud"*. Modelled
 //!     as neither: [`TerrainType::Wall`] stays impassable to a burrower
 //!     exactly as it is to a walker. Granting it would hand the
 //!     pathfinder a second passability model keyed on the mover, and

@@ -2065,7 +2065,7 @@ pub static PRY_LOOSE: LazyLock<PryLoose> = LazyLock::new(|| PryLoose {});
 
 /// **Burrow** — dig into the ground, and out of the fight.
 ///
-/// Offered only to the eleven stat blocks that print a burrow speed,
+/// Offered only to the ten stat blocks that print a burrow speed,
 /// and only while they are standing on earth with room to go down. See
 /// `crate::engine::burrowing` for what being under the floor costs and
 /// buys, and for why the price is half a move rather than nothing.
@@ -2080,7 +2080,7 @@ pub static PRY_LOOSE: LazyLock<PryLoose> = LazyLock::new(|| PryLoose {});
 pub struct Burrow {}
 
 impl Action for Burrow {
-    /// Only the eleven stat blocks that print a burrow speed, which is
+    /// Only the ten stat blocks that print a burrow speed, which is
     /// not a thing that appears mid-fight. See `Action::possible_for`.
     fn possible_for(&self, actor: &crate::actors::actor_template::ActorInstance) -> bool {
         actor.can_burrow()

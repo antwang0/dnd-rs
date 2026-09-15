@@ -3364,7 +3364,7 @@ pub struct CreatureTemplate {
     /// 5e's **third** speed line — "Speed 30 ft., burrow 10 ft." — in
     /// feet, and `0.0` for everything that cannot dig.
     ///
-    /// Eleven stat blocks in the roster print one and every one of them
+    /// Ten stat blocks in the roster print one and every one of them
     /// used to carry an apology in its docstring instead: the Giant
     /// Badger's said *"the engine doesn't track separate burrow speed
     /// (no underground-terrain awareness), so the burrow half is
@@ -5250,7 +5250,7 @@ pub struct ActorInstance {
     hovers: bool,
     /// The creature's own burrowing speed in feet, copied from
     /// `CreatureTemplate::burrow_speed`. `0.0` for everything that
-    /// cannot dig, which is all but eleven of the roster.
+    /// cannot dig, which is all but ten of the roster.
     ///
     /// Immutable for the life of the actor, for the same reason
     /// `base_fly_speed` is: what stops a burrower is a condition or a
@@ -8735,7 +8735,19 @@ impl ActorInstance {
         let mut seen: HashSet<&'static str> = HashSet::new();
         for item in self.active_items() {
             if !item.on_use.is_empty() && seen.insert(item.name) {
-                out.extend(item.on_use.iter().copied());
+                // The same two filters the stat-block leg above ran.
+                // No item row answers `false` to either today, and the
+                // point of applying them here is that the day one does
+                // it should behave the same whether it arrived on a
+                // sheet or in a pack — a filter that covers one of the
+                // two legs is the kind of asymmetry nothing would
+                // notice until it mattered.
+                out.extend(
+                    item.on_use
+                        .iter()
+                        .copied()
+                        .filter(|a| !a.is_reaction_only() && a.possible_for(self)),
+                );
             }
         }
         out
@@ -10761,9 +10773,12 @@ impl ActorInstance {
         // in the air moves at the better of its two numbers because
         // nothing about being aloft costs it its legs; a bulette in the
         // ground is moving through rock, and its walking speed is not
-        // available to it there. Eight of the eleven burrowers tunnel
-        // slower than they walk, and that gap is the price the lane
-        // charges for being unreachable.
+        // available to it there. Five of the ten burrowers tunnel
+        // slower than they walk — the ankheg at a third of its stride,
+        // the purple worm at well under half — and that gap is the
+        // price the lane charges for being unreachable. The other five
+        // dig as fast as they run, which is what makes a bulette a
+        // bulette.
         if self.is_burrowed() {
             return self.base_burrow_speed;
         }
@@ -10960,9 +10975,16 @@ impl ActorInstance {
     /// Accumulates rather than replaces: two shadows draining the same
     /// knight are eight points between them, and that is the whole
     /// tactical shape of a pack of them.
+    /// Clamped at the score, so the ledger never records points that
+    /// were not there to take. Without it the `saturating_sub` in
+    /// `ability_score` still answers 0 and the *reporting* lies: a
+    /// Strength-10 creature drained twice reads `STR -14 (now 0)` on
+    /// the panel, which is a number that does not exist. Reachable
+    /// exactly where the `before > 0` guard above is — after a Death
+    /// Ward has left somebody standing at 0.
     pub fn drain_ability(&mut self, ast: AbilityScoreType, amount: u32) -> bool {
         let before = self.ability_score(ast);
-        *self.ability_drain.entry(ast).or_insert(0) += amount;
+        *self.ability_drain.entry(ast).or_insert(0) += amount.min(before);
         before > 0 && self.ability_score(ast) == 0
     }
 

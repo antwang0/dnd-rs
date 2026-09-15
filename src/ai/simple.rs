@@ -2489,7 +2489,7 @@ fn try_surface(
     try_self_action(encounter, actor_id, "surface")
 }
 
-/// **Dig in.** The approach lane for the eleven stat blocks that can
+/// **Dig in.** The approach lane for the ten stat blocks that can
 /// cross a room where nothing can touch them.
 ///
 /// Sits immediately above the walk at rung 8 because it is the same
