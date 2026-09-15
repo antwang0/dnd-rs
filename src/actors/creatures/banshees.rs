@@ -1,3 +1,4 @@
+use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BANSHEE_WAIL, CORRUPTING_TOUCH};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
@@ -41,6 +42,9 @@ pub static BANSHEE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Incorporeal Movement** — the stone is not a wall to
+        // this thing. See `crate::engine::incorporeal`.
+        features: HashSet::from([INCORPOREAL_MOVEMENT_TAG]),
         // 5e: resistance to non-magical bludgeoning/piercing/slashing.
         // We don't track magical weapon flags so we apply the resistance
         // directly (mirrors the wraith / specter pattern).

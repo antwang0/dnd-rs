@@ -1,3 +1,4 @@
+use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GHOST_HORRIFYING_VISAGE, GHOST_WITHERING_TOUCH};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
@@ -49,6 +50,9 @@ pub static GHOST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Incorporeal Movement** — the stone is not a wall to
+        // this thing. See `crate::engine::incorporeal`.
+        features: HashSet::from([INCORPOREAL_MOVEMENT_TAG]),
         damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),

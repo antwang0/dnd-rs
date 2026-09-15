@@ -1,3 +1,4 @@
+use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WISP_SHOCK;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
@@ -44,6 +45,9 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Incorporeal Movement** — the stone is not a wall to
+        // this thing. See `crate::engine::incorporeal`.
+        features: HashSet::from([INCORPOREAL_MOVEMENT_TAG]),
         damage_modifiers: damage_modifiers_from([
             (DamageType::Acid, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),

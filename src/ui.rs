@@ -1073,6 +1073,26 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
+    // …and the third state a body can be in that the Movement number
+    // does not account for: inside the stone. The row a player needs is
+    // the price, because the price is the whole counterplay — a spirit
+    // that stops in a wall cannot be reached and is paying five hit
+    // points a round for it, and the panel is the only place that
+    // number appears before it lands in the log.
+    if curr_actor.phases_through_objects() {
+        let inside = encounter.is_lodged_in_stone(curr_actor_id);
+        stats_lines.push(Line::from(Span::styled(
+            if inside {
+                format!(
+                    "Phasing: inside stone ({} force at end of turn)",
+                    crate::engine::incorporeal::LODGED_DAMAGE
+                )
+            } else {
+                "Phasing: walls cost double".to_string()
+            },
+            Style::default().fg(Color::Magenta),
+        )));
+    }
     // SRD 5.2 **Long Jump**, rendered only on a board that has
     // somewhere to jump to.
     //
@@ -1947,6 +1967,46 @@ mod tests {
         assert!(
             !panel.contains("Burrow: 10 ft"),
             "…without also offering the trip it has already taken:\n{panel}"
+        );
+    }
+
+    /// The panel says what a spirit is paying, and only for a spirit.
+    ///
+    /// The line carries the counterplay: a specter that stopped in the
+    /// stone cannot be reached and is being charged five hit points a
+    /// round for it, and the panel is the only place that price appears
+    /// before it lands in the log.
+    #[test]
+    fn the_panel_prices_a_spirit_that_has_stopped_in_the_stone() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = encounter_with(&[(&SPECTER_TEMPLATE, 0), (&SPECTER_TEMPLATE, 1)]);
+        e.process_stack();
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Phasing: walls cost double"),
+            "out in the open it says what the stone will cost:\n{panel}"
+        );
+
+        // Wall the specter in where it stands and the line changes to
+        // the bill.
+        let here = e.actors[&id].location();
+        e.set_terrain_at(here, TerrainType::Wall);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Phasing: inside stone (1d10 force at end of turn)"),
+            "and inside it says what stopping there costs:\n{panel}"
+        );
+
+        // Nothing that walks grows the line at all.
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel(&e).contains("Phasing"),
+            "a goblin has a wall like everybody else"
         );
     }
 

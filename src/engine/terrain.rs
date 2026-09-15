@@ -210,6 +210,33 @@ impl TerrainType {
         )
     }
 
+    /// True if this tile is **an object a ghost could move through** —
+    /// see `crate::engine::incorporeal`.
+    ///
+    /// Exactly `Wall`, and the exclusions are each a rule:
+    ///
+    ///   - **`Chasm`** is not an object, it is the floor's absence.
+    ///     RAW's clause is *"through other creatures and objects"*, and
+    ///     a hole is neither. The engine already hands every flier —
+    ///     which all eight incorporeal stat blocks are — the jump edge
+    ///     across one.
+    ///   - **`ForceWall`** is the one barrier 5e names as stopping this
+    ///     kind of travel: *"nothing can physically pass through the
+    ///     wall"*, and the spell's own text puts the Ethereal Plane on
+    ///     the far side of it. A wizard's answer to a wraith should
+    ///     stay an answer.
+    ///   - Everything else is passable already and has nothing to
+    ///     phase through.
+    ///
+    /// Deliberately its own predicate rather than `blocks_sight`,
+    /// which names the same single variant today. The two questions are
+    /// unrelated — one is about stone, the other about opacity — and a
+    /// tile that is opaque without being solid (a smoke bank, a
+    /// darkness) would answer them differently the day it is added.
+    pub fn is_phaseable(self) -> bool {
+        matches!(self, TerrainType::Wall)
+    }
+
     /// True if this tile is a gap a creature could *leap over* rather
     /// than an obstruction it has to go round.
     ///

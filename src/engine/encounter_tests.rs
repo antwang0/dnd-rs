@@ -111141,6 +111141,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/errors.rs", include_str!("errors.rs")),
         ("engine/falling.rs", include_str!("falling.rs")),
         ("engine/hovering_blade.rs", include_str!("hovering_blade.rs")),
+        ("engine/incorporeal.rs", include_str!("incorporeal.rs")),
         ("engine/jumping.rs", include_str!("jumping.rs")),
         ("engine/lair_actions.rs", include_str!("lair_actions.rs")),
         ("engine/legendary_actions.rs", include_str!("legendary_actions.rs")),
@@ -113018,5 +113019,197 @@ fn every_burrower_in_the_bestiary_can_actually_dig() {
     assert!(
         seen >= 10,
         "the roster carries the burrowers this lane was built for, found {seen}"
+    );
+}
+
+// ── Incorporeal Movement ─────────────────────────────────────────────
+//
+// See `crate::engine::incorporeal` for the model these pin.
+
+/// Solid stone is a tile a spirit may enter and a wall to everything
+/// else, and the two answers come out of the same predicate.
+///
+/// Asked through `can_move_to` rather than through `tile_admits`
+/// directly, because that is the chokepoint the rule has to hold at:
+/// the walk, the AI's directional BFS, a shove and a teleport all go
+/// through it, and a rule that held only in the pathfinder would be a
+/// rule half the engine had never heard of.
+#[test]
+fn stone_is_a_tile_a_spirit_may_enter_and_a_wall_to_everything_else() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[(6, 4), (6, 5)]);
+    let specter = e
+        .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let knight = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(2, 8), 0, 0)
+        .unwrap();
+
+    assert!(
+        e.can_move_to(specter, Coordinate::new(6, 4)),
+        "the stone is not the spirit's wall"
+    );
+    assert!(
+        !e.can_move_to(knight, Coordinate::new(6, 4)),
+        "and it is everybody else's"
+    );
+
+    // A chasm is not an object, and neither is a wall of force: both
+    // stay shut to a spirit. See `TerrainType::is_phaseable`.
+    let hole = e.idx(Coordinate::new(8, 4)).unwrap();
+    e.terrain[hole].terrain_type = TerrainType::Chasm;
+    let pane = e.idx(Coordinate::new(10, 4)).unwrap();
+    e.terrain[pane].terrain_type = TerrainType::ForceWall;
+    assert!(
+        !e.can_move_to(specter, Coordinate::new(8, 4)),
+        "a hole in the floor is not something to pass through"
+    );
+    assert!(
+        !e.can_move_to(specter, Coordinate::new(10, 4)),
+        "and a wall of force is the one barrier RAW names as stopping this"
+    );
+}
+
+/// Pushing through stone costs double — RAW's *"as if they were
+/// Difficult Terrain"* — and the waivers that cancel difficult terrain
+/// do not cancel it.
+///
+/// The second half is the one worth a test. Every one of the seven
+/// spirits flies, and flight is on `DIFFICULT_TERRAIN_IMMUNITIES`, so
+/// a specter already crosses rubble for free — which means a surcharge
+/// routed *through* the waiver would have been silently free as well.
+/// Three boards, one column each, and the comparison is the whole
+/// assertion: rubble costs a specter nothing and stone costs it double.
+#[test]
+fn pushing_through_stone_costs_double_and_no_waiver_touches_it() {
+    use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+
+    // The same eight-tile walk, with one column of the board set to
+    // `column` — nothing, rubble, or wall.
+    let cost_across = |column: Option<TerrainType>| -> f32 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        if let Some(t) = column {
+            for y in 0..20isize {
+                let idx = e.idx(Coordinate::new(6, y)).unwrap();
+                e.terrain[idx].terrain_type = t;
+            }
+        }
+        let specter = e
+            .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(2, 4), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&specter].is_airborne(),
+            "the premise: a specter already waives the ground's surcharge"
+        );
+        e.actors
+            .get_mut(&specter)
+            .unwrap()
+            .set_movement_budget(400.0);
+        e.path_cost_to(specter, Coordinate::new(10, 4))
+            .expect("a spirit gets through")
+    };
+
+    let open = cost_across(None);
+    let rubble = cost_across(Some(TerrainType::DifficultTerrain));
+    let stone = cost_across(Some(TerrainType::Wall));
+
+    assert_eq!(
+        rubble, open,
+        "flight waives the ground's surcharge, which is why this test exists"
+    );
+    assert!(
+        stone > open,
+        "and does not waive the stone's: {stone} vs {open}"
+    );
+}
+
+/// A spirit that ends its turn in the stone pays 1d10 force for it.
+///
+/// The clause that makes the other two a fight rather than an escape
+/// hatch: a wall is total cover in both directions, so a specter that
+/// stopped inside one would otherwise be unreachable for free.
+#[test]
+fn a_spirit_that_ends_its_turn_in_the_stone_pays_for_it() {
+    use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[(6, 4), (7, 4), (6, 5), (7, 5)]);
+    let specter = e
+        .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(2, 2), 1, 0)
+        .unwrap();
+
+    // Out in the open it pays nothing, however many rounds go by.
+    assert!(!e.is_lodged_in_stone(specter));
+    let full = e.actors[&specter].hitpoints();
+    e.tick_incorporeal_lodging(specter);
+    assert_eq!(e.actors[&specter].hitpoints(), full);
+
+    // Inside, it pays every turn.
+    e.place_actor_at(specter, Coordinate::new(6, 4)).unwrap();
+    assert!(e.is_lodged_in_stone(specter));
+    e.tick_incorporeal_lodging(specter);
+    let after = e.actors[&specter].hitpoints();
+    assert!(after < full, "1d10 force, not {full} -> {after}");
+    e.tick_incorporeal_lodging(specter);
+    assert!(
+        e.actors[&specter].hitpoints() < after,
+        "and again the next turn"
+    );
+
+    // The bill is force, which is the one type none of the seven
+    // resists — so the damage that landed is the damage that was
+    // rolled, not a halved version of it.
+    assert!(
+        e.messages().iter().any(|m| m.contains("lodged in solid stone")),
+        "the log says why:\n{}",
+        e.messages().join("\n")
+    );
+}
+
+/// Every spirit on the incorporeal roster can actually cross a wall,
+/// and nothing else on the roster can.
+///
+/// The sweep that keeps the tag from being a line on a stat block that
+/// no turn could ever spend — which is what the whole cohort's
+/// `Incorporeal Movement` note was before
+/// `crate::engine::incorporeal` existed.
+#[test]
+fn every_spirit_in_the_bestiary_can_actually_cross_a_wall() {
+    use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
+
+    let mut seen = 0;
+    for template in EncounterInstance::template_pool() {
+        // A curtain of wall wide enough that no footprint on the
+        // roster can straddle it.
+        let walls: Vec<(isize, isize)> = (0..40)
+            .flat_map(|y| (12..18).map(move |x| (x as isize, y as isize)))
+            .collect();
+        let mut e = ei_with_terrain(40, 40, &walls);
+        let Ok(id) = e.instantiate_creature(template, Coordinate::new(4, 4), 0, 0) else {
+            continue;
+        };
+        let phases = template.features.contains(INCORPOREAL_MOVEMENT_TAG);
+        assert_eq!(
+            e.can_move_to(id, Coordinate::new(14, 14)),
+            phases,
+            "{} carries the trait: {}",
+            template.name,
+            phases
+        );
+        if !phases {
+            continue;
+        }
+        seen += 1;
+        e.place_actor_at(id, Coordinate::new(14, 14)).unwrap();
+        assert!(
+            e.is_lodged_in_stone(id),
+            "{} is inside the stone once it is there",
+            template.name
+        );
+    }
+    assert!(
+        seen >= 7,
+        "the roster carries the spirits this lane was built for, found {seen}"
     );
 }

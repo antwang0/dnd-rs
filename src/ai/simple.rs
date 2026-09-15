@@ -24961,6 +24961,67 @@ mod tests {
         );
     }
 
+    /// A spirit crosses the wall the party is standing behind.
+    ///
+    /// No new AI rung: the approach lane already walks whatever route
+    /// the pathfinder can find, and `tile_admits` is what makes a route
+    /// exist. That is the point of putting the rule at the subtile
+    /// chokepoint rather than in a picker — the specter gets the
+    /// behaviour for free, and so does every other lane that asks "can
+    /// you get there".
+    #[test]
+    fn a_spirit_walks_through_the_wall_the_party_is_behind() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::specters::SPECTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = open_field(30, 20);
+        // A wall from edge to edge with the fighter sealed behind it.
+        // Nothing that walks has a route; the specter is not a thing
+        // that walks.
+        for y in 0..20isize {
+            e.set_terrain_at(Coordinate::new(15, y), TerrainType::Wall);
+        }
+        let specter = e
+            .instantiate_creature(&SPECTER_TEMPLATE, Coordinate::new(4, 9), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(24, 9), 0, 0)
+            .unwrap();
+        e.pop_prompt();
+
+        // The premise: the wall really does seal the room for a walker.
+        assert!(
+            e.path_to(fighter, Coordinate::new(4, 9)).is_none(),
+            "the fighter cannot get out"
+        );
+
+        let mut picks = Vec::new();
+        let mut crossed = false;
+        for _ in 0..40 {
+            let Some(a) = e.actors.get_mut(&specter) else {
+                break;
+            };
+            a.reset_for_new_round();
+            for _ in 0..8 {
+                let ControllerDecision::Act(aei) = SimpleAi.decide(&e, specter) else {
+                    break;
+                };
+                picks.push(aei.action().name().to_string());
+                e.push_action(aei);
+                e.process_stack();
+            }
+            if e.actors
+                .get(&specter)
+                .is_some_and(|a| a.location().x > 15)
+            {
+                crossed = true;
+                break;
+            }
+        }
+        assert!(crossed, "the specter got to the far side: {picks:?}");
+    }
+
     /// True for a pick that is an attack rather than footwork — the
     /// burrowing tests' way of saying "and then it did something to
     /// somebody" without naming a stat block's action.

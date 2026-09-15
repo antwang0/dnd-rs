@@ -8166,7 +8166,51 @@ impl EncounterInstance {
                 return false;
             }
 
-        matches!(self.terrain_at(coord), Some(ti) if ti.terrain_type.is_passable())
+        matches!(self.terrain_at(coord), Some(ti) if self.tile_admits(ti.terrain_type, actor_id))
+    }
+
+    /// **May this particular creature be on a tile of this kind?** —
+    /// `TerrainType::is_passable` plus the two creatures the board
+    /// answers differently for.
+    ///
+    /// `is_passable` is a fact about the tile and is right for almost
+    /// everything: a wall stops a body, a chasm has no floor, water and
+    /// rubble merely cost. Two states in the engine make the question a
+    /// fact about the *pair* instead, and they move the answer in
+    /// opposite directions:
+    ///
+    ///   - **Burrowed** narrows it. A creature under the floor travels
+    ///     through earth, so the one passable tile with no ground in it
+    ///     — water — becomes a wall to it. See
+    ///     `crate::engine::burrowing`.
+    ///   - **Incorporeal Movement** widens it. A ghost *"can move
+    ///     through other creatures and objects"*, so the solid stone
+    ///     that stops everything else is a tile it may enter. See
+    ///     `crate::engine::incorporeal`.
+    ///
+    /// Asked here, at the single subtile chokepoint, rather than at the
+    /// pathfinder — which is where the burrow gate first landed, and
+    /// was wrong for a reason worth writing down. The engine has two
+    /// route-finders: `dijkstra_path`, which prices a walk, and
+    /// `step_toward_actor_inner`, a cheap directional BFS the AI asks
+    /// "which way". Both go through `can_move_to`, and only one of them
+    /// went through the gate — so the BFS believed a burrowed ankheg
+    /// could cross a lake, and `try_surface` read that belief when
+    /// deciding whether the tunnel had anywhere left to go. One
+    /// chokepoint, one answer, and every mover in the engine — spawn,
+    /// shove, drag, teleport, growth — picks it up without knowing the
+    /// rules exist.
+    fn tile_admits(&self, tile: TerrainType, actor_id: usize) -> bool {
+        match self.actors.get(&actor_id) {
+            Some(a) if a.is_burrowed() => tile.is_diggable(),
+            Some(a) if a.phases_through_objects() => {
+                tile.is_passable() || tile.is_phaseable()
+            }
+            // A missing actor is the ownerless question, and
+            // `is_passable` is its answer: nothing about a body that is
+            // not on the board widens or narrows what a tile will take.
+            _ => tile.is_passable(),
+        }
     }
 
     fn get_random_coord_list(&mut self) -> Vec<Coordinate> {
@@ -8383,9 +8427,21 @@ impl EncounterInstance {
                     // and that is a lot of sites to hold by inspection.
                     // This is the sweep that would catch the one that
                     // forgot.
+                    //
+                    // Asked through `tile_admits` rather than through
+                    // `is_passable` directly, so the invariant and the
+                    // movers that have to uphold it are reading one
+                    // predicate. Two creatures on this board legitimately
+                    // stand where a plain passability check says nothing
+                    // can — a burrower, which is *under* the floor, and a
+                    // spirit, which is *inside* the wall — and a sweep
+                    // with its own opinion about that would fail on the
+                    // rules working correctly. It is the same helper
+                    // `can_move_to` puts them there through, so the two
+                    // cannot disagree.
                     if !self
                         .terrain_at(tile)
-                        .is_some_and(|t| t.terrain_type.is_passable())
+                        .is_some_and(|t| self.tile_admits(t.terrain_type, *id))
                     {
                         problems.push(format!(
                             "{} (#{}) at {:?} is standing on {:?}, which is {:?}",
@@ -14104,15 +14160,19 @@ impl EncounterInstance {
         // two surcharge waivers are.
         let water_bound = body.breathes_only_underwater() && self.is_immersed(body_id);
         // …and its mirror underground. A creature that is *in* the
-        // ground moves through ground: every tile of the walk has to
-        // have earth in it, which rules out water and nothing else on
-        // a passable board. Resolved once out here for the same reason
-        // the three waivers above are — it cannot change while a single
-        // path is being searched — and gated on the condition rather
-        // than on the speed, so a bulette that has surfaced walks over
-        // the same pool it could not tunnel under. See
-        // `crate::engine::burrowing`.
+        // ground moves through ground, so water is a wall to it and
+        // solid stone still is — but neither answer lives here.
+        // `can_move_to` owns the whole "may this creature be on that
+        // tile" question at the subtile chokepoint, which is what keeps
+        // this search and the AI's directional BFS from disagreeing
+        // about the same lake; see `tile_admits`. What the flag is read
+        // for here is the *jump* lane below, which has no tile to ask
+        // about. See `crate::engine::burrowing`.
         let burrowing = body.is_burrowed();
+        // …and the widening one, read here for the surcharge rather
+        // than for passability — which, like the burrow's, lives at
+        // `tile_admits`. See `crate::engine::incorporeal`.
+        let phasing = body.phases_through_objects();
         let body_size = body.size();
         // SRD 5.2 **Long Jump**, resolved once per path for the reason
         // every other waiver above is: neither number can change while a
@@ -14288,13 +14348,6 @@ impl EncounterInstance {
                     if water_bound && !self.footprint_is_water(next, body_size) {
                         continue;
                     }
-                    // The tunnel's edge, measured over the whole
-                    // footprint for the reason the lake's is: a Huge
-                    // worm allowed to put one corner under a pool would
-                    // be half swimming.
-                    if burrowing && !self.footprint_is_diggable(next, body_size) {
-                        continue;
-                    }
                     let waived = if tile.is_some_and(|t| t.is_water()) {
                         swims
                     } else {
@@ -14306,6 +14359,25 @@ impl EncounterInstance {
                         tile.map(|t| t.movement_cost())
                             .unwrap_or(1.0)
                             .max(self.zone_movement_multiplier(next))
+                    };
+                    // SRD 5.2 **Incorporeal Movement** — *"as if they
+                    // were Difficult Terrain"*. The surcharge the tile
+                    // itself cannot carry: a `Wall` is priced at 1.0
+                    // because nothing walks into one, and a ghost is
+                    // the creature for whom that price is real.
+                    //
+                    // Applied after the waivers rather than through
+                    // them, which is the whole reason it is a separate
+                    // term. Freedom of Movement and a ranger's Land's
+                    // Stride waive *difficult terrain* — a property of
+                    // the ground — and the stone a spirit is pushing
+                    // through is not the ground. A ghost under Freedom
+                    // of Movement still pays for the wall, and pays
+                    // nothing extra for the rubble in front of it.
+                    let terrain_mult = if phasing && tile.is_some_and(|t| t.is_phaseable()) {
+                        terrain_mult.max(crate::engine::incorporeal::PHASE_COST_MULTIPLIER)
+                    } else {
+                        terrain_mult
                     };
                     let step = (base_step as f32 * terrain_mult) as u32;
                     let next_cost = cost.saturating_add(step);
@@ -20714,6 +20786,15 @@ impl EncounterInstance {
             // victim, and the victim should not pay a rung of exhaustion
             // for a hold that is already over.
             self.tick_breath(id);
+            // SRD 5.2 **Incorporeal Movement**, the half that is a
+            // price: *"it takes 5 (1d10) Force damage if it ends its
+            // turn inside an object."* Beside the breath clock because
+            // it is the same shape — a creature being charged for
+            // where it chose to stop — and after it because both are
+            // damage and the breath's exhaustion rung is the older
+            // reading of "end of turn". See
+            // `crate::engine::incorporeal`.
+            self.tick_incorporeal_lodging(id);
             // Regeneration: heal `regen_per_round` HP at end-of-round if
             // the actor is combat-active and hasn't been hit by a
             // suppressor damage type this round (5e troll: fire/acid).

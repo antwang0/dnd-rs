@@ -1,3 +1,4 @@
+use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::ALLIP_MADDENING_TOUCH;
 use crate::actors::actor_template::{
@@ -50,13 +51,13 @@ use std::sync::LazyLock;
 /// we pin Common as the universal default). Size Medium. CR 5.
 ///
 /// Incorporeal Movement (RAW: "The allip can move through other
-/// creatures and objects as if they were difficult terrain") is
-/// omitted as a deliberate scope cut — the engine's pathfinding
-/// doesn't yet model wall-phasing actors, and modeling the
-/// half-speed-through-walls clause would require a per-tile
-/// "incorporeal cost" lane that doesn't exist. The BPS resistance
-/// envelope captures the load-bearing "hard to hit with physical
-/// weapons" half of the incorporeal identity.
+/// creatures and objects as if they were difficult terrain") is the
+/// half of the identity that is a fight rather than arithmetic, and it
+/// ships: the stone is a tile the allip may enter at double cost, and
+/// it pays 1d10 force for ending a turn in there. See
+/// `crate::engine::incorporeal` — which also says why the "through
+/// other creatures" half of that sentence is still missing. The BPS
+/// resistance envelope is the other half.
 pub static ALLIP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&ALLIP_MADDENING_TOUCH);
@@ -90,6 +91,9 @@ pub static ALLIP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Incorporeal Movement** — the stone is not a wall to
+        // this thing. See `crate::engine::incorporeal`.
+        features: HashSet::from([INCORPOREAL_MOVEMENT_TAG]),
         // CR-5 RAW saves: WIS proficient (the allip's spectral
         // identity is rooted in mental willpower — the only stat that
         // weathered the shattering at death).

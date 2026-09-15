@@ -1,3 +1,4 @@
+use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LIFE_DRAIN;
 use crate::actors::actor_template::{
@@ -39,6 +40,9 @@ pub static SPECTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Incorporeal Movement** — the stone is not a wall to
+        // this thing. See `crate::engine::incorporeal`.
+        features: HashSet::from([INCORPOREAL_MOVEMENT_TAG]),
         // 5e Specter **Sunlight Sensitivity**: "while in sunlight, the
         // specter has disadvantage on attack rolls, as well as on
         // Wisdom (Perception) checks that rely on sight." The kobold's

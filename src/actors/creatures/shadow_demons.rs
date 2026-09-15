@@ -1,3 +1,4 @@
+use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::SHADOW_DEMON_CLAWS;
 use crate::actors::actor_template::CreatureTemplate;
@@ -49,6 +50,9 @@ pub static SHADOW_DEMON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Medium,
         creature_type: CreatureType::Fiend,
         actions,
+        // SRD 5.2 **Incorporeal Movement** — the stone is not a wall to
+        // this thing. See `crate::engine::incorporeal`.
+        features: HashSet::from([INCORPOREAL_MOVEMENT_TAG]),
         damage_modifiers: HashMap::from([
             (DamageType::Cold, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),

@@ -11573,6 +11573,20 @@ impl ActorInstance {
         self.has_passive_feature(crate::actions::class_features::AQUATIC_ONLY_TAG)
     }
 
+    /// True if solid stone is not an obstacle to this creature — SRD
+    /// 5.2's **Incorporeal Movement**, on the eight spirits that print
+    /// it. See `crate::engine::incorporeal`.
+    ///
+    /// Named for the half of the clause the engine actually models.
+    /// RAW's sentence is *"through other creatures and objects"* and
+    /// only the objects half is here: the board is one actor id per
+    /// subtile, so two creatures sharing a square is a second occupancy
+    /// layer rather than a predicate. That gap is named in the module
+    /// docs rather than papered over by a wider-sounding name.
+    pub fn phases_through_objects(&self) -> bool {
+        self.has_passive_feature(crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG)
+    }
+
     /// How long this actor could hold its breath from full, in rounds —
     /// RAW's *"1 plus its Constitution modifier"* minutes, floored at
     /// thirty seconds.

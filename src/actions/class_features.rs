@@ -14133,6 +14133,36 @@ pub const UNDERWATER_BREATHING_TAG: &str = "shared.underwater_breathing";
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const AQUATIC_ONLY_TAG: &str = "monster.aquatic_only";
 
+/// SRD 5.2 **Incorporeal Movement** — *"the ghost can move through
+/// other creatures and objects as if they were Difficult Terrain. It
+/// takes 5 (1d10) Force damage if it ends its turn inside an object."*
+///
+/// Eight stat blocks print it and every one of them is a spirit: the
+/// Allip, the Banshee, the Ghost, the Poltergeist, the Shadow, the
+/// Shadow Demon, the Specter and the Wraith. Until this tag existed
+/// they each carried the same apology instead — the Allip's said the
+/// clause was *"omitted as a deliberate scope cut — the engine's
+/// pathfinding doesn't yet model wall-phasing actors, and modeling the
+/// half-speed-through-walls clause would require a per-tile
+/// 'incorporeal cost' lane that doesn't exist"* — and settled for the
+/// bludgeoning/piercing/slashing resistance as the load-bearing half of
+/// being a ghost.
+///
+/// It is not the load-bearing half. A spirit's whole tactical shape is
+/// that the room's walls are not its walls: it reaches the back rank
+/// through the stone, and the party's answer is to make it pay for
+/// stopping in there. That is the clause, and the lane it wanted is
+/// `crate::engine::incorporeal`.
+///
+/// On the `monster.` namespace beside the aquatic pair above, and for
+/// the same reason: it is a line of a stat block rather than a class
+/// feature. Read by `ActorInstance::phases_through_objects`, and
+/// through it by `EncounterInstance::tile_admits` — the single subtile
+/// chokepoint every mover in the engine already goes through.
+///
+/// Always-on passive; no per-rest charge and no condition gate.
+pub const INCORPOREAL_MOVEMENT_TAG: &str = "monster.incorporeal_movement";
+
 
 /// Monster trait: "its weapon attacks are magical".
 ///

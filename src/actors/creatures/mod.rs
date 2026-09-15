@@ -697,6 +697,41 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
     aquatic
 }
 
+/// Every template that walks through walls — the seven stat blocks
+/// whose RAW traits print **Incorporeal Movement**, and so the seven
+/// creatures for which the room's geometry is a suggestion.
+///
+/// Written down rather than derived, for the reason `aquatic_templates`
+/// above is: there is nothing to derive it from. "Does this stat block
+/// print Incorporeal Movement" is a fact about the monster manual, so
+/// the monster manual's answer is what gets stored, and the two-way
+/// sweep in this module's tests is what keeps the list and the tag from
+/// drifting apart in either direction.
+///
+/// The **Shadow** is the interesting absence. It sits beside the
+/// Specter and the Wraith in every other respect — the same
+/// incorporeal-undead condition envelope, the same physical resistance,
+/// the same shape of fight — and its own trait is a different sentence:
+/// *Amorphous*, *"can move through a space as narrow as 1 inch without
+/// expending extra movement"*. That is squeezing through a crack, not
+/// pushing through the stone, and on a grid whose smallest unit is two
+/// and a half feet it has nothing to say. Listing it here would give
+/// the shadow a rule its stat block does not have, on the strength of a
+/// family resemblance.
+///
+/// See `crate::engine::incorporeal` for what the tag buys and costs.
+pub fn incorporeal_templates() -> Vec<&'static CreatureTemplate> {
+    vec![
+        &allips::ALLIP_TEMPLATE,
+        &banshees::BANSHEE_TEMPLATE,
+        &ghosts::GHOST_TEMPLATE,
+        &shadow_demons::SHADOW_DEMON_TEMPLATE,
+        &specters::SPECTER_TEMPLATE,
+        &wisps::WISP_TEMPLATE,
+        &wraiths::WRAITH_TEMPLATE,
+    ]
+}
+
 /// Every template the water will not drown — the creatures whose RAW
 /// stat block carries Amphibious, Water Breathing, Hold Breath or
 /// Limited Amphibiousness, and so the creatures that can stand at the
@@ -1957,6 +1992,52 @@ mod tests {
             assert!(
                 aquatic_names.contains(&t.name),
                 "{} carries a swimming speed but is not on the aquatic list",
+                t.name
+            );
+        }
+    }
+
+    /// `incorporeal_templates` is the whole truth about who carries
+    /// `INCORPOREAL_MOVEMENT_TAG`, in both directions.
+    ///
+    /// The twin of the swimming sweep above, and it guards a bigger
+    /// silent failure than that one does. A spirit that loses the tag
+    /// is merely a spirit that takes the corridor; a creature that
+    /// gains one by copy-paste can walk out of a sealed room, and the
+    /// only sign of it is a fight that goes somewhere the map said it
+    /// could not. Neither direction is a crash or a warning.
+    ///
+    /// Swept across the encounter pool and every player template rather
+    /// than across the list alone, for the reason the swimming one is:
+    /// a list can only catch what is on it, and the interesting failure
+    /// is a tag somewhere the list never looks.
+    #[test]
+    fn the_incorporeal_tag_is_carried_by_exactly_the_wall_walkers() {
+        use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
+        use crate::engine::encounter::EncounterInstance;
+
+        let spirits = super::incorporeal_templates();
+        for t in &spirits {
+            assert!(
+                t.features.contains(INCORPOREAL_MOVEMENT_TAG),
+                "{} is on the incorporeal list without the trait",
+                t.name
+            );
+        }
+        let names: Vec<&str> = spirits.iter().map(|t| t.name).collect();
+
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            super::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            if !t.features.contains(INCORPOREAL_MOVEMENT_TAG) {
+                continue;
+            }
+            assert!(
+                names.contains(&t.name),
+                "{} walks through walls but is not on the incorporeal list",
                 t.name
             );
         }
