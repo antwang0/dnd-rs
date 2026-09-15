@@ -10192,11 +10192,6 @@ mod tests {
     #[test]
     fn every_cursed_suit_resists_its_label_and_doubles_the_rest() {
         use crate::engine::types::DamageType;
-        const PHYSICAL: [DamageType; 3] = [
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ];
         let mut resisted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         for suit in ARMORS_OF_VULNERABILITY {
             assert!(
@@ -10224,7 +10219,7 @@ mod tests {
                 .nth(1)
                 .and_then(|s| s.strip_suffix(')'))
                 .expect("every suit names its type in parentheses");
-            let expected = PHYSICAL
+            let expected = DamageType::PHYSICAL
                 .iter()
                 .copied()
                 .find(|t| t.to_string().eq_ignore_ascii_case(label))
@@ -10240,7 +10235,7 @@ mod tests {
                 .map(|t| t.to_string())
                 .collect();
             doubled.sort();
-            let mut others: Vec<String> = PHYSICAL
+            let mut others: Vec<String> = DamageType::PHYSICAL
                 .iter()
                 .filter(|t| **t != expected)
                 .map(|t| t.to_string())

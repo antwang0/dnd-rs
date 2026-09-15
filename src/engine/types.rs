@@ -85,6 +85,31 @@ impl DamageType {
         DamageType::Thunder,
     ];
 
+    /// The three **physical** damage types — bludgeoning, piercing and
+    /// slashing.
+    ///
+    /// Not a category 5e ever names in one word, which is why this was a
+    /// three-line array literal in eleven places before it was a
+    /// constant: the rulebook writes the list out every time too. What
+    /// makes it worth a name here is that the engine does not merely
+    /// *mention* the trio, it depends on the three being exactly these
+    /// three — `apply_heavy_armor_reduction` subtracts from them,
+    /// `restore_resisted_physical_damage` un-halves them,
+    /// `resistant_to_nonmagical_physical` builds forty stat blocks out
+    /// of them, and two tests had already declared their own private
+    /// `const PHYSICAL` rather than write it a twelfth time.
+    ///
+    /// Ordered as `ALL` orders them, so a reader comparing the two lists
+    /// is comparing membership rather than sequence. Deliberately not a
+    /// `fn is_physical(self) -> bool` predicate: every consumer wants
+    /// the *list* (to iterate, to `contains`, to build a map from), and
+    /// a predicate would make each of them write the iteration back out.
+    pub const PHYSICAL: [DamageType; 3] = [
+        DamageType::Bludgeoning,
+        DamageType::Piercing,
+        DamageType::Slashing,
+    ];
+
     /// This type's bit position in a `DamageTypeSet`. Kept as an
     /// exhaustive `match` rather than a scan of `ALL` so the compiler
     /// makes adding a fourteenth damage type a build error here instead

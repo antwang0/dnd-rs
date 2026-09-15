@@ -20498,11 +20498,7 @@ fn stoneskin_applies_damage_resistant_and_concentration() {
     }
     assert!(e.actors[&ally].has_condition(Condition::Stoneskinned));
     assert!(e.actors[&caster].is_concentrating());
-    for physical in [
-        DamageType::Bludgeoning,
-        DamageType::Piercing,
-        DamageType::Slashing,
-    ] {
+    for physical in DamageType::PHYSICAL {
         assert!(
             e.actors[&ally].has_condition_resistance(physical),
             "stoneskin should answer {physical:?}"
@@ -23131,7 +23127,7 @@ fn fire_elemental_immunities_and_resistances() {
     // RAW's clause is "from nonmagical attacks", so a +1 sword gets
     // through where a mundane one is halved. The unqualified table must
     // stay empty of the triplet for that to hold.
-    for dt in [DamageType::Bludgeoning, DamageType::Piercing, DamageType::Slashing] {
+    for dt in DamageType::PHYSICAL {
         assert!(actor.resists_nonmagical(dt), "{:?} from a mundane weapon", dt);
         assert!(!actor.is_resistant_to(dt), "{:?} from a magical one", dt);
     }
@@ -25785,11 +25781,7 @@ fn deflect_energy_blunts_everything_but_a_physical_blow() {
             "{:?}: deflecting spends the reaction", dt
         );
     }
-    for dt in [
-        DamageType::Bludgeoning,
-        DamageType::Piercing,
-        DamageType::Slashing,
-    ] {
+    for dt in DamageType::PHYSICAL {
         let mut e = ei_with_terrain(20, 20, &[]);
         let ogre = e
             .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 5), 1, 0)
@@ -58343,7 +58335,7 @@ fn water_elemental_inherits_elemental_damage_base() {
     // Inherited from the elemental base — and qualified to nonmagical
     // attacks, which is the half of RAW's clause the base used to drop.
     assert!(actor.is_immune_to(DamageType::Poison));
-    for dt in [DamageType::Bludgeoning, DamageType::Piercing, DamageType::Slashing] {
+    for dt in DamageType::PHYSICAL {
         assert!(actor.resists_nonmagical(dt));
         assert!(!actor.is_resistant_to(dt));
     }
@@ -87726,11 +87718,7 @@ fn gaseous_form_buys_a_defence_with_the_whole_offence() {
 
     // The defensive half.
     let mist = &e.actors[&fighter];
-    for dt in [
-        DamageType::Bludgeoning,
-        DamageType::Piercing,
-        DamageType::Slashing,
-    ] {
+    for dt in DamageType::PHYSICAL {
         assert!(
             mist.has_condition_resistance(dt),
             "a cloud halves {:?}",
@@ -100281,11 +100269,7 @@ fn the_new_armour_is_worth_what_it_prints() {
         .get_mut(&id)
         .unwrap()
         .pickup_item(&ARMOR_OF_INVULNERABILITY);
-    for dt in [
-        DamageType::Bludgeoning,
-        DamageType::Piercing,
-        DamageType::Slashing,
-    ] {
+    for dt in DamageType::PHYSICAL {
         assert_eq!(
             e.actors[&id].effective_damage(20, dt),
             10,
@@ -105623,11 +105607,7 @@ fn the_cursed_suit_halves_one_blow_and_doubles_the_other_two() {
         .unwrap();
 
     // Bare: every physical type lands at face value.
-    for dt in [
-        DamageType::Bludgeoning,
-        DamageType::Piercing,
-        DamageType::Slashing,
-    ] {
+    for dt in DamageType::PHYSICAL {
         assert_eq!(e.actors[&who].effective_damage(20, dt), 20, "{dt} unworn");
     }
 
@@ -112328,4 +112308,61 @@ fn resilient_constitution_puts_the_proficiency_bonus_on_a_druids_concentration_s
         con + pb,
         "the bonus reaches the die"
     );
+}
+
+/// `DamageType::PHYSICAL` against the axis it is a subset of.
+///
+/// The constant exists because eleven places had written its three
+/// members out by hand, two of them as private `const PHYSICAL` arrays
+/// of their own. What a shared list buys is that a fourteenth damage
+/// type cannot quietly join or leave it; what it costs is that nothing
+/// checks the membership any more, because the sites that used to spell
+/// it out no longer do. This is that check.
+#[test]
+fn the_physical_damage_types_are_the_three_a_weapon_deals() {
+    use std::collections::HashSet;
+
+    assert_eq!(
+        DamageType::PHYSICAL.len(),
+        3,
+        "bludgeoning, piercing, slashing — and nothing has been added"
+    );
+    for dt in DamageType::PHYSICAL {
+        assert!(
+            DamageType::ALL.contains(&dt),
+            "{dt} is on the physical list and not on the damage-type axis"
+        );
+    }
+    let unique: HashSet<DamageType> = DamageType::PHYSICAL.into_iter().collect();
+    assert_eq!(unique.len(), 3, "no type is listed twice");
+    // Named individually as well, so a reordering that swapped a member
+    // for its neighbour would still fail here rather than pass on a
+    // length check.
+    assert!(unique.contains(&DamageType::Bludgeoning));
+    assert!(unique.contains(&DamageType::Piercing));
+    assert!(unique.contains(&DamageType::Slashing));
+    // And the complement is every type a weapon does not deal by being
+    // a weapon — the half that would break if somebody read "physical"
+    // as "mundane" and added Poison.
+    for dt in DamageType::ALL {
+        if DamageType::PHYSICAL.contains(&dt) {
+            continue;
+        }
+        assert!(
+            matches!(
+                dt,
+                DamageType::Acid
+                    | DamageType::Cold
+                    | DamageType::Fire
+                    | DamageType::Force
+                    | DamageType::Lightning
+                    | DamageType::Necrotic
+                    | DamageType::Poison
+                    | DamageType::Psychic
+                    | DamageType::Radiant
+                    | DamageType::Thunder
+            ),
+            "{dt} is neither physical nor one of the ten that are not"
+        );
+    }
 }

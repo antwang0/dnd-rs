@@ -584,11 +584,7 @@ mod tests {
     /// tactically-relevant split inside the family.
     #[test]
     fn only_the_rat_swarm_lacks_physical_resistance() {
-        for damage_type in [
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ] {
+        for damage_type in DamageType::PHYSICAL {
             assert_eq!(
                 make(&SWARM_OF_RATS_TEMPLATE).damage_modifier(damage_type),
                 None,

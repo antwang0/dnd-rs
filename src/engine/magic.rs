@@ -278,11 +278,7 @@ mod tests {
     #[test]
     fn the_bps_triplet_is_qualified_and_only_qualified() {
         for t in EncounterInstance::template_pool() {
-            for dt in [
-                DamageType::Bludgeoning,
-                DamageType::Piercing,
-                DamageType::Slashing,
-            ] {
+            for dt in DamageType::PHYSICAL {
                 let Some(qualified) = t.nonmagical_damage_modifiers.get(&dt) else {
                     continue;
                 };
@@ -541,11 +537,6 @@ mod tests {
     fn a_physical_resistance_that_magic_cannot_answer_is_a_swarm_or_a_bug() {
         use crate::engine::types::{DamageModifier, DamageType};
 
-        const PHYSICAL: [DamageType; 3] = [
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ];
         // RAW's own unqualified physical resistance, and the only one.
         let unqualified_in_raw = [
             // A cloud of individually-tiny things: the blade passes
@@ -580,7 +571,7 @@ mod tests {
                 .flat_map(|(_, ts)| ts),
         );
         for t in everything {
-            let unqualified: Vec<DamageType> = PHYSICAL
+            let unqualified: Vec<DamageType> = DamageType::PHYSICAL
                 .into_iter()
                 .filter(|dt| {
                     matches!(

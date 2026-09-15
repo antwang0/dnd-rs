@@ -4231,22 +4231,6 @@ pub fn resolve_attack_outcome_with_rider(
     (effects, damage)
 }
 
-/// The three damage types the **Heavy Armor Master** feat reduces —
-/// RAW's *"Bludgeoning, Piercing, and Slashing damage you take from
-/// attacks"*.
-///
-/// The same three `IRRESISTIBLE_PHYSICAL_TYPES` below names, and
-/// deliberately a second constant rather than a shared one: the two
-/// clauses agree on a list today by coincidence of what "physical"
-/// means in 5e, and a feature that named four (or two) should not have
-/// to notice that it was sharing. Neither list is long enough for the
-/// duplication to be worth a taxonomy.
-const HEAVY_ARMOR_REDUCED_TYPES: &[DamageType] = &[
-    DamageType::Bludgeoning,
-    DamageType::Piercing,
-    DamageType::Slashing,
-];
-
 /// The **Heavy Armor Master** feat: subtract the defender's proficiency
 /// bonus from every Bludgeoning / Piercing / Slashing payload this swing
 /// has queued at them.
@@ -4303,7 +4287,7 @@ pub fn apply_heavy_armor_reduction(
         };
         if aimed_at != defender_id
             || amount == 0
-            || !HEAVY_ARMOR_REDUCED_TYPES.contains(&damage_type)
+            || !DamageType::PHYSICAL.contains(&damage_type)
         {
             continue;
         }
@@ -4322,20 +4306,6 @@ pub fn apply_heavy_armor_reduction(
     }
     removed
 }
-
-/// Every damage type SRD 5.2's **Boon of Irresistible Offense** names:
-/// *"The Bludgeoning, Piercing, and Slashing damage you deal always
-/// ignores Resistance."*
-///
-/// The three physical types and no others. Written out rather than
-/// derived from a `DamageType::is_physical` predicate because there is
-/// no such predicate to derive from and one row of three constants is
-/// not worth inventing a taxonomy for.
-const IRRESISTIBLE_PHYSICAL_TYPES: &[DamageType] = &[
-    DamageType::Bludgeoning,
-    DamageType::Piercing,
-    DamageType::Slashing,
-];
 
 /// SRD 5.2 **Boon of Irresistible Offense**, *Overcome Defenses*: the
 /// holder's physical damage ignores Resistance.
@@ -4396,7 +4366,7 @@ pub fn restore_resisted_physical_damage(
         };
         if aimed_at != target_id
             || amount == 0
-            || !IRRESISTIBLE_PHYSICAL_TYPES.contains(&damage_type)
+            || !DamageType::PHYSICAL.contains(&damage_type)
         {
             continue;
         }
@@ -4519,7 +4489,7 @@ pub fn apply_nonmagical_resistance(
         };
         if ignores_physical_resistance
             && modifier == crate::engine::types::DamageModifier::Resistance
-            && IRRESISTIBLE_PHYSICAL_TYPES.contains(&damage_type)
+            && DamageType::PHYSICAL.contains(&damage_type)
         {
             continue;
         }

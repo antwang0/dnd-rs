@@ -169,19 +169,11 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
     // `Condition::Stoneskinned`.
     ConditionDrivenTypedResistance {
         source: Condition::Stoneskinned,
-        types: &[
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ],
+        types: &DamageType::PHYSICAL,
     },
     ConditionDrivenTypedResistance {
         source: Condition::InvestedInStone,
-        types: &[
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ],
+        types: &DamageType::PHYSICAL,
     },
     ConditionDrivenTypedResistance {
         source: Condition::Purified,
@@ -194,19 +186,11 @@ const TYPED_RESISTANCE_CONDITIONS: &[ConditionDrivenTypedResistance] = &[
     // cut.
     ConditionDrivenTypedResistance {
         source: Condition::Gaseous,
-        types: &[
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ],
+        types: &DamageType::PHYSICAL,
     },
     ConditionDrivenTypedResistance {
         source: Condition::Raging,
-        types: &[
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ],
+        types: &DamageType::PHYSICAL,
     },
     // 5e Tasha's Otherworldly Guise (celestial flavor): radiant + poison
     // resistance from the divine-aligned form. Folded into the same lane
@@ -4947,11 +4931,10 @@ impl CreatureTemplate {
     /// than one more halved swing.
     pub fn resistant_to_nonmagical_physical() -> CreatureTemplate {
         CreatureTemplate {
-            nonmagical_damage_modifiers: HashMap::from([
-                (DamageType::Bludgeoning, DamageModifier::Resistance),
-                (DamageType::Piercing, DamageModifier::Resistance),
-                (DamageType::Slashing, DamageModifier::Resistance),
-            ]),
+            nonmagical_damage_modifiers: DamageType::PHYSICAL
+                .iter()
+                .map(|&dt| (dt, DamageModifier::Resistance))
+                .collect(),
             ..CreatureTemplate::defaults()
         }
     }
@@ -13870,11 +13853,7 @@ mod tests {
         let t = CreatureTemplate::resistant_to_nonmagical_physical();
         assert!(t.damage_modifiers.is_empty());
         assert_eq!(t.nonmagical_damage_modifiers.len(), 3);
-        for dt in [
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ] {
+        for dt in DamageType::PHYSICAL {
             assert_eq!(
                 t.nonmagical_damage_modifiers.get(&dt).copied(),
                 Some(DamageModifier::Resistance)

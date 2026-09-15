@@ -174,11 +174,7 @@ mod tests {
         // directions: a resistance that had leaked into the unqualified
         // table would halve a Divine Smite, which is the one thing the
         // qualification exists to stop.
-        for dt in [
-            DamageType::Bludgeoning,
-            DamageType::Piercing,
-            DamageType::Slashing,
-        ] {
+        for dt in DamageType::PHYSICAL {
             assert_eq!(
                 a.nonmagical_damage_modifier(dt),
                 Some(DamageModifier::Resistance)
