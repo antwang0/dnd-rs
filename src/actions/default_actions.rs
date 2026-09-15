@@ -2080,6 +2080,12 @@ pub static PRY_LOOSE: LazyLock<PryLoose> = LazyLock::new(|| PryLoose {});
 pub struct Burrow {}
 
 impl Action for Burrow {
+    /// Only the eleven stat blocks that print a burrow speed, which is
+    /// not a thing that appears mid-fight. See `Action::possible_for`.
+    fn possible_for(&self, actor: &crate::actors::actor_template::ActorInstance) -> bool {
+        actor.can_burrow()
+    }
+
     fn name(&self) -> &str {
         "burrow"
     }
@@ -2154,6 +2160,14 @@ pub static BURROW: LazyLock<Burrow> = LazyLock::new(|| Burrow {});
 pub struct Surface {}
 
 impl Action for Surface {
+    /// The inverse of `Burrow`'s row and gated on the same thing rather
+    /// than on being underground: a burrower that is on the surface
+    /// should see the pair, greyed out, the way `Stand` and `Drop Prone`
+    /// sit beside each other.
+    fn possible_for(&self, actor: &crate::actors::actor_template::ActorInstance) -> bool {
+        actor.can_burrow()
+    }
+
     fn name(&self) -> &str {
         "surface"
     }

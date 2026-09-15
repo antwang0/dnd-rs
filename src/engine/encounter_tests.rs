@@ -114248,3 +114248,54 @@ fn a_drain_follows_the_blow_that_downed_its_target_and_kills_only_once() {
         "a reduction that changed nothing does not kill"
     );
 }
+
+/// The picker offers `Burrow` and `Surface` to the creatures that can
+/// dig and to nobody else.
+///
+/// `available_actions`'s own rule — *"a row the picker would offer and
+/// the validator would always refuse is worse than no row"* — with the
+/// weight on **always**. Most of the default list is situational and
+/// stays: `Mount` needs a horse beside you and `Stand` needs you to be
+/// prone, and either can be true a second from now. A burrow speed is
+/// a line on a stat block.
+#[test]
+fn only_a_burrower_is_offered_the_two_rows_it_can_use() {
+    let mut seen_digger = 0;
+    let mut seen_walker = 0;
+    for template in EncounterInstance::template_pool() {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let Ok(id) = e.instantiate_creature(template, Coordinate::new(4, 4), 0, 0) else {
+            continue;
+        };
+        let offered: Vec<&str> = e.actors[&id]
+            .available_actions()
+            .iter()
+            .map(|a| a.name())
+            .collect();
+        let digs = template.burrow_speed > 0.0;
+        for row in ["burrow", "surface"] {
+            assert_eq!(
+                offered.contains(&row),
+                digs,
+                "{} prints burrow {} and is offered {row}: {}",
+                template.name,
+                template.burrow_speed,
+                offered.contains(&row)
+            );
+        }
+        // …and the situational rows stay on everybody's list, which is
+        // the distinction this filter is drawing.
+        assert!(
+            offered.contains(&"mount"),
+            "{} keeps the rows that are merely unavailable right now",
+            template.name
+        );
+        if digs {
+            seen_digger += 1;
+        } else {
+            seen_walker += 1;
+        }
+    }
+    assert!(seen_digger >= 10, "the roster has burrowers: {seen_digger}");
+    assert!(seen_walker > 100, "…and plenty that walk: {seen_walker}");
+}

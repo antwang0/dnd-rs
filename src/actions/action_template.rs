@@ -1457,6 +1457,37 @@ pub trait Action {
         false
     }
 
+    /// **Could this creature ever take this action?** — the question
+    /// `is_reaction_only` one method up asks about the *action*, asked
+    /// about the pair instead.
+    ///
+    /// `available_actions`'s own docstring states the rule this
+    /// enforces: *"a row the picker would offer and the validator would
+    /// always refuse is worse than no row."* The word doing the work
+    /// there is **always**, and it is what separates this from
+    /// `custom_validate_input`:
+    ///
+    ///   - **Situational** is the validator's job, and most of the
+    ///     default list is situational. `Mount` needs a horse standing
+    ///     next to you, `Stand` needs you to be prone, `Pry Loose` needs
+    ///     something latched onto somebody. Every one of those can
+    ///     become available in the next second, so the row stays and
+    ///     greys out.
+    ///   - **Impossible** is this. `Burrow` needs a burrow speed, which
+    ///     is a line on a stat block and will not appear mid-fight.
+    ///     Offering it to the other three hundred and thirty creatures
+    ///     is two dead rows on every picker in the game.
+    ///
+    /// Defaults to `true`, so every existing action keeps its row and
+    /// nothing has to opt in. Read only at `available_actions`, never
+    /// at validation — an action that answers `false` here is simply
+    /// not on the menu, and one that reaches the validator by some
+    /// other route (the AI naming it, the parser resolving an alias)
+    /// still gets the validator's own answer.
+    fn possible_for(&self, _actor: &crate::actors::actor_template::ActorInstance) -> bool {
+        true
+    }
+
     /// True when this action swings rather than shoots — a melee weapon
     /// attack or a touch spell, as opposed to a bow, a thrown rock or a
     /// Fire Bolt.

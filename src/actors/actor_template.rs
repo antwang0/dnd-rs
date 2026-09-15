@@ -8719,11 +8719,18 @@ impl ActorInstance {
         // fires for it — see `Action::is_reaction_only`. A row the
         // picker would offer and the validator would always refuse is
         // worse than no row.
+        //
+        // …and except the rows that are impossible for *this* creature
+        // rather than for anybody. `Action::possible_for` is that
+        // second filter, and the distinction it draws is between
+        // "cannot right now" and "cannot ever": `Mount` needs a horse
+        // beside you and stays on the list greyed out, and `Burrow`
+        // needs a burrow speed, which is a line on a stat block.
         let mut out: Vec<&'static (dyn Action + Send + Sync)> = self
             .actions
             .iter()
             .copied()
-            .filter(|a| !a.is_reaction_only())
+            .filter(|a| !a.is_reaction_only() && a.possible_for(self))
             .collect();
         let mut seen: HashSet<&'static str> = HashSet::new();
         for item in self.active_items() {

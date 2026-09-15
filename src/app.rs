@@ -1708,15 +1708,19 @@ mod tests {
             )
             .expect("the wizard fits");
         spawn(&mut app, 1, Coordinate::new(12, 5));
+        app.encounter.process_stack();
         // Park the selection on Burning Hands, which is the cone this
-        // is about.
-        let idx = app.encounter.actors[&wiz]
-            .actions
+        // is about — found in the **prompt's** list, which is what
+        // `selected_action_idx` indexes. See the sibling test above for
+        // why the stat block's own `actions` vec is not that list.
+        app.selected_action_idx = app
+            .encounter
+            .peek_prompt()
+            .expect("the wizard is asked")
+            .actions()
             .iter()
             .position(|a| a.name() == "burning hands")
             .expect("a wizard carries burning hands");
-        app.selected_action_idx = idx;
-        app.encounter.process_stack();
 
         let expected: std::collections::HashSet<Coordinate> = AreaShape::Cone { length: 6 }
             .tiles(
@@ -1798,8 +1802,7 @@ mod tests {
     #[test]
     fn a_bare_tile_casts_the_highlighted_action() {
         let mut app = app_with_empty_board();
-        let wiz = app
-            .encounter
+        app.encounter
             .instantiate_creature(
                 &crate::actors::creatures::wizards::WIZARD_TEMPLATE,
                 Coordinate::new(4, 4),
@@ -1808,14 +1811,22 @@ mod tests {
             )
             .expect("the wizard fits");
         let goblin = spawn(&mut app, 1, Coordinate::new(9, 5));
-        let idx = app.encounter.actors[&wiz]
-            .actions
+        app.encounter.process_stack();
+        assert!(app.encounter.peek_prompt().is_some(), "the wizard is asked");
+        // Found in the **prompt's** list, which is what
+        // `selected_action_idx` indexes. The raw `actions` vec on the
+        // stat block is a different list: `available_actions` drops the
+        // reaction-only rows and the ones this creature could never
+        // take, so the two agree only by luck and stopped agreeing the
+        // day `Action::possible_for` landed.
+        app.selected_action_idx = app
+            .encounter
+            .peek_prompt()
+            .expect("the wizard is asked")
+            .actions()
             .iter()
             .position(|a| a.name() == "burning hands")
             .expect("a wizard carries burning hands");
-        app.selected_action_idx = idx;
-        app.encounter.process_stack();
-        assert!(app.encounter.peek_prompt().is_some(), "the wizard is asked");
 
         app.input_str.push_str("9,5");
         // The preview and the cast agree on the shape, which is the
