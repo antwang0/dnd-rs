@@ -5564,6 +5564,39 @@ pub static FROST_BRAND: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Dancing Sword** (Weapon — Greatsword, Longsword, Rapier, Scimitar
+/// or Shortsword; Very Rare, requires attunement) — *"You can take a
+/// Bonus Action to toss this magic weapon into the air. When you do so,
+/// the weapon begins to hover, flies up to 30 feet, and attacks one
+/// creature of your choice within 5 feet of itself."*
+///
+/// The only weapon on the armoury that fights somewhere its wielder is
+/// not. Every other entry here is a rider on a swing the holder makes —
+/// an extra 2d6, a 1d6 of cold, a save-or-die on a natural 20 — and this
+/// one is a second attack a turn, made thirty feet away, for a Bonus
+/// Action the holder was probably not spending.
+///
+/// What it costs is *position*: the sword drops out of the air the
+/// moment its owner is more than thirty feet from it, so it belongs to
+/// whoever is willing to stay in the fight it was thrown into. It rides
+/// the hovering-blade layer with SRD 5.2's two spectral-weapon spells —
+/// see [`crate::engine::hovering_blade`] and
+/// [`crate::actions::item_actions::DancingSwordItem`], which carries the
+/// rest of the reading.
+///
+/// No `+1`: RAW prints none, and the sword's value is the four free
+/// attacks rather than a better number on them. `grants_magical_attacks`
+/// all the same — it is a magic weapon, which is what the physical
+/// resistances in the bestiary ask about.
+pub static DANCING_SWORD: Item = Item {
+    name: crate::actions::item_actions::DANCING_SWORD_NAME,
+    glyph: '%',
+    on_use: &[&crate::actions::item_actions::DANCE_THE_SWORD],
+    grants_magical_attacks: true,
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Vicious Weapon** (Weapon, any simple or martial; Rare) — "This
 /// magic weapon deals an extra 2d6 damage to any creature it hits. This
 /// extra damage is of the same type as the weapon's normal damage."
@@ -8124,6 +8157,7 @@ pub static STAFF_OF_THUNDER_AND_LIGHTNING: Item = Item {
 /// repeating them, so it can say how *often* one of these drops but not
 /// which ones there are.
 pub static MAGIC_ARMOURY: &[&Item] = &[
+    &DANCING_SWORD,
     &DRAGON_SLAYER,
     &HAMMER_OF_THUNDERBOLTS,
     &AMMUNITION_OF_SLAYING,
@@ -8958,6 +8992,9 @@ pub static LOOT_POOL: &[&Item] = &[
     &FROST_BRAND,
     &VICIOUS_WEAPON,
     &SWORD_OF_WOUNDING,
+    // The armoury's one entry that fights somewhere else. Single
+    // weight, like the rest of the Very Rare shelf.
+    &DANCING_SWORD,
     &ADAMANTINE_ARMOR,
     // The two bane weapons the shelf was missing, at the same
     // single-entry weight as the rest of the family. Both are gated on
@@ -9438,12 +9475,19 @@ mod tests {
         //     hit. It is on this shelf rather than off it because
         //     `exactly_the_weapons_carry_the_magic` asks who is allowed
         //     to sharpen a swing, and a magic quarterstaff is.
+        //   - the **Dancing Sword** is the Scimitar of Speed's case
+        //     taken one step further: its clause is not an extra swing
+        //     the holder makes, it is a swing made somewhere the holder
+        //     is not. The whole of it is an `on_use` onto the
+        //     hovering-blade layer, and there is nothing for a rider to
+        //     add to a hit the wielder's arm never made.
         let no_rider: &[&Item] = &[
             &ADAMANTINE_ARMOR,
             &MACE_OF_TERROR,
             &BERSERKER_AXE,
             &SCIMITAR_OF_SPEED,
             &QUARTERSTAFF_OF_THE_ACROBAT,
+            &DANCING_SWORD,
         ];
         for item in no_rider {
             assert!(

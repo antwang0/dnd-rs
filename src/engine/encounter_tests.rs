@@ -110626,3 +110626,127 @@ fn a_fire_shield_does_not_burn_an_attacker_it_cannot_reach() {
         "toe to toe, the flames still answer the swing"
     );
 }
+
+/// The Dancing Sword's own two clauses, which is what makes it the item
+/// rather than a third printing of the spell: it flies for a Bonus
+/// Action and it is counted rather than clocked.
+#[test]
+fn a_dancing_sword_swings_four_times_and_then_comes_home() {
+    use crate::actions::item_actions::{DANCE_THE_SWORD, DANCING_SWORD_NAME};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::DANCING_SWORD;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+        .unwrap();
+    assert!(
+        !DANCE_THE_SWORD.custom_validate_input(&e, fighter, Some(&vec![zombie]), None, None),
+        "nobody who is not holding the sword may dance it"
+    );
+    e.actors.get_mut(&fighter).unwrap().pickup_item(&DANCING_SWORD);
+    assert!(
+        DANCE_THE_SWORD.custom_validate_input(&e, fighter, Some(&vec![zombie]), None, None),
+        "…and whoever is, may"
+    );
+    assert!(
+        DANCE_THE_SWORD
+            .cost(&e, fighter, Some(&vec![zombie]), None, None)
+            .iter()
+            .any(|c| matches!(c, Resource::BonusAction)),
+        "a Bonus Action to toss it"
+    );
+
+    let swing = |e: &mut EncounterInstance| {
+        for ef in DANCE_THE_SWORD.side_effects(e, fighter, Some(&vec![zombie]), None, None) {
+            ef.apply(e);
+        }
+    };
+    // Keep the target upright so the four swings are what ends the
+    // dance rather than the corpse.
+    for expected in [3u32, 2, 1] {
+        swing(&mut e);
+        e.actors.get_mut(&zombie).unwrap().heal(200);
+        assert_eq!(
+            e.hovering_blades()[0].swings_remaining,
+            Some(expected),
+            "each flight is one of the four"
+        );
+    }
+    swing(&mut e);
+    assert!(
+        e.hovering_blades().is_empty(),
+        "after the fourth attack the sword flies back to its wielder"
+    );
+    assert!(
+        e.actors[&fighter].wields_live_item(DANCING_SWORD_NAME),
+        "…and is in the pack again, not lost on the floor"
+    );
+}
+
+/// *"It also ceases to hover if you […] are more than 30 feet away from
+/// it."* The tether is the sword's price, and the round-end tick is what
+/// notices the wielder having been the one who walked.
+#[test]
+fn a_dancing_sword_falls_when_its_wielder_walks_away_from_it() {
+    use crate::actions::item_actions::DANCE_THE_SWORD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::DANCING_SWORD;
+
+    let mut e = ei_with_terrain(60, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&fighter).unwrap().pickup_item(&DANCING_SWORD);
+    for ef in DANCE_THE_SWORD.side_effects(&mut e, fighter, Some(&vec![zombie]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.hovering_blades().len(), 1);
+    e.round_end();
+    assert_eq!(
+        e.hovering_blades().len(),
+        1,
+        "standing next to it, the sword keeps dancing"
+    );
+
+    e.place_actor_at(fighter, Coordinate::new(45, 10)).unwrap();
+    e.round_end();
+    assert!(
+        e.hovering_blades().is_empty(),
+        "thirty-one tiles is well past the sword's thirty feet"
+    );
+}
+
+/// The two spells are *not* tethered, and that asymmetry is RAW rather
+/// than an oversight: a Spiritual Weapon left behind by a cleric who ran
+/// keeps swinging at what it was swinging at.
+#[test]
+fn a_spiritual_weapon_is_not_tethered_to_the_cleric_who_cast_it() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(8, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+        .unwrap();
+    for ef in SPIRITUAL_WEAPON.side_effects(&mut e, cleric, Some(&vec![zombie]), None, None) {
+        ef.apply(&mut e);
+    }
+    e.place_actor_at(cleric, Coordinate::new(50, 10)).unwrap();
+    e.round_end();
+    assert_eq!(
+        e.hovering_blades().len(),
+        1,
+        "the mace stays where the spell left it"
+    );
+}

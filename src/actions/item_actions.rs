@@ -11009,3 +11009,264 @@ pub static BIND_DIMENSIONAL_SHACKLES: DimensionalShacklesItem = DimensionalShack
     item_name: DIMENSIONAL_SHACKLES_NAME,
     reach: crate::actions::action_template::MELEE_REACH,
 };
+
+/// **Dancing Sword** (Weapon — Greatsword, Longsword, Rapier, Scimitar
+/// or Shortsword; Very Rare, requires attunement) —
+///
+/// > You can take a Bonus Action to toss this magic weapon into the air.
+/// > When you do so, the weapon begins to hover, flies up to 30 feet,
+/// > and attacks one creature of your choice within 5 feet of itself.
+/// > The weapon uses your attack roll and adds your ability modifier to
+/// > damage rolls.
+/// >
+/// > While the weapon hovers, you can take a Bonus Action to cause it to
+/// > fly up to 30 feet to another spot within 30 feet of you. As part of
+/// > the same Bonus Action, you can cause the weapon to attack one
+/// > creature within 5 feet of the weapon.
+/// >
+/// > After the hovering weapon attacks for the fourth time, it flies
+/// > back to you […] It also ceases to hover if you grasp it or are more
+/// > than 30 feet away from it.
+///
+/// The loot table's entry on the hovering-blade lane, and the one that
+/// pays for its position rather than for a spell slot. Every number RAW
+/// prints lands on a field of `BladeProfile`: thirty feet of flight is
+/// the `step`, thirty feet of leash is the `tether`, and the fourth
+/// attack is `swings`. See `crate::engine::hovering_blade` for what the
+/// blade is; the two spells on the same lane are `SPIRITUAL_WEAPON` and
+/// `MORDENKAINENS_SWORD`.
+///
+/// **What makes it the item rather than a third printing of the spell**
+/// is the tether. A Spiritual Weapon left behind by a fleeing cleric
+/// keeps swinging; a Dancing Sword its owner has backed thirty feet away
+/// from drops out of the air, and the round-end tick is what notices.
+/// So the sword is worth tossing into a fight you are staying in, which
+/// is exactly the fight a character holding a Very Rare melee weapon is
+/// already in.
+///
+/// **It is a weapon attack, not a spell attack**, and that is RAW's
+/// *"uses your attack roll"*. It goes through `resolve_attack` with the
+/// wielder's own proficiency and ability modifier, which means the swing
+/// picks up Bless, Bane, cover, Sanctuary, the reactive taxes, the
+/// interception cohort and every other rule the shared chokepoint owns
+/// — the same reason nothing in this engine open-codes an attack roll.
+///
+/// **The blade is a rapier** among RAW's five permitted shapes, chosen
+/// for the one property that changes who can use it: Finesse means the
+/// wielder swings off whichever of Strength and Dexterity is better,
+/// so the sword is worth attuning for a rogue as well as a fighter.
+/// A greatsword-shaped one would be a bigger die for a narrower set of
+/// hands.
+///
+/// **Not modeled**: *"it flies back to you and tries to return to your
+/// hand. If you have no hand free, the weapon falls to the ground"* —
+/// the engine has no hands (see `SimpleWeapon::is_versatile` for the
+/// same absence from the other side), so a spent sword simply returns
+/// to the pack it was tossed from. It is never lost, which is the
+/// generous reading of a clause about an inventory slot this engine
+/// does not have.
+pub struct DancingSwordItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    pub blade: crate::engine::hovering_blade::BladeProfile,
+    /// The steel, which the swing reads for its Finesse choice and its
+    /// damage type. Shared with the ordinary weapon lane so the sword in
+    /// the air and a sword in the hand roll the same way.
+    pub weapon: &'static crate::actions::monster_attacks::SimpleWeapon,
+}
+
+impl Action for DancingSwordItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    /// The thirty feet the sword may fly on the toss. Measured
+    /// wielder-to-target, as everything on this lane is — see
+    /// `SpiritualWeapon::reach_tiles` — and here the bound is RAW's own,
+    /// because the tether never lets the sword be further from its
+    /// owner than this anyway.
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.blade.cast_reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    /// Deliberately **not** overridden to melee, though the swing the
+    /// sword makes is one.
+    ///
+    /// `is_melee_attack` is not a question about the attack roll; it is
+    /// the question the AI's positioning rungs ask — *do I have to be
+    /// standing next to something for this to be worth anything* — and
+    /// for a sword that flies thirty feet the answer is no. The default
+    /// derivation (`requires_los() && reach > MELEE_BAND_REACH`) already
+    /// gets it right, and an override saying "melee" would put this item
+    /// in the same bucket as an ogre's greatclub: a creature holding one
+    /// would count itself as having no ranged option and back away from
+    /// fights it could have reached into.
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![self.weapon.damage_type]
+    }
+
+    fn cost(
+        &self,
+        e: &EncounterInstance,
+        c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // A Bonus Action either way — the toss and the later flights are
+        // priced identically by RAW, which is the one thing about this
+        // item's economy that is simpler than the spells'. The branch is
+        // still worth taking rather than returning a constant: it is
+        // what `blade_cost` is for, and an item that later grows a
+        // different price for the toss changes one argument.
+        crate::engine::hovering_blade::blade_cost(
+            e,
+            c,
+            &self.blade,
+            bonus_action_only(),
+            bonus_action_only(),
+        )
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        crate::engine::hovering_blade::blade_validate(
+            encounter,
+            caster_id,
+            &self.blade,
+            target_ids,
+        )
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let Some(anchor) = encounter.blade_strike_anchor(caster_id, &self.blade, target_id) else {
+            return Vec::new();
+        };
+        let Some(wielder) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        // RAW's *"uses your attack roll and adds your ability modifier
+        // to damage rolls"*, resolved off the steel so a Finesse blade
+        // swings off the better arm — the same two accessors an ordinary
+        // swing of the same weapon reads.
+        let swing_ability = self.weapon.swing_ability(wielder);
+        let attack_bonus = wielder.spell_attack_modifier(swing_ability);
+        let damage_bonus = self
+            .weapon
+            .swing_damage_ability(wielder)
+            .map(|a| wielder.ability_modifier(a))
+            .unwrap_or(0);
+        let existing = encounter
+            .blade_sustained_by(caster_id, self.blade.name)
+            .map(|b| b.id);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = match existing {
+            Some(blade_id) => vec![Box::new(crate::engine::side_effects::FlyBlade {
+                blade_id,
+                dest: anchor,
+            })],
+            None => {
+                let holder = encounter.actor_name(caster_id);
+                encounter.log(format!("{} tosses the {} into the air.", holder, self.item_name));
+                vec![Box::new(crate::engine::side_effects::ConjureBlade {
+                    blade: self
+                        .blade
+                        .conjure(caster_id, anchor, self.weapon.damage_dice),
+                })]
+            }
+        };
+        effects.extend(crate::engine::attack::resolve_attack(
+            encounter,
+            crate::engine::attack::AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.blade.name,
+                attack_bonus,
+                damage_dice: self.weapon.damage_dice,
+                damage_bonus,
+                damage_type: self.weapon.damage_type,
+                ..crate::engine::attack::AttackParams::DEFAULTS
+            },
+        ));
+        effects
+    }
+}
+
+pub const DANCING_SWORD_NAME: &str = "Dancing Sword";
+
+/// The steel the Dancing Sword is: SRD 5.2's rapier, 1d8 piercing and
+/// Finesse. See [`DancingSwordItem`] for why that shape among the five
+/// RAW permits.
+pub static DANCING_SWORD_BLADE: crate::actions::monster_attacks::SimpleWeapon =
+    crate::actions::monster_attacks::SimpleWeapon::melee(
+        "dancing sword",
+        &[],
+        AbilityScoreType::Dexterity,
+        Dice::new(1, 8),
+        DamageType::Piercing,
+    )
+    .finesse();
+
+/// Dancing Sword — Bonus Action to toss, Bonus Action to fly it again,
+/// four swings and it comes home. See [`DancingSwordItem`].
+pub static DANCE_THE_SWORD: DancingSwordItem = DancingSwordItem {
+    action_name: "dancing sword",
+    action_aliases: &["dance", "dancing", "toss sword"],
+    item_name: DANCING_SWORD_NAME,
+    blade: crate::engine::hovering_blade::BladeProfile {
+        name: "dancing sword",
+        glyph: '†',
+        // "flies up to 30 feet" on the toss and again on every later
+        // flight: the same twelve tiles, which is why the two are the
+        // same number here and are not on either spell.
+        cast_reach: 12,
+        step: 12,
+        // Nothing in RAW ends the dance on a clock; what ends it is the
+        // fourth swing or the tether. Ten rounds is the engine's
+        // longest ordinary timer and is here so the layer's own tick has
+        // something to count — a sword that outlasts the fight is a
+        // sword nobody notices expiring.
+        rounds: 10,
+        concentration: false,
+        swings: Some(4),
+        tether: Some(12),
+        dice: Dice::new(1, 8),
+        damage_type: DamageType::Piercing,
+    },
+    weapon: &DANCING_SWORD_BLADE,
+};

@@ -4211,6 +4211,10 @@ impl SpiritualWeapon {
         rounds: 10,
         concentration: true,
         swings: None,
+        // Nothing holds the spell's blade to its caster: RAW's leash is
+        // the 20 / 30 feet it may travel each turn, and where that
+        // leaves it is where it stays. See `BladeProfile::tether`.
+        tether: None,
         dice: Dice::new(1, 8),
         damage_type: DamageType::Force,
     };
@@ -19055,6 +19059,10 @@ impl MordenkainensSword {
         rounds: 10,
         concentration: true,
         swings: None,
+        // Nothing holds the spell's blade to its caster: RAW's leash is
+        // the 20 / 30 feet it may travel each turn, and where that
+        // leaves it is where it stays. See `BladeProfile::tether`.
+        tether: None,
         dice: Dice::new(4, 12),
         damage_type: DamageType::Force,
     };

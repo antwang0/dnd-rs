@@ -125,6 +125,24 @@ pub struct BladeProfile {
     /// attacks for the fourth time, it flies back to you"* — and the
     /// count is the item's whole balance.
     pub swings: Option<u32>,
+    /// How far from its owner the blade may ever be, or `None` for one
+    /// nothing is holding onto.
+    ///
+    /// The Dancing Sword's last sentence and the clause that makes it a
+    /// *dancing* sword rather than a second combatant: *"it ceases to
+    /// hover if you grasp it or are more than 30 feet away from it."* A
+    /// wielder who backs off loses the blade, so the sword is only worth
+    /// tossing into a fight its owner is staying in.
+    ///
+    /// Both spells pass `None`, which is RAW: a Spiritual Weapon left
+    /// behind by a fleeing cleric keeps swinging at whatever it was
+    /// swinging at, and that is most of what a cleric flees under.
+    ///
+    /// Read twice, in the two places a tether can break — when the blade
+    /// is asked to fly somewhere (`blade_strike_anchor` will not pick a
+    /// tile outside it) and at the round-end tick, which is what notices
+    /// the *owner* having been the one who moved.
+    pub tether: Option<isize>,
     /// What one swing rolls, at the level the thing is printed at.
     ///
     /// The *printed* dice, which is not always what the blade in the
@@ -162,6 +180,7 @@ impl BladeProfile {
             rounds_remaining: self.rounds,
             concentration: self.concentration,
             swings_remaining: self.swings,
+            tether: self.tether,
             dice,
             damage_type: self.damage_type,
         }
@@ -194,6 +213,9 @@ pub struct HoveringBlade {
     /// Swings left, or `None` for a blade nobody is counting. See
     /// `BladeProfile::swings`.
     pub swings_remaining: Option<u32>,
+    /// How far from its owner this blade may be — see
+    /// `BladeProfile::tether`.
+    pub tether: Option<isize>,
     /// What this blade rolls on a hit, resolved once at the conjuring
     /// and remembered — see `BladeProfile::conjure`.
     pub dice: Dice,

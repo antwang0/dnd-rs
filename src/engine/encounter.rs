@@ -9391,10 +9391,21 @@ impl EncounterInstance {
         // The search only ever has to look as far as the leash allows,
         // and every candidate must also be next to the target — so the
         // ring walk is the cheaper of the two envelopes to walk.
+        // …and how far from its owner it is ever allowed to be. The
+        // Dancing Sword's last sentence; `None` for the two spells,
+        // which leave a blade where they left it. See
+        // `BladeProfile::tether`.
+        let within_tether = |tile: Coordinate| match profile.tether {
+            None => true,
+            Some(tether) => self
+                .footprint_distance_to_point(caster_id, tile)
+                .is_some_and(|gap| gap <= tether),
+        };
         let reachable = |tile: &Coordinate| {
             self.is_spawnable(*tile)
                 && footprint_chebyshev(*tile, 1, target_loc, target_span)
                     <= crate::actions::action_template::MELEE_REACH
+                && within_tether(*tile)
         };
         // `rings_outward` skips the centre, which would otherwise be the
         // answer whenever the blade is already parked in reach and has
@@ -9436,10 +9447,21 @@ impl EncounterInstance {
             .hovering_blades
             .iter()
             .filter(|b| {
-                !self
-                    .actors
-                    .get(&b.owner_id)
-                    .is_some_and(|a| a.is_combat_active())
+                let Some(owner) = self.actors.get(&b.owner_id) else {
+                    return true;
+                };
+                if !owner.is_combat_active() {
+                    return true;
+                }
+                // The Dancing Sword's *"or are more than 30 feet away
+                // from it"*. The other half of the tether, and the half
+                // `blade_strike_anchor` cannot catch: that one refuses a
+                // tile the blade would have to fly to, and this is the
+                // owner walking away from a blade that never moved.
+                b.tether.is_some_and(|tether| {
+                    self.footprint_distance_to_point(b.owner_id, b.origin)
+                        .is_none_or(|gap| gap > tether)
+                })
             })
             .map(|b| (b.id, b.name))
             .collect();
