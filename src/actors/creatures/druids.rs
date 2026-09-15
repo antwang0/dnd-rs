@@ -510,6 +510,16 @@ pub static LAND_DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([
             crate::actions::class_features::NATURAL_RECOVERY_TAG,
             crate::actions::class_features::LANDS_STRIDE_TAG,
+            // **Elemental Adept (cold)** — the Circle of the Land is
+            // the subclass that *is* a place, and the arctic reading is
+            // the one the baseline druid's spell list already supports:
+            // Frostbite on the cantrip rung and Ice Storm at level 4,
+            // both inherited through the `..base.clone()` tail below.
+            // The cold half of the bestiary is also the half that most
+            // often resists it, which is what makes the feat's first
+            // clause worth more here than on a fire caster. See
+            // `crate::actions::feats::ELEMENTAL_ADEPT_TAGS`.
+            crate::actions::feats::ELEMENTAL_ADEPT_COLD_TAG,
             // 5e **Absorb Elements** — a tag rather than an action
             // because its RAW window opens on incoming elemental
             // damage, which no turn-ordered list can offer. See

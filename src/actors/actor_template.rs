@@ -1666,6 +1666,15 @@ const PASSIVE_FEATURE_SPEED_BONUSES: &[PassiveFeatureSpeedBonus] = &[
         flag: |a| a.has_passive_feature(crate::actions::feats::SPEEDY_TAG),
         bonus_ft: crate::actions::feats::SPEEDY_SPEED_BONUS,
     },
+    // The **Mobile** feat's first clause — the same ten feet Speedy
+    // grants directly above, and a separate row rather than a shared tag
+    // because the two feats are separate choices: a character may take
+    // both, and RAW's bonuses stack the way every other pair on this
+    // cohort does. See `crate::actions::feats::MOBILE_TAG`.
+    PassiveFeatureSpeedBonus {
+        flag: |a| a.has_passive_feature(crate::actions::feats::MOBILE_TAG),
+        bonus_ft: crate::actions::feats::MOBILE_SPEED_BONUS,
+    },
     // 5e Scout Rogue **Superior Mobility** (subclass level 9, XGtE) —
     // passive +10 ft walking-speed bump on the scout rogue chassis. RAW
     // also grants matching climbing / swimming speeds; both fold into
@@ -2154,6 +2163,42 @@ const MOVER_OA_SUPPRESSORS: &[ActorFlagRow] = &[
     // two rows rather than one tag read twice.
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::AGILE_TAG),
+    },
+];
+
+/// The *targeted* half of the opportunity-attack suppression axis: rows
+/// whose holder does not provoke from **a creature they have already
+/// made a melee attack against this turn**, and provokes from everybody
+/// else normally.
+///
+/// Sibling of `MOVER_OA_SUPPRESSORS` directly above and deliberately a
+/// separate cohort, because the two answer different questions. That one
+/// asks "does this mover provoke at all?" and a `true` ends the
+/// dispatch before a single reactor is considered; this one asks "does
+/// this mover provoke *from this reactor*?" and is consulted once per
+/// candidate, against the per-turn ledger
+/// `melee_attack_targets_this_turn`. Folding them would make a
+/// Swashbuckler who swung at one of three flankers walk away from all
+/// three.
+///
+/// Two rows, and RAW prints them as the same sentence:
+///
+///   - 5e Swashbuckler Rogue **Fancy Footwork** (subclass level 3) —
+///     *"when you make a melee attack against a creature, it can't make
+///     opportunity attacks against you for the rest of your turn."*
+///   - The **Mobile** feat — *"When you make a melee attack against a
+///     creature, you don't provoke Opportunity Attacks from that
+///     creature for the rest of the turn, whether you hit or not."*
+///
+/// Read by `ActorInstance::suppresses_opportunity_attacks_from_targets`,
+/// which `EncounterInstance::dispatch_opportunity_attacks` asks once per
+/// mover before it snapshots the ledger.
+const TARGETED_OA_SUPPRESSORS: &[ActorFlagRow] = &[
+    ActorFlagRow {
+        flag: ActorInstance::has_fancy_footwork,
+    },
+    ActorFlagRow {
+        flag: |a| a.has_passive_feature(crate::actions::feats::MOBILE_TAG),
     },
 ];
 
@@ -11359,6 +11404,19 @@ impl ActorInstance {
     /// `MOVER_OA_SUPPRESSORS`.
     pub fn suppresses_opportunity_attacks(&self) -> bool {
         self.matches_any(MOVER_OA_SUPPRESSORS)
+    }
+
+    /// True when this actor carries any feature that suppresses
+    /// opportunity attacks *from the creatures it has already swung at*
+    /// — see `TARGETED_OA_SUPPRESSORS`, which is the whole of the
+    /// answer.
+    ///
+    /// Distinct from `suppresses_opportunity_attacks` above: that one is
+    /// a blanket exemption and this one is a per-reactor filter, so a
+    /// `true` here means the dispatcher must go on to consult the
+    /// mover's melee-target ledger rather than bail.
+    pub fn suppresses_opportunity_attacks_from_targets(&self) -> bool {
+        self.matches_any(TARGETED_OA_SUPPRESSORS)
     }
 
     /// True while the actor carries an item that lets them breathe

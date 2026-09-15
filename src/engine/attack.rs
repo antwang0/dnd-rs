@@ -84,6 +84,23 @@ pub struct AttackParams<'a> {
     /// loot table makes possible — a paladin who picks up a Scimitar of
     /// Speed and keeps floorng its dice.
     pub two_handed: bool,
+    /// True when the object that made this swing has SRD 5.2's **Heavy**
+    /// property — the gate the **Great Weapon Master** feat names:
+    /// *"when you hit a creature with a Heavy weapon as part of the
+    /// Attack action…"*.
+    ///
+    /// The sibling of `two_handed` directly above, and a separate field
+    /// rather than a reading of it because the two lists disagree at
+    /// both ends: a longsword is Versatile and not Heavy, a greatclub is
+    /// Two-Handed and not Heavy. Folding the feat onto `two_handed`
+    /// would hand its bonus to every versatile blade on the roster,
+    /// which is most of them.
+    ///
+    /// Defaults to `false` for the same reason `two_handed` does, and
+    /// for a sharper one: the flag *adds damage*, so the conservative
+    /// direction is the only safe one. A natural weapon says nothing and
+    /// gets nothing.
+    pub heavy: bool,
 }
 
 impl AttackParams<'_> {
@@ -125,6 +142,7 @@ impl AttackParams<'_> {
         min_range: None,
         is_spell: false,
         two_handed: false,
+        heavy: false,
     };
 }
 
@@ -285,12 +303,62 @@ impl<S: ActionOnHitRider> ActionOnHitRider for AttackRiderPair<'_, S> {
     }
 }
 
+/// One row on `MELEE_CASTER_BUMPS` — a labeled flat damage bump the
+/// attacker adds to a melee swing.
+///
+/// The cohort used to be `(&str, AttackBumpFn)` tuples, which said
+/// everything a bump that reads only the attacker's own sheet needs to
+/// say and nothing a bump that reads the *swing* does. Two rows needed
+/// the second kind and both had been written down as impossible: the
+/// Dueling style's "in one hand and no other weapons", conceded in this
+/// cohort's own docstring as collapsed to "melee weapon attack", and
+/// the Great Weapon Master feat's Heavy gate, which is why the feat was
+/// not here at all.
+struct MeleeCasterBump {
+    /// What the combat log calls this bump.
+    label: &'static str,
+    /// The magnitude, read off the attacker's own sheet. `0` skips the
+    /// row entirely — no log line, no once-per-turn charge spent.
+    amount: AttackBumpFn,
+    /// An extra gate on the *swing* rather than on the attacker, for a
+    /// clause worded about the weapon in hand. `None` — the common case
+    /// — means the row fires on any melee swing its holder makes.
+    ///
+    /// Takes `&AttackParams` rather than the individual flags so a row
+    /// needing a fact the struct already carries (the damage type, the
+    /// target, the range band) does not need this column widened again.
+    swing: Option<fn(&AttackParams) -> bool>,
+    /// The once-per-turn ledger tag this row spends, for a clause RAW
+    /// rations. `None` means the bump is a standing modifier and is paid
+    /// on every qualifying swing — which is what the four style, rage
+    /// and aura rows are.
+    ///
+    /// The charge is claimed **only when the row actually pays out**:
+    /// checked after `amount` and `swing` have both said yes, so a
+    /// holder who swings a dagger first and a greataxe second still
+    /// collects on the greataxe.
+    once_per_turn: Option<&'static str>,
+}
+
+impl MeleeCasterBump {
+    /// The row every standing bump is: no swing gate, no ration.
+    /// `label` and `amount` are overwritten by every literal; they are
+    /// here so a row can be written `..MeleeCasterBump::DEFAULTS`.
+    const DEFAULTS: MeleeCasterBump = MeleeCasterBump {
+        label: "",
+        amount: |_| 0,
+        swing: None,
+        once_per_turn: None,
+    };
+}
+
 /// Caster-side flat melee-only damage bumps read at
 /// `resolve_attack_outcome` after the base damage roll lands. Each
-/// entry is a (label, amount_fn) tuple: the amount_fn reads the
-/// caster's features/conditions and returns the flat bonus (`0`
-/// skips the log line). All entries stack additively on holders that
-/// carry multiple flags.
+/// entry is a `MeleeCasterBump`: `amount` reads the caster's
+/// features/conditions and returns the flat bonus (`0` skips the log
+/// line), `swing` optionally gates on the weapon that made the attack,
+/// and `once_per_turn` optionally rations the payout. All entries stack
+/// additively on holders that carry multiple flags.
 ///
 /// Entries:
 ///   - **Rage (+2)**: Barbarian's Raging condition.
@@ -316,34 +384,86 @@ impl<S: ActionOnHitRider> ActionOnHitRider for AttackRiderPair<'_, S> {
 ///
 /// A new melee-side bump (Ancestral Guardians retribution, Rage
 /// tier-scaling to +3/+4, a Warlock's Lifedrinker) drops in here as
-/// a new tuple.
-const MELEE_CASTER_BUMPS: &[(&str, AttackBumpFn)] = &[
-    ("rage", |a| {
-        if a.has_condition(Condition::Raging) { 2 } else { 0 }
-    }),
-    ("dueling", |a| {
-        if a.has_dueling_style() { 2 } else { 0 }
-    }),
+/// a new row.
+const MELEE_CASTER_BUMPS: &[MeleeCasterBump] = &[
+    MeleeCasterBump {
+        label: "rage",
+        amount: |a| {
+            if a.has_condition(Condition::Raging) { 2 } else { 0 }
+        },
+        ..MeleeCasterBump::DEFAULTS
+    },
+    // SRD 5.2 **Dueling** fighting style — *"When you are wielding a
+    // Melee weapon in one hand and no other weapons, you gain a +2
+    // bonus to damage rolls with that weapon."*
+    //
+    // The `swing` gate is that first clause, and it used to be a
+    // paragraph conceding its absence: the style was paid out on every
+    // melee swing the holder made, greatsword included, because a swing
+    // could not be asked which object made it. It can —
+    // `AttackParams::two_handed` is the union of Two-Handed and
+    // Versatile, and a weapon carrying either is not one being wielded
+    // "in one hand and no other weapons" in any reading of RAW that
+    // leaves the style meaning anything.
+    //
+    // A Versatile weapon is the arguable half: RAW's longsword *can* be
+    // held in one hand, so a duellist holding one and nothing else does
+    // qualify at a real table. The engine has no hands to decide with
+    // (see `SimpleWeapon::is_versatile`, which says the same thing from
+    // the armoury's side), and between the two readings this takes the
+    // one that cannot pay the style out for a maul.
+    MeleeCasterBump {
+        label: "dueling",
+        amount: |a| {
+            if a.has_dueling_style() { 2 } else { 0 }
+        },
+        swing: Some(|p| !p.two_handed),
+        ..MeleeCasterBump::DEFAULTS
+    },
+    // The **Great Weapon Master** feat's *Heavy Weapon Mastery* clause —
+    // see `crate::actions::feats::GREAT_WEAPON_MASTER_TAG`. The first
+    // row on this cohort to use both new columns at once: a gate on the
+    // object that swung, and a ration of one payout per turn.
+    MeleeCasterBump {
+        label: "great weapon master",
+        amount: |a| {
+            if a.has_passive_feature(crate::actions::feats::GREAT_WEAPON_MASTER_TAG) {
+                a.proficiency_bonus().max(0) as u32
+            } else {
+                0
+            }
+        },
+        swing: Some(|p| p.heavy),
+        once_per_turn: Some(crate::actions::feats::GREAT_WEAPON_MASTER_TAG),
+    },
     // 5e Bladesinging Wizard **Song of Victory** (subclass level 14):
     // "add your Intelligence modifier (minimum of +1) to the damage of
     // your melee weapon attacks" while Bladesong is active. The clause
     // that makes the trance offensive as well as defensive, and the
     // only reason a wizard's dagger is worth swinging at all.
-    ("song of victory", |a| {
-        if !a.has_condition(Condition::Bladesinging) {
-            return 0;
-        }
-        a.ability_modifier(AbilityScoreType::Intelligence).max(1) as u32
-    }),
-    ("aura of hate", |a| {
-        if !a.has_aura_of_hate() {
-            return 0;
-        }
-        // RAW: minimum +1 even if the paladin's CHA modifier is
-        // zero or negative. Matches the Aura of Protection floor
-        // shape (`aura_of_protection_bonus` clamps to `max(1)`).
-        a.ability_modifier(AbilityScoreType::Charisma).max(1) as u32
-    }),
+    MeleeCasterBump {
+        label: "song of victory",
+        amount: |a| {
+            if !a.has_condition(Condition::Bladesinging) {
+                return 0;
+            }
+            a.ability_modifier(AbilityScoreType::Intelligence).max(1) as u32
+        },
+        ..MeleeCasterBump::DEFAULTS
+    },
+    MeleeCasterBump {
+        label: "aura of hate",
+        amount: |a| {
+            if !a.has_aura_of_hate() {
+                return 0;
+            }
+            // RAW: minimum +1 even if the paladin's CHA modifier is
+            // zero or negative. Matches the Aura of Protection floor
+            // shape (`aura_of_protection_bonus` clamps to `max(1)`).
+            a.ability_modifier(AbilityScoreType::Charisma).max(1) as u32
+        },
+        ..MeleeCasterBump::DEFAULTS
+    },
 ];
 
 /// One caster-side source of extra weapon dice on a critical hit.
@@ -3319,6 +3439,11 @@ pub fn resolve_attack_outcome_with_rider(
     // were counted.
     let mode = encounter.resolve_attack_mode_against(p.target_id, tally);
     let mode = encounter.steady_the_d20(p.caster_id, mode);
+    // And the defender's answer to it — the **Lucky** feat's
+    // Disadvantage clause, which is the genuine last word on the mode
+    // because it is the only lane that reads the finished result from
+    // the other side of the swing.
+    let mode = encounter.spend_luck_against_attack(p.caster_id, p.target_id, mode);
     // 5e Lucky: if the holder rolls a nat-1, they may re-roll once. The
     // helper folds the reroll into the same seedable RNG so determinism
     // by seed holds — and falls back to the raw roll for actors without
@@ -3752,14 +3877,37 @@ pub fn resolve_attack_outcome_with_rider(
     // for legibility (all entries stack additively on holders that
     // carry multiple flags).
     if p.is_melee {
-        for (label, amount_fn) in MELEE_CASTER_BUMPS {
+        for row in MELEE_CASTER_BUMPS {
+            // The swing gate is asked before the attacker's sheet
+            // because it is the cheaper of the two and the one that
+            // rejects most rows on most swings.
+            if row.swing.is_some_and(|gate| !gate(&p)) {
+                continue;
+            }
             let Some(a) = encounter.actors.get(&p.caster_id) else { break; };
-            let bump = amount_fn(a);
+            // A rationed row that has already paid out this turn is
+            // skipped here rather than inside `amount`, so the ledger
+            // stays a property of the cohort and not of each closure.
+            if row
+                .once_per_turn
+                .is_some_and(|tag| a.once_per_turn_used(tag))
+            {
+                continue;
+            }
+            let bump = (row.amount)(a);
             if bump == 0 {
                 continue;
             }
+            // Claimed only now that the row is certain to pay, so a
+            // holder whose first swing of the turn did not qualify
+            // still has the charge for one that does.
+            if let Some(tag) = row.once_per_turn
+                && let Some(a) = encounter.actors.get_mut(&p.caster_id)
+            {
+                a.mark_once_per_turn_used(tag);
+            }
             damage = damage.saturating_add(bump);
-            encounter.log(format!("  {}: +{} melee damage", label, bump));
+            encounter.log(format!("  {}: +{} melee damage", row.label, bump));
         }
     }
     // SRD 5.2 **Boon of Irresistible Offense**, *Overwhelming Strike*:
@@ -4056,6 +4204,17 @@ pub fn resolve_attack_outcome_with_rider(
     // restores. See `restore_resisted_physical_damage` — and note that
     // it deliberately does not move `damage`.
     restore_resisted_physical_damage(encounter, &mut effects, p.caster_id, p.target_id);
+    // The **Heavy Armor Master** feat, from the defender's side. Last of
+    // the four payload walks, and the order is PHB p.197's: every
+    // attacker-side adjustment above has finished moving the number, and
+    // what this subtracts from is the figure the target's own resistance
+    // will halve a moment later — *"the 25 damage is first reduced by 5
+    // and then halved"*.
+    damage = damage.saturating_sub(apply_heavy_armor_reduction(
+        encounter,
+        &mut effects,
+        p.target_id,
+    ));
     push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
     // The **Sentinel** feat's Guardian clause, the bystander's answer to
     // a swing aimed at somebody else. Last in the function, after every
@@ -4070,6 +4229,98 @@ pub fn resolve_attack_outcome_with_rider(
     // anything that reads the board.
     try_fire_sentinel_guardian(encounter, &p);
     (effects, damage)
+}
+
+/// The three damage types the **Heavy Armor Master** feat reduces —
+/// RAW's *"Bludgeoning, Piercing, and Slashing damage you take from
+/// attacks"*.
+///
+/// The same three `IRRESISTIBLE_PHYSICAL_TYPES` below names, and
+/// deliberately a second constant rather than a shared one: the two
+/// clauses agree on a list today by coincidence of what "physical"
+/// means in 5e, and a feature that named four (or two) should not have
+/// to notice that it was sharing. Neither list is long enough for the
+/// duplication to be worth a taxonomy.
+const HEAVY_ARMOR_REDUCED_TYPES: &[DamageType] = &[
+    DamageType::Bludgeoning,
+    DamageType::Piercing,
+    DamageType::Slashing,
+];
+
+/// The **Heavy Armor Master** feat: subtract the defender's proficiency
+/// bonus from every Bludgeoning / Piercing / Slashing payload this swing
+/// has queued at them.
+///
+/// Returns how much was removed, which the caller subtracts from its
+/// running `damage_dealt` figure — the opposite bookkeeping to
+/// `restore_resisted_physical_damage` directly above, and for the
+/// opposite reason. That function changes a payload *because* of a
+/// halving the figure never counted, so the figure is already right;
+/// this one removes damage the figure did count, so the figure has to
+/// move with it.
+///
+/// **Per payload, not per swing**, which is the reading RAW's "damage
+/// you take from attacks" supports and the one the engine can express:
+/// a single attack routinely queues several typed instances (the weapon
+/// die, a Divine Smite's radiant, a mastery rider), and the reduction
+/// applies to each physical one. A swing that queues two physical
+/// payloads is two instances of damage taken. The alternative — one
+/// subtraction spread across the swing — would need a notion of "this
+/// attack's total" that nothing else in the pipeline has.
+///
+/// Three narrowings, each RAW or structural:
+///
+///   - **Physical types only.** A Flame Tongue's fire rider riding the
+///     same swing is untouched.
+///   - **Payloads aimed at the defender.** A swing carries damage
+///     pointed the other way — Fire Shield, a reflect rider — and the
+///     defender's armour has nothing to say about what it does to the
+///     attacker.
+///   - **From attacks.** Obtained by where this function is called
+///     rather than by a flag: the two attack chokepoints and nowhere
+///     else, so a Fireball and a fall are outside it by construction.
+///
+/// Saturating, so a blow smaller than the bonus lands as zero rather
+/// than healing anybody.
+pub fn apply_heavy_armor_reduction(
+    encounter: &mut EncounterInstance,
+    effects: &mut [Box<dyn ApplicableSideEffect>],
+    defender_id: usize,
+) -> u32 {
+    let Some(reduction) = encounter
+        .actors
+        .get(&defender_id)
+        .filter(|d| d.has_passive_feature(crate::actions::feats::HEAVY_ARMOR_MASTER_TAG))
+        .map(|d| d.proficiency_bonus().max(0) as u32)
+        .filter(|r| *r > 0)
+    else {
+        return 0;
+    };
+    let mut removed: u32 = 0;
+    for effect in effects.iter_mut() {
+        let Some((aimed_at, damage_type, amount)) = effect.damage_payload() else {
+            continue;
+        };
+        if aimed_at != defender_id
+            || amount == 0
+            || !HEAVY_ARMOR_REDUCED_TYPES.contains(&damage_type)
+        {
+            continue;
+        }
+        let reduced = amount.saturating_sub(reduction);
+        if !effect.set_damage_amount(reduced) {
+            continue;
+        }
+        removed = removed.saturating_add(amount - reduced);
+    }
+    if removed > 0 {
+        let name = encounter.actor_name(defender_id);
+        encounter.log(format!(
+            "  heavy armor master: {}'s plate turns {} damage",
+            name, removed
+        ));
+    }
+    removed
 }
 
 /// Every damage type SRD 5.2's **Boon of Irresistible Offense** names:

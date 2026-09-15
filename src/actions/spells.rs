@@ -235,6 +235,11 @@ pub fn spell_attack_roll(
     // and it is a d20, which is the whole of Restore Balance's trigger.
     // See `EncounterInstance::steady_the_d20`.
     let mode = encounter.steady_the_d20(caster_id, mode);
+    // The defender's half of the same lane. RAW's trigger is "a
+    // creature rolls a d20 for an attack roll against you", and a
+    // spell attack roll is one — so the call sits at both attack
+    // chokepoints exactly as `steady_the_d20` does.
+    let mode = encounter.spend_luck_against_attack(caster_id, target_id, mode);
     // Pull through the same caster-side flat buffs (Bless / Bane d4,
     // attack_bonus_buff, condition_attack_bonus) that weapon attacks
     // get via `resolve_attack`. This keeps spell-attack rolls
@@ -692,6 +697,17 @@ fn spell_attack_outcome_exploding(
         caster_id,
         target_id,
     );
+    // The **Heavy Armor Master** feat, from the defender's side. RAW's
+    // qualifier is "damage you take from attacks", and a spell attack
+    // roll is an attack — so the lane is walked at both attack
+    // chokepoints, exactly as the boon above it is. Same position: after
+    // every rider has queued its payload, before the vulnerability
+    // removals.
+    let total_dmg = total_dmg.saturating_sub(crate::engine::attack::apply_heavy_armor_reduction(
+        encounter,
+        &mut effects,
+        target_id,
+    ));
     // "And then the curse ends" — see the weapon chokepoint's twin
     // call. Last, so every damage instance the spell attack queued is
     // still doubled when it applies.

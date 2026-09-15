@@ -280,6 +280,20 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             crate::actions::class_features::FEATHER_FALL_TAG,
             BARDIC_INSPIRATION_TAG,
             CUTTING_WORDS_TAG,
+            // The **Lucky** feat. The bard is the chassis whose whole
+            // class is other people's d20s — Bardic Inspiration adds to
+            // them, Cutting Words subtracts from them — and Lucky is the
+            // three that the bard keeps for their own. It is also the
+            // only pool on this sheet that is not a die handed to
+            // somebody else, which is why it does not simply duplicate
+            // what the bard already does.
+            //
+            // Placed here rather than on the rogue, which is the other
+            // chassis the feat reads as: `has_elusive` caps every attack
+            // roll against a rogue at Normal already, so the feat's
+            // defensive half would be a pool nobody could spend. See
+            // `crate::actions::feats::LUCKY_TAG`.
+            crate::actions::feats::LUCKY_TAG,
             // 5e Bard Font of Inspiration (level 5 passive): Bardic
             // Inspiration die refreshes on a short rest instead of a
             // long rest. Ships on the CR-2 (level-7) baseline template

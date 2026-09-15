@@ -76,6 +76,13 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         //     only fires on a critical hit, which on this chassis is
         //     one roll in ten rather than one in twenty. See
         //     `crate::actions::feats::SLASHER_TAG`.
+        //   - HEAVY_ARMOR_MASTER_TAG: the General feat whose whole text
+        //     is a subtraction from every physical blow the holder
+        //     takes, and the Champion is the chassis it belongs to — AC
+        //     18 is plate, and a subclass whose level-18 capstone
+        //     (Survivor) is "you regain hit points every turn you are
+        //     still standing" is the one built to still be standing.
+        //     See `crate::actions::feats::HEAVY_ARMOR_MASTER_TAG`.
         features: HashSet::from([
             SECOND_WIND_TAG,
             ACTION_SURGE_TAG,
@@ -83,6 +90,7 @@ pub static CHAMPION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             SURVIVOR_TAG,
             crate::actions::feats::BOON_OF_COMBAT_PROWESS_TAG,
             crate::actions::feats::SLASHER_TAG,
+            crate::actions::feats::HEAVY_ARMOR_MASTER_TAG,
         ]),
         has_extra_attack: true,
         // 5e Champion subclass level-3 feature: critical hits trigger on

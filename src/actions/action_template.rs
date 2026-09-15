@@ -2681,6 +2681,16 @@ pub trait Action {
         // cast lands the same remap on both targets RAW.
         let transmuted_for_twin =
             encounter.consume_transmuted_spell(caster_id, &mut side_effects);
+        // The **Elemental Adept** feat's *ignore Resistance* clause, and
+        // the third sweep over this cast's finished payloads. Last of
+        // the three, because it is the only one whose arithmetic depends
+        // on what damage type the payload ends up carrying: Transmuted
+        // Spell directly above may have just remapped a Fireball's fire
+        // to cold, and an adept who took cold should get the bypass on
+        // the type the target will actually be hit with rather than on
+        // the one the spell printed. See
+        // `EncounterInstance::apply_elemental_adept`.
+        encounter.apply_elemental_adept(caster_id, &mut side_effects);
         // 5e Sorcerer Twinned Spell metamagic: re-fire the action's
         // side_effects against a second target if the prime is up and the
         // caster can afford the SP cost (max(1, spell_level)). Gated to
@@ -2787,6 +2797,13 @@ pub trait Action {
                         new_type,
                     );
                 }
+                // The Elemental Adept bypass, applied to the twin's own
+                // payloads. Not a propagation like the two above it —
+                // nothing was consumed to produce the first sweep — but
+                // the same second call, for the same reason: these
+                // effects were built by a separate `side_effects` call
+                // and the first sweep never saw them.
+                encounter.apply_elemental_adept(caster_id, &mut twin_effects);
                 // One cast is one spell and one concentration. Without
                 // this fold the twin's own `StartConcentration` would
                 // land second and its `drop_concentration` prologue

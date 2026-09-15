@@ -233,6 +233,14 @@ pub static ALCHEMIST_ARTIFICER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
             MAGIC_ITEM_ADEPT_TAG,
             EXPERIMENTAL_ELIXIR_TAG,
             ALCHEMICAL_SAVANT_TAG,
+            // **Elemental Adept (acid)** — the Alchemist is the acid
+            // chassis on the roster: Acid Splash and Tasha's Caustic
+            // Brew both ride the baseline artificer list, and
+            // Alchemical Savant directly above is already a bonus to
+            // the same rolls. One adds the intelligence modifier to the
+            // total; this one lifts the dice and takes the resistance
+            // off. See `crate::actions::feats::ELEMENTAL_ADEPT_TAGS`.
+            crate::actions::feats::ELEMENTAL_ADEPT_ACID_TAG,
         ]),
         ..ARTIFICER_TEMPLATE.clone()
     }

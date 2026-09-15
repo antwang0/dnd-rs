@@ -1231,6 +1231,16 @@ pub static EVOCATION_WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     features.insert(crate::actions::class_features::POTENT_CANTRIP_TAG);
     features.insert(crate::actions::class_features::EMPOWERED_EVOCATION_TAG);
     features.insert(crate::actions::class_features::OVERCHANNEL_TAG);
+    // **Elemental Adept (fire)** — the evoker is the subclass whose
+    // whole identity is the damage roll, and this feat moves that roll
+    // on both ends: the low dice come up as 2s, and the half of the
+    // bestiary that resists fire stops halving it. It pairs with the
+    // three rows already above it rather than duplicating any of them
+    // — Sculpt Spells decides who is in the blast, Empowered Evocation
+    // adds a flat bonus to the total, Potent Cantrip salvages a
+    // successful save, and this one is about the dice themselves.
+    // See `crate::actions::feats::ELEMENTAL_ADEPT_TAGS`.
+    features.insert(crate::actions::feats::ELEMENTAL_ADEPT_FIRE_TAG);
     let mut actions = WIZARD_TEMPLATE.actions.clone();
     actions.push(&*crate::actions::class_features::OVERCHANNEL);
     CreatureTemplate {

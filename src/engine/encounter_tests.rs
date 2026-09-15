@@ -111511,3 +111511,657 @@ fn a_blade_hangs_over_a_rift_but_not_inside_a_wall() {
         "a blade does not hang inside masonry"
     );
 }
+
+/// The **Heavy Armor Master** feat: *"Bludgeoning, Piercing, and
+/// Slashing damage you take from attacks is reduced by an amount equal
+/// to your Proficiency Bonus."*
+///
+/// Measured on the payload rather than on a hit point total, for the
+/// same reason `overcome_defenses_lands_a_resisted_blow_whole` is: the
+/// reduction happens on the queued instance, and what it is worth is
+/// what the target's own sheet then does with the smaller number.
+#[test]
+fn heavy_armor_master_turns_the_proficiency_bonus_off_a_physical_blow() {
+    use crate::actors::creatures::fighters::{CHAMPION_TEMPLATE, FIGHTER_TEMPLATE};
+    use crate::engine::attack::apply_heavy_armor_reduction;
+    use crate::engine::side_effects::DealDamage;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let champion = e
+        .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    let pb = e.actors[&champion].proficiency_bonus() as u32;
+    assert!(pb > 0, "the chassis has a proficiency bonus to subtract");
+
+    let payload = |who: usize, amount: u32, dt: DamageType| -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(DealDamage {
+            actor_id: who,
+            amount,
+            damage_type: dt,
+        })]
+    };
+    let amount_of = |effects: &[Box<dyn ApplicableSideEffect>]| effects[0].damage_payload().unwrap().2;
+
+    let mut slash = payload(champion, 12, DamageType::Slashing);
+    assert_eq!(
+        apply_heavy_armor_reduction(&mut e, &mut slash, champion),
+        pb,
+        "the sweep reports exactly what it removed"
+    );
+    assert_eq!(amount_of(&slash), 12 - pb, "and takes it off the payload");
+
+    // The other ten damage types are untouched: RAW names three.
+    let mut fire = payload(champion, 12, DamageType::Fire);
+    assert_eq!(
+        apply_heavy_armor_reduction(&mut e, &mut fire, champion),
+        0,
+        "a fire payload is not one of RAW's three types"
+    );
+    assert_eq!(amount_of(&fire), 12);
+
+    // And a fighter without the feat takes the blow whole.
+    let mut unfeated = payload(plain, 12, DamageType::Piercing);
+    assert_eq!(
+        apply_heavy_armor_reduction(&mut e, &mut unfeated, plain),
+        0,
+        "a fighter who did not take the feat has no plate to turn it"
+    );
+    assert_eq!(amount_of(&unfeated), 12);
+
+    // A blow smaller than the bonus lands as zero rather than as a heal.
+    let mut graze = payload(champion, 1, DamageType::Bludgeoning);
+    apply_heavy_armor_reduction(&mut e, &mut graze, champion);
+    assert_eq!(amount_of(&graze), 0, "the subtraction saturates at zero");
+}
+
+/// PHB p.197: *"Resistance and then vulnerability are applied after all
+/// other modifiers to damage… The 25 damage is first reduced by 5 and
+/// then halved, so the creature takes 10 damage."*
+///
+/// The ordering rule is the whole reason the Heavy Armor Master sweep
+/// lives at the attack chokepoint rather than on the target's sheet:
+/// the chokepoint is the last place that still holds the pre-resistance
+/// number. This test is the arithmetic that distinguishes the two
+/// orders — reduce-then-halve and halve-then-reduce disagree by one on
+/// these inputs, and by more on most.
+#[test]
+fn heavy_armor_master_reduces_before_resistance_rather_than_after() {
+    use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+    use crate::engine::attack::apply_heavy_armor_reduction;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageModifier;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let champion = e
+        .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let pb = e.actors[&champion].proficiency_bonus() as u32;
+    e.actors
+        .get_mut(&champion)
+        .unwrap()
+        .set_damage_modifier(DamageType::Bludgeoning, DamageModifier::Resistance);
+
+    let raw = 25u32;
+    let mut blow: Vec<Box<dyn ApplicableSideEffect>> = vec![Box::new(DealDamage {
+        actor_id: champion,
+        amount: raw,
+        damage_type: DamageType::Bludgeoning,
+    })];
+    apply_heavy_armor_reduction(&mut e, &mut blow, champion);
+    let (_, dt, reduced) = blow[0].damage_payload().unwrap();
+    let felt = e.actors[&champion].effective_damage(reduced, dt);
+
+    assert_eq!(
+        felt,
+        (raw - pb) / 2,
+        "RAW's order: reduce by the proficiency bonus, then halve"
+    );
+    assert_ne!(
+        felt,
+        (raw / 2).saturating_sub(pb),
+        "and not the other order, which these inputs are chosen to separate"
+    );
+}
+
+/// The **Great Weapon Master** feat's Heavy Weapon Mastery clause, and
+/// the two gates that ration it: the weapon must be Heavy, and the
+/// bonus lands once a turn.
+#[test]
+fn great_weapon_master_pays_the_proficiency_bonus_once_a_turn_for_a_heavy_weapon() {
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    // A swing that cannot miss (huge bonus) into a target with nothing
+    // clever on its sheet, so the only thing moving the number is the
+    // feat. Fixed dice (1d1) so the damage roll is a constant.
+    let swing = |heavy: bool, twice: bool| -> (u32, u32) {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let paladin = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        let hit = |e: &mut EncounterInstance| {
+            resolve_attack_outcome(
+                e,
+                AttackParams {
+                    caster_id: paladin,
+                    target_id: target,
+                    action_name: "greatsword",
+                    attack_bonus: 40,
+                    damage_dice: Dice::new(1, 1),
+                    damage_bonus: 0,
+                    damage_type: DamageType::Slashing,
+                    heavy,
+                    ..AttackParams::DEFAULTS
+                },
+            )
+            .1
+        };
+        let first = hit(&mut e);
+        let second = if twice { hit(&mut e) } else { 0 };
+        (first, second)
+    };
+
+    let pb = {
+        let mut e = ei_with_terrain(5, 5, &[]);
+        let p = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.actors[&p].proficiency_bonus() as u32
+    };
+
+    let (heavy_first, heavy_second) = swing(true, true);
+    let (light_first, _) = swing(false, false);
+    assert_eq!(
+        heavy_first - light_first,
+        pb,
+        "the Heavy swing collects the proficiency bonus and the other does not"
+    );
+    assert_eq!(
+        heavy_second, light_first,
+        "and the second Heavy swing of the same turn collects nothing"
+    );
+}
+
+/// SRD 5.2 **Dueling**: *"When you are wielding a Melee weapon in one
+/// hand and no other weapons, you gain a +2 bonus to damage rolls with
+/// that weapon."*
+///
+/// The clause this cohort spent its whole life conceding. A fighter
+/// with the style swings a one-handed blade for +2 and a two-hander for
+/// nothing, which is the sentence RAW prints and the opposite of what
+/// the engine used to do.
+#[test]
+fn dueling_style_pays_out_for_one_hand_and_not_for_two() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    let swing = |two_handed: bool| -> u32 {
+        let mut e = ei_with_terrain(15, 15, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&fighter].has_dueling_style(),
+            "the baseline fighter carries the style"
+        );
+        let target = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+            .unwrap();
+        resolve_attack_outcome(
+            &mut e,
+            AttackParams {
+                caster_id: fighter,
+                target_id: target,
+                action_name: "blade",
+                attack_bonus: 40,
+                damage_dice: Dice::new(1, 1),
+                damage_bonus: 0,
+                damage_type: DamageType::Slashing,
+                two_handed,
+                ..AttackParams::DEFAULTS
+            },
+        )
+        .1
+    };
+
+    assert_eq!(
+        swing(false) - swing(true),
+        2,
+        "the style is worth +2 on a one-handed swing and nothing on a two-handed one"
+    );
+}
+
+/// The armoury's Heavy column, and the reason it is not
+/// `is_two_handed`: the two lists disagree at both ends, and a feat
+/// worded on Heavy would collect on a longsword if they did not.
+#[test]
+fn the_heavy_property_is_its_own_column_and_not_a_reading_of_two_handed() {
+    use crate::actions::monster_attacks::{
+        GLAIVE, GREATAXE, GREATSWORD, HEAVY_CROSSBOW, LANCE, LONGBOW, LONGSWORD, SHORTSWORD,
+    };
+
+    for w in [&GREATAXE, &GREATSWORD, &GLAIVE, &LANCE, &HEAVY_CROSSBOW, &LONGBOW] {
+        assert!(w.is_heavy, "{} is Heavy in the weapons table", w.display_name);
+        assert!(
+            w.is_two_handed,
+            "{} is Two-Handed as well, which is why the columns look alike",
+            w.display_name
+        );
+    }
+    // The disagreement that makes two columns necessary: a longsword
+    // floats Great Weapon Fighting (Versatile) and must not float
+    // Great Weapon Master (not Heavy).
+    assert!(
+        LONGSWORD.is_versatile && !LONGSWORD.is_heavy,
+        "a longsword is Versatile and not Heavy"
+    );
+    assert!(
+        !SHORTSWORD.is_heavy && !SHORTSWORD.is_two_handed,
+        "and a shortsword is neither"
+    );
+}
+
+/// The **Elemental Adept** feat's second clause: *"when you roll damage
+/// for a spell you cast that deals damage of that type, you can treat
+/// any 1 on a damage die as a 2."*
+///
+/// Driven through `roll_empowered_sum` — the spell-damage chokepoint the
+/// floor hangs off — inside a hand-opened cast frame, because the gate
+/// is the *spell's* declared damage types and the frame is where those
+/// live. A pool of d4s over many seeds is the cheapest way to make the
+/// difference unambiguous: a d4 comes up 1 a quarter of the time, so a
+/// floored caster's total is reliably higher and never lower.
+#[test]
+fn elemental_adept_reads_a_one_on_its_own_element_as_a_two() {
+    use crate::actions::feats::ELEMENTAL_ADEPT_FIRE_TAG;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::types::{DamageTypeSet, SpellSchool};
+
+    // Sum a fixed pool of d4s for one caster under one declared
+    // element, over a sweep of seeds.
+    //
+    // The two arms are the *same* chassis with and without the tag,
+    // rather than the evoker and the baseline wizard: the evoker also
+    // carries Empowered Evocation, which adds a flat bonus to the same
+    // figure, and comparing the two templates would be measuring that
+    // instead. The evoker's own placement is asserted separately by
+    // `every_feat_is_carried_by_a_playable_chassis`.
+    let total = |adept: bool, element: DamageType| -> u32 {
+        let mut sum = 0u32;
+        for seed in 0..40u64 {
+            let mut e = ei_with_terrain(10, 10, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let caster = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            if adept {
+                e.actors
+                    .get_mut(&caster)
+                    .unwrap()
+                    .grant_feature_for_test(ELEMENTAL_ADEPT_FIRE_TAG);
+            }
+            e.enter_cast(
+                Some(SpellSchool::Evocation),
+                3,
+                DamageTypeSet::from_types(&[element]),
+            );
+            sum = sum.saturating_add(e.roll_empowered_sum(caster, 8, 4));
+            e.exit_cast();
+        }
+        sum
+    };
+
+    let adept_fire = total(true, DamageType::Fire);
+    let plain_fire = total(false, DamageType::Fire);
+    assert!(
+        adept_fire > plain_fire,
+        "the floor lifts a fire evoker's dice ({} vs {})",
+        adept_fire,
+        plain_fire
+    );
+    // The element is the gate: the same wizard casting cold gets
+    // nothing, and rolls exactly what a wizard without the feat rolls.
+    assert_eq!(
+        total(true, DamageType::Cold),
+        total(false, DamageType::Cold),
+        "a fire adept's cold spell is rolled like anybody else's"
+    );
+}
+
+/// The **Elemental Adept** feat's first clause: *"Spells you cast ignore
+/// Resistance to damage of the chosen type."*
+///
+/// Measured on the payload after the round trip, the way its weapon-lane
+/// sibling `overcome_defenses_lands_a_resisted_blow_whole` is: the sweep
+/// pre-doubles, the target's sheet halves, and the number that matters is
+/// the one left at the end.
+#[test]
+fn elemental_adept_carries_a_resisted_spell_payload_whole() {
+    use crate::actors::creatures::wizards::{EVOCATION_WIZARD_TEMPLATE, WIZARD_TEMPLATE};
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::{DamageModifier, DamageTypeSet, SpellSchool};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    // The sweep runs inside a cast frame — `Action::execute` holds one
+    // open across the whole spell — and asks it whether this was a
+    // spell at all. See `elemental_adept_does_not_reach_a_flaming_sword`
+    // for what the gate is keeping out.
+    e.enter_cast(Some(SpellSchool::Evocation), 3, DamageTypeSet::EMPTY);
+    let evoker = e
+        .instantiate_creature(&EVOCATION_WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    {
+        let t = e.actors.get_mut(&target).unwrap();
+        t.set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+        t.set_damage_modifier(DamageType::Cold, DamageModifier::Resistance);
+    }
+
+    let payload = |amount: u32, dt: DamageType| -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(DealDamage {
+            actor_id: target,
+            amount,
+            damage_type: dt,
+        })]
+    };
+    let felt = |e: &EncounterInstance, effects: &[Box<dyn ApplicableSideEffect>]| {
+        let (_, dt, amount) = effects[0].damage_payload().unwrap();
+        e.actors[&target].effective_damage(amount, dt)
+    };
+
+    let mut fire = payload(9, DamageType::Fire);
+    assert_eq!(felt(&e, &fire), 4, "9 fire at a resistant skeleton is 4");
+    e.apply_elemental_adept(evoker, &mut fire);
+    assert_eq!(felt(&e, &fire), 9, "and the feat carries the whole 9 through");
+
+    let mut cold = payload(9, DamageType::Cold);
+    e.apply_elemental_adept(evoker, &mut cold);
+    assert_eq!(
+        felt(&e, &cold),
+        4,
+        "a fire adept has nothing to say about cold"
+    );
+
+    let mut unfeated = payload(9, DamageType::Fire);
+    e.apply_elemental_adept(plain, &mut unfeated);
+    assert_eq!(
+        felt(&e, &unfeated),
+        4,
+        "and a wizard without the feat casts into the resistance"
+    );
+
+    // Immunity is not resistance, and RAW names only the one.
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .set_damage_modifier(DamageType::Fire, DamageModifier::Immunity);
+    let mut immune = payload(9, DamageType::Fire);
+    e.apply_elemental_adept(evoker, &mut immune);
+    assert_eq!(
+        felt(&e, &immune),
+        0,
+        "a creature immune to fire still takes none of it"
+    );
+}
+
+/// The **Lucky** feat's Advantage clause, narrowed to the cancellation
+/// the engine can take without a player: a disadvantaged d20 is
+/// straightened out, and a luck point leaves the pool.
+#[test]
+fn lucky_spends_a_point_to_straighten_a_disadvantaged_die() {
+    use crate::actions::feats::{LUCKY_POINTS, LUCKY_TAG};
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 1)
+        .unwrap();
+    assert_eq!(
+        e.actors[&bard].feature_charges_remaining(LUCKY_TAG),
+        LUCKY_POINTS,
+        "the bard banks a full pool of luck points"
+    );
+
+    // An advantaged or plain roll is left alone — the pool is not spent
+    // on a die that does not need it.
+    assert_eq!(
+        e.steady_the_d20(bard, RollMode::Advantage),
+        RollMode::Advantage
+    );
+    assert_eq!(e.steady_the_d20(bard, RollMode::Normal), RollMode::Normal);
+    assert_eq!(
+        e.actors[&bard].feature_charges_remaining(LUCKY_TAG),
+        LUCKY_POINTS,
+        "and neither costs anything"
+    );
+
+    // A disadvantaged one does.
+    assert_eq!(
+        e.steady_the_d20(bard, RollMode::Disadvantage),
+        RollMode::Normal,
+        "the luck point flattens the disadvantage"
+    );
+    assert_eq!(
+        e.actors[&bard].feature_charges_remaining(LUCKY_TAG),
+        LUCKY_POINTS - 1
+    );
+
+    // The pool runs out, and then it is just a bad roll.
+    for _ in 0..LUCKY_POINTS {
+        e.steady_the_d20(bard, RollMode::Disadvantage);
+    }
+    assert_eq!(e.actors[&bard].feature_charges_remaining(LUCKY_TAG), 0);
+    assert_eq!(
+        e.steady_the_d20(bard, RollMode::Disadvantage),
+        RollMode::Disadvantage,
+        "an empty pool cancels nothing"
+    );
+
+    // And a caster who never took the feat rolls what they rolled.
+    assert_eq!(
+        e.steady_the_d20(wizard, RollMode::Disadvantage),
+        RollMode::Disadvantage
+    );
+}
+
+/// The **Lucky** feat's Disadvantage clause, from the defender's side:
+/// an attack rolled against the holder with Advantage is flattened, and
+/// nothing else is.
+#[test]
+fn lucky_flattens_an_advantaged_attack_against_its_holder() {
+    use crate::actions::feats::{LUCKY_POINTS, LUCKY_TAG};
+    use crate::actors::creatures::bards::BARD_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let bard = e
+        .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 4), 0, 0)
+        .unwrap();
+    let attacker = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+
+    // Normal and disadvantaged swings cost the defender nothing: RAW's
+    // upgrade to Disadvantage is the half the engine gives up.
+    assert_eq!(
+        e.spend_luck_against_attack(attacker, bard, RollMode::Normal),
+        RollMode::Normal
+    );
+    assert_eq!(
+        e.spend_luck_against_attack(attacker, bard, RollMode::Disadvantage),
+        RollMode::Disadvantage
+    );
+    assert_eq!(
+        e.actors[&bard].feature_charges_remaining(LUCKY_TAG),
+        LUCKY_POINTS
+    );
+
+    assert_eq!(
+        e.spend_luck_against_attack(attacker, bard, RollMode::Advantage),
+        RollMode::Normal,
+        "an advantaged swing at the holder is flattened"
+    );
+    assert_eq!(
+        e.actors[&bard].feature_charges_remaining(LUCKY_TAG),
+        LUCKY_POINTS - 1,
+        "and it costs one point"
+    );
+
+    // A defender without the feat has nothing to spend.
+    assert_eq!(
+        e.spend_luck_against_attack(attacker, wizard, RollMode::Advantage),
+        RollMode::Advantage
+    );
+}
+
+/// The **Mobile** feat's second clause: *"When you make a melee attack
+/// against a creature, you don't provoke Opportunity Attacks from that
+/// creature for the rest of the turn."*
+///
+/// The clause that is *not* Disengage, and the test says so on both
+/// halves: the creature the assassin swung at gets nothing, and the one
+/// standing beside it still swings.
+#[test]
+fn mobile_suppresses_the_opportunity_attack_of_whoever_it_just_swung_at() {
+    use crate::actions::feats::MOBILE_TAG;
+    use crate::actors::creatures::rogues::{ASSASSIN_ROGUE_TEMPLATE, ROGUE_TEMPLATE};
+
+    // A rogue steps out of reach of two adjacent zombies, having swung
+    // at one of them. Returns (log of the walk-away, mover id).
+    let walk_out = |mobile: bool| -> String {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(7);
+        let template = if mobile {
+            &*ASSASSIN_ROGUE_TEMPLATE
+        } else {
+            &*ROGUE_TEMPLATE
+        };
+        let rogue = e
+            .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        assert_eq!(
+            e.actors[&rogue].has_passive_feature(MOBILE_TAG),
+            mobile,
+            "the chassis carries the feat iff the case asks for it"
+        );
+        let swung_at = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let bystander = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 6), 1, 1)
+            .unwrap();
+        // Mark the swing. This is the ledger write every melee attack
+        // makes; doing it directly keeps the test about the OA lane
+        // rather than about whether a d20 landed.
+        e.actors
+            .get_mut(&rogue)
+            .unwrap()
+            .mark_melee_attacked_this_turn(swung_at);
+        let before = e.messages().len();
+        e.dispatch_opportunity_attacks(rogue, Coordinate::new(5, 5), Coordinate::new(9, 9));
+        let _ = bystander;
+        e.messages()[before..].join("\n")
+    };
+
+    let mobile_log = walk_out(true);
+    assert_eq!(
+        mobile_log.matches("opportunity-attacks").count(),
+        1,
+        "only the zombie the assassin did not swing at gets a swing:\n{mobile_log}"
+    );
+    let plain_log = walk_out(false);
+    assert_eq!(
+        plain_log.matches("opportunity-attacks").count(),
+        2,
+        "a rogue without the feat is swung at by both:\n{plain_log}"
+    );
+}
+
+/// RAW's *"Spells you cast ignore Resistance"* — and the word that had
+/// to be enforced rather than assumed.
+///
+/// `Action::execute` opens a cast frame for **every** action it runs, so
+/// the frame's existence is not evidence of a spell. A weapon that
+/// declares `[Slashing, Fire]` is the case that separates the two: it
+/// puts fire in the frame's declared types with no spell anywhere, and a
+/// gate reading only those types would have handed a fire adept's
+/// longsword a resistance bypass.
+#[test]
+fn elemental_adept_does_not_reach_a_flaming_sword() {
+    use crate::actions::feats::ELEMENTAL_ADEPT_FIRE_TAG;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::{DamageModifier, DamageTypeSet, SpellSchool};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let adept = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&adept)
+        .unwrap()
+        .grant_feature_for_test(ELEMENTAL_ADEPT_FIRE_TAG);
+    let target = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&target)
+        .unwrap()
+        .set_damage_modifier(DamageType::Fire, DamageModifier::Resistance);
+
+    let payload = || -> Vec<Box<dyn ApplicableSideEffect>> {
+        vec![Box::new(DealDamage {
+            actor_id: target,
+            amount: 9,
+            damage_type: DamageType::Fire,
+        })]
+    };
+    let amount_of = |effects: &[Box<dyn ApplicableSideEffect>]| effects[0].damage_payload().unwrap().2;
+
+    // A frame with no school: what a weapon swing opens. The declared
+    // fire type is there, and it buys nothing.
+    e.enter_cast(None, 0, DamageTypeSet::from_types(&[DamageType::Fire]));
+    let mut swing = payload();
+    e.apply_elemental_adept(adept, &mut swing);
+    e.exit_cast();
+    assert_eq!(amount_of(&swing), 9, "a flaming blade is not a spell");
+
+    // The same payload under a cantrip's frame — a school, level 0 —
+    // is the spell RAW means.
+    e.enter_cast(
+        Some(SpellSchool::Evocation),
+        0,
+        DamageTypeSet::from_types(&[DamageType::Fire]),
+    );
+    let mut cantrip = payload();
+    e.apply_elemental_adept(adept, &mut cantrip);
+    e.exit_cast();
+    assert_eq!(
+        amount_of(&cantrip),
+        18,
+        "and a Fire Bolt is pre-doubled so the halving nets back to 9"
+    );
+
+    // And outside any frame at all, nothing happens.
+    let mut loose = payload();
+    e.apply_elemental_adept(adept, &mut loose);
+    assert_eq!(amount_of(&loose), 9, "no frame, no spell, no bypass");
+}

@@ -739,6 +739,17 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // table that is read as a budget across several features rather
     // than as one feature's depth. See `KI_POINTS_TAG`.
     (KI_POINTS_TAG, 5),
+    // The **Lucky** feat's Luck Points: "you have a number of Luck
+    // Points equal to your Proficiency Bonus." Three, which is the
+    // proficiency bonus of the chassis it ships on, so this row is RAW
+    // to the number rather than one of this table's compromises — and
+    // it passes the preamble's second test easily, because every point
+    // is spent on a die somebody else is rolling and a fight has plenty
+    // of those. See `crate::actions::feats::LUCKY_POINTS`.
+    (
+        crate::actions::feats::LUCKY_TAG,
+        crate::actions::feats::LUCKY_POINTS,
+    ),
     // SRD 5.2 Androsphinx **Roar (3/Day)** — RAW to the number, and
     // the only row on this table whose count is read for something
     // other than "may I". See `ROAR_TAG`.

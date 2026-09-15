@@ -757,6 +757,13 @@ pub static STORM_SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     // `UNDYING_WARLOCK_TEMPLATE`'s tag-only subclass build.
     let mut features = SORCERER_TEMPLATE.features.clone();
     features.insert(crate::actions::class_features::HEART_OF_THE_STORM_TAG);
+    // **Elemental Adept (lightning)** — the Storm Sorcerer casts the
+    // engine's whole lightning list (Chain Lightning, Lightning Bolt,
+    // Witch Bolt, Call Lightning) and Heart of the Storm above already
+    // says the storm is what this sorcerer *is*. The feat is what stops
+    // the storm being halved by everything that lives in one. See
+    // `crate::actions::feats::ELEMENTAL_ADEPT_TAGS`.
+    features.insert(crate::actions::feats::ELEMENTAL_ADEPT_LIGHTNING_TAG);
     // 5e Storm Sorcery **Wind Speaker** (lv1): the sorcerer's storm-
     // attuned lineage grants them the Primordial tongue (Aquan / Auran
     // / Ignan / Terran dialects share one language slot in the engine).

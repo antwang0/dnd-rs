@@ -191,7 +191,20 @@ pub static ASSASSIN_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         // landing on the chassis is what made it visible. The
         // clone-and-insert shape the Soulknife and the Thief already
         // use is the one that says what it means.
-        features: rogue_features_with(&[ASSASSINATE_TAG]),
+        // The **Mobile** feat rides here with Assassinate, and the two
+        // are the same turn read from its two ends: Assassinate is
+        // worth the most on the round the assassin arrives, and Mobile
+        // is what lets them leave again — a melee swing against a
+        // creature buys immunity to that creature's opportunity attack
+        // for the rest of the turn, so the strike and the withdrawal
+        // cost one action between them. Ten feet of walking speed comes
+        // with it, and the assassin is the one rogue on the roster
+        // carrying no other speed bonus for it to pile onto. See
+        // `crate::actions::feats::MOBILE_TAG`.
+        features: rogue_features_with(&[
+            ASSASSINATE_TAG,
+            crate::actions::feats::MOBILE_TAG,
+        ]),
         ..ROGUE_TEMPLATE.clone()
     }
 });

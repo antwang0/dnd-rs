@@ -963,6 +963,10 @@ fn simple_weapon_swing(
             // RAW's Great Weapon Fighting gate, carried from the object
             // to the damage roll — see `AttackParams::two_handed`.
             two_handed: weapon.is_two_handed || weapon.is_versatile,
+            // RAW's Great Weapon Master gate, carried the same way and
+            // deliberately off its own column — see
+            // `AttackParams::heavy`.
+            heavy: weapon.is_heavy,
             ..AttackParams::DEFAULTS
         },
         // The reach the rider needs is Cleave's "within your reach",
@@ -1462,6 +1466,47 @@ pub struct SimpleWeapon {
     /// `polearm()` builder, for the reason `is_light` and `mastery`
     /// are.
     pub is_polearm: bool,
+    /// SRD 5.2's **Heavy** weapon property — *"You have Disadvantage on
+    /// attack rolls with a Heavy weapon if it's a Melee weapon and your
+    /// Strength score isn't at least 13, or if it's a Ranged weapon and
+    /// your Dexterity score isn't at least 13."*
+    ///
+    /// The shared armoury's six — greataxe, greatsword, glaive, lance,
+    /// heavy crossbow and longbow. Set with the `heavy()` builder and
+    /// defaulted to `false`, for the reason `is_light`, `is_polearm`
+    /// and `mastery` are.
+    ///
+    /// The monster-specific copies of those weapons (a frost giant's
+    /// greataxe, an oni's glaive, a wereboar's maul) are **not** marked,
+    /// and neither are they marked `two_handed()` — a bespoke stat-block
+    /// weapon in this file declares the dice it rolls and the riders it
+    /// carries, and leaves the property columns to the shared entries a
+    /// player can be handed. Nothing on the roster reads this flag for a
+    /// monster.
+    ///
+    /// **Not the same flag as `is_two_handed`, and the difference is
+    /// the whole reason it exists.** The two lists overlap on most of
+    /// the armoury and disagree at both ends: the longsword and the
+    /// quarterstaff are Versatile and *not* Heavy, and the greatclub is
+    /// Two-Handed and not Heavy either. `AttackParams::two_handed` is
+    /// the union of Two-Handed and Versatile because that is the gate
+    /// Great Weapon Fighting names; a clause that names **Heavy**
+    /// cannot read it without handing a longsword-swinging holder a
+    /// benefit RAW withholds.
+    ///
+    /// Read for the **Great Weapon Master** feat's Heavy Weapon Mastery
+    /// clause, through `AttackParams::heavy` — see
+    /// `crate::actions::feats::GREAT_WEAPON_MASTER_TAG`.
+    ///
+    /// RAW's own clause — the Strength-13 / Dexterity-13 disadvantage —
+    /// is deliberately **not** enforced here. Every wielder on the
+    /// roster meets the threshold for the weapon they are printed with
+    /// (a stat block does not carry a weapon it fumbles), so the gate
+    /// would be dead code that only a loot drop could wake, and the
+    /// engine has no equip step for one to fail at. The day a creature
+    /// can pick a greataxe up off the floor, this flag is what that
+    /// check reads.
+    pub is_heavy: bool,
     /// SRD 5.2's **Loading** weapon property — *"you can fire only one
     /// piece of ammunition from a Loading weapon when you use an
     /// action, a Bonus Action, or a Reaction to fire it, regardless of
@@ -1648,6 +1693,7 @@ impl SimpleWeapon {
             is_versatile: false,
             mastery: None,
             is_polearm: false,
+            is_heavy: false,
             is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
@@ -1697,6 +1743,7 @@ impl SimpleWeapon {
             is_versatile: false,
             mastery: None,
             is_polearm: false,
+            is_heavy: false,
             is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
@@ -1743,6 +1790,7 @@ impl SimpleWeapon {
             is_versatile: false,
             mastery: None,
             is_polearm: false,
+            is_heavy: false,
             is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
@@ -1899,6 +1947,19 @@ impl SimpleWeapon {
     pub const fn polearm(self) -> Self {
         Self {
             is_polearm: true,
+            ..self
+        }
+    }
+
+    /// Const builder that marks a weapon SRD 5.2 **Heavy** —
+    /// `SimpleWeapon::melee(...).heavy()`. See `is_heavy`.
+    ///
+    /// Orthogonal to `two_handed()` and deliberately not implied by it:
+    /// the greatclub is Two-Handed without being Heavy, and marking one
+    /// from the other would quietly widen every clause that names Heavy.
+    pub const fn heavy(self) -> Self {
+        Self {
+            is_heavy: true,
             ..self
         }
     }
@@ -4336,7 +4397,8 @@ pub static LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
     12,
 )
 .mastery(WeaponMastery::Slow)
-.two_handed();
+.two_handed()
+.heavy();
 
 /// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
 /// canonical "monster fist" attack so multislams (and tests) reference it.
@@ -4423,6 +4485,7 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     is_versatile: false,
     mastery: Some(WeaponMastery::Nick),
     is_polearm: false,
+    is_heavy: false,
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
@@ -4450,6 +4513,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     is_versatile: false,
     mastery: Some(WeaponMastery::Vex),
     is_polearm: false,
+    is_heavy: false,
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
@@ -4910,7 +4974,8 @@ pub static GREATAXE: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 )
 .mastery(WeaponMastery::Cleave)
-.two_handed();
+.two_handed()
+.heavy();
 
 /// Heavy Crossbow — DEX-based 1d10 piercing ranged. Differs from the
 /// Longbow in damage die (1d10 vs 1d8) and in RAW's **Loading**
@@ -4936,7 +5001,8 @@ pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
 )
 .mastery(WeaponMastery::Push)
 .loading()
-.two_handed();
+.two_handed()
+.heavy();
 
 /// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
 /// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
@@ -6793,7 +6859,8 @@ pub static GREATSWORD: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 )
 .mastery(WeaponMastery::Graze)
-.two_handed();
+.two_handed()
+.heavy();
 
 /// Pact Blade — the Hexblade Warlock's **Hex Warrior** weapon: 1d8
 /// slashing, but keyed to **Charisma** rather than Strength.
@@ -6854,6 +6921,9 @@ pub static LANCE: SimpleWeapon = SimpleWeapon {
     // unmounted reading — the stricter one, and the one that matches
     // what the property is for.
     .two_handed()
+    // And Heavy, which RAW prints unconditionally — the mounted clause
+    // above suspends the Two-Handed property and nothing else.
+    .heavy()
 };
 
 /// Knight's double-longsword multiattack — two swings per Action,
@@ -11773,7 +11843,8 @@ pub static GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
 )
 .mastery(WeaponMastery::Graze)
 .polearm()
-.two_handed();
+.two_handed()
+.heavy();
 
 /// Gnoll Pack Lord multiattack — 2 glaive swings per Action. The pack
 /// lord's signature move: two reach-2 slashing strikes that let it
@@ -20755,6 +20826,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     is_versatile: false,
     mastery: None,
     is_polearm: false,
+    is_heavy: false,
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
@@ -22204,6 +22276,7 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     is_versatile: false,
     mastery: None,
     is_polearm: false,
+    is_heavy: false,
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,

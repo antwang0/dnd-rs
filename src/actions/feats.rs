@@ -28,6 +28,11 @@
 //! | Defensive Duelist | General | one swing a round, off the armour class |
 //! | Polearm Master | General | a bonus-action swing with the other end |
 //! | Sentinel | General | a swing on somebody else's turn, and their feet |
+//! | Great Weapon Master | General | the proficiency bonus, onto one Heavy swing a turn |
+//! | Heavy Armor Master | General | the proficiency bonus, off every physical blow |
+//! | Mobile | General | ten feet, and the swing of whoever you just swung at |
+//! | Lucky | General | three d20s a rest that stop going the wrong way |
+//! | Elemental Adept | General | a resistance, and the 1s on an element's dice |
 //! | Boon of Combat Prowess | Epic Boon | one miss a turn becomes a hit |
 //! | Boon of Dimensional Travel | Epic Boon | thirty feet after the swing |
 //! | Boon of Fate | Epic Boon | 2d4 onto a d20 that came up short |
@@ -926,6 +931,310 @@ pub static POLE_STRIKE_LANCE: PoleStrike = PoleStrike {
 /// psi warrior has Protective Field, and a barbarian has a free hand.
 pub const SENTINEL_TAG: &str = "feat.sentinel";
 
+/// **Great Weapon Master** (General feat), *Heavy Weapon Mastery* —
+/// *"When you hit a creature with a Heavy weapon as part of the Attack
+/// action on your turn, you can cause the attack to deal extra damage
+/// to the target. The extra damage equals your Proficiency Bonus."*
+///
+/// One row on `attack::MELEE_CASTER_BUMPS`, and the row that made that
+/// cohort grow its two new columns. Every other bump on it reads the
+/// attacker's sheet alone and is paid on every melee swing; this one
+/// asks what is in the attacker's hands and is paid once a turn, so the
+/// cohort's tuples became a struct with a `swing` gate and a
+/// `once_per_turn` tag. The Dueling style was waiting on the first of
+/// those two columns — see the row's own comment.
+///
+/// **The Heavy gate is the object's, not the grip's.** RAW names the
+/// Heavy property and the engine now carries it as
+/// `SimpleWeapon::is_heavy` → `AttackParams::heavy`, kept deliberately
+/// apart from `two_handed` (which is Two-Handed *or* Versatile, because
+/// that is the different gate Great Weapon Fighting names). A longsword
+/// is Versatile and not Heavy; folding the two would have paid this feat
+/// out on most of the armoury.
+///
+/// **Once per turn, not once per attack**, which is a narrowing of RAW
+/// rather than a transcription: the 2024 printing rations the bonus per
+/// *attack* in the Attack action and not per turn, so a holder with
+/// Extra Attack collects it twice. The engine rations it once because
+/// the clause it would otherwise need — *"as part of the Attack
+/// action"* — is not a fact `AttackParams` carries: an opportunity
+/// attack, a Riposte, a readied swing and a Battle Master's
+/// Commander's Strike all reach this chokepoint looking exactly like an
+/// Attack-action swing. Once a turn is the number that is right for the
+/// swing the feat is about and never wrong for the four it is not.
+///
+/// **The second clause is absent.** *"Heavy Weapon Mastery... Once per
+/// turn, when you score a Critical Hit or reduce a creature to 0 Hit
+/// Points with a Heavy weapon, you can make one attack with the weapon
+/// as a Bonus Action"* — the engine has the bonus-action follow-up lane
+/// (`mark_weapon_openings`, which Pole Strike and the Nick mastery both
+/// ride) but it stamps its ledger from the *action* that was taken,
+/// before the swing resolves. This clause's trigger is the swing's
+/// *outcome*, which arrives after the ledger for the turn has been
+/// written. See the module preamble on what that lane cannot yet say.
+///
+/// Ships on `paladins::PALADIN_TEMPLATE` — the greatsword chassis, and
+/// the only one on the roster that has also spent a fighting style pick
+/// on the same weapon. Great Weapon Fighting floors its bad dice and
+/// this adds the proficiency bonus on top; both read the object through
+/// the property columns the armoury carries, and they read *different*
+/// columns, which is the whole reason `heavy` is not `two_handed`.
+pub const GREAT_WEAPON_MASTER_TAG: &str = "feat.great_weapon_master";
+
+/// **Heavy Armor Master** (General feat) — *"While you're wearing Heavy
+/// armor, Bludgeoning, Piercing, and Slashing damage you take from
+/// attacks is reduced by an amount equal to your Proficiency Bonus."*
+///
+/// The engine's **first flat damage reduction**, and the reason it is a
+/// feat that brought one is that nothing before it needed one: every
+/// mitigation on the roster until now has been a resistance (halve), an
+/// immunity (zero), a shield (temp HP) or a ward (a separate pool). A
+/// subtraction is none of those, and PHB p.197 is explicit about where
+/// it lands relative to the halving it is not:
+///
+/// > *"Resistance and then vulnerability are applied after all other
+/// > modifiers to damage. For example, a creature has resistance to
+/// > bludgeoning damage and is hit by an attack that deals 25
+/// > bludgeoning damage. The creature is also within a magical aura that
+/// > reduces all damage by 5. The 25 damage is first reduced by 5 and
+/// > then halved, so the creature takes 10 damage."*
+///
+/// So the reduction runs at the attack chokepoint, on the queued payload
+/// **before** it reaches the target's sheet — which is where
+/// `ActorInstance::effective_damage` will halve it a moment later. That
+/// ordering is not a happy accident of where the code sits; it is the
+/// only place in the pipeline that still holds the pre-resistance
+/// number, and it is the same place `apply_nonmagical_resistance` and
+/// `restore_resisted_physical_damage` already work. See
+/// `attack::apply_heavy_armor_reduction`.
+///
+/// **"From attacks" is enforced by construction.** The sweep runs at the
+/// attack chokepoint and nowhere else, so a Fireball, a fall, a trap and
+/// an Acid Splash are all untouched even where they deal one of the
+/// three types — which is exactly RAW's qualifier, obtained by putting
+/// the rule where attacks are rather than by asking a damage instance
+/// where it came from (which, in this engine, it cannot answer: see
+/// `side_effects::DealDamage`, which carries no attacker).
+///
+/// **"While you're wearing Heavy armor" is not enforced**, and it is the
+/// clause the engine has no surface for: armour here is a number on a
+/// stat block, not an object with a category, so there is nothing to
+/// ask. The feat is therefore placed by *identity* rather than gated by
+/// equipment — it ships on `fighters::CHAMPION_TEMPLATE`, a plate-armour
+/// chassis whose AC could not be built any other way — and a holder who
+/// could somehow shed their armour would keep it. Nothing in the engine
+/// can shed armour.
+///
+/// **It cannot heal.** The reduction is a saturating subtraction on the
+/// payload, so a blow smaller than the proficiency bonus lands as zero
+/// rather than as a negative the target would gain from.
+pub const HEAVY_ARMOR_MASTER_TAG: &str = "feat.heavy_armor_master";
+
+/// **Mobile** (General feat), whose two combat clauses both land on
+/// lanes somebody else had already built:
+///
+///   - *"Your Speed increases by 10 feet."* — one row on
+///     `PASSIVE_FEATURE_SPEED_BONUSES`, beside Speedy, which is the same
+///     ten feet arriving from a different feat.
+///   - *"When you make a melee attack against a creature, you don't
+///     provoke Opportunity Attacks from that creature for the rest of
+///     the turn, whether you hit or not."* — the Swashbuckler Rogue's
+///     **Fancy Footwork** is that sentence word for word, so the two
+///     share the cohort `encounter::TARGETED_OA_SUPPRESSORS` and the
+///     per-turn ledger (`melee_attack_targets_this_turn`) it reads.
+///
+/// That second clause is the interesting one, because it is *not* a
+/// blanket suppression and the difference is tactical: a Mobile holder
+/// who swings at one of three creatures in reach and then walks off
+/// still eats two opportunity attacks. Disengage suppresses all three
+/// and costs an action; this costs nothing and suppresses one.
+///
+/// **The Dash clause is absent** — *"When you take the Dash action,
+/// Difficult Terrain doesn't cost you extra movement on that turn"* —
+/// for the same reason it is absent from Speedy, whose docstring names
+/// it: the movement cost table has no channel for a per-turn exemption.
+/// Named in both places rather than once, because a reader arriving at
+/// either feat should not have to find the other to learn what it does
+/// not do.
+///
+/// Ships on `rogues::ASSASSIN_ROGUE_TEMPLATE`, where it and Assassinate
+/// are the same turn read from its two ends: Assassinate is worth the
+/// most on the round the assassin arrives, and Mobile is what lets them
+/// leave again.
+///
+/// **Not the monk**, which is the chassis the feat reads as and which it
+/// would have suited: the monk already carries Unarmored Movement's ten
+/// feet, and a second row would have put it at fifty — the one chassis
+/// on the roster whose speed is deliberately a clean 30 + 10, asserted
+/// as such (see `unarmored_movement_grants_monk_flat_speed_bump`).
+pub const MOBILE_TAG: &str = "feat.mobile";
+
+/// Feet of walking speed the **Mobile** feat grants its holder.
+pub const MOBILE_SPEED_BONUS: f32 = 10.0;
+
+/// **Lucky** (General feat) — *"You have a number of Luck Points equal
+/// to your Proficiency Bonus and can spend them on: **Advantage** — when
+/// you roll a d20 Test, you can spend 1 Luck Point to give yourself
+/// Advantage on the roll; **Disadvantage** — when a creature rolls a d20
+/// for an attack roll against you, you can spend 1 Luck Point to impose
+/// Disadvantage on that roll."*
+///
+/// The first feat in the engine with a **pool** rather than a charge,
+/// and it needed no new machinery for one: `FEATURE_CHARGES` sizes a
+/// tag's `features_remaining` counter, and `spend_feature` decrements
+/// it. See `LUCKY_POINTS`.
+///
+/// **Both clauses are implemented as cancellations, which is a
+/// narrowing of RAW and a deliberate one.** RAW hands the holder a
+/// decision the engine has no channel for — *before* the roll, knowing
+/// the DC, the stakes and how many rounds are left — and the two
+/// existing roll-mode lanes had already settled how that decision gets
+/// made without a player: spend only where the spend is unambiguously
+/// right. So:
+///
+///   - The Advantage clause fires when the holder's own d20 is about to
+///     be rolled **at disadvantage**, and straightens it to Normal.
+///     That is what advantage does to a disadvantaged roll by the
+///     cancellation rule, so this is RAW's arithmetic on the subset of
+///     rolls where the point is certainly worth spending. It joins the
+///     Drunkard's Luck row on `encounter::SELF_DISADVANTAGE_CANCELLERS`.
+///   - The Disadvantage clause fires when an attack against the holder
+///     is about to be rolled **with advantage**, and flattens it to
+///     Normal — the same subset, read from the other side, and the same
+///     policy the Clockwork Soul's Restore Balance takes on somebody
+///     else's die.
+///
+/// What is given up is the upgrade from Normal to Advantage (and Normal
+/// to Disadvantage), which is the half of the feat that needs to know
+/// whether *this* roll is the decisive one. A lane that spent on it
+/// unconditionally would empty the pool on the first three d20s of the
+/// fight, which is strictly worse than not having the feat.
+///
+/// **It is not a Reaction**, which is RAW and is worth stating because
+/// the engine's other mid-roll defensive lanes all are: a Luck Point is
+/// spent out of its own pool and nothing else, so a holder who has
+/// already parried this round may still flatten the next swing.
+///
+/// Ships on `bards::BARD_TEMPLATE` — the chassis whose whole class is
+/// other people's d20s, adding to them with Bardic Inspiration and
+/// subtracting from them with Cutting Words. Lucky is the three the bard
+/// keeps.
+///
+/// **Not the rogue**, which is the other chassis the feat reads as, and
+/// the reason is a collision worth naming: `has_elusive` already caps
+/// every attack roll against a rogue at Normal, so the Disadvantage
+/// clause would be a pool with nothing to spend itself on.
+pub const LUCKY_TAG: &str = "feat.lucky";
+
+/// How many Luck Points the **Lucky** feat banks per long rest.
+///
+/// RAW is the holder's proficiency bonus, which is +3 on the rogue
+/// chassis this ships on, so three is the number rather than a
+/// compromise — and it is also the pool the 2014 printing prints flat.
+/// A row on `FEATURE_CHARGES` rather than a computed value because that
+/// table is where a pool's depth is declared, and because a pool that
+/// re-derived itself from a live proficiency bonus would be the only one
+/// in the engine that did.
+pub const LUCKY_POINTS: u32 = 3;
+
+/// The five damage types SRD 5.2's **Elemental Adept** lets its holder
+/// choose between — *"acid, cold, fire, lightning, or thunder"*.
+///
+/// Each element gets its own tag, because the feat is chosen per element
+/// and a holder who picked fire has nothing to say about a cold spell.
+/// The rows are paired with their tags in `ELEMENTAL_ADEPT_ELEMENTS`
+/// below, which is the table every consumer reads.
+pub const ELEMENTAL_ADEPT_ACID_TAG: &str = "feat.elemental_adept.acid";
+pub const ELEMENTAL_ADEPT_COLD_TAG: &str = "feat.elemental_adept.cold";
+pub const ELEMENTAL_ADEPT_FIRE_TAG: &str = "feat.elemental_adept.fire";
+pub const ELEMENTAL_ADEPT_LIGHTNING_TAG: &str = "feat.elemental_adept.lightning";
+pub const ELEMENTAL_ADEPT_THUNDER_TAG: &str = "feat.elemental_adept.thunder";
+
+/// **Elemental Adept** (General feat) — *"Spells you cast ignore
+/// Resistance to damage of the chosen type. In addition, when you roll
+/// damage for a spell you cast that deals damage of that type, you can
+/// treat any 1 on a damage die as a 2."*
+///
+/// One row per element, keyed to the tag its holder took. Both clauses
+/// ship, and each lands on a chokepoint that already existed for a
+/// different feature:
+///
+///   - **Ignore Resistance** is a sweep over the assembled side effects
+///     in `Action::execute`, beside Extended Spell and Transmuted Spell
+///     — the two metamagics that already reach into a finished cast and
+///     rewrite its payloads. It pre-doubles a payload aimed at a
+///     creature that would halve it, exactly as Boon of Irresistible
+///     Offense does on the weapon lane, so the halving the target's own
+///     sheet applies nets back to the whole number. Resistance is a
+///     floored halving and `2n / 2 == n`, so the arithmetic is exact
+///     rather than approximate.
+///   - **Treat 1s as 2s** is a floor at
+///     `EncounterInstance::spell_damage_pool`, the one place a spell's
+///     damage dice are rolled. It is the same shape as the Great Weapon
+///     Fighting floor on the weapon lane (`GREAT_WEAPON_FIGHTING_FLOOR`)
+///     and reads the in-flight cast's declared damage types off
+///     `CastContext` to know whether it applies.
+///
+/// **Immunity is untouched**, which RAW's wording requires: the clause
+/// names Resistance and nothing else, so a Fire Elemental still takes no
+/// fire damage from an adept.
+///
+/// **The floor is applied to the whole cast's dice, not to the dice of
+/// the chosen type**, and that is RAW's own sentence read literally:
+/// *"when you roll damage for a spell you cast **that deals damage of
+/// that type**, treat any 1 on a damage die as a 2"*. The condition is
+/// on the spell; the effect is on its damage dice. A two-typed spell —
+/// Ice Knife's cold burst around its piercing dart — floors both halves
+/// for a cold adept, which is what the sentence says and what a table
+/// plays.
+///
+/// **Spells only.** RAW says "spells you cast", so a warlock's
+/// Lifedrinker, a flaming weapon's rider and a dragon's breath are all
+/// outside it. Both lanes ask `CastContext::is_spell` rather than
+/// assuming it from where they sit, because neither sits anywhere that
+/// could: `Action::execute` opens a cast frame for every action it runs
+/// — a Move included — and `damage_types` alone would not have caught a
+/// flaming longsword, which declares `[Slashing, Fire]` like a spell
+/// would.
+///
+/// **Five elements, five chassis**, each the one whose spell list
+/// actually rolls that element — a feat placed on a caster who never
+/// deals its damage type is a constant nobody can observe:
+///
+///   - acid → `artificers::ALCHEMIST_ARTIFICER_TEMPLATE` (Acid Splash,
+///     Tasha's Caustic Brew)
+///   - cold → `druids::LAND_DRUID_TEMPLATE` (Frostbite, Ice Storm)
+///   - fire → `wizards::EVOCATION_WIZARD_TEMPLATE` (the subclass whose
+///     whole identity is the damage roll, and whose Empowered Evocation
+///     already adds a flat bonus to the same figure this floors)
+///   - lightning → `sorcerers::STORM_SORCERER_TEMPLATE` (Chain
+///     Lightning, Lightning Bolt, Call Lightning)
+///   - thunder → `clerics::TEMPEST_CLERIC_TEMPLATE` (Destructive Wrath
+///     names lightning *and* thunder; the Storm Sorcerer above has the
+///     lightning half, so the domain takes the other)
+pub const ELEMENTAL_ADEPT_TAGS: &[(&str, crate::engine::types::DamageType)] = &[
+    (
+        ELEMENTAL_ADEPT_ACID_TAG,
+        crate::engine::types::DamageType::Acid,
+    ),
+    (
+        ELEMENTAL_ADEPT_COLD_TAG,
+        crate::engine::types::DamageType::Cold,
+    ),
+    (
+        ELEMENTAL_ADEPT_FIRE_TAG,
+        crate::engine::types::DamageType::Fire,
+    ),
+    (
+        ELEMENTAL_ADEPT_LIGHTNING_TAG,
+        crate::engine::types::DamageType::Lightning,
+    ),
+    (
+        ELEMENTAL_ADEPT_THUNDER_TAG,
+        crate::engine::types::DamageType::Thunder,
+    ),
+];
+
 pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 
 /// **Boon of Dimensional Travel** (Epic Boon) — *"Blink Steps.
@@ -1159,6 +1468,15 @@ pub const FEAT_TAGS: &[&str] = &[
     DEFENSIVE_DUELIST_TAG,
     POLEARM_MASTER_TAG,
     SENTINEL_TAG,
+    GREAT_WEAPON_MASTER_TAG,
+    HEAVY_ARMOR_MASTER_TAG,
+    MOBILE_TAG,
+    LUCKY_TAG,
+    ELEMENTAL_ADEPT_ACID_TAG,
+    ELEMENTAL_ADEPT_COLD_TAG,
+    ELEMENTAL_ADEPT_FIRE_TAG,
+    ELEMENTAL_ADEPT_LIGHTNING_TAG,
+    ELEMENTAL_ADEPT_THUNDER_TAG,
     BOON_OF_COMBAT_PROWESS_TAG,
     BOON_OF_DIMENSIONAL_TRAVEL_TAG,
     BOON_OF_FATE_TAG,

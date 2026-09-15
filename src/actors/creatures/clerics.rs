@@ -527,6 +527,14 @@ pub static TEMPEST_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
     // Wrath of the Storm charge — once per short rest, refreshed via
     // `SHORT_REST_FEATURES` alongside the War / Light CDs.
     features.insert(WRATH_OF_THE_STORM_TAG);
+    // **Elemental Adept (thunder)** — RAW's Tempest domain names two
+    // damage types and the engine's roster claims them separately:
+    // lightning belongs to the Storm Sorcerer, whose whole spell list
+    // is it, and thunder is the half nothing else on the roster carries
+    // as an identity. Destructive Wrath already maximises both; this
+    // feat is what stops the half that is left being halved. See
+    // `crate::actions::feats::ELEMENTAL_ADEPT_TAGS`.
+    features.insert(crate::actions::feats::ELEMENTAL_ADEPT_THUNDER_TAG);
     CreatureTemplate {
         name: "Tempest Cleric",
         glyph: 'S',

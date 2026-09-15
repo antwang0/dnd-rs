@@ -192,6 +192,17 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // above strict RAW level (templates target a balanced
             // playable level, not lockstep PHB progression).
             IMPROVED_DIVINE_SMITE_TAG,
+            // The **Great Weapon Master** feat, and the paladin is the
+            // chassis it belongs to: the only one on the roster that
+            // swings a Heavy weapon *and* has already spent a fighting
+            // style pick on it. Great Weapon Fighting floors the
+            // greatsword's bad dice and this adds the proficiency bonus
+            // once a turn on top — the two halves of "this is the
+            // character who hits things with a very large sword", and
+            // both of them read the same object through the property
+            // columns the armoury now carries. See
+            // `crate::actions::feats::GREAT_WEAPON_MASTER_TAG`.
+            crate::actions::feats::GREAT_WEAPON_MASTER_TAG,
         ]),
         has_extra_attack: true,
         // 5e Paladin **Fighting Style: Defense** (lv2 pick): passive +1 AC

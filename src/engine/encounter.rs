@@ -693,6 +693,60 @@ const AURA_OF_CONQUEST_PSYCHIC: u32 = 5;
 /// would make it a different style.
 pub const GREAT_WEAPON_FIGHTING_FLOOR: u32 = 3;
 
+/// One row on `SELF_DISADVANTAGE_CANCELLERS` — a charged feature whose
+/// holder can straighten out a disadvantage on their own d20.
+struct SelfDisadvantageCanceller {
+    /// The passive-feature tag that both gates the row and holds its
+    /// charges (`feature_available` / `spend_feature`).
+    tag: &'static str,
+    /// What the combat log calls the feature.
+    label: &'static str,
+    /// The rest of the log line, after the holder's name.
+    flavour: &'static str,
+}
+
+/// Features that let their holder spend a charge to cancel a
+/// disadvantage on a d20 they are about to roll.
+///
+/// Read by `cancel_disadvantage_with_luck`, which is on the path of
+/// every d20 the engine rolls through `steady_the_d20`. Ordered by spend
+/// priority: a holder of two rows spends the first that has a charge,
+/// because one cancellation is all a disadvantage takes.
+///
+/// The two rows arrive from opposite directions and are the same
+/// sentence at the die:
+///
+///   - 5e Way of the Drunken Master Monk **Drunkard's Luck** — a
+///     ki-priced subclass feature, listed first because its pool is the
+///     smaller and refills on a short rest.
+///   - The **Lucky** feat's Advantage clause, narrowed to the
+///     disadvantaged rolls where the point is certainly worth spending.
+///     See `crate::actions::feats::LUCKY_TAG` for the narrowing, and for
+///     the half of the feat that is deliberately absent.
+const SELF_DISADVANTAGE_CANCELLERS: &[SelfDisadvantageCanceller] = &[
+    SelfDisadvantageCanceller {
+        tag: crate::actions::class_features::DRUNKARDS_LUCK_TAG,
+        label: "drunkard's luck",
+        flavour: "shrugs off the disadvantage.",
+    },
+    SelfDisadvantageCanceller {
+        tag: crate::actions::feats::LUCKY_TAG,
+        label: "lucky",
+        flavour: "spends a luck point and rolls straight.",
+    },
+];
+
+/// The value the **Elemental Adept** feat reads a low spell damage die
+/// as: *"treat any 1 on a damage die as a 2."*
+///
+/// The weapon lane's `GREAT_WEAPON_FIGHTING_FLOOR` directly above, one
+/// point lower and on the other half of the engine — a style floors a
+/// greatsword's 1s and 2s at 3, a feat floors a Fireball's 1s at 2. Two
+/// constants rather than one because the numbers are each their own
+/// rule's, and a shared one would make either feature's printing a
+/// change to the other.
+pub const ELEMENTAL_ADEPT_FLOOR: u32 = 2;
+
 /// SRD 5.2 Chain Devil **Unnerving Gaze**: *"Wisdom Saving Throw: DC
 /// 15."* Printed rather than derived — the kyton's own numbers give
 /// `8 + PB 3 + CHA 2 = 13`, and a stat block's save DC is not obliged to
@@ -2516,6 +2570,26 @@ impl CastContext {
         self.school.is_some() && self.level == 0
     }
 
+    /// True when this frame belongs to a **spell** at all — cantrip or
+    /// leveled, any school.
+    ///
+    /// The gate every clause worded *"a spell you cast"* needs, and the
+    /// one that is easy to forget is necessary: `Action::execute` opens
+    /// a frame for **every** action it runs, a weapon swing and a Move
+    /// included, so a sweep that reads only the frame's damage types
+    /// would fire for a flaming longsword. `damage_types` fails closed
+    /// on most non-spells because they declare none, but not on all of
+    /// them — a weapon that declares `[Slashing, Fire]` is the
+    /// counterexample the trait's own docstring gives.
+    ///
+    /// `school.is_some()` is the test because a spell is exactly the
+    /// thing that has one; `every_cantrip_declares_its_school` is what
+    /// keeps that true for the level-0 half, where there is no slot to
+    /// read instead.
+    pub fn is_spell(&self) -> bool {
+        self.school.is_some()
+    }
+
     /// True when the action that opened this frame declared it deals
     /// `damage_type`. See the `damage_types` field for why a spell whose
     /// typing is only decided at roll time answers `false`.
@@ -3349,10 +3423,71 @@ impl EncounterInstance {
         // Empowered Spell's reroll to improve once every die is showing
         // its top face, and calling through anyway would burn that
         // separate prime for nothing.
-        match self.consume_overchannel(caster_id, dice) {
+        let pool = match self.consume_overchannel(caster_id, dice) {
             Some(_) => vec![faces; count as usize],
             None => self.roll_empowered(caster_id, count, faces),
+        };
+        self.apply_elemental_adept_floor(caster_id, pool, faces)
+    }
+
+    /// The **Elemental Adept** feat's second clause: *"when you roll
+    /// damage for a spell you cast that deals damage of that type, you
+    /// can treat any 1 on a damage die as a 2."*
+    ///
+    /// Applied at the tail of `spell_damage_pool` — after Overchannel
+    /// and Empowered Spell have both had their say, which is the order
+    /// RAW would resolve them in and the only order that is stable: a
+    /// floor applied first would be un-done by an Empowered reroll (the
+    /// metamagic rerolls dice showing 1 or 2 and *must* take the new
+    /// roll), and a die Overchannel has already pinned to its top face
+    /// has no 1 on it to floor.
+    ///
+    /// **The gate is the cast frame, not the die.** A damage die carries
+    /// no type of its own here; what carries one is the spell, and
+    /// `CastContext::deals` is the frame's own accessor for it. That is
+    /// also RAW's own subject — *"a spell you cast that deals damage of
+    /// that type"* — so the floor covers every die of a qualifying
+    /// spell, including the ones a two-typed spell rolls for its other
+    /// half. See `feats::ELEMENTAL_ADEPT_TAGS`.
+    ///
+    /// Outside any cast frame (a non-spell roll that reached this
+    /// chokepoint) `current_cast` is `None` and the pool comes back
+    /// untouched, which is the same fail-closed default every other
+    /// frame reader takes.
+    ///
+    /// The floor is clamped to the die's own faces for the reason the
+    /// weapon lane's is: a hypothetical d1 cannot be made to read higher
+    /// than it can roll.
+    fn apply_elemental_adept_floor(
+        &mut self,
+        caster_id: usize,
+        pool: Vec<u32>,
+        faces: u32,
+    ) -> Vec<u32> {
+        if !pool.contains(&1) {
+            return pool;
         }
+        let Some(cast) = self.current_cast().filter(|c| c.is_spell()) else {
+            return pool;
+        };
+        let adept = self.actors.get(&caster_id).is_some_and(|a| {
+            crate::actions::feats::ELEMENTAL_ADEPT_TAGS
+                .iter()
+                .any(|(tag, dt)| cast.deals(*dt) && a.has_passive_feature(tag))
+        });
+        if !adept {
+            return pool;
+        }
+        let floor = ELEMENTAL_ADEPT_FLOOR.min(faces);
+        let lifted = pool.iter().filter(|&&v| v < floor).count();
+        let pool: Vec<u32> = pool.into_iter().map(|v| v.max(floor)).collect();
+        if lifted > 0 {
+            self.log(format!(
+                "  elemental adept: {} low d{} read as {}",
+                lifted, faces, floor
+            ));
+        }
+        pool
     }
 
     /// Add the once-per-cast flat spell-damage bonus to a rolled total.
@@ -3739,40 +3874,43 @@ impl EncounterInstance {
             .unwrap_or(0)
     }
 
-    /// 5e Way of the Drunken Master Monk **Drunkard's Luck**: if `mode`
-    /// is disadvantage and `actor_id` has a charge left, spend it and
-    /// hand back `RollMode::Normal`.
+    /// The self-side roll-mode cancel lane: if `mode` is disadvantage
+    /// and `actor_id` holds a `SELF_DISADVANTAGE_CANCELLERS` feature
+    /// with a charge left, spend it and hand back `RollMode::Normal`.
     ///
-    /// The first row on the roll-mode cancel lane, reached through
-    /// `steady_the_d20` — which is what the two d20 chokepoints that
-    /// can see the mode before the die lands and still hold `&mut`
-    /// actually call. Anything not disadvantaged passes straight
-    /// through, so the cost of the feature on every other actor in the
-    /// game is one enum comparison.
+    /// Reached through `steady_the_d20` — which is what the two d20
+    /// chokepoints that can see the mode before the die lands and still
+    /// hold `&mut` actually call. Anything not disadvantaged passes
+    /// straight through, so the cost of the lane on every other actor in
+    /// the game is one enum comparison.
+    ///
+    /// **One charge per roll, even for a holder carrying two rows.** The
+    /// cohort is scanned with `find` rather than walked: it takes one
+    /// cancellation to clear a disadvantage, and a second charge spent
+    /// on the same die would buy nothing. Row order is therefore a
+    /// spend *priority*, and the cohort is ordered accordingly.
     ///
     /// Returns the mode to roll under. See `DRUNKARDS_LUCK_TAG` for why
     /// it clears to Normal rather than combining an advantage in, and
     /// for why the charge is spent on the first disadvantaged roll
-    /// rather than saved for a better one.
+    /// rather than saved for a better one — both answers are the
+    /// cohort's, not that row's.
     pub fn cancel_disadvantage_with_luck(&mut self, actor_id: usize, mode: RollMode) -> RollMode {
-        use crate::actions::class_features::DRUNKARDS_LUCK_TAG;
         if mode != RollMode::Disadvantage {
             return mode;
         }
-        let lucky = self.actors.get(&actor_id).is_some_and(|a| {
-            a.has_passive_feature(DRUNKARDS_LUCK_TAG) && a.feature_available(DRUNKARDS_LUCK_TAG)
-        });
-        if !lucky {
+        let Some(row) = SELF_DISADVANTAGE_CANCELLERS.iter().find(|row| {
+            self.actors
+                .get(&actor_id)
+                .is_some_and(|a| a.has_passive_feature(row.tag) && a.feature_available(row.tag))
+        }) else {
             return mode;
-        }
+        };
         if let Some(a) = self.actors.get_mut(&actor_id) {
-            a.spend_feature(DRUNKARDS_LUCK_TAG);
+            a.spend_feature(row.tag);
         }
         let name = self.actor_name(actor_id);
-        self.log(format!(
-            "  drunkard's luck: {} shrugs off the disadvantage.",
-            name
-        ));
+        self.log(format!("  {}: {} {}", row.label, name, row.flavour));
         RollMode::Normal
     }
 
@@ -3897,6 +4035,65 @@ impl EncounterInstance {
     pub fn steady_the_d20(&mut self, roller_id: usize, mode: RollMode) -> RollMode {
         let mode = self.cancel_disadvantage_with_luck(roller_id, mode);
         self.cancel_mode_with_restore_balance(roller_id, mode)
+    }
+
+    /// The **Lucky** feat's Disadvantage clause, from the defender's
+    /// side: *"when a creature rolls a d20 for an attack roll against
+    /// you, you can spend 1 Luck Point to impose Disadvantage on that
+    /// roll."*
+    ///
+    /// Called at both attack chokepoints immediately after
+    /// `steady_the_d20`, which makes it the genuine last word on an
+    /// attack's roll mode — every advantage and disadvantage source, the
+    /// Elusive cap and the attacker's own cancel lane have all spoken,
+    /// so the mode this reads is the one the die would have been rolled
+    /// under.
+    ///
+    /// **It fires only against Advantage**, which is the same narrowing
+    /// the two rows on `SELF_DISADVANTAGE_CANCELLERS` take and is made
+    /// for the same reason: RAW gives the spend decision to a player who
+    /// knows the stakes, and an engine that spends it on every incoming
+    /// swing would empty a three-point pool on the first round of the
+    /// fight. Flattening an advantaged attack to Normal is the largest
+    /// swing a single point can buy — it removes the better of two dice
+    /// — and it is the one case where the point is certainly not wasted.
+    /// Turning a Normal attack into a disadvantaged one is the half
+    /// given up; see `feats::LUCKY_TAG`.
+    ///
+    /// **Not a Reaction**, which is RAW: the point comes out of its own
+    /// pool, so a defender who has already spent their reaction this
+    /// round may still flatten the swing. That also means the lane
+    /// cannot be starved by the reaction economy, and so the pool is the
+    /// only thing rationing it.
+    ///
+    /// A defender who is not a live combatant does not spend: an
+    /// unconscious holder is not choosing anything, and RAW's clause is
+    /// a choice.
+    pub fn spend_luck_against_attack(
+        &mut self,
+        attacker_id: usize,
+        defender_id: usize,
+        mode: RollMode,
+    ) -> RollMode {
+        use crate::actions::feats::LUCKY_TAG;
+        if mode != RollMode::Advantage || attacker_id == defender_id {
+            return mode;
+        }
+        let ready = self.actors.get(&defender_id).is_some_and(|d| {
+            d.has_passive_feature(LUCKY_TAG) && d.feature_available(LUCKY_TAG) && d.is_combat_active()
+        });
+        if !ready {
+            return mode;
+        }
+        if let Some(d) = self.actors.get_mut(&defender_id) {
+            d.spend_feature(LUCKY_TAG);
+        }
+        let (defender, attacker) = (self.actor_name(defender_id), self.actor_name(attacker_id));
+        self.log(format!(
+            "  lucky: {} spends a luck point and {} loses the advantage.",
+            defender, attacker
+        ));
+        RollMode::Normal
     }
 
     /// SRD 5.2 **Boon of Combat Prowess**, *Peerless Aim*: *"When you
@@ -11989,25 +12186,27 @@ impl EncounterInstance {
         // no-such-actor case, since a mover who doesn't exist can hardly
         // provoke).
         //
-        // 5e Swashbuckler Rogue **Fancy Footwork** (subclass level 3) is
-        // deliberately *not* in that cohort: it doesn't blanket-suppress
-        // OAs the way the three above do, it only suppresses them from
-        // reactors the swash has already made a melee attack against
-        // this turn. That surgical skip lives inside the candidate loop
-        // below via `mover_fancy_footwork_targets`. Keeping the two
-        // lanes separate lets a Swashbuckler with a spent bonus action
-        // benefit from Fancy Footwork's targeted suppression without
-        // burning Cunning Disengage's bonus action.
-        let (mover_team, mover_size, mover_fancy_footwork_targets) =
+        // The *targeted* suppressors — the Swashbuckler Rogue's **Fancy
+        // Footwork** and the **Mobile** feat — are deliberately *not* in
+        // that cohort: neither blanket-suppresses OAs the way the three
+        // above do, and both only suppress them from reactors the mover
+        // has already made a melee attack against this turn. That
+        // surgical skip lives inside the candidate loop below via
+        // `mover_swung_at`, off the sibling cohort
+        // `TARGETED_OA_SUPPRESSORS`. Keeping the two lanes separate lets
+        // a Swashbuckler with a spent bonus action benefit from the
+        // targeted suppression without burning Cunning Disengage's bonus
+        // action.
+        let (mover_team, mover_size, mover_swung_at) =
             match self.actors.get(&mover_id) {
                 Some(a) if a.suppresses_opportunity_attacks() => return,
                 Some(a) => {
-                    let footwork_targets = if a.has_fancy_footwork() {
+                    let swung_at = if a.suppresses_opportunity_attacks_from_targets() {
                         Some(a.melee_attack_targets_this_turn_snapshot())
                     } else {
                         None
                     };
-                    (a.team(), get_tiles_from_size(a.size()), footwork_targets)
+                    (a.team(), get_tiles_from_size(a.size()), swung_at)
                 }
                 None => return,
             };
@@ -12069,19 +12268,18 @@ impl EncounterInstance {
             if !was_in_reach || still_in_reach {
                 continue;
             }
-            // 5e Swashbuckler Rogue Fancy Footwork (subclass level 3):
-            // if the mover holds the flag AND has made a melee attack
-            // against this specific reactor during their current turn,
-            // that reactor's OA is silently suppressed. Sibling gate to
-            // Disengage above — Disengage blanket-suppresses every
-            // reactor's OA for the turn, Fancy Footwork surgically
-            // suppresses only the swash's melee-attack targets, so a
-            // swash-vs-swarm move-out fires OAs from any flanker the
-            // swash didn't swing at while sparing the ones they did.
+            // The targeted suppressors (Fancy Footwork, Mobile): if the
+            // mover holds one AND has made a melee attack against this
+            // specific reactor during their current turn, that reactor's
+            // OA is silently suppressed. Sibling gate to Disengage above
+            // — Disengage blanket-suppresses every reactor's OA for the
+            // turn, these suppress only the mover's melee-attack
+            // targets, so a move-out fires OAs from any flanker the
+            // mover didn't swing at while sparing the ones they did.
             // Snapshot the ledger up-front to avoid re-borrowing the
             // mutating actor map inside the loop body.
-            if let Some(footwork_targets) = mover_fancy_footwork_targets.as_ref()
-                && footwork_targets.contains(&reactor_id)
+            if let Some(swung_at) = mover_swung_at.as_ref()
+                && swung_at.contains(&reactor_id)
             {
                 continue;
             }
@@ -18185,6 +18383,102 @@ impl EncounterInstance {
             |se| crate::engine::side_effects::remap_side_effect_damage_types(se, new_type),
         );
         if consumed { Some(new_type) } else { None }
+    }
+
+    /// The **Elemental Adept** feat's first clause: *"Spells you cast
+    /// ignore Resistance to damage of the chosen type."*
+    ///
+    /// A sweep over a finished cast's assembled side effects, run from
+    /// `Action::execute` beside Extended Spell and Transmuted Spell —
+    /// the two metamagics that already reach into a cast after its
+    /// `side_effects` have been built and rewrite them. This is the
+    /// third, and it needs the same position for the same reason: the
+    /// payloads have to be finished before anything scales them, and the
+    /// cast has to still be the caster's before anything applies them.
+    ///
+    /// **It pre-doubles rather than un-halves**, which is the whole
+    /// implementation and is the same trick
+    /// `attack::restore_resisted_physical_damage` plays on the weapon
+    /// lane. The halving happens on the *target's* sheet, inside
+    /// `ActorInstance::effective_damage`, at a moment when nothing knows
+    /// who cast; what a caster-side bypass can reach is the payload on
+    /// its way there. A `2n` handed to a creature that halves lands as
+    /// `n`, exactly, for every n — resistance is a floored halving and
+    /// doubling is its exact inverse.
+    ///
+    /// Three narrowings, each RAW:
+    ///
+    ///   - **The chosen element only.** A holder who took fire has
+    ///     nothing to say about the cold half of an Ice Knife; a holder
+    ///     who took two elements has both rows checked, and a payload is
+    ///     doubled at most once whichever matched.
+    ///   - **Resistance only.** Immunity is not resistance and RAW does
+    ///     not name it, so a Fire Elemental still takes nothing.
+    ///     `halves_damage_of_type` is what keeps the two apart — and
+    ///     what keeps a creature that resists *and* is vulnerable (which
+    ///     already takes full damage) from being doubled for nothing.
+    ///   - **Damage aimed at somebody.** A payload whose target has left
+    ///     the board between assembly and this sweep is skipped rather
+    ///     than doubled blind.
+    ///
+    /// Unlike its two neighbours in `Action::execute` this consumes
+    /// nothing: the feat is a standing property of the caster, not a
+    /// prime, so there is no charge to burn and no value to propagate to
+    /// a Twinned Spell's second payload — the twin's own effects are
+    /// built by a second `side_effects` call and swept by a second call
+    /// to this.
+    pub fn apply_elemental_adept(
+        &mut self,
+        caster_id: usize,
+        side_effects: &mut [Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
+    ) {
+        // RAW's "spells you cast", asked of the frame rather than
+        // assumed from the call site: `Action::execute` opens one for
+        // every action it runs, so without this a fire adept's flaming
+        // longsword would bypass a target's fire resistance. See
+        // `CastContext::is_spell`.
+        if !self.current_cast().is_some_and(|c| c.is_spell()) {
+            return;
+        }
+        let elements: Vec<crate::engine::types::DamageType> = match self.actors.get(&caster_id) {
+            Some(a) => crate::actions::feats::ELEMENTAL_ADEPT_TAGS
+                .iter()
+                .filter(|(tag, _)| a.has_passive_feature(tag))
+                .map(|(_, dt)| *dt)
+                .collect(),
+            None => return,
+        };
+        if elements.is_empty() {
+            return;
+        }
+        let mut notes: Vec<String> = Vec::new();
+        for effect in side_effects.iter_mut() {
+            let Some((aimed_at, damage_type, amount)) = effect.damage_payload() else {
+                continue;
+            };
+            if amount == 0 || !elements.contains(&damage_type) {
+                continue;
+            }
+            let halved = self
+                .actors
+                .get(&aimed_at)
+                .is_some_and(|t| t.halves_damage_of_type(damage_type));
+            if !halved {
+                continue;
+            }
+            if !effect.set_damage_amount(amount.saturating_mul(2)) {
+                continue;
+            }
+            notes.push(format!("{} {}", amount, damage_type));
+        }
+        if !notes.is_empty() {
+            let name = self.actor_name(caster_id);
+            self.log(format!(
+                "  elemental adept: {}'s {} ignores resistance",
+                name,
+                notes.join(", ")
+            ));
+        }
     }
 
     /// Pick the best damage type for a Transmuted Spell remap given a
