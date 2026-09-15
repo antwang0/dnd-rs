@@ -85180,6 +85180,14 @@ fn the_once_per_turn_ledger_registry_names_every_rider() {
         // chokepoint (`mark_weapon_openings`), which is not an attack
         // cohort at all.
         crate::actions::feats::POLE_STRIKE_OPENING_TAG,
+        // SRD 5.2 **Rampage**, and the first entry here that is not
+        // about an attack roll at all. The gnoll's Bonus Action is
+        // stamped on a *kill* — `EncounterInstance::pay_rampage`, on the
+        // shared `trigger_creature_dropped` hook — so there is no swing
+        // for either cohort to hang it on, and what the ledger caps is a
+        // second Bonus Action rather than a second die. See
+        // `RAMPAGE_TAG`.
+        crate::actions::class_features::RAMPAGE_TAG,
     ];
 
     let declared: HashSet<&str> = ONCE_PER_TURN_RIDER_TAGS.iter().copied().collect();
@@ -113576,5 +113584,210 @@ fn turn_resistance_reaches_the_turn_and_nothing_else() {
     assert!(
         !e.actors[&wraith].has_save_advantage_against(Condition::Frightened),
         "a wraith has no special claim against a dragon's roar"
+    );
+}
+
+/// SRD 5.2 **Martial Advantage** — the hobgoblin's 2d6, and the ally it
+/// needs standing next to the target.
+///
+/// Three things to pin and the third is the one a target-side gate
+/// could not have: the rider fires, it fires *once* a turn, and it does
+/// not fire for a hobgoblin swinging alone. The clause is about a third
+/// creature, which is why the cohort's `caster_gate` takes the board.
+#[test]
+fn martial_advantage_needs_somebody_standing_next_to_the_target() {
+    use crate::actions::monster_attacks::SCIMITAR;
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::hobgoblins::HOBGOBLIN_TEMPLATE;
+
+    // Swings across fresh turns until one connects, the way every other
+    // rider test in this file does — a miss pays nothing, which is RAW
+    // and is why one swing is not enough to assert on. Returns how many
+    // turns paid out and how many times the rider fired inside the turn
+    // it first did.
+    let swing = |with_a_friend: bool| -> (usize, usize) {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(3);
+        let hob = e
+            .instantiate_creature(&HOBGOBLIN_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+            .unwrap();
+        // Medium, so its footprint is (6..8, 4..6) on this grid.
+        let mark = e
+            .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+            .unwrap();
+        if with_a_friend {
+            // Touching the gladiator on the far side, so the swinger is
+            // not itself the adjacent ally the clause asks for.
+            e.instantiate_creature(&HOBGOBLIN_TEMPLATE, Coordinate::new(8, 4), 1, 1)
+                .unwrap();
+        }
+        let (mut turns_paid, mut in_one_turn) = (0usize, 0usize);
+        for _ in 0..25 {
+            e.actors.get_mut(&hob).unwrap().reset_for_new_round();
+            let mut this_turn = 0usize;
+            for _ in 0..3 {
+                let before = e.messages().len();
+                let _ = SCIMITAR.side_effects(&mut e, hob, Some(&vec![mark]), None, None);
+                if e.messages()[before..]
+                    .iter()
+                    .any(|m| m.contains("martial advantage"))
+                {
+                    this_turn += 1;
+                }
+            }
+            if this_turn > 0 {
+                turns_paid += 1;
+                in_one_turn = in_one_turn.max(this_turn);
+            }
+            // Topped up so the gladiator survives the sweep — a corpse
+            // would end the loop for the wrong reason.
+            e.actors.get_mut(&mark).unwrap().heal(200);
+        }
+        (turns_paid, in_one_turn)
+    };
+
+    let (alone, _) = swing(false);
+    assert_eq!(alone, 0, "a hobgoblin swinging by itself gets nothing");
+    let (together, per_turn) = swing(true);
+    assert!(together > 0, "a hobgoblin with a friend on the far side does");
+    assert_eq!(per_turn, 1, "and only on the first hit of the turn");
+}
+
+/// SRD 5.2 **Rampage** — the gnoll that drops somebody gets to be
+/// somewhere else, biting.
+///
+/// The payout is two resources rather than a scripted move-and-bite,
+/// which is what lets the gnoll's own picker spend them; what this pins
+/// is that both arrive, that they arrive once however many bodies drop,
+/// and that finishing off a packmate buys nothing.
+#[test]
+fn a_gnolls_kill_buys_it_half_a_move_and_another_bite() {
+    use crate::actors::creatures::gnolls::GNOLL_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, DealDamage, Resource};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let gnoll = e
+        .instantiate_creature(&GNOLL_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let first = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+    let second = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 4), 0, 1)
+        .unwrap();
+    // The trigger keys off whose turn it is, so wind the tracker round
+    // to the gnoll — the same arrangement the Dark One's Blessing test
+    // makes for the same hook.
+    while e.current_turn_actor_id() != Some(gnoll) {
+        e.skip_turn();
+    }
+    let speed = e.actors[&gnoll].speed();
+    e.actors
+        .get_mut(&gnoll)
+        .unwrap()
+        .consume_resource(Resource::BonusAction);
+    assert!(
+        !e.actors[&gnoll].can_consume_resource(Resource::BonusAction),
+        "the premise: its Bonus Action is gone"
+    );
+    let movement_before = e.actors[&gnoll].remaining_movement();
+
+    DealDamage {
+        actor_id: first,
+        amount: 500,
+        damage_type: crate::engine::types::DamageType::Slashing,
+    }
+    .apply(&mut e);
+
+    assert!(
+        e.actors[&gnoll].can_consume_resource(Resource::BonusAction),
+        "the kill hands the Bonus Action back"
+    );
+    let gained = e.actors[&gnoll].remaining_movement() - movement_before;
+    assert!(
+        (gained - speed / 2.0).abs() < 0.01,
+        "…and half a move with it: {gained} of {speed}"
+    );
+
+    // A second body in the same turn buys nothing more: RAW's ration is
+    // the words "a Bonus Action".
+    e.actors
+        .get_mut(&gnoll)
+        .unwrap()
+        .consume_resource(Resource::BonusAction);
+    DealDamage {
+        actor_id: second,
+        amount: 500,
+        damage_type: crate::engine::types::DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors[&gnoll].can_consume_resource(Resource::BonusAction),
+        "one Bonus Action is one bite, however many drop"
+    );
+}
+
+/// SRD 5.2 **Aggressive** — an orc with something in view arrives a
+/// round early, and an orc alone in a room keeps its Bonus Action.
+///
+/// The sight half of RAW's clause is the half that could be enforced;
+/// the "toward" half is named as a rounding in `AGGRESSIVE_TAG`. What
+/// this pins is the gate and the grant.
+#[test]
+fn an_orc_charges_only_at_something_it_can_see() {
+    use crate::actions::class_features::AGGRESSIVE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::orcs::ORC_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let orc = e
+        .instantiate_creature(&ORC_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&orc).unwrap().reset_for_new_round();
+
+    let aei = ActionExecutionInfo::new(&AGGRESSIVE, orc, None, None, None);
+    assert!(
+        !aei.validate(&e),
+        "an orc alone in a room has nothing to charge at"
+    );
+
+    // Somebody to charge at, behind a wall: still nothing, because RAW
+    // says *can see*.
+    let target = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 4), 0, 0)
+        .unwrap();
+    for y in 0..20isize {
+        let idx = e.idx(Coordinate::new(12, y)).unwrap();
+        e.terrain[idx].terrain_type = TerrainType::Wall;
+    }
+    let aei = ActionExecutionInfo::new(&AGGRESSIVE, orc, None, None, None);
+    assert!(
+        !aei.validate(&e),
+        "a wall between them is the sight clause doing its job"
+    );
+
+    // Knock the wall down and it charges.
+    for y in 0..20isize {
+        let idx = e.idx(Coordinate::new(12, y)).unwrap();
+        e.terrain[idx].terrain_type = TerrainType::Floor;
+    }
+    assert!(e.viewer_can_see(orc, target));
+    let speed = e.actors[&orc].speed();
+    let before = e.actors[&orc].remaining_movement();
+    let aei = ActionExecutionInfo::new(&AGGRESSIVE, orc, None, None, None);
+    assert!(aei.validate(&e));
+    e.push_action(aei);
+    e.process_stack();
+    let gained = e.actors[&orc].remaining_movement() - before;
+    assert!(
+        (gained - speed).abs() < 0.01,
+        "a whole move's worth: {gained} of {speed}"
+    );
+    assert!(
+        !e.actors[&orc].can_consume_resource(Resource::BonusAction),
+        "…for the Bonus Action"
     );
 }

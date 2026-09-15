@@ -5162,6 +5162,38 @@ impl EncounterInstance {
         !self.sight_denied_between(viewer_id, subject_id)
     }
 
+    /// True when `actor_id` can see at least one combat-active creature
+    /// on another team — RAW's *"a hostile creature that it can see"*,
+    /// which is the clause a whole family of "when you see an enemy"
+    /// features opens with.
+    ///
+    /// Asked through `viewer_can_see`, so it is the *whole* sight gate
+    /// — blindness, the illusion cohort, the terrain on the line, the
+    /// light, and Total Cover — rather than a bare distance check. That
+    /// matters for the first caller: an orc in a pitch-dark corridor
+    /// with something round the corner has nothing to charge at, and
+    /// RAW says so.
+    ///
+    /// Short-circuits on the first hit, and sorted so the walk is
+    /// deterministic even though the answer is a `bool` — the sight
+    /// gate can roll nothing, but it is the kind of predicate that
+    /// grows a die, and every other actor walk in this file is sorted
+    /// for the same reason.
+    pub fn can_see_any_hostile(&self, actor_id: usize) -> bool {
+        let Some(me) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        let my_team = me.team();
+        self.sorted_actor_ids().into_iter().any(|id| {
+            id != actor_id
+                && self
+                    .actors
+                    .get(&id)
+                    .is_some_and(|a| a.team() != my_team && a.is_combat_active())
+                && self.viewer_can_see(actor_id, id)
+        })
+    }
+
     /// True if the *environment* — fog or the dark — stops `viewer_id`
     /// seeing `subject_id`, with neither's own conditions considered.
     ///
@@ -16491,6 +16523,75 @@ impl EncounterInstance {
         );
         self.pay_hexblade_curse_on_death(dropped_target_id);
         self.pay_kill_triggered_temp_hp(dropped_target_id);
+        self.pay_rampage(dropped_target_id);
+    }
+
+    /// SRD 5.2 **Rampage** — *"When the gnoll reduces a creature to 0
+    /// Hit Points with a melee attack on its turn, the gnoll can take a
+    /// Bonus Action to move up to half its Speed and make a Bite
+    /// attack."*
+    ///
+    /// The swinger-scoped third payout on this hook, beside the two
+    /// temp-HP rows. What it hands over is **tempo** rather than hit
+    /// points, which is the whole shape of the trait: the gnoll that
+    /// drops somebody gets to be somewhere else, biting.
+    ///
+    /// Both halves are given as resources rather than as a scripted
+    /// move-and-bite. A Bonus Action the gnoll's own picker spends on
+    /// the bite it already owns is the same outcome and costs the
+    /// engine nothing — and it keeps the clause honest about the one
+    /// thing a script would have hidden, which is that a gnoll with its
+    /// Bonus Action already spent gets a second one out of this and a
+    /// gnoll with no bite in reach gets to walk.
+    ///
+    /// Rationed by the once-a-turn ledger. RAW's ration is the words "a
+    /// Bonus Action", which is one per turn; without the mark a gnoll
+    /// wading through a line of commoners would bank one per body. See
+    /// `RAMPAGE_TAG` for the two clauses this rounds, and why.
+    fn pay_rampage(&mut self, dropped_target_id: usize) {
+        use crate::actions::class_features::RAMPAGE_TAG;
+        use crate::engine::side_effects::{ApplicableSideEffect, GiveResource, Resource};
+
+        let Some(killer_id) = self.current_turn_actor_id() else {
+            return;
+        };
+        if killer_id == dropped_target_id {
+            return;
+        }
+        // RAW's "a creature", read as the team-distinct proxy the two
+        // temp-HP rows beside this one already use: a gnoll that has
+        // just finished off one of its own pack has not rampaged.
+        let dropped_team = self.actors.get(&dropped_target_id).map(|a| a.team());
+        let Some(killer) = self.actors.get(&killer_id) else {
+            return;
+        };
+        if !killer.has_passive_feature(RAMPAGE_TAG)
+            || !killer.is_combat_active()
+            || killer.once_per_turn_used(RAMPAGE_TAG)
+            || dropped_team == Some(killer.team())
+        {
+            return;
+        }
+        let half_speed = killer.speed() / 2.0;
+        let killer_name = killer.name().to_string();
+        let victim_name = self.actor_name(dropped_target_id);
+        if let Some(k) = self.actors.get_mut(&killer_id) {
+            k.mark_once_per_turn_used(RAMPAGE_TAG);
+        }
+        self.log(format!(
+            "  rampage: {} goes down and {} lunges on ({:.0} ft and a bite).",
+            victim_name, killer_name, half_speed
+        ));
+        GiveResource {
+            actor_id: killer_id,
+            resource: Resource::Movement(half_speed),
+        }
+        .apply(self);
+        GiveResource {
+            actor_id: killer_id,
+            resource: Resource::BonusAction,
+        }
+        .apply(self);
     }
 
     /// The curser-scoped half of `trigger_creature_dropped`: a hexblade

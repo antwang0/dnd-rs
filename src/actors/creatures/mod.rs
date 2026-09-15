@@ -761,6 +761,48 @@ pub fn turn_resistant_templates() -> Vec<&'static CreatureTemplate> {
     ]
 }
 
+/// The three signature bestiary traits that buy **tempo** rather than a
+/// number, and the stat blocks that print each.
+///
+/// One table rather than three lists, because the three are the same
+/// shape of fact — *which sheet prints this line* — and because a
+/// roster with one entry reads as an accident where a row in a table of
+/// three reads as a family. Each is enforced in both directions by the
+/// sweep in this module's tests.
+///
+///   - **Martial Advantage** (`MARTIAL_ADVANTAGE_TAG`) — the hobgoblin
+///     and its captain. Pack Tactics' twin: the same question about who
+///     is standing next to the target, paid on the dice instead of on
+///     the d20.
+///   - **Rampage** (`RAMPAGE_TAG`) — the gnoll and the giant hyena it
+///     keeps. The kill that cascades.
+///   - **Aggressive** (`AGGRESSIVE_TAG`) — the orc, and the reason a
+///     line of them reaches the back rank a round early.
+///
+/// See `crate::actions::class_features` for what each tag is read by.
+pub fn tempo_trait_rosters() -> Vec<(&'static str, Vec<&'static CreatureTemplate>)> {
+    vec![
+        (
+            crate::actions::class_features::MARTIAL_ADVANTAGE_TAG,
+            vec![
+                &*hobgoblins::HOBGOBLIN_TEMPLATE,
+                &*hobgoblins::HOBGOBLIN_CAPTAIN_TEMPLATE,
+            ],
+        ),
+        (
+            crate::actions::class_features::RAMPAGE_TAG,
+            vec![
+                &*giant_hyenas::GIANT_HYENA_TEMPLATE,
+                &*gnolls::GNOLL_TEMPLATE,
+            ],
+        ),
+        (
+            crate::actions::class_features::AGGRESSIVE_TAG,
+            vec![&*orcs::ORC_TEMPLATE],
+        ),
+    ]
+}
+
 /// Every template the water will not drown — the creatures whose RAW
 /// stat block carries Amphibious, Water Breathing, Hold Breath or
 /// Limited Amphibiousness, and so the creatures that can stand at the
@@ -2072,6 +2114,66 @@ mod tests {
                 "{} resists turning but is not on the list",
                 t.name
             );
+        }
+    }
+
+    /// Each of the three tempo traits is carried by exactly the stat
+    /// blocks `tempo_trait_rosters` names, and by nothing else.
+    ///
+    /// One sweep over a table of three, which is what the table is for.
+    /// The failure it guards is the same in all three cases and is
+    /// silent in both directions: a hobgoblin that loses Martial
+    /// Advantage is a bandit in better armour, and a creature that
+    /// gains Rampage by a copy-paste gets a free Bonus Action every
+    /// time anything dies in front of it. Neither is a crash and
+    /// neither shows in a log.
+    ///
+    /// The **Aggressive** row carries a fourth assertion of its own,
+    /// for the reason the aquatic pair's third does: the tag gates a
+    /// `BonusManeuver` that has to be *on the stat block's action list*
+    /// to be reachable at all, so a tag without the action would be a
+    /// trait that looks present and can never be used.
+    #[test]
+    fn each_tempo_trait_is_carried_by_exactly_the_sheets_that_print_it() {
+        use crate::actions::action_template::Action;
+        use crate::actions::class_features::{AGGRESSIVE, AGGRESSIVE_TAG};
+        use crate::engine::encounter::EncounterInstance;
+
+        let everything: Vec<&'static CreatureTemplate> = EncounterInstance::template_pool()
+            .into_iter()
+            .chain(
+                super::pc_template_families()
+                    .into_iter()
+                    .flat_map(|(_, ts)| ts),
+            )
+            .collect();
+
+        for (tag, carriers) in super::tempo_trait_rosters() {
+            for t in &carriers {
+                assert!(
+                    t.features.contains(tag),
+                    "{} is on the {tag} list without the trait",
+                    t.name
+                );
+                if tag == AGGRESSIVE_TAG {
+                    assert!(
+                        t.actions.iter().any(|a| a.name() == AGGRESSIVE.name()),
+                        "{} carries {tag} without the action it gates",
+                        t.name
+                    );
+                }
+            }
+            let names: Vec<&str> = carriers.iter().map(|t| t.name).collect();
+            for t in &everything {
+                if !t.features.contains(tag) {
+                    continue;
+                }
+                assert!(
+                    names.contains(&t.name),
+                    "{} carries {tag} but is not on its list",
+                    t.name
+                );
+            }
         }
     }
 

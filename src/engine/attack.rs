@@ -5806,6 +5806,40 @@ pub fn try_fire_once_per_turn_weapon_die_rider(
 ///     condition, and the first whose condition is worth more than its
 ///     die.
 pub const ONCE_PER_TURN_WEAPON_DIE_RIDERS: &[OncePerTurnWeaponRiderSpec] = &[
+    // SRD 5.2 Hobgoblin **Martial Advantage** — *"Once per turn, the
+    // hobgoblin can deal an extra 2d6 damage to a creature it hits with
+    // a weapon attack if that creature is within 5 feet of an ally of
+    // the hobgoblin that doesn't have the Incapacitated condition."*
+    //
+    // The first row on this cohort that belongs to a monster rather
+    // than to a class, and the first whose gate is about a *third*
+    // creature: not the swinger, not the target, but whoever else is
+    // standing next to the target. That is what the `caster_gate`
+    // column's encounter-and-swing signature buys — a `target_gate`
+    // could not have asked it.
+    //
+    // The same board question `has_ally_adjacent_to` answers for Pack
+    // Tactics, which is not a coincidence: they are the bestiary's two
+    // ways of saying that numbers matter, one on the d20 and one on the
+    // dice. See `MARTIAL_ADVANTAGE_TAG`.
+    OncePerTurnWeaponRiderSpec {
+        tag: crate::actions::class_features::MARTIAL_ADVANTAGE_TAG,
+        dice: Dice::new(2, 6),
+        // Weapon-typed. RAW says "extra damage" without naming a type,
+        // which is the game's way of saying it is more of the same
+        // blow — a scimitar's slashing, a longbow's piercing.
+        damage_type: |p| p.damage_type,
+        label: "martial advantage",
+        target_gate: |_| true,
+        installs: None,
+        caster_gate: Some(|encounter, _swinger, p| {
+            encounter.has_ally_adjacent_to(p.caster_id, p.target_id, |ally| {
+                !ally.is_incapacitated()
+            })
+        }),
+        charge_tag: None,
+        self_heal: None,
+    },
     OncePerTurnWeaponRiderSpec {
         tag: crate::actions::class_features::COLOSSUS_SLAYER_TAG,
         dice: Dice::new(1, 8),

@@ -1,3 +1,4 @@
+use crate::actions::class_features::MARTIAL_ADVANTAGE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     HOBGOBLIN_CAPTAIN_GREATSWORD, HOBGOBLIN_CAPTAIN_LONGBOW, HOBGOBLIN_CAPTAIN_MULTI, LONGBOW,
@@ -11,8 +12,11 @@ use std::sync::LazyLock;
 /// Hobgoblin — CR 1/2 martial humanoid. Disciplined and well-armored
 /// (chain mail + shield → AC 18) compared to the rabble goblin. Carries
 /// both a scimitar (melee) and a longbow (ranged) so it can pivot to
-/// whichever range suits the moment. No special features — the threat
-/// is just having tankier mooks at the same XP price as bandits.
+/// whichever range suits the moment. **Martial Advantage** is the
+/// threat: an extra 2d6 on the first hit of the turn against anything
+/// standing next to one of its own, which at CR ½ is more than
+/// doubling the blow and is why a hobgoblin line is worth more than the
+/// sum of its hobgoblins. See `MARTIAL_ADVANTAGE_TAG`.
 pub static HOBGOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&SCIMITAR);
@@ -35,6 +39,10 @@ pub static HOBGOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
+        // SRD 5.2 **Martial Advantage** — the reason a hobgoblin line
+        // is worth more than the sum of its hobgoblins. See
+        // `MARTIAL_ADVANTAGE_TAG`.
+        features: HashSet::from([MARTIAL_ADVANTAGE_TAG]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -94,6 +102,10 @@ pub static HOBGOBLIN_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
+        // SRD 5.2 **Martial Advantage** — the reason a hobgoblin line
+        // is worth more than the sum of its hobgoblins. See
+        // `MARTIAL_ADVANTAGE_TAG`.
+        features: HashSet::from([MARTIAL_ADVANTAGE_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

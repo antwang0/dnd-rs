@@ -1413,6 +1413,23 @@ pub struct BonusManeuver {
     /// A passive-feature tag the actor must carry, or `None` for the
     /// features that are available to anything holding the action.
     pub gated_on: Option<&'static str>,
+    /// An extra precondition about the **board**, or `None` for the
+    /// rows whose only gate is who is holding them.
+    ///
+    /// The orc's **Aggressive** is the first: RAW's *"toward a hostile
+    /// creature that it can see"* has two clauses, and while the
+    /// direction cannot be bound to a movement grant (see
+    /// `AGGRESSIVE_TAG`), the *sight* half can — an orc alone in a room
+    /// gets no Bonus Action out of it.
+    ///
+    /// A function of the encounter and the actor's id rather than of
+    /// the `ActorInstance`, because every question of this shape is
+    /// about where somebody is standing relative to somebody else, and
+    /// an `&ActorInstance` cannot ask one. The Hide precondition
+    /// already inside `custom_validate_input` is the same shape and
+    /// stays inlined: it belongs to a *maneuver* rather than to a row,
+    /// and every printing of Hide has to obey it.
+    pub requires: Option<fn(&EncounterInstance, usize) -> bool>,
 }
 
 impl BonusManeuver {
@@ -1426,6 +1443,7 @@ impl BonusManeuver {
             aliases,
             maneuvers,
             gated_on: None,
+            requires: None,
         }
     }
 
@@ -1434,6 +1452,15 @@ impl BonusManeuver {
     pub const fn gated_on(self, tag: &'static str) -> Self {
         Self {
             gated_on: Some(tag),
+            ..self
+        }
+    }
+
+    /// Builder tail for a row with a board-side precondition — see
+    /// [`BonusManeuver::requires`].
+    pub const fn requiring(self, gate: fn(&EncounterInstance, usize) -> bool) -> Self {
+        Self {
+            requires: Some(gate),
             ..self
         }
     }
@@ -1496,6 +1523,13 @@ impl Action for BonusManeuver {
         {
             return false;
         }
+        // …and the row's own precondition, if it has one. See
+        // `BonusManeuver::requires`.
+        if let Some(gate) = self.requires
+            && !gate(encounter, caster_id)
+        {
+            return false;
+        }
         // Every printing of Hide reads the same clause: there has to
         // be somewhere to hide — SRD 5.2's Heavily Obscured or
         // three-quarters cover, out of every enemy's line of sight.
@@ -1544,6 +1578,23 @@ impl Action for BonusManeuver {
         effects
     }
 }
+
+/// SRD 5.2 Orc **Aggressive** — *"As a Bonus Action, the orc moves up
+/// to its Speed toward a hostile creature that it can see."*
+///
+/// A `Dash` on the same chassis every bonus-action mobility feature in
+/// the engine uses, with the two gates RAW prints: the tag, so only an
+/// orc has it, and the sight clause, so an orc with nothing in view
+/// keeps its Bonus Action. RAW's *"toward"* is the clause that could
+/// not come with it — see [`AGGRESSIVE_TAG`] for why, and for what the
+/// orc is without the trait at all.
+pub static AGGRESSIVE: BonusManeuver = BonusManeuver::new(
+    "aggressive",
+    &["aggro", "charge", "close"],
+    &[Maneuver::Dash],
+)
+.gated_on(AGGRESSIVE_TAG)
+.requiring(|encounter, orc_id| encounter.can_see_any_hostile(orc_id));
 
 /// Rogue **Cunning Action** — bonus-action Dash. RAW offers the rogue a
 /// choice of Dash, Disengage or Hide; the choice lives in the action
@@ -3205,6 +3256,16 @@ pub const ONCE_PER_TURN_RIDER_TAGS: &[&str] = &[
     // possible because the ledger is keyed by plain tag and asks
     // nothing about what the tag means.
     crate::actions::feats::POLE_STRIKE_OPENING_TAG,
+    // The first two rows off a *monster* sheet, and they arrive from
+    // the two ends of this list's range. Martial Advantage is the
+    // plainest thing on it — a once-a-turn extra die on a weapon hit,
+    // which is what the cohort was built for. Rampage is not a rider at
+    // all: it is stamped on a kill and read back to refuse a second
+    // Bonus Action, which is the same "once on each of your turns" the
+    // rows above measure, spelled around tempo instead of damage. See
+    // `MARTIAL_ADVANTAGE_TAG` and `RAMPAGE_TAG`.
+    MARTIAL_ADVANTAGE_TAG,
+    RAMPAGE_TAG,
 ];
 
 /// 5e **Colossus Slayer** — Hunter Ranger subclass feature (level 3).
@@ -14218,6 +14279,93 @@ pub const INCORPOREAL_MOVEMENT_TAG: &str = "monster.incorporeal_movement";
 ///
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const TURN_RESISTANCE_TAG: &str = "monster.turn_resistance";
+
+/// SRD 5.2 **Martial Advantage** — *"Once per turn, the hobgoblin can
+/// deal an extra 2d6 damage to a creature it hits with a weapon attack
+/// if that creature is within 5 feet of an ally of the hobgoblin that
+/// doesn't have the Incapacitated condition."*
+///
+/// The hobgoblin's whole identity, and the file's docstring said so by
+/// omission: *"No special features — the threat is just having tankier
+/// mooks at the same XP price as bandits."* That is what a hobgoblin is
+/// **without** this clause, and it is why the rank-and-file hobgoblin
+/// read as a goblin with better armour. With it, a pair of them is
+/// worth more than two of them: the second one to reach a target is
+/// swinging for an extra 2d6, which at CR ½ is more than doubling the
+/// hit.
+///
+/// It is the same board question Pack Tactics asks — *is one of mine
+/// standing next to that* — and pays out on a different axis. Pack
+/// Tactics buys the hit; this buys the damage. A wolf pack wants
+/// numbers to *land* blows and a hobgoblin line wants numbers to *land
+/// them harder*, and the two traits are the bestiary saying that in one
+/// sentence each.
+///
+/// Rides `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, whose `caster_gate` column
+/// takes the encounter and the swing — which is exactly what this needs
+/// and what a target-side gate could not give it: the clause is about a
+/// third creature standing near the target.
+///
+/// Always-on passive; the ration is the once-a-turn ledger, which is
+/// RAW's own.
+pub const MARTIAL_ADVANTAGE_TAG: &str = "monster.martial_advantage";
+
+/// SRD 5.2 **Rampage** — *"When the gnoll reduces a creature to 0 Hit
+/// Points with a melee attack on its turn, the gnoll can take a Bonus
+/// Action to move up to half its Speed and make a Bite attack."*
+///
+/// The gnoll's and the giant hyena's, and the reason a pack of them
+/// is a different fight from a pack of anything else at the same CR:
+/// the first kill is the one that cascades. Both stat blocks' docstrings
+/// named the clause and stopped there.
+///
+/// Read at `EncounterInstance::pay_rampage`, on the shared kill hook
+/// `trigger_creature_dropped` — whose own docstring invited it: *"a
+/// future 'on kill' feature picks whichever scoping matches its RAW
+/// text and joins here."* The scoping this one picks is the swinger's:
+/// RAW says *the gnoll* reduces the creature, so the payout goes to
+/// whoever's turn it is, exactly as the two temp-HP rows beside it do.
+///
+/// **Two clauses are rounded and both are named here.** RAW's *"with a
+/// melee attack"* is dropped, because the kill hook is handed a body
+/// rather than a swing and threading the weapon through every path that
+/// can reduce something to 0 would be a wide change for one word; a
+/// gnoll that finishes somebody with a thrown spear gets its bite. And
+/// RAW's *"move up to half its Speed"* is paid as movement rather than
+/// as a second, direction-bound step, for the reason
+/// `crate::engine::burrowing` gives about the movement budget being a
+/// scalar.
+///
+/// Rationed by the once-a-turn ledger, which is RAW's *"a Bonus
+/// Action"*: one Bonus Action is one bite however many creatures the
+/// gnoll drops, and without the ledger a gnoll wading through a line of
+/// commoners would collect one per body.
+pub const RAMPAGE_TAG: &str = "monster.rampage";
+
+/// SRD 5.2 **Aggressive** — *"As a Bonus Action, the orc moves up to its
+/// Speed toward a hostile creature that it can see."*
+///
+/// The orc's one trait, and the one thing that makes a line of them
+/// different from a line of bandits: they arrive a round early. The
+/// template's docstring described the orc as *"solid mid-tier melee
+/// enemy that punishes exposed casters"*, which is what the trait is
+/// **for** and what the orc could not actually do without it — thirty
+/// feet of walking does not reach a caster who started at range.
+///
+/// Ships as a `BonusManeuver` row — the chassis every bonus-action
+/// mobility feature in the engine is built on — gated on this tag and
+/// on there being something in sight to charge at.
+///
+/// **RAW's "toward" is not enforced**, and it is the one clause of the
+/// three that could not be. The engine's movement is a scalar budget
+/// spent by a separate `Move` action, so a grant cannot carry a
+/// direction with it; binding one would mean a marker condition read by
+/// `Move::custom_validate_input`, which is the machinery the Frightened
+/// clause already uses and is more than one stat block's sentence is
+/// worth. What the gate *can* say is that there has to be something to
+/// charge at, and it says it: an orc alone in a room gets no Bonus
+/// Action out of this.
+pub const AGGRESSIVE_TAG: &str = "monster.aggressive";
 
 
 /// Monster trait: "its weapon attacks are magical".
