@@ -6290,28 +6290,42 @@ impl EncounterInstance {
         let target_team = target.map(|t| t.team());
         let target_loc = target.map(|t| t.location());
         let target_size = target.map(|t| get_tiles_from_size(t.size())).unwrap_or(1);
-        self.actors.values().filter(move |paladin| {
-            let Some(team) = target_team else {
-                return false;
-            };
-            let Some(loc) = target_loc else {
-                return false;
-            };
-            let side_ok = match side {
-                AuraSide::Allied => paladin.team() == team,
-                AuraSide::Hostile => paladin.team() != team,
-            };
-            predicate(paladin)
-                && side_ok
-                && paladin.is_combat_active()
-                && !paladin.is_incapacitated()
-                && footprint_chebyshev(
-                    paladin.location(),
-                    get_tiles_from_size(paladin.size()),
-                    loc,
-                    target_size,
-                ) <= Self::PALADIN_AURA_RADIUS
-        })
+        self.actors
+            .iter()
+            .filter(move |(emitter_id, paladin)| {
+                let Some(team) = target_team else {
+                    return false;
+                };
+                let Some(loc) = target_loc else {
+                    return false;
+                };
+                let side_ok = match side {
+                    AuraSide::Allied => paladin.team() == team,
+                    AuraSide::Hostile => paladin.team() != team,
+                };
+                predicate(paladin)
+                    && side_ok
+                    && paladin.is_combat_active()
+                    && !paladin.is_incapacitated()
+                    // Total Cover, which an aura obeys like everything
+                    // else that crosses the space between two
+                    // creatures: a paladin does not shield an ally
+                    // inside a purple worm, and a Conquest aura does not
+                    // root something under ten feet of earth. Pair-
+                    // scoped, so it is also the reason the *swallower*
+                    // keeps its aura over what it has eaten. See
+                    // `total_cover_separates`. Iterating `(id, actor)`
+                    // rather than values is what this arm costs — the
+                    // predicate needs a name for the emitter.
+                    && !self.total_cover_separates(**emitter_id, actor_id)
+                    && footprint_chebyshev(
+                        paladin.location(),
+                        get_tiles_from_size(paladin.size()),
+                        loc,
+                        target_size,
+                    ) <= Self::PALADIN_AURA_RADIUS
+            })
+            .map(|(_, paladin)| paladin)
     }
 
     /// True if `actor_id` is standing inside the 10 ft Aura of Conquest
@@ -17043,6 +17057,18 @@ impl EncounterInstance {
                 || emitter.team() == victim_team
                 || !emitter.is_combat_active()
             {
+                continue;
+            }
+            // Total Cover — the fourth lane an effect can arrive down,
+            // and the last one that had no gate. A ghast's stench does
+            // not reach a creature ten feet under the floor, and a pit
+            // fiend's fear aura does not reach one inside a purple
+            // worm. Pair-scoped, which gets the interesting case right
+            // in the other direction too: a creature swallowed *by* the
+            // ghast is inside the thing that smells, and the predicate
+            // does not separate a swallower from its own stomach. See
+            // `total_cover_separates`.
+            if self.total_cover_separates(emitter_id, actor_id) {
                 continue;
             }
             let emitter_conscious = !emitter.is_incapacitated();

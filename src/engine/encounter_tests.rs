@@ -113361,3 +113361,95 @@ fn a_burrower_is_under_the_zone_layer_and_pays_it_nothing() {
         "the thorns are on the floor and the ankheg is not"
     );
 }
+
+/// Total Cover stops an **aura** and an **emanation**, which are the
+/// two ways an effect crosses the space between two creatures without
+/// anybody aiming it.
+///
+/// They were the last two lanes with no gate. An area is aimed and goes
+/// through `area_targets_with`; a swing is declared and goes through
+/// `Action::validate`; a zone sits on the floor and goes through
+/// `actor_in_zone`. An aura and an emanation are neither — they are
+/// simply *on*, and they reach whoever is standing near the thing
+/// emitting them, which used to include a gladiator inside a purple
+/// worm.
+///
+/// Pair-scoped in both directions, and the second direction is the one
+/// that would be wrong under a simpler rule: a creature swallowed by
+/// the ghast is *inside the thing that smells*, so the stench still
+/// reaches it.
+#[test]
+fn total_cover_stops_an_aura_and_a_stench() {
+    use crate::actors::creatures::gladiators::GLADIATOR_TEMPLATE;
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ally = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 1)
+        .unwrap();
+    let worm = e
+        .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+
+    // Standing beside the paladin, the gladiator gets the aura.
+    let sheltered = e.aura_of_protection_bonus(ally);
+    assert!(sheltered > 0, "the premise: a paladin is standing there");
+
+    // Eaten, it does not — the aura is outside and so is the paladin.
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        ally,
+        worm,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.swallow(worm, ally).is_ok());
+    assert_eq!(
+        e.aura_of_protection_bonus(ally),
+        0,
+        "a stomach wall is between them"
+    );
+
+    // A ghast's stench reaches the surface and not the tunnel under it.
+    let mut e = ei_with_terrain(30, 20, &[]);
+    let ghast = e
+        .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&GLADIATOR_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+        .unwrap();
+    assert!(
+        !e.actors[&ghast].emanations().is_empty(),
+        "the premise: a ghast smells"
+    );
+    // Nothing is between them on the surface, so the gate is open…
+    assert!(!e.total_cover_separates(ghast, victim));
+    // …and shut once the ghast is inside something.
+    let worm = e
+        .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(12, 4), 1, 1)
+        .unwrap();
+    for effect in install_condition_with_link(
+        Condition::Grappled,
+        ghast,
+        worm,
+        ConditionTimer::Permanent,
+    ) {
+        effect.apply(&mut e);
+    }
+    assert!(e.swallow(worm, ghast).is_ok());
+    assert!(
+        e.total_cover_separates(ghast, victim),
+        "the stench is in the worm now"
+    );
+    assert!(
+        !e.total_cover_separates(ghast, worm),
+        "…and the worm is the one thing it still reaches"
+    );
+}
