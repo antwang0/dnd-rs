@@ -113515,11 +113515,18 @@ fn a_creature_under_the_floor_is_neither_cover_nor_a_sight() {
 /// SRD 5.2 **Turn Resistance** reaches the die a Turn Undead rolls, and
 /// nothing else the same creature rolls.
 ///
-/// Measured as a pass rate over a sweep of seeds rather than as a flag
-/// read, because the flag was never the question: what the trait has to
-/// do is put a second d20 on *this* save. A skeleton and a wraith of
-/// the same Wisdom modifier facing the same DC should not come out
-/// level.
+/// A controlled A/B on **one** creature rather than a comparison
+/// between two stat blocks, which is the only way to measure this
+/// honestly: two different undead have two different Wisdom modifiers
+/// and two different Destroy-Undead ceilings, and a pass-rate gap
+/// between them says nothing. The same skeleton, the same seeds, the
+/// same DC — and the tag granted on one run through
+/// `grant_feature_for_test`.
+///
+/// Read off the **save line** rather than off the condition, because
+/// the condition is not evidence: the burst destroys what it turns at
+/// this tier, and half the undead roster is immune to Frightened
+/// anyway. What is under test is the die.
 ///
 /// The second half — that the advantage is scoped to the turn and not
 /// to the condition — is what keeps the trait from being a row on
@@ -113527,54 +113534,59 @@ fn a_creature_under_the_floor_is_neither_cover_nor_a_sight() {
 /// wraith has no special claim against a dragon's Frightful Presence.
 #[test]
 fn turn_resistance_reaches_the_turn_and_nothing_else() {
-    use crate::actions::class_features::TURN_UNDEAD;
+    use crate::actions::class_features::{TURN_RESISTANCE_TAG, TURN_UNDEAD};
     use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
     use crate::conditions::Condition;
 
-    // Same seeds, same cleric, same distance — one undead with the
-    // trait and one without.
-    let shrugged_off = |template: &'static CreatureTemplate| -> usize {
-        let mut held = 0;
-        for seed in 0..60u64 {
-            let mut e = ei_with_terrain(20, 20, &[]);
-            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
-            let cleric = e
-                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
-                .unwrap();
-            let undead = e
-                .instantiate_creature(template, Coordinate::new(6, 4), 1, 0)
-                .unwrap();
-            let aei = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
-            if !aei.validate(&e) {
-                continue;
-            }
-            e.pop_prompt();
-            e.push_action(aei);
-            e.process_stack();
-            // Still on the board and not frightened: it made the save.
-            // The wraith's own Destroy-Undead ceiling is far above its
-            // CR, so a failure here is a fright rather than a deletion.
-            if e.actors
-                .get(&undead)
-                .is_some_and(|a| !a.has_condition(Condition::Frightened))
-            {
-                held += 1;
-            }
-        }
-        held
+    // How many of `seeds` runs the skeleton *failed*, with and without
+    // the trait. Same board, same seeds, same DC; the first d20 of the
+    // burst is the same draw either way, so advantage can only ever
+    // turn a failure into a pass.
+    let failures = |resistant: bool| -> usize {
+        (0..60u64)
+            .filter(|seed| {
+                let mut e = ei_with_terrain(20, 20, &[]);
+                e.roller = crate::engine::dice::FastRandRoller::with_seed(*seed);
+                let cleric = e
+                    .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                    .unwrap();
+                let undead = e
+                    .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(6, 4), 1, 0)
+                    .unwrap();
+                if resistant {
+                    e.actors
+                        .get_mut(&undead)
+                        .unwrap()
+                        .grant_feature_for_test(TURN_RESISTANCE_TAG);
+                }
+                let name = e.actor_name(undead);
+                let aei = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
+                if !aei.validate(&e) {
+                    return false;
+                }
+                let before = e.messages().len();
+                e.pop_prompt();
+                e.push_action(aei);
+                e.process_stack();
+                e.messages()[before..].iter().any(|m| {
+                    m.contains(&name) && m.contains("Wisdom save") && m.contains("fail")
+                })
+            })
+            .count()
     };
 
-    let plain = shrugged_off(&SKELETON_TEMPLATE);
-    let resistant = shrugged_off(&WRAITH_TEMPLATE);
+    let plain = failures(false);
+    let resistant = failures(true);
+    assert!(plain > 0, "the premise: the burst is landing on somebody");
     assert!(
-        resistant > plain,
-        "a second d20 on the save should show: wraith held {resistant} of 60, \
-         skeleton {plain}"
+        resistant < plain,
+        "a second d20 on the save should show: {resistant} failures with the \
+         trait against {plain} without it"
     );
 
-    // …and the trait does not follow the wraith to every save against
+    // …and the trait does not follow its carriers to every save against
     // the condition the burst happens to install.
     let mut e = ei_with_terrain(20, 20, &[]);
     let wraith = e
@@ -113585,6 +113597,123 @@ fn turn_resistance_reaches_the_turn_and_nothing_else() {
         !e.actors[&wraith].has_save_advantage_against(Condition::Frightened),
         "a wraith has no special claim against a dragon's roar"
     );
+}
+
+/// A Channel Divinity does not reach through a stomach wall either.
+///
+/// `resolve_turn_burst` builds its own candidate list, because RAW
+/// shapes the burst by *creature type* rather than by an `AreaShape` —
+/// which made it the last effect collector in the engine with no Total
+/// Cover gate, after the areas, the auras, the emanations and the zone
+/// layer had all been given one.
+///
+/// Asserted on the **save line** rather than on the condition, and the
+/// difference matters: a wight is immune to Frightened, so the install
+/// is not evidence either way, and what is under test is whether the
+/// burst ever asked it to roll.
+#[test]
+fn a_turn_undead_does_not_reach_through_a_stomach_wall() {
+    use crate::actions::class_features::TURN_UNDEAD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::purple_worms::PURPLE_WORM_TEMPLATE;
+    use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+    use crate::engine::side_effects::install_condition_with_link;
+
+    // Both boards are the same board. The wight starts beside the worm
+    // and inside the burst; after the swallow its location mirrors onto
+    // the worm's, which is inside the burst too — so the only thing
+    // that differs between the two runs is the wall.
+    let asked_to_save = |eaten: bool| -> bool {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(1);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let worm = e
+            .instantiate_creature(&PURPLE_WORM_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        let wight = e
+            .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(5, 2), 1, 1)
+            .unwrap();
+        if eaten {
+            for effect in install_condition_with_link(
+                Condition::Grappled,
+                wight,
+                worm,
+                ConditionTimer::Permanent,
+            ) {
+                effect.apply(&mut e);
+            }
+            assert!(e.swallow(worm, wight).is_ok());
+        }
+        let name = e.actor_name(wight);
+        let aei = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
+        assert!(aei.validate(&e), "the cleric has its Channel Divinity");
+        let before = e.messages().len();
+        e.pop_prompt();
+        e.push_action(aei);
+        e.process_stack();
+        e.messages()[before..]
+            .iter()
+            .any(|m| m.contains(&name) && m.contains("Wisdom save"))
+    };
+
+    assert!(
+        asked_to_save(false),
+        "the premise: a wight standing there rolls against the turn"
+    );
+    assert!(
+        !asked_to_save(true),
+        "and one inside the worm is never asked"
+    );
+}
+
+/// A tunnel is priced at the earth's rate whatever is lying on the
+/// floor above it — rubble and a low wall as much as a web.
+///
+/// Both surcharges on this board are properties of the *surface*, and
+/// the burrow lane waived only one of them for a while: a bulette
+/// tunnelling under a scree slope was paying double for the scree.
+#[test]
+fn a_tunnel_pays_nothing_for_what_is_lying_on_the_floor_above_it() {
+    use crate::actors::creatures::ankhegs::ANKHEG_TEMPLATE;
+
+    let walk = |burrowed: bool, band: Option<TerrainType>| -> f32 {
+        let mut e = ei_with_terrain(40, 20, &[]);
+        if let Some(t) = band {
+            for y in 0..20isize {
+                for x in 10..16isize {
+                    let idx = e.idx(Coordinate::new(x, y)).unwrap();
+                    e.terrain[idx].terrain_type = t;
+                }
+            }
+        }
+        let ankheg = e
+            .instantiate_creature(&ANKHEG_TEMPLATE, Coordinate::new(4, 8), 1, 0)
+            .unwrap();
+        if burrowed {
+            assert!(e.submerge(ankheg));
+        }
+        e.actors
+            .get_mut(&ankheg)
+            .unwrap()
+            .set_movement_budget(600.0);
+        e.path_cost_to(ankheg, Coordinate::new(20, 8))
+            .expect("the far side is reachable")
+    };
+
+    let clear = walk(false, None);
+    for band in [TerrainType::DifficultTerrain, TerrainType::LowWall] {
+        assert!(
+            walk(false, Some(band)) > clear,
+            "the premise: walking across {band:?} costs more"
+        );
+        assert_eq!(
+            walk(true, Some(band)),
+            walk(true, None),
+            "and tunnelling under {band:?} does not"
+        );
+    }
 }
 
 /// SRD 5.2 **Martial Advantage** — the hobgoblin's 2d6, and the ally it
@@ -113798,9 +113927,9 @@ fn an_orc_charges_only_at_something_it_can_see() {
 /// picking order from, so a printing missing from it is a feature the
 /// AI can never reach — and the failure is invisible, because the
 /// action still validates and the picker simply never asks for it.
-/// That is exactly how the vampire's Deathless Agility spent its whole
-/// life on the sheet and off both of the hand-written name lists this
-/// registry replaced.
+/// That is exactly how the Vampire Familiar's Deathless Agility spent
+/// its whole life on the sheet and off both of the hand-written name
+/// lists this registry replaced.
 ///
 /// Compared against the module's own text rather than against a second
 /// list, for the reason the doc-reference sweep's guard is: the
@@ -113839,15 +113968,16 @@ fn every_bonus_maneuver_static_is_on_the_registry() {
     assert_eq!(unique, names.len(), "a printing is on the registry twice");
 }
 
-/// The vampire's **Deathless Agility** is reachable by the picker that
-/// wants it — which it was not, for its whole life before the registry.
+/// The Vampire Familiar's **Deathless Agility** is reachable by the
+/// picker that wants it — which it was not, for its whole life before
+/// the registry.
 ///
 /// Written against the two lanes rather than against the registry,
 /// because the registry is not the point: what was broken was that a
 /// creature with a bonus-action Dash on its sheet spent its Action on
 /// the expensive printing instead, and nothing said so.
 #[test]
-fn a_vampire_reaches_for_the_dash_that_costs_it_a_bonus_action() {
+fn a_vampire_familiar_reaches_for_the_dash_that_costs_it_a_bonus_action() {
     use crate::actions::class_features::{Maneuver, printings_of};
 
     let dashes = printings_of(Maneuver::Dash);

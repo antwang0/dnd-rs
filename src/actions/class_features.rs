@@ -1587,9 +1587,9 @@ impl Action for BonusManeuver {
 /// printing of Dash this creature has?" by handing a *hand-written list
 /// of names* to `try_cheapest_printing`, and a printing missing from
 /// that list is a feature the AI can never use. Deathless Agility —
-/// both halves of it — had been on the vampire's sheet and off both
-/// lists since it was added, so the engine's most dangerous humanoid
-/// was walking when it could have run.
+/// both halves of it — had been on the Vampire Familiar's sheet and off
+/// both lists since it was added, so the one creature in the bestiary
+/// whose whole design is footwork was walking when it could have run.
 ///
 /// The failure is silent in the worst way: the action validates, the
 /// picker simply never asks for it, and what you see is a creature
@@ -6449,6 +6449,16 @@ fn resolve_turn_burst(
                 return false;
             }
             if !is_affected(a.creature_type()) {
+                return false;
+            }
+            // Total Cover. This collector is hand-rolled rather than
+            // routed through `area_targets_with`, because RAW's burst is
+            // shaped by a creature-type filter rather than by a
+            // `AreaShape` — which meant it was the one effect lane in
+            // the engine with no cover gate at all, and a Channel
+            // Divinity reached a wight inside a purple worm through the
+            // stomach wall. See `EncounterInstance::total_cover_separates`.
+            if encounter.total_cover_separates(caster_id, *id) {
                 return false;
             }
             let dist = footprint_chebyshev(
@@ -14289,9 +14299,9 @@ pub const AQUATIC_ONLY_TAG: &str = "monster.aquatic_only";
 /// other creatures and objects as if they were Difficult Terrain. It
 /// takes 5 (1d10) Force damage if it ends its turn inside an object."*
 ///
-/// Eight stat blocks print it and every one of them is a spirit: the
-/// Allip, the Banshee, the Ghost, the Poltergeist, the Shadow, the
-/// Shadow Demon, the Specter and the Wraith. Until this tag existed
+/// Seven stat blocks on the roster print it and every one of them is a
+/// spirit: the Allip, the Banshee, the Ghost, the Shadow Demon, the
+/// Specter, the Will-o'-Wisp and the Wraith. Until this tag existed
 /// they each carried the same apology instead — the Allip's said the
 /// clause was *"omitted as a deliberate scope cut — the engine's
 /// pathfinding doesn't yet model wall-phasing actors, and modeling the

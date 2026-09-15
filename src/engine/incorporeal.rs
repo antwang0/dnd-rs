@@ -5,15 +5,17 @@
 //! were Difficult Terrain. It takes 5 (1d10) Force damage if it ends
 //! its turn inside an object."*
 //!
-//! Eight stat blocks in the roster print it — the Allip, the Banshee,
-//! the Ghost, the Poltergeist, the Shadow, the Shadow Demon, the
-//! Specter and the Wraith — and every one of them carried the same
-//! apology instead. The Allip's was the longest and said the most:
-//! the clause was *"omitted as a deliberate scope cut — the engine's
-//! pathfinding doesn't yet model wall-phasing actors, and modeling the
-//! half-speed-through-walls clause would require a per-tile
-//! 'incorporeal cost' lane that doesn't exist"*, and the
-//! bludgeoning/piercing/slashing resistance was offered as *"the
+//! Seven stat blocks in the roster print it — the Allip, the Banshee,
+//! the Ghost, the Shadow Demon, the Specter, the Will-o'-Wisp and the
+//! Wraith — and every one of them carried the same apology instead.
+//! The **Shadow** is the near miss and is deliberately not among them:
+//! its own trait is *Amorphous*, which is a crack rather than a wall —
+//! see `creatures::incorporeal_templates`. The Allip's apology was the
+//! longest and said the most: the clause was *"omitted as a deliberate
+//! scope cut — the engine's pathfinding doesn't yet model wall-phasing
+//! actors, and modeling the half-speed-through-walls clause would
+//! require a per-tile 'incorporeal cost' lane that doesn't exist"*, and
+//! the bludgeoning/piercing/slashing resistance was offered as *"the
 //! load-bearing 'hard to hit with physical weapons' half of the
 //! incorporeal identity."*
 //!

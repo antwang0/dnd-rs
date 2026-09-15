@@ -1916,16 +1916,6 @@ mod tests {
         );
     }
 
-    /// The panel says how high the current actor is and what the
-    /// landing will cost, and says nothing at all for everybody standing
-    /// on the floor.
-    ///
-    /// The die count is the half worth pinning. "Airborne: 30 ft" is
-    /// trivia; the number of d6 waiting at the bottom is the reason a
-    /// player would think twice about letting the concentration go, and
-    /// it is read straight off the same `fall_damage_dice` the fall
-    /// itself rolls so the panel can never promise a softer landing than
-    /// the engine delivers.
     /// A burrower's two states both reach the screen, and they say
     /// different things.
     ///
@@ -2069,6 +2059,16 @@ mod tests {
         );
     }
 
+    /// The panel says how high the current actor is and what the
+    /// landing will cost, and says nothing at all for everybody standing
+    /// on the floor.
+    ///
+    /// The die count is the half worth pinning. "Airborne: 30 ft" is
+    /// trivia; the number of d6 waiting at the bottom is the reason a
+    /// player would think twice about letting the concentration go, and
+    /// it is read straight off the same `fall_damage_dice` the fall
+    /// itself rolls so the panel can never promise a softer landing than
+    /// the engine delivers.
     #[test]
     fn the_panel_counts_the_dice_waiting_under_a_flier() {
         use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;

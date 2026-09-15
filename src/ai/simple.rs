@@ -2331,10 +2331,10 @@ fn try_disengage(
 /// block and off the list is a feature the AI can never reach, and
 /// nothing about that failure is visible: the action validates, the
 /// picker simply never asks, and what you see is a creature playing
-/// slightly worse than its sheet. The vampire's Deathless Agility was
-/// missing from both the Dash and the Disengage list from the day it
-/// landed, so the engine's most dangerous humanoid walked where it
-/// could have run.
+/// slightly worse than its sheet. The Vampire Familiar's Deathless
+/// Agility was missing from both the Dash and the Disengage list from
+/// the day it landed, so the one creature in the bestiary whose whole
+/// design is footwork walked where it could have run.
 ///
 /// Derived from `class_features::BONUS_MANEUVERS` instead, which is one
 /// line per printing and is swept against the file it lives in. A

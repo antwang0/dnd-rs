@@ -13789,6 +13789,54 @@ impl EncounterInstance {
         })
     }
 
+    /// **Is there something solid between these two?** — 5e's Total
+    /// Cover, and the complete list of the ways this board can produce
+    /// it between a *pair* of creatures.
+    ///
+    /// Two today, and they are the same sentence written about two
+    /// different walls: a stomach's (`crate::engine::swallow`) and the
+    /// floor's (`crate::engine::burrowing`). Both read *"has Total
+    /// Cover against attacks **and other effects** outside"*, and the
+    /// second half is why this is not folded into `hostility_blocked`
+    /// one method down: that one answers "may A swing at B", and Total
+    /// Cover stops a Cure Wounds and a Fireball exactly as firmly.
+    ///
+    /// **Six lanes ask it**, and the number is the argument for it
+    /// being a named predicate rather than a pair of calls at each
+    /// site. They are every way one creature can reach another:
+    ///
+    ///   - `hostility_blocked`, for the three reaction dispatchers.
+    ///   - `Action::validate`, for a declared target list.
+    ///   - **`area_targets_with`**, for the areas that have no declared
+    ///     target list at all — and which had no gate whatsoever. That
+    ///     was the drift worth fixing: `actors_in_burst` carried the
+    ///     swallow filter and claimed in its own docstring to be *"the
+    ///     one place every area in the engine collects its hit list"*,
+    ///     and it had a single caller. The hundred-odd others came
+    ///     through `area_targets_with`, so a Fireball on a purple worm
+    ///     cooked the person inside it.
+    ///   - **`aura_emitters`** and **`apply_hostile_emanations`**, the
+    ///     two lanes an effect crosses a room down with nobody aiming
+    ///     it: a paladin's aura and a ghast's stench.
+    ///   - **`resolve_turn_burst`**, which builds its own list because
+    ///     RAW shapes the Channel Divinity by creature type rather than
+    ///     by an area, and was therefore the last collector in the
+    ///     engine with no gate.
+    ///   - **`viewer_can_see`**, which is not a reach at all and belongs
+    ///     here anyway: the terrain walk behind it cannot see a solid
+    ///     thing that is between two creatures without being on the
+    ///     line between their tiles.
+    ///
+    /// Pair-scoped rather than a property of one actor, which is what
+    /// makes the answers right in both directions: two creatures in the
+    /// same tunnel reach each other, a swallowed creature can still
+    /// carve at the thing around it, and neither of them reaches the
+    /// open board.
+    pub fn total_cover_separates(&self, actor_id: usize, target_id: usize) -> bool {
+        self.swallow_blocks_targeting(actor_id, target_id)
+            || self.burrow_blocks_targeting(actor_id, target_id)
+    }
+
     /// **May `actor_id` swing at `target_id` at all?** — the complete
     /// list of rules that say no, in one place.
     ///
@@ -13830,42 +13878,6 @@ impl EncounterInstance {
     /// it gets here. The overlap is intentional: this list stays
     /// complete for the three callers that have no other gate to lean
     /// on.
-    /// **Is there something solid between these two?** — 5e's Total
-    /// Cover, and the complete list of the ways this board can produce
-    /// it between a *pair* of creatures.
-    ///
-    /// Two today, and they are the same sentence written about two
-    /// different walls: a stomach's (`crate::engine::swallow`) and the
-    /// floor's (`crate::engine::burrowing`). Both read *"has Total
-    /// Cover against attacks **and other effects** outside"*, and the
-    /// second half is why this is not folded into `hostility_blocked`
-    /// one method down: that one answers "may A swing at B", and Total
-    /// Cover stops a Cure Wounds and a Fireball exactly as firmly.
-    ///
-    /// Three lanes ask it, and the third is why it exists as a named
-    /// predicate rather than two calls at two sites:
-    ///
-    ///   - `hostility_blocked`, for the reaction dispatchers.
-    ///   - `Action::validate`, for a declared target list.
-    ///   - **`area_targets_with`**, for the areas that have no declared
-    ///     target list at all — and which had no gate whatsoever. That
-    ///     was the drift worth fixing: `actors_in_burst` carried the
-    ///     swallow filter and claimed in its own docstring to be *"the
-    ///     one place every area in the engine collects its hit list"*,
-    ///     and it had a single caller. The hundred-odd others came
-    ///     through `area_targets_with`, so a Fireball on a purple worm
-    ///     cooked the person inside it.
-    ///
-    /// Pair-scoped rather than a property of one actor, which is what
-    /// makes the answers right in both directions: two creatures in the
-    /// same tunnel reach each other, a swallowed creature can still
-    /// carve at the thing around it, and neither of them reaches the
-    /// open board.
-    pub fn total_cover_separates(&self, actor_id: usize, target_id: usize) -> bool {
-        self.swallow_blocks_targeting(actor_id, target_id)
-            || self.burrow_blocks_targeting(actor_id, target_id)
-    }
-
     pub fn hostility_blocked(&self, actor_id: usize, target_id: usize) -> bool {
         self.actors
             .get(&actor_id)
@@ -14507,20 +14519,30 @@ impl EncounterInstance {
                     } else {
                         ignores_rough
                     };
-                    // …and the zone layer, which a burrower is under.
-                    // Web, Entangle and Spike Growth are all things
-                    // lying on the floor; a tunnel beneath one pays the
-                    // earth's price and not the thorns'. The same
+                    // …and both surcharges are waived outright for a
+                    // creature that is **under** them.
+                    //
+                    // Every surcharge on this board is a property of the
+                    // surface: rubble and undergrowth on the terrain
+                    // layer, a web and a patch of thorns on the zone
+                    // one. A tunnel beneath any of them is a tunnel, and
+                    // the price it pays is the burrow speed the pick in
+                    // `base_speed_now` has already charged. The same
                     // reading `actor_in_zone` gives the biting half.
-                    let zone_mult = if burrowing {
+                    //
+                    // Waived rather than routed through `ignores_rough`,
+                    // which is the *waiver* cohort — Freedom of
+                    // Movement, flight, Land's Stride — and is a
+                    // statement about creatures that cross the bad
+                    // ground rather than about one that goes under it.
+                    let terrain_mult = if burrowing {
                         1.0
-                    } else {
+                    } else if waived {
                         self.zone_movement_multiplier(next)
-                    };
-                    let terrain_mult = if waived {
-                        zone_mult
                     } else {
-                        tile.map(|t| t.movement_cost()).unwrap_or(1.0).max(zone_mult)
+                        tile.map(|t| t.movement_cost())
+                            .unwrap_or(1.0)
+                            .max(self.zone_movement_multiplier(next))
                     };
                     // SRD 5.2 **Incorporeal Movement** — *"as if they
                     // were Difficult Terrain"*. The surcharge the tile
