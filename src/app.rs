@@ -127,6 +127,41 @@ impl App {
         self.actor_params.cr_target * (1.0 + 0.5 * (next_n - 1) as f32)
     }
 
+    /// The seed the next room is generated from.
+    ///
+    /// `start_next_encounter` used to hand `EncounterInstance::with_pcs`
+    /// a `None`, and `None` there means `fastrand::u64(..)` off the
+    /// thread's global generator. So a run started as `dnd-rs 42` was
+    /// reproducible for exactly one room and drew every room after it
+    /// out of the air — which quietly contradicts the initiative
+    /// panel's own title, where the seed rides *"to replay a good
+    /// encounter, or to hand over with a bug report"*. A bug report
+    /// about the third room of seed 42 named a number that could not
+    /// get anybody back to it.
+    ///
+    /// Derived from the *outgoing* room's seed and the room number, so
+    /// the chain is a pure function of the one number the player typed:
+    /// room two of seed 42 is always the same room two. Deliberately not
+    /// drawn from the encounter's own roller, which would make the next
+    /// room depend on how many dice the last fight happened to roll —
+    /// reproducible in principle and useless in practice, because
+    /// reproducing it would mean replaying the fight identically.
+    ///
+    /// The mixing is SplitMix64's finalizer and is not decoration. A
+    /// bare `seed + room` would make room two of seed 41 the same board
+    /// as room one of seed 42, so a dungeon would be a single sequence
+    /// of rooms that every run entered at a different point.
+    fn next_room_seed(&self) -> u64 {
+        let mut z = self
+            .encounter
+            .seed()
+            .wrapping_add(u64::from(self.encounter_number))
+            .wrapping_add(0x9E37_79B9_7F4A_7C15);
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
     /// Advance to the next encounter: take surviving team-0 actors out of
     /// the current fight, long-rest them, and spawn them into a freshly
     /// generated map alongside new enemies. Resets per-encounter UI state.
@@ -163,7 +198,12 @@ impl App {
         // base so future scaling stays anchored to the original difficulty.
         let mut scaled_params = self.actor_params.clone();
         scaled_params.cr_target = self.scaled_cr_target();
-        match EncounterInstance::with_pcs(&self.terrain_params, &scaled_params, None, rested) {
+        // Seeded rather than `None` — see `next_room_seed`, which is
+        // what makes a whole playthrough reproducible from the one
+        // number the player typed and the panel prints back.
+        let seed = self.next_room_seed();
+        match EncounterInstance::with_pcs(&self.terrain_params, &scaled_params, Some(seed), rested)
+        {
             Ok(mut next) => {
                 // The sky and the floor carry over. All three belong to
                 // the *game* the player started rather than to one
@@ -1242,6 +1282,12 @@ mod tests {
     /// An empty 20×20 arena with the generator's roster switched off,
     /// so the only actors on the board are the ones a test puts there.
     fn app_with_empty_board() -> App {
+        app_seeded(0)
+    }
+
+    /// `app_with_empty_board` on a named seed, for the tests that are
+    /// about the seed itself.
+    fn app_seeded(seed: u64) -> App {
         let terrain_params = TerrainGenParams {
             width: 20,
             height: 20,
@@ -1255,7 +1301,7 @@ mod tests {
             start_team: 0,
         };
         let mut encounter =
-            EncounterInstance::from_params(&terrain_params, &actor_params, Some(0))
+            EncounterInstance::from_params(&terrain_params, &actor_params, Some(seed))
                 .expect("an empty board generates");
         // Dry. "Empty" here means nothing happens on this board unless a
         // test makes it happen, and a generated pool is not nothing: a
@@ -1451,6 +1497,52 @@ mod tests {
         assert!(
             rift_tiles(&app) > 0,
             "the second room's floor was quietly mended"
+        );
+    }
+
+    /// A seed is a *run*, not a room.
+    ///
+    /// The panel prints the seed so a player can replay a fight or hand
+    /// it over with a bug report, and until the rooms were chained that
+    /// promise held for exactly the first one: every room after it was
+    /// generated from `fastrand::u64(..)`, so two playthroughs of seed
+    /// 4 diverged the moment anybody pressed continue. Now the whole
+    /// dungeon is a pure function of the number the player typed.
+    ///
+    /// The second half is the one that needs a mixer rather than an
+    /// increment: consecutive run seeds must not produce overlapping
+    /// dungeons, or seed 41 and seed 42 would be the same corridor
+    /// entered one room apart.
+    #[test]
+    fn a_run_is_reproducible_from_the_seed_the_panel_prints() {
+        let room_two = |seed: u64| {
+            let mut app = app_seeded(seed);
+            spawn(&mut app, 0, Coordinate::new(5, 5));
+            assert!(app.start_next_encounter(), "the next room generates");
+            app.encounter.seed()
+        };
+        assert_eq!(
+            room_two(4),
+            room_two(4),
+            "the same seed walks into the same second room, every time"
+        );
+        assert_ne!(
+            room_two(41),
+            room_two(42),
+            "and neighbouring seeds are not one dungeon read at an offset"
+        );
+        // The chain is a chain: room three is derived from room two, so
+        // no two rooms of one run collide either.
+        let mut app = app_seeded(4);
+        spawn(&mut app, 0, Coordinate::new(5, 5));
+        let one = app.encounter.seed();
+        assert!(app.start_next_encounter());
+        let two = app.encounter.seed();
+        assert!(app.start_next_encounter());
+        let three = app.encounter.seed();
+        assert!(
+            one != two && two != three && one != three,
+            "three rooms, three boards: {one} {two} {three}"
         );
     }
 
