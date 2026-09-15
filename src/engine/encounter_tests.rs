@@ -111097,6 +111097,18 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
     // missing when they are simply next door. The test file itself is
     // left out — it declares nothing anybody cites, and it is a third of
     // the crate.
+    //
+    // A hand-kept list that claims to be exhaustive is a list that
+    // silently stops being one, and this one had already: a new engine
+    // module is invisible here until somebody remembers this line, and
+    // the way that shows up is *this test failing for the wrong
+    // reason* — the module's own doc comments cite its own members,
+    // which are not in `declared` because the module is not in
+    // `sources`. `crate::engine::burrowing` arrived and did exactly
+    // that. The guard is
+    // `the_doc_reference_sweep_reads_every_module_the_crate_declares`
+    // below, which walks the `mod.rs` files and fails if one of them
+    // names something this list does not.
     let sources: &[(&str, &str)] = &[
         ("actions/action_template.rs", include_str!("../actions/action_template.rs")),
         ("actions/class_attacks.rs", include_str!("../actions/class_attacks.rs")),
@@ -111152,6 +111164,8 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/weather.rs", include_str!("weather.rs")),
         ("engine/zones.rs", include_str!("zones.rs")),
         ("items/item_template.rs", include_str!("../items/item_template.rs")),
+        ("ai/mod.rs", include_str!("../ai/mod.rs")),
+        ("ai/simple.rs", include_str!("../ai/simple.rs")),
         ("app.rs", include_str!("../app.rs")),
         ("ui.rs", include_str!("../ui.rs")),
     ];
@@ -111217,6 +111231,89 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         stale.is_empty(),
         "these doc comments cite something the engine no longer has; a \
          cross-reference nobody can follow is worse than none: {stale:#?}"
+    );
+}
+
+/// The list `every_qualified_name_a_doc_comment_cites_still_exists`
+/// reads names every module the crate declares.
+///
+/// That list has to be written out by hand — `include_str!` takes a
+/// literal and there is no way to glob one — so it is the kind of list
+/// that goes quietly out of date, and the way it fails is worse than
+/// useless: a module missing from it contributes no `declared` names,
+/// so the *sweep itself* starts reporting that module's own doc
+/// comments as citing things the engine no longer has. Somebody reading
+/// that failure is being told a true fact about a list they were not
+/// looking at.
+///
+/// So the `mod.rs` files are the authority and this compares against
+/// them. They can be `include_str!`'d, they are the one place a module
+/// has to be named to exist at all, and a new module therefore fails
+/// here — once, with a message that says to add a line — rather than
+/// showing up as a phantom stale reference somewhere else.
+///
+/// `actors/creatures` is the one exemption and it is a directory rather
+/// than a module: three hundred and forty stat blocks that declare
+/// nothing the rest of the crate cites by name. Their doc comments are
+/// unswept, which is a real gap and a much smaller one than three
+/// hundred and forty `include_str!` lines would be.
+#[test]
+fn the_doc_reference_sweep_reads_every_module_the_crate_declares() {
+    // (the directory a `mod.rs` sits in, its text). The crate root is
+    // `main.rs`, which declares the top-level modules and lives at the
+    // root itself.
+    let manifests: &[(&str, &str)] = &[
+        ("", include_str!("../main.rs")),
+        ("actions/", include_str!("../actions/mod.rs")),
+        ("actors/", include_str!("../actors/mod.rs")),
+        ("ai/", include_str!("../ai/mod.rs")),
+        ("conditions/", include_str!("../conditions/mod.rs")),
+        ("engine/", include_str!("mod.rs")),
+        ("items/", include_str!("../items/mod.rs")),
+    ];
+    // Modules that are directories rather than files, plus the test
+    // file itself, which the sweep leaves out on purpose.
+    const NOT_A_LEAF_FILE: &[&str] = &[
+        "actions",
+        "actors",
+        "ai",
+        "conditions",
+        "engine",
+        "items",
+        "creatures",
+        "encounter_tests",
+    ];
+
+    let mut expected: Vec<String> = Vec::new();
+    for (dir, text) in manifests {
+        for line in text.lines() {
+            let Some(rest) = line.trim().strip_prefix("pub mod ") else {
+                continue;
+            };
+            let name = rest.trim_end_matches(';').trim();
+            if NOT_A_LEAF_FILE.contains(&name) {
+                continue;
+            }
+            expected.push(format!("{dir}{name}.rs"));
+        }
+    }
+    assert!(
+        expected.len() > 40,
+        "the manifests parsed to something plausible, got {expected:?}"
+    );
+
+    // The sweep's own list, read back out of the test above rather than
+    // duplicated here — the whole point is that there is one list.
+    let sweep = include_str!("encounter_tests.rs");
+    let missing: Vec<&String> = expected
+        .iter()
+        .filter(|path| !sweep.contains(&format!("(\"{path}\", include_str!(")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "`every_qualified_name_a_doc_comment_cites_still_exists` does not \
+         read these modules, so nothing they declare counts as declared \
+         and their own doc comments will be reported as stale: {missing:#?}"
     );
 }
 
