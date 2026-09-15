@@ -1579,6 +1579,62 @@ impl Action for BonusManeuver {
     }
 }
 
+/// Every bonus-action mobility printing in the engine, in the order a
+/// picker should prefer them.
+///
+/// The registry exists because the alternative had already gone wrong
+/// three times in the same way. `ai::simple` asks "what is the cheapest
+/// printing of Dash this creature has?" by handing a *hand-written list
+/// of names* to `try_cheapest_printing`, and a printing missing from
+/// that list is a feature the AI can never use. Deathless Agility —
+/// both halves of it — had been on the vampire's sheet and off both
+/// lists since it was added, so the engine's most dangerous humanoid
+/// was walking when it could have run.
+///
+/// The failure is silent in the worst way: the action validates, the
+/// picker simply never asks for it, and what you see is a creature
+/// playing slightly worse than its stat block. Nothing logs.
+///
+/// Read through [`printings_of`], which filters by what a row actually
+/// buys rather than by what it is called — so a future printing is one
+/// line here and nothing anywhere else. The sweep
+/// `every_bonus_maneuver_is_on_the_registry` is what keeps this list
+/// honest against the file it lives in.
+///
+/// Ordered cheapest-first in the only sense that matters here, which is
+/// not price — every row costs one Bonus Action — but *breadth*: Step
+/// of the Wind buys a Dash and a Disengage and a doubled jump with one
+/// activation, so a monk that wants either of the first two should
+/// reach for it and get the rest free.
+pub const BONUS_MANEUVERS: &[&BonusManeuver] = &[
+    &STEP_OF_THE_WIND,
+    &CUNNING_DASH,
+    &CUNNING_DISENGAGE,
+    &CUNNING_HIDE,
+    &NIMBLE_DISENGAGE,
+    &NIMBLE_HIDE,
+    &DEATHLESS_DASH,
+    &DEATHLESS_DISENGAGE,
+    &VANISH,
+    &AGGRESSIVE,
+];
+
+/// The names of every bonus-action printing that buys `maneuver`, in
+/// `BONUS_MANEUVERS` order.
+///
+/// What a picker wants is *"the cheap printing of Disengage, whatever
+/// this creature calls it"*, and this is that question asked of the
+/// rows rather than of a list of strings somebody has to remember to
+/// extend. See `BONUS_MANEUVERS` for the three times the list of
+/// strings was not extended.
+pub fn printings_of(maneuver: Maneuver) -> Vec<&'static str> {
+    BONUS_MANEUVERS
+        .iter()
+        .filter(|row| row.does(maneuver))
+        .map(|row| row.display_name)
+        .collect()
+}
+
 /// SRD 5.2 Orc **Aggressive** — *"As a Bonus Action, the orc moves up
 /// to its Speed toward a hostile creature that it can see."*
 ///

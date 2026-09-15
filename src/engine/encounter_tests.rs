@@ -113791,3 +113791,94 @@ fn an_orc_charges_only_at_something_it_can_see() {
         "…for the Bonus Action"
     );
 }
+
+/// `BONUS_MANEUVERS` names every `BonusManeuver` the file declares.
+///
+/// The registry is what `ai::simple::try_cheapest_maneuver` derives its
+/// picking order from, so a printing missing from it is a feature the
+/// AI can never reach — and the failure is invisible, because the
+/// action still validates and the picker simply never asks for it.
+/// That is exactly how the vampire's Deathless Agility spent its whole
+/// life on the sheet and off both of the hand-written name lists this
+/// registry replaced.
+///
+/// Compared against the module's own text rather than against a second
+/// list, for the reason the doc-reference sweep's guard is: the
+/// declaration is the authority, it can be read as a string, and a new
+/// static therefore fails here once — with a message naming the line to
+/// add — instead of quietly narrowing a picker.
+#[test]
+fn every_bonus_maneuver_static_is_on_the_registry() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::BONUS_MANEUVERS;
+
+    let source = include_str!("../actions/class_features.rs");
+    let declared: Vec<&str> = source
+        .lines()
+        .filter_map(|line| line.strip_prefix("pub static "))
+        .filter(|rest| rest.contains(": BonusManeuver"))
+        .map(|rest| rest.split(':').next().unwrap_or("").trim())
+        .collect();
+    assert!(
+        declared.len() >= 10,
+        "the module still declares bonus maneuvers, found {declared:?}"
+    );
+    assert_eq!(
+        BONUS_MANEUVERS.len(),
+        declared.len(),
+        "the registry has {} rows and the module declares {}: {:?}",
+        BONUS_MANEUVERS.len(),
+        declared.len(),
+        declared
+    );
+    // …and no row is listed twice, which a bare count would not catch.
+    let mut names: Vec<&str> = BONUS_MANEUVERS.iter().map(|m| m.name()).collect();
+    names.sort_unstable();
+    let unique = names.len();
+    names.dedup();
+    assert_eq!(unique, names.len(), "a printing is on the registry twice");
+}
+
+/// The vampire's **Deathless Agility** is reachable by the picker that
+/// wants it — which it was not, for its whole life before the registry.
+///
+/// Written against the two lanes rather than against the registry,
+/// because the registry is not the point: what was broken was that a
+/// creature with a bonus-action Dash on its sheet spent its Action on
+/// the expensive printing instead, and nothing said so.
+#[test]
+fn a_vampire_reaches_for_the_dash_that_costs_it_a_bonus_action() {
+    use crate::actions::class_features::{Maneuver, printings_of};
+
+    let dashes = printings_of(Maneuver::Dash);
+    for expected in ["step of the wind", "cunning dash", "deathless dash", "aggressive"] {
+        assert!(
+            dashes.contains(&expected),
+            "{expected} buys a Dash and is not among {dashes:?}"
+        );
+    }
+    let disengages = printings_of(Maneuver::Disengage);
+    for expected in [
+        "step of the wind",
+        "cunning disengage",
+        "nimble disengage",
+        "deathless disengage",
+    ] {
+        assert!(
+            disengages.contains(&expected),
+            "{expected} buys a Disengage and is not among {disengages:?}"
+        );
+    }
+    let hides = printings_of(Maneuver::Hide);
+    for expected in ["cunning hide", "nimble hide", "vanish"] {
+        assert!(
+            hides.contains(&expected),
+            "{expected} buys a Hide and is not among {hides:?}"
+        );
+    }
+    // Step of the Wind heads both mobility lists, because one
+    // activation buys both and a monk reaching for either should get
+    // the other free.
+    assert_eq!(dashes.first(), Some(&"step of the wind"));
+    assert_eq!(disengages.first(), Some(&"step of the wind"));
+}

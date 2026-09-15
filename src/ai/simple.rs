@@ -5,6 +5,7 @@ use crate::actions::action_template::{
 };
 use crate::actions::class_features::{
     ARCANE_ABJURATION, ASPECT_OF_THE_WYRM, CHAMPION_CHALLENGE, CHARM_ANIMALS_AND_PLANTS,
+    Maneuver,
     CONQUERING_PRESENCE, DREADFUL_ASPECT, ENTHRALLING_PERFORMANCE,
     ORDERS_DEMAND, TURN_THE_FAITHLESS, TURN_UNDEAD,
     TurnBurst,
@@ -2303,46 +2304,51 @@ fn try_disengage(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    try_cheapest_printing(
-        encounter,
-        actor_id,
-        // The monk's Step of the Wind is the bonus-action printing of
-        // Disengage *and* Dash at once, so it heads both lists. Nothing
-        // carries two of the three cheap printings, so the order among
-        // them decides nothing — what matters is that all three sort
-        // above the Action-priced one at the end. Nimble Escape is the
-        // monster-side printing: the goblins and the big cats.
-        &[
-            "step of the wind",
-            "cunning disengage",
-            "nimble disengage",
-            "disengage",
-        ],
-    )
+    // Every bonus-action printing of Disengage the engine has, derived
+    // from `BONUS_MANEUVERS` rather than written out — see
+    // `try_cheapest_maneuver`. The Action-priced "disengage" is the
+    // fallback, and sorts last for the reason `try_cheapest_printing`
+    // gives: there is never a reason to pay an Action for something on
+    // the sheet at a Bonus Action.
+    try_cheapest_maneuver(encounter, actor_id, Maneuver::Disengage, Some("disengage"))
 }
 
-/// Pick the first action in `names` the actor carries and can afford.
+/// The cheapest printing of `maneuver` this actor carries: every
+/// bonus-action printing that buys it, then the Action-priced
+/// `fallback` if there is one.
 ///
 /// 5e prints the same effect at two prices more than once, and the
-/// engine models both printings as separate actions with separate names:
-/// the Rogue's Cunning Action is Dash, Disengage and Hide *as a bonus
-/// action*, and the PHB's own Dash, Disengage and Hide cost the whole
-/// Action. Every heuristic in this file that wanted one of those three
-/// asked for the expensive printing by name, so a rogue — the one
-/// chassis that has the cheap one — bought the expensive one and gave up
-/// its attack to do it.
+/// engine models both printings as separate actions with separate
+/// names: the Rogue's Cunning Action is Dash, Disengage and Hide *as a
+/// Bonus Action*, and the PHB's own three cost the whole Action. There
+/// is never a reason to prefer the Action-priced one when the cheap one
+/// is on the sheet — the effect is identical, and a rogue that
+/// Disengages for a Bonus Action still has an Action to Sneak Attack
+/// with.
 ///
-/// Order the list cheapest-first. There is never a reason to prefer the
-/// Action-priced version when the bonus-action one is on the sheet: the
-/// effect is identical, and a rogue that Disengages for a bonus action
-/// still has an Action to Sneak Attack with.
-fn try_cheapest_printing(
+/// This used to be asked with a **hand-written list of names**, and
+/// that list had gone stale three times over. A printing on a stat
+/// block and off the list is a feature the AI can never reach, and
+/// nothing about that failure is visible: the action validates, the
+/// picker simply never asks, and what you see is a creature playing
+/// slightly worse than its sheet. The vampire's Deathless Agility was
+/// missing from both the Dash and the Disengage list from the day it
+/// landed, so the engine's most dangerous humanoid walked where it
+/// could have run.
+///
+/// Derived from `class_features::BONUS_MANEUVERS` instead, which is one
+/// line per printing and is swept against the file it lives in. A
+/// future bonus-action Dash is reachable here without this function
+/// being touched, which is the whole point.
+fn try_cheapest_maneuver(
     encounter: &EncounterInstance,
     actor_id: usize,
-    names: &[&str],
+    maneuver: Maneuver,
+    fallback: Option<&str>,
 ) -> Option<ActionExecutionInfo> {
-    names
-        .iter()
+    crate::actions::class_features::printings_of(maneuver)
+        .into_iter()
+        .chain(fallback)
         .find_map(|name| try_self_action(encounter, actor_id, name))
 }
 
@@ -2393,13 +2399,9 @@ fn try_bonus_action_hide(
     {
         return None;
     }
-    // Cheapest-printing order, with the Action-priced "hide" absent by
-    // design — see the docstring.
-    try_cheapest_printing(
-        encounter,
-        actor_id,
-        &["cunning hide", "nimble hide", "vanish"],
-    )
+    // The Action-priced "hide" is absent by design — see the docstring
+    // — which is what the `None` fallback says.
+    try_cheapest_maneuver(encounter, actor_id, Maneuver::Hide, None)
 }
 
 /// If the actor is Prone, return the StandUp action invocation. The action
@@ -12095,12 +12097,9 @@ fn try_dash_to_close(
         return None;
     }
     // Cheapest printing first — a rogue Dashes for a bonus action and
-    // keeps its Action. See `try_cheapest_printing`.
-    try_cheapest_printing(
-        encounter,
-        actor_id,
-        &["step of the wind", "cunning dash", "dash"],
-    )
+    // keeps its Action, a vampire does, and an orc charges. See
+    // `try_cheapest_maneuver`.
+    try_cheapest_maneuver(encounter, actor_id, Maneuver::Dash, Some("dash"))
 }
 
 /// Break a hold that has left the actor unable to do anything else.
