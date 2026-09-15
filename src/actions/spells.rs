@@ -18,8 +18,8 @@ use crate::{
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
         side_effects::{
-            ApplicableSideEffect, ApplyCondition, ConjureBlade, ConjureTerrain, DealDamage,
-            FlyBlade, GainTempHp, Heal, InstallZone, MoveZone, Resource, StartConcentration,
+            ApplicableSideEffect, ApplyCondition, BladeSwing, ConjureTerrain, DealDamage,
+            GainTempHp, Heal, InstallZone, MoveZone, Resource, StartConcentration,
             install_condition_with_link, install_fragile_condition,
         },
         terrain::TerrainType,
@@ -167,7 +167,14 @@ pub fn spell_attack_roll(
     // Scorching Ray, etc.) honor the rule identically — through the
     // spell-aware wrapper, which is where SRD 5.2's Wand of the War Mage
     // takes *half* cover off a cast. See `spell_cover_ac_bonus`.
-    let cover_bonus = encounter.spell_cover_ac_bonus(caster_id, target_id);
+    let cover_bonus = if encounter.swing_comes_from_a_blade(caster_id, action_name) {
+        // The blade is next to what it is hitting; the caster's own line
+        // of sight is not what this swing travels down. See
+        // `EncounterInstance::swing_comes_from_a_blade`.
+        0
+    } else {
+        encounter.spell_cover_ac_bonus(caster_id, target_id)
+    };
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics, lv7):
     // spell attacks honor the same +4 AC envelope as weapon swings —
     // RAW says "when a creature hits you with an attack" without a
@@ -788,19 +795,21 @@ fn steered_zone_validate(
 ///
 /// `is_melee: true`, because RAW calls it a melee spell attack and the
 /// blade really is standing next to what it is hitting. Two clauses
-/// downstream of that flag measure from the *caster* instead, and are
-/// wrong by the width of the room for as long as they do:
-/// **cover**, which a blade next to its target should never suffer and
-/// which `spell_cover_ac_bonus` reads off the caster's line of sight;
-/// and the **melee reflect** cohort (Fire Shield and its siblings),
-/// whose RAW trigger is "a creature *within 5 feet of you* that hits
-/// you" and which now asks exactly that question — see
-/// `engine::attack::push_melee_reflect_riders`, where the distance gate
-/// this spell needed turned out to be a rule the reach weapons had been
-/// missing all along. The cover half stays approximate: the attack
-/// pipeline is handed an attacker id and not an origin tile, and
-/// threading one through both chokepoints is a change to every swing in
-/// the engine rather than to this spell.
+/// downstream of that flag would otherwise measure from the *caster*
+/// instead, and be wrong by the width of the room:
+///
+///   - **Cover**, which a blade next to its target should never suffer.
+///     Both attack chokepoints ask
+///     `EncounterInstance::swing_comes_from_a_blade` before they
+///     measure, which is also why the blade is placed above rather than
+///     queued as a side effect: the swing is made from where it is
+///     standing, so it has to be standing there first.
+///   - The **melee reflect** cohort (Fire Shield and its siblings),
+///     whose RAW trigger is "a creature *within 5 feet of you* that
+///     hits you" and which now asks exactly that — see
+///     `engine::attack::push_melee_reflect_riders`, where the distance
+///     gate this spell needed turned out to be a rule the reach weapons
+///     had been missing all along.
 fn blade_strike(
     encounter: &mut EncounterInstance,
     caster_id: usize,
@@ -819,29 +828,28 @@ fn blade_strike(
     );
     let attack_bonus = caster.spell_attack_modifier(ability);
     let damage_bonus = caster.ability_modifier(ability);
+    // The blade is put where it has to be **before** the swing, because
+    // the swing is made from there: `spell_attack_roll` asks the board
+    // where the attack is coming from when it works out cover, and a
+    // blade that had not arrived yet would be answered with its owner's
+    // tile sixty feet away. A blade already in the air keeps the dice it
+    // was conjured with — the slot that bought the upcast was spent on
+    // the cast, and there is nothing in hand on a later turn to
+    // re-derive it from. See `BladeProfile::conjure`.
     let existing = encounter
         .blade_sustained_by(caster_id, profile.name)
         .map(|b| (b.id, b.dice));
-    // The move goes in front of the damage so the two land in the order
-    // they happen — the blade arrives, and then the thing it arrived
-    // next to takes the hit.
-    let (mut effects, dice): (Vec<Box<dyn ApplicableSideEffect>>, Dice) = match existing {
-        // A blade already in the air keeps the dice it was conjured
-        // with. The slot that bought the upcast was spent on the cast
-        // and there is nothing in hand on a later turn to re-derive it
-        // from — see `BladeProfile::conjure`.
-        Some((blade_id, held)) => (
-            vec![Box::new(FlyBlade { blade_id, dest: anchor })],
-            held,
-        ),
+    let (blade_id, dice) = match existing {
+        Some((blade_id, held)) => {
+            encounter.move_blade(blade_id, anchor);
+            (blade_id, held)
+        }
         None => (
-            vec![Box::new(ConjureBlade {
-                blade: profile.conjure(caster_id, anchor, dice),
-            })],
+            encounter.conjure_blade(profile.conjure(caster_id, anchor, dice)),
             dice,
         ),
     };
-    effects.extend(spell_attack_with_bonus(
+    let mut effects = spell_attack_with_bonus(
         encounter,
         caster_id,
         target_id,
@@ -851,7 +859,11 @@ fn blade_strike(
         damage_bonus,
         profile.damage_type,
         true,
-    ));
+    );
+    // The count goes *after* the damage: a Dancing Sword's fourth swing
+    // takes it out of the air, and a blade that vanished before its own
+    // hit landed would print the two lines in the wrong order.
+    effects.push(Box::new(BladeSwing { blade_id }));
     effects
 }
 

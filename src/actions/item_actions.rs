@@ -11192,25 +11192,28 @@ impl Action for DancingSwordItem {
             .swing_damage_ability(wielder)
             .map(|a| wielder.ability_modifier(a))
             .unwrap_or(0);
+        // Placed before the swing, because the swing is made from there
+        // — see `spells::blade_strike`, which does the same for the two
+        // spells on this lane and for the same reason.
         let existing = encounter
             .blade_sustained_by(caster_id, self.blade.name)
             .map(|b| b.id);
-        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = match existing {
-            Some(blade_id) => vec![Box::new(crate::engine::side_effects::FlyBlade {
-                blade_id,
-                dest: anchor,
-            })],
+        let blade_id = match existing {
+            Some(blade_id) => {
+                encounter.move_blade(blade_id, anchor);
+                blade_id
+            }
             None => {
                 let holder = encounter.actor_name(caster_id);
                 encounter.log(format!("{} tosses the {} into the air.", holder, self.item_name));
-                vec![Box::new(crate::engine::side_effects::ConjureBlade {
-                    blade: self
-                        .blade
-                        .conjure(caster_id, anchor, self.weapon.damage_dice),
-                })]
+                encounter.conjure_blade(self.blade.conjure(
+                    caster_id,
+                    anchor,
+                    self.weapon.damage_dice,
+                ))
             }
         };
-        effects.extend(crate::engine::attack::resolve_attack(
+        let mut effects = crate::engine::attack::resolve_attack(
             encounter,
             crate::engine::attack::AttackParams {
                 caster_id,
@@ -11222,7 +11225,8 @@ impl Action for DancingSwordItem {
                 damage_type: self.weapon.damage_type,
                 ..crate::engine::attack::AttackParams::DEFAULTS
             },
-        ));
+        );
+        effects.push(Box::new(crate::engine::side_effects::BladeSwing { blade_id }));
         effects
     }
 }

@@ -110881,3 +110881,55 @@ fn initiative_rolls_on_the_same_lane_every_other_check_does() {
         "two hundred Initiative rolls without a single halfling reroll"
     );
 }
+
+/// A blade takes no cover. It is standing next to what it is hitting,
+/// and cover is the one clause on a swing that asks where the attack
+/// comes from rather than who is making it.
+///
+/// The case is real rather than theoretical: a mace conjured across the
+/// room is very often on the far side of a body its caster is looking
+/// past, and measuring from the cleric would tax the swing +2 AC for an
+/// obstruction that is nowhere near it.
+#[test]
+fn a_hovering_blade_is_not_taxed_by_cover_its_caster_is_looking_past() {
+    use crate::actions::spells::SPIRITUAL_WEAPON;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    // A body directly between the cleric and the target, which is what
+    // `cover_ac_bonus` reads.
+    let screen = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+        .unwrap();
+    let behind = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(18, 10), 1, 1)
+        .unwrap();
+    assert!(
+        e.cover_ac_bonus(cleric, behind) > 0,
+        "the fixture's own premise: the cleric is shooting past somebody"
+    );
+    assert!(
+        !e.swing_comes_from_a_blade(cleric, "spiritual weapon"),
+        "nothing is in the air yet"
+    );
+
+    for ef in SPIRITUAL_WEAPON.side_effects(&mut e, cleric, Some(&vec![behind]), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.swing_comes_from_a_blade(cleric, "spiritual weapon"),
+        "the mace is placed before the swing it makes, not after"
+    );
+    let blade = e.hovering_blades()[0].origin;
+    assert!(
+        e.footprint_distance_to_point(behind, blade).unwrap() <= 1,
+        "and it is standing next to the target, which is why it has no cover"
+    );
+    // The screen is still there and still between the cleric and the
+    // target — what changed is who the engine thinks is swinging.
+    assert!(e.actors.contains_key(&screen));
+    assert!(e.cover_ac_bonus(cleric, behind) > 0);
+}

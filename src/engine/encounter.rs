@@ -11318,6 +11318,34 @@ impl EncounterInstance {
         cover
     }
 
+    /// True when this swing is being made by a spectral weapon hanging
+    /// in the air rather than by the arm of whoever owns it — see
+    /// `crate::engine::hovering_blade`.
+    ///
+    /// Read by both attack chokepoints, and read for exactly one rule:
+    /// **cover**. Every other clause on a swing is a fact about the
+    /// attacker — their proficiency, their buffs, their advantage — and
+    /// stays true wherever the steel is. Cover is the one that asks
+    /// *where the attack comes from*, and for a blade the answer is not
+    /// its owner's tile.
+    ///
+    /// The answer is a boolean rather than the blade's coordinates
+    /// because there is nothing to measure. `blade_strike_anchor` only
+    /// ever puts a blade within melee reach of what it is about to hit,
+    /// and 5e's own rule is that *"a target has cover only if the
+    /// obstruction is between it and the attacker"* — with an adjacent
+    /// attacker there is no between. So a blade swing takes no cover,
+    /// full stop, and the geometry that would prove it is the geometry
+    /// that placed the blade.
+    ///
+    /// Matched on `(owner, action name)` for the same reason
+    /// `blade_sustained_by` is: an `Action` is a zero-sized static with
+    /// nowhere to keep an id, and the name is the identity it carries.
+    /// Both chokepoints have the action's name in hand already.
+    pub fn swing_comes_from_a_blade(&self, caster_id: usize, action_name: &str) -> bool {
+        self.blade_sustained_by(caster_id, action_name).is_some()
+    }
+
     pub fn cover_ac_bonus(&self, attacker_id: usize, target_id: usize) -> i32 {
         let (Some(a), Some(b)) = (
             self.actors.get(&attacker_id),

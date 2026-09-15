@@ -3094,8 +3094,15 @@ pub fn resolve_attack_outcome_with_rider(
     // Asked through the ranged-aware wrapper, which is where SRD's
     // Sharpshooter takes half and three-quarters cover off a shot — see
     // `feats::SHARPSHOOTER_TAG`.
-    let cover_bonus =
-        encounter.cover_ac_bonus_for_attack(p.caster_id, p.target_id, p.is_melee);
+    // A swing made by a hovering blade takes no cover: the blade is
+    // standing next to what it is hitting, and cover is the one clause
+    // on an attack that asks where the attack comes from rather than who
+    // is making it. See `EncounterInstance::swing_comes_from_a_blade`.
+    let cover_bonus = if encounter.swing_comes_from_a_blade(p.caster_id, p.action_name) {
+        0
+    } else {
+        encounter.cover_ac_bonus_for_attack(p.caster_id, p.target_id, p.is_melee)
+    };
     // 5e Hunter Ranger Multiattack Defense (Defensive Tactics option,
     // lv7): if the target holds `MULTIATTACK_DEFENSE_TAG` AND this
     // attacker has already landed a connecting swing on the target
