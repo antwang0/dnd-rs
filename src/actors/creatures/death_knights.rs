@@ -1,3 +1,4 @@
+use crate::actions::class_features::TURN_RESISTANCE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     DEATH_KNIGHT_HELLFIRE_ORB, DEATH_KNIGHT_LONGSWORD, DEATH_KNIGHT_MULTI,
@@ -65,6 +66,9 @@ pub static DEATH_KNIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Turn Resistance** — a cleric's Channel Divinity is
+        // a poor answer to this one. See `TURN_RESISTANCE_TAG`.
+        features: HashSet::from([TURN_RESISTANCE_TAG]),
         // CR 17 paladin-caster equivalent. Slimmer than the Lich's apex
         // loadout — the Death Knight leans on its Hellfire Orb + multi
         // pattern rather than a deep slot economy.

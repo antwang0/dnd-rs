@@ -1,3 +1,4 @@
+use crate::actions::class_features::TURN_RESISTANCE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     MUMMY_LORD_DREADFUL_GLARE, MUMMY_LORD_MULTI, MUMMY_LORD_ROTTING_FIST,
@@ -124,6 +125,9 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Turn Resistance** — a cleric's Channel Divinity is
+        // a poor answer to this one. See `TURN_RESISTANCE_TAG`.
+        features: HashSet::from([TURN_RESISTANCE_TAG]),
         // Mummy Lord proficient saves: CON, INT, WIS, CHA per MM.
         proficient_saves: HashSet::from([
             AbilityScoreType::Constitution,

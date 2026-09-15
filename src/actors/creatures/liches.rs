@@ -1,3 +1,4 @@
+use crate::actions::class_features::TURN_RESISTANCE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::LICH_PARALYZING_TOUCH;
 use crate::actions::spells::{
@@ -95,6 +96,9 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Turn Resistance** — a cleric's Channel Divinity is
+        // a poor answer to this one. See `TURN_RESISTANCE_TAG`.
+        features: HashSet::from([TURN_RESISTANCE_TAG]),
         // Boss-tier loadout: 4/3/3/3/3/2/2/2/2.
         spell_slots_by_level: vec![4, 3, 3, 3, 3, 2, 2, 2, 2],
         // 5e Lich: necrotic / poison immunity, resistance to cold /

@@ -1,4 +1,4 @@
-use crate::actions::class_features::{DEATHLESS_DASH, DEATHLESS_DISENGAGE};
+use crate::actions::class_features::{DEATHLESS_DASH, DEATHLESS_DISENGAGE, TURN_RESISTANCE_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     THROWN_UMBRAL_DAGGER, UMBRAL_DAGGER, VAMPIRE_CHARMING_GAZE, VAMPIRE_FAMILIAR_MULTI,
@@ -50,6 +50,9 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Turn Resistance** — a cleric's Channel Divinity is
+        // a poor answer to this one. See `TURN_RESISTANCE_TAG`.
+        features: HashSet::from([TURN_RESISTANCE_TAG]),
         // 5e MM Vampire: resistant to necrotic + non-magical BPS,
         // immune to poison. Radiant is the regen-suppressor (proxy
         // for the "sunlight / holy water" RAW downside).

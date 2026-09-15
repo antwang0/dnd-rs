@@ -6756,8 +6756,38 @@ impl EncounterInstance {
         dc: i32,
         against: crate::conditions::Condition,
     ) -> crate::engine::saves::SaveOutcome {
-        let extra = self.condition_save_tally(actor_id, Some(against));
-        self.roll_save_with_extra_mode(actor_id, ability, dc, extra)
+        self.roll_save_vs_condition_at(actor_id, ability, dc, against, RollMode::Normal)
+    }
+
+    /// `roll_save_vs_condition` with one further notch the **site**
+    /// supplies — a clause that is about neither the ability nor the
+    /// condition but about what is being resisted.
+    ///
+    /// SRD 5.2's **Turn Resistance** is the first: *"the creature has
+    /// Advantage on saving throws against any effect that turns
+    /// Undead."* No cohort can express that. `CONDITION_SAVE_ADVANTAGES`
+    /// is keyed on what failing costs you, and the condition a Turn
+    /// Undead installs is `Frightened` — the same condition a dragon's
+    /// Frightful Presence installs, which a lich has no special claim
+    /// against. The distinguishing fact is the *source*, and the only
+    /// code that knows it is the burst's own resolver.
+    ///
+    /// Merged with the condition cohort rather than replacing it, so a
+    /// lich that also carried a belt granting advantage against
+    /// Frightened would have two sources and still roll at one notch —
+    /// which is 5e's rule about advantage and is what the tally exists
+    /// to keep true.
+    pub fn roll_save_vs_condition_at(
+        &mut self,
+        actor_id: usize,
+        ability: crate::engine::types::AbilityScoreType,
+        dc: i32,
+        against: crate::conditions::Condition,
+        extra: RollMode,
+    ) -> crate::engine::saves::SaveOutcome {
+        let mut tally = self.condition_save_tally(actor_id, Some(against));
+        tally.add(extra);
+        self.roll_save_with_extra_mode(actor_id, ability, dc, tally)
     }
 
     /// The `CONDITION_SAVE_ADVANTAGES` contribution to one save, as a

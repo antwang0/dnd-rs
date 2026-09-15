@@ -6346,8 +6346,43 @@ fn resolve_turn_burst(
 
     let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
     for id in candidates {
-        let save = encounter.roll_save(id, AbilityScoreType::Wisdom, dc);
+        // SRD 5.2 **Turn Resistance** — *"the creature has Advantage on
+        // saving throws against any effect that turns Undead"* — which
+        // is a fact about the *source* of the save rather than about
+        // the ability or the condition, and so cannot be a row on any
+        // cohort. The lich, the vampire and its spawn, the mummy lord,
+        // the wraith and the death knight all print it.
+        //
+        // Routed through the condition-aware lane at the same time,
+        // which it was not before: the burst installs `Frightened` (or
+        // `Charmed`, on the Trickery domain's variant), and a creature
+        // whose own sheet grants advantage against that condition was
+        // being denied it here because the site called the anonymous
+        // `roll_save`. Both sources land in one tally and two of them
+        // still roll at one notch.
+        let resists = encounter
+            .actors
+            .get(&id)
+            .is_some_and(|a| a.resists_turning());
+        let save = encounter.roll_save_vs_condition_at(
+            id,
+            AbilityScoreType::Wisdom,
+            dc,
+            installed,
+            if resists {
+                crate::engine::dice::RollMode::Advantage
+            } else {
+                crate::engine::dice::RollMode::Normal
+            },
+        );
         if save.passed() {
+            if resists {
+                let name = encounter.actor_name(id);
+                encounter.log(format!(
+                    "  {}: {} shrugs it off — turn resistance.",
+                    label, name
+                ));
+            }
             continue;
         }
         // Escalation branch: a weak enough creature of the right type
@@ -14162,6 +14197,27 @@ pub const AQUATIC_ONLY_TAG: &str = "monster.aquatic_only";
 ///
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const INCORPOREAL_MOVEMENT_TAG: &str = "monster.incorporeal_movement";
+
+/// SRD 5.2 **Turn Resistance** — *"the creature has Advantage on saving
+/// throws against any effect that turns Undead."*
+///
+/// Six stat blocks print it: the Lich, the Mummy Lord, the Vampire and
+/// its Spawn, the Wraith and the Death Knight. They are the undead a
+/// cleric is least likely to be able to wave away, which is the whole
+/// design of the trait — the roster's low tier is exactly the tier
+/// `DESTROY_UNDEAD_TAG` deletes outright, and these six are the ones
+/// the Channel Divinity is *supposed* to be a poor answer to.
+///
+/// Read at `resolve_turn_burst`, and nowhere else it could be. Every
+/// other save-advantage clause in the engine is keyed on what failing
+/// costs you — see `CONDITION_SAVE_ADVANTAGES` — and this one is keyed
+/// on where the save came from: the condition a Turn Undead installs is
+/// `Frightened`, the same condition a dragon's Frightful Presence
+/// installs, and a lich has no special claim against that. The
+/// distinguishing fact is the source, so the source is what reads it.
+///
+/// Always-on passive; no per-rest charge and no condition gate.
+pub const TURN_RESISTANCE_TAG: &str = "monster.turn_resistance";
 
 
 /// Monster trait: "its weapon attacks are magical".

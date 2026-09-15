@@ -113503,3 +113503,78 @@ fn a_creature_under_the_floor_is_neither_cover_nor_a_sight() {
         "and it cannot see out either"
     );
 }
+
+/// SRD 5.2 **Turn Resistance** reaches the die a Turn Undead rolls, and
+/// nothing else the same creature rolls.
+///
+/// Measured as a pass rate over a sweep of seeds rather than as a flag
+/// read, because the flag was never the question: what the trait has to
+/// do is put a second d20 on *this* save. A skeleton and a wraith of
+/// the same Wisdom modifier facing the same DC should not come out
+/// level.
+///
+/// The second half — that the advantage is scoped to the turn and not
+/// to the condition — is what keeps the trait from being a row on
+/// `CONDITION_SAVE_ADVANTAGES`: the burst installs `Frightened`, and a
+/// wraith has no special claim against a dragon's Frightful Presence.
+#[test]
+fn turn_resistance_reaches_the_turn_and_nothing_else() {
+    use crate::actions::class_features::TURN_UNDEAD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::actors::creatures::wraiths::WRAITH_TEMPLATE;
+    use crate::conditions::Condition;
+
+    // Same seeds, same cleric, same distance — one undead with the
+    // trait and one without.
+    let shrugged_off = |template: &'static CreatureTemplate| -> usize {
+        let mut held = 0;
+        for seed in 0..60u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            let undead = e
+                .instantiate_creature(template, Coordinate::new(6, 4), 1, 0)
+                .unwrap();
+            let aei = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
+            if !aei.validate(&e) {
+                continue;
+            }
+            e.pop_prompt();
+            e.push_action(aei);
+            e.process_stack();
+            // Still on the board and not frightened: it made the save.
+            // The wraith's own Destroy-Undead ceiling is far above its
+            // CR, so a failure here is a fright rather than a deletion.
+            if e.actors
+                .get(&undead)
+                .is_some_and(|a| !a.has_condition(Condition::Frightened))
+            {
+                held += 1;
+            }
+        }
+        held
+    };
+
+    let plain = shrugged_off(&SKELETON_TEMPLATE);
+    let resistant = shrugged_off(&WRAITH_TEMPLATE);
+    assert!(
+        resistant > plain,
+        "a second d20 on the save should show: wraith held {resistant} of 60, \
+         skeleton {plain}"
+    );
+
+    // …and the trait does not follow the wraith to every save against
+    // the condition the burst happens to install.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wraith = e
+        .instantiate_creature(&WRAITH_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    assert!(e.actors[&wraith].resists_turning());
+    assert!(
+        !e.actors[&wraith].has_save_advantage_against(Condition::Frightened),
+        "a wraith has no special claim against a dragon's roar"
+    );
+}

@@ -11587,6 +11587,16 @@ impl ActorInstance {
         self.has_passive_feature(crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG)
     }
 
+    /// True if a cleric's Channel Divinity is a poor answer to this
+    /// creature — SRD 5.2's **Turn Resistance**, on the six undead that
+    /// print it.
+    ///
+    /// Read by `resolve_turn_burst`; see `TURN_RESISTANCE_TAG` for why
+    /// it cannot be a row on any of the save cohorts.
+    pub fn resists_turning(&self) -> bool {
+        self.has_passive_feature(crate::actions::class_features::TURN_RESISTANCE_TAG)
+    }
+
     /// How long this actor could hold its breath from full, in rounds —
     /// RAW's *"1 plus its Constitution modifier"* minutes, floored at
     /// thirty seconds.

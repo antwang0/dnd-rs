@@ -1,3 +1,4 @@
+use crate::actions::class_features::TURN_RESISTANCE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::VAMPIRIC_BITE;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
@@ -34,6 +35,9 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
+        // SRD 5.2 **Turn Resistance** — a cleric's Channel Divinity is
+        // a poor answer to this one. See `TURN_RESISTANCE_TAG`.
+        features: HashSet::from([TURN_RESISTANCE_TAG]),
         // Necrotic-resistant + non-magical BPS resistance + poison
         // immunity (5e MM vampire damage envelope).
         damage_modifiers: damage_modifiers_from([

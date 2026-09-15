@@ -732,6 +732,35 @@ pub fn incorporeal_templates() -> Vec<&'static CreatureTemplate> {
     ]
 }
 
+/// Every template a cleric's Channel Divinity is a poor answer to —
+/// the six stat blocks whose RAW traits print **Turn Resistance**.
+///
+/// The Lich, the Mummy Lord, the Vampire and its Spawn, the Wraith and
+/// the Death Knight: the roster's undead aristocracy, and exactly the
+/// creatures the trait exists to protect. Everything below them is the
+/// tier `DESTROY_UNDEAD_TAG` deletes outright on a failed save, so a
+/// Turn Undead that also waved the lich away would leave the feature
+/// with no tier it was merely *good* against.
+///
+/// The **Vampire Familiar** is on the file with the vampire and is
+/// deliberately not here: RAW it is a Humanoid thrall, which the burst's
+/// own type filter already excludes, and giving it the trait would be a
+/// row that could never be read.
+///
+/// Written down rather than derived, and enforced in both directions by
+/// the sweep in this module's tests, for the reason
+/// `incorporeal_templates` above is.
+pub fn turn_resistant_templates() -> Vec<&'static CreatureTemplate> {
+    vec![
+        &death_knights::DEATH_KNIGHT_TEMPLATE,
+        &liches::LICH_TEMPLATE,
+        &mummy_lords::MUMMY_LORD_TEMPLATE,
+        &vampire_spawns::VAMPIRE_SPAWN_TEMPLATE,
+        &vampires::VAMPIRE_TEMPLATE,
+        &wraiths::WRAITH_TEMPLATE,
+    ]
+}
+
 /// Every template the water will not drown — the creatures whose RAW
 /// stat block carries Amphibious, Water Breathing, Hold Breath or
 /// Limited Amphibiousness, and so the creatures that can stand at the
@@ -1992,6 +2021,55 @@ mod tests {
             assert!(
                 aquatic_names.contains(&t.name),
                 "{} carries a swimming speed but is not on the aquatic list",
+                t.name
+            );
+        }
+    }
+
+    /// `turn_resistant_templates` is the whole truth about who carries
+    /// `TURN_RESISTANCE_TAG`, in both directions — and every one of them
+    /// is Undead, which is the entailment the trait's own name makes
+    /// and the code has to keep.
+    ///
+    /// The third assertion is the one worth having, for the reason the
+    /// aquatic pair's third is: the tag is read only by a burst whose
+    /// type filter is "is this Undead", so a tag that landed on
+    /// anything else would be a row nothing could ever reach — a
+    /// feature that looks present on a stat block and is not.
+    #[test]
+    fn the_turn_resistance_tag_is_carried_by_exactly_the_undead_aristocracy() {
+        use crate::actions::class_features::TURN_RESISTANCE_TAG;
+        use crate::engine::encounter::EncounterInstance;
+        use crate::engine::types::CreatureType;
+
+        let resistant = super::turn_resistant_templates();
+        for t in &resistant {
+            assert!(
+                t.features.contains(TURN_RESISTANCE_TAG),
+                "{} is on the turn-resistant list without the trait",
+                t.name
+            );
+            assert_eq!(
+                t.creature_type,
+                CreatureType::Undead,
+                "{} resists being turned without being something that can be",
+                t.name
+            );
+        }
+        let names: Vec<&str> = resistant.iter().map(|t| t.name).collect();
+
+        let everything = EncounterInstance::template_pool().into_iter().chain(
+            super::pc_template_families()
+                .into_iter()
+                .flat_map(|(_, ts)| ts),
+        );
+        for t in everything {
+            if !t.features.contains(TURN_RESISTANCE_TAG) {
+                continue;
+            }
+            assert!(
+                names.contains(&t.name),
+                "{} resists turning but is not on the list",
                 t.name
             );
         }
