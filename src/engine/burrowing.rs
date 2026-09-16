@@ -107,7 +107,7 @@
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::types::{Coordinate, Size};
-use crate::engine::util::get_tiles_from_size;
+use crate::engine::util::footprint_tiles;
 
 /// The share of a creature's current speed that digging in — or back
 /// out — costs, in movement.
@@ -179,12 +179,9 @@ impl EncounterInstance {
     /// `footprint_is_water` fails in and the safe one: a missing tile is
     /// not a tile you may tunnel into.
     pub fn footprint_is_diggable(&self, anchor: Coordinate, size: Size) -> bool {
-        let width = get_tiles_from_size(size) as isize;
-        (0..width).all(|dx| {
-            (0..width).all(|dy| {
-                self.terrain_at(anchor + Coordinate::new(dx, dy))
-                    .is_some_and(|t| t.terrain_type.is_diggable())
-            })
+        footprint_tiles(anchor, size).all(|tile| {
+            self.terrain_at(tile)
+                .is_some_and(|t| t.terrain_type.is_diggable())
         })
     }
 

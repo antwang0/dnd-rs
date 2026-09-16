@@ -83,14 +83,10 @@
 //! its own breath is not a rule anybody wants.
 
 use crate::engine::types::{Coordinate, Size};
-use crate::engine::util::{feet_from_tiles, footprint_chebyshev, get_tiles_from_size};
-
-/// The tiles of a footprint anchored at `anchor` with side `span`.
-fn footprint_tiles(anchor: Coordinate, span: isize) -> impl Iterator<Item = Coordinate> {
-    (0..span).flat_map(move |dy| {
-        (0..span).map(move |dx| Coordinate::new(anchor.x + dx, anchor.y + dy))
-    })
-}
+use crate::engine::util::{
+    feet_from_tiles, footprint_chebyshev, footprint_tiles_of_span as footprint_tiles,
+    get_tiles_from_size,
+};
 
 /// Chebyshev distance between two tiles — the board's metric, used here
 /// for the cone's length cap so a cone reaches exactly as far as every

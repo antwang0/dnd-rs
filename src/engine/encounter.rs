@@ -316,7 +316,7 @@ use crate::engine::zones::Zone;
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
 use crate::engine::jumping;
-use crate::engine::util::{TILE_FEET, footprint_chebyshev, get_tiles_from_size};
+use crate::engine::util::{TILE_FEET, footprint_chebyshev, footprint_tiles, get_tiles_from_size};
 use fastrand::Rng;
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, RollMode, RollModeTally, Roller};
@@ -8311,10 +8311,7 @@ impl EncounterInstance {
     /// ring walk and the banishment return, which each used to spell the
     /// double loop out.
     pub(crate) fn footprint_is_clear(&self, origin: Coordinate, size: Size) -> bool {
-        let w = get_tiles_from_size(size) as isize;
-        (0..w).all(|ox| {
-            (0..w).all(|oy| self.is_spawnable(Coordinate::new(origin.x + ox, origin.y + oy)))
-        })
+        footprint_tiles(origin, size).all(|tile| self.is_spawnable(tile))
     }
 
     fn can_move_to_subtile(&self, coord: Coordinate, actor_id: usize) -> bool {
@@ -8418,20 +8415,14 @@ impl EncounterInstance {
         size: Size,
         require_water: bool,
     ) -> Result<Coordinate, NoLegalPosition> {
-        let actor_width: usize = get_tiles_from_size(size);
         let coords = self.get_random_coord_list();
 
-        'coord_loop: for &coord in coords.iter() {
-            for x_off in 0..actor_width {
-                for y_off in 0..actor_width {
-                    let offset = Coordinate::new(x_off as isize, y_off as isize);
-                    if !self.is_spawnable(coord + offset) {
-                        continue 'coord_loop;
-                    }
-                }
+        for &coord in coords.iter() {
+            if !self.footprint_is_clear(coord, size) {
+                continue;
             }
             if require_water && !self.footprint_is_water(coord, size) {
-                continue 'coord_loop;
+                continue;
             }
             return Ok(coord);
         }
@@ -8459,12 +8450,8 @@ impl EncounterInstance {
         origin: Coordinate,
         size: Size,
     ) {
-        let width = get_tiles_from_size(size);
-        for x_off in 0..width {
-            for y_off in 0..width {
-                let offset = Coordinate::new(x_off as isize, y_off as isize);
-                self.set_actor_id_at(actor_id, origin + offset);
-            }
+        for tile in footprint_tiles(origin, size) {
+            self.set_actor_id_at(actor_id, tile);
         }
     }
 
@@ -8551,68 +8538,64 @@ impl EncounterInstance {
                 }
                 continue;
             }
-            let width = get_tiles_from_size(actor.size()) as isize;
-            for x_off in 0..width {
-                for y_off in 0..width {
-                    let tile = loc + Coordinate::new(x_off, y_off);
-                    // Off-board tiles are the map's edge rather than a
-                    // leak: a footprint anchored legally can still run
-                    // past the boundary, and `set_actor_id_at` drops
-                    // those writes.
-                    if self.idx(tile).is_err() {
-                        continue;
-                    }
-                    if self.actor_id_at(tile) != Some(*id) {
-                        problems.push(format!(
-                            "{} (#{}) at {:?} does not own its own tile {:?} (that is {:?})",
-                            actor.name(),
-                            id,
-                            loc,
-                            tile,
-                            self.actor_id_at(tile)
-                        ));
-                    }
-                    // …and the tile is one a body could be standing on.
-                    //
-                    // The fourth question, and the one `TerrainType::Chasm`
-                    // made worth asking. Every other impassable tile on
-                    // the board is a *wall*, and a creature inside one is
-                    // an obvious absurdity that something would have
-                    // noticed; a hole in the floor is the same violation
-                    // and reads, on the map, as a creature standing near
-                    // a hole. The invariant that nothing ever occupies a
-                    // gap — which is what lets flight be an unbounded
-                    // jump rather than a third coordinate, see
-                    // `TerrainType::Chasm` — is held by every forced-move
-                    // resolver on the board asking `can_move_to` first,
-                    // and that is a lot of sites to hold by inspection.
-                    // This is the sweep that would catch the one that
-                    // forgot.
-                    //
-                    // Asked through `tile_admits` rather than through
-                    // `is_passable` directly, so the invariant and the
-                    // movers that have to uphold it are reading one
-                    // predicate. Two creatures on this board legitimately
-                    // stand where a plain passability check says nothing
-                    // can — a burrower, which is *under* the floor, and a
-                    // spirit, which is *inside* the wall — and a sweep
-                    // with its own opinion about that would fail on the
-                    // rules working correctly. It is the same helper
-                    // `can_move_to` puts them there through, so the two
-                    // cannot disagree.
-                    if !self
-                        .terrain_at(tile)
-                        .is_some_and(|t| self.tile_admits(t.terrain_type, *id))
-                    {
-                        problems.push(format!(
-                            "{} (#{}) at {:?} is standing on {:?}, which is {:?}",
-                            actor.name(),
-                            id,
-                            loc,
-                            tile,
-                            self.terrain_at(tile).map(|t| t.terrain_type)
-                        ));
-                    }
+            for tile in footprint_tiles(loc, actor.size()) {
+                // Off-board tiles are the map's edge rather than a
+                // leak: a footprint anchored legally can still run
+                // past the boundary, and `set_actor_id_at` drops
+                // those writes.
+                if self.idx(tile).is_err() {
+                    continue;
+                }
+                if self.actor_id_at(tile) != Some(*id) {
+                    problems.push(format!(
+                        "{} (#{}) at {:?} does not own its own tile {:?} (that is {:?})",
+                        actor.name(),
+                        id,
+                        loc,
+                        tile,
+                        self.actor_id_at(tile)
+                    ));
+                }
+                // …and the tile is one a body could be standing on.
+                //
+                // The fourth question, and the one `TerrainType::Chasm`
+                // made worth asking. Every other impassable tile on
+                // the board is a *wall*, and a creature inside one is
+                // an obvious absurdity that something would have
+                // noticed; a hole in the floor is the same violation
+                // and reads, on the map, as a creature standing near
+                // a hole. The invariant that nothing ever occupies a
+                // gap — which is what lets flight be an unbounded
+                // jump rather than a third coordinate, see
+                // `TerrainType::Chasm` — is held by every forced-move
+                // resolver on the board asking `can_move_to` first,
+                // and that is a lot of sites to hold by inspection.
+                // This is the sweep that would catch the one that
+                // forgot.
+                //
+                // Asked through `tile_admits` rather than through
+                // `is_passable` directly, so the invariant and the
+                // movers that have to uphold it are reading one
+                // predicate. Two creatures on this board legitimately
+                // stand where a plain passability check says nothing
+                // can — a burrower, which is *under* the floor, and a
+                // spirit, which is *inside* the wall — and a sweep
+                // with its own opinion about that would fail on the
+                // rules working correctly. It is the same helper
+                // `can_move_to` puts them there through, so the two
+                // cannot disagree.
+                if !self
+                    .terrain_at(tile)
+                    .is_some_and(|t| self.tile_admits(t.terrain_type, *id))
+                {
+                    problems.push(format!(
+                        "{} (#{}) at {:?} is standing on {:?}, which is {:?}",
+                        actor.name(),
+                        id,
+                        loc,
+                        tile,
+                        self.terrain_at(tile).map(|t| t.terrain_type)
+                    ));
                 }
             }
         }
@@ -8749,12 +8732,9 @@ impl EncounterInstance {
     /// not immersed, therefore drowning, therefore no longer gated, and
     /// away it walks.
     pub(crate) fn footprint_is_water(&self, anchor: Coordinate, size: Size) -> bool {
-        let width = get_tiles_from_size(size) as isize;
-        (0..width).all(|dx| {
-            (0..width).all(|dy| {
-                self.terrain_at(anchor + Coordinate::new(dx, dy))
-                    .is_some_and(|t| t.terrain_type.is_water())
-            })
+        footprint_tiles(anchor, size).all(|tile| {
+            self.terrain_at(tile)
+                .is_some_and(|t| t.terrain_type.is_water())
         })
     }
 
@@ -9478,13 +9458,10 @@ impl EncounterInstance {
             return seen;
         };
         let size = actor.size();
-        let span = get_tiles_from_size(size) as isize;
         let fits = |anchor: Coordinate| {
-            (0..span).all(|dy| {
-                (0..span).all(|dx| {
-                    self.terrain_at(Coordinate::new(anchor.x + dx, anchor.y + dy))
-                        .is_some_and(|t| t.terrain_type.is_passable())
-                })
+            footprint_tiles(anchor, size).all(|tile| {
+                self.terrain_at(tile)
+                    .is_some_and(|t| t.terrain_type.is_passable())
             })
         };
         let jump_tiles = if jump_feet == 0 {

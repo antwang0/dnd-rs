@@ -95,7 +95,8 @@ pub fn footprint_tiles_of_span(
     anchor: Coordinate,
     span: isize,
 ) -> impl Iterator<Item = Coordinate> {
-    (0..span).flat_map(move |dy| (0..span).map(move |dx| Coordinate::new(anchor.x + dx, anchor.y + dy)))
+    (0..span)
+        .flat_map(move |dy| (0..span).map(move |dx| Coordinate::new(anchor.x + dx, anchor.y + dy)))
 }
 
 /// Map glyph + team-keyed (fg, bg) for an actor. The glyph comes from the
@@ -271,6 +272,62 @@ pub fn parse_coord(input: &str, base_coord: Coordinate) -> Option<Coordinate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A footprint is a square block, and the iterator covers exactly
+    /// it — every tile once, none outside, anchored at the corner the
+    /// rest of the engine anchors bodies at.
+    ///
+    /// Pinned because a dozen sites now read their creature's tiles off
+    /// this and none of them can see the loop any more. The Tiny row is
+    /// the one worth having: a single tile is where an off-by-one in
+    /// either direction is easiest to write and hardest to notice.
+    #[test]
+    fn a_footprint_is_exactly_the_square_block_the_creature_stands_on() {
+        let at = Coordinate::new(3, 7);
+        for (size, span) in [
+            (Size::Tiny, 1),
+            (Size::Small, 2),
+            (Size::Medium, 2),
+            (Size::Large, 4),
+            (Size::Huge, 6),
+            (Size::Gargantuan, 8),
+        ] {
+            let tiles: Vec<Coordinate> = footprint_tiles(at, size).collect();
+            assert_eq!(tiles.len(), span * span, "{size:?} covers {span}x{span}");
+            assert_eq!(tiles[0], at, "{size:?} starts at its anchor");
+            assert_eq!(
+                *tiles.last().unwrap(),
+                Coordinate::new(at.x + span as isize - 1, at.y + span as isize - 1),
+                "{size:?} ends at the far corner"
+            );
+            let unique: std::collections::HashSet<Coordinate> = tiles.iter().copied().collect();
+            assert_eq!(unique.len(), tiles.len(), "{size:?} yields no tile twice");
+            assert!(
+                tiles
+                    .iter()
+                    .all(|c| c.x >= at.x && c.y >= at.y && c.x < at.x + span as isize),
+                "{size:?} stays inside its own block"
+            );
+        }
+    }
+
+    /// The span-taking sibling answers the same question, and the two
+    /// have to agree or the area code and the creature code are
+    /// measuring different boxes.
+    #[test]
+    fn the_two_footprint_walks_are_one_walk() {
+        let at = Coordinate::new(-2, 5);
+        for size in [Size::Tiny, Size::Medium, Size::Large, Size::Gargantuan] {
+            let by_size: Vec<Coordinate> = footprint_tiles(at, size).collect();
+            let by_span: Vec<Coordinate> =
+                footprint_tiles_of_span(at, get_tiles_from_size(size) as isize).collect();
+            assert_eq!(by_size, by_span, "{size:?}");
+        }
+        // A degenerate span is empty rather than wrong — the shape a
+        // `0`-radius area hands in.
+        assert_eq!(footprint_tiles_of_span(at, 0).count(), 0);
+        assert_eq!(footprint_tiles_of_span(at, -3).count(), 0);
+    }
 
     /// The conversion is exact on the multiples of five every rule in
     /// the book is written in, and rounds an odd distance up rather than
