@@ -121,29 +121,7 @@ impl EncounterInstance {
         if self.footing_checks_this_turn.contains(&body_id) {
             return;
         }
-        let Some(actor) = self.actors.get(&body_id) else {
-            return;
-        };
-        // A creature that is down, out, or off the floor has no footing
-        // to lose. Each of the three is a separate sentence and none of
-        // them is the ledger's business, so they are asked before it is
-        // written to: a flier that crosses the pond has not spent its
-        // check, and lands on the ice later in the same turn still
-        // owing one.
-        if !actor.is_combat_active()
-            || !actor.is_grounded()
-            || actor.has_condition(Condition::Prone)
-        {
-            return;
-        }
-        if !self.on_slippery_ground(body_id) {
-            return;
-        }
-        // Immunity is checked here rather than left to `add_condition`
-        // so a creature that cannot be knocked prone does not roll a
-        // die whose outcome it is exempt from either way — the same
-        // ordering `apply_zone_contact` uses for the size gate.
-        if self.actor_immune_to_condition(body_id, Condition::Prone) {
+        if !self.footing_at_risk(body_id) {
             return;
         }
         self.footing_checks_this_turn.insert(body_id);
@@ -171,7 +149,53 @@ impl EncounterInstance {
         // which slipping is not.
     }
 
-    /// True if any tile of `actor_id`'s footprint is slippery.
+    /// True if `actor_id` has footing here that the ice could take.
+    ///
+    /// Every gate [`EncounterInstance::test_footing`] applies except the
+    /// once-per-turn ledger, which is not about the creature at all. One
+    /// predicate rather than a list of `if`s inside the resolver,
+    /// because the status panel has to ask the same question and a panel
+    /// that asked a *nearly* identical one would be the kind of bug
+    /// nobody reports: a row that promises a save the engine is never
+    /// going to roll, or stays silent before one it is.
+    ///
+    /// The redirect to the mount is the first of the gates and is why
+    /// this takes the whole encounter rather than an actor: a knight on
+    /// a horse on the ice is not the thing that slips, and the panel a
+    /// player is reading while mounted should be showing them the
+    /// horse's problem, because the horse's problem is about to be
+    /// theirs.
+    ///
+    /// The four refusals, each a separate sentence of the rule:
+    ///
+    ///   - **not on the board** (dead, banished, swallowed) — nothing to
+    ///     stand anywhere;
+    ///   - **not on the floor** (`is_grounded`: flying, `Lifted`,
+    ///     burrowed) — RAW's ice is a surface, and a creature over it is
+    ///     not on it;
+    ///   - **already Prone** — you cannot fall over from the floor;
+    ///   - **immune to Prone** — asked here rather than left to
+    ///     `add_condition`, so an ooze does not roll a die whose outcome
+    ///     it is exempt from either way. The same ordering
+    ///     `apply_zone_contact` uses for its size gate.
+    pub fn footing_at_risk(&self, actor_id: usize) -> bool {
+        let body_id = self.movement_body(actor_id);
+        let Some(actor) = self.actors.get(&body_id) else {
+            return false;
+        };
+        actor.is_combat_active()
+            && actor.is_grounded()
+            && !actor.has_condition(Condition::Prone)
+            && self.on_slippery_ground(body_id)
+            && !self.actor_immune_to_condition(body_id, Condition::Prone)
+    }
+
+    /// True if any tile under `actor_id` is slippery.
+    ///
+    /// Asked of the body that carries it — a rider is standing on its
+    /// mount — for the reason [`EncounterInstance::footing_at_risk`]
+    /// redirects, and so that the two agree when the panel asks one and
+    /// the resolver the other.
     ///
     /// **Any**, where `footprint_is_water` asks **all**, and the
     /// asymmetry is each rule's own. Immersion is a claim about the
@@ -181,13 +205,11 @@ impl EncounterInstance {
     /// has put a foot on the ice, and that is the foot that goes out
     /// from under it.
     ///
-    /// Public because the status panel asks it too: a player whose next
-    /// step is onto a frozen pond should be able to read that off the
-    /// panel rather than infer it from the colour of a glyph, and the
-    /// panel and the rule must not be able to disagree about which tiles
-    /// count.
+    /// Public because the tests read it directly, and because "is there
+    /// ice under this creature" is a question worth being able to ask
+    /// without also asking whether the creature could fall over.
     pub fn on_slippery_ground(&self, actor_id: usize) -> bool {
-        let Some(actor) = self.actors.get(&actor_id) else {
+        let Some(actor) = self.actors.get(&self.movement_body(actor_id)) else {
             return false;
         };
         footprint_tiles(actor.location(), actor.size()).any(|tile| {

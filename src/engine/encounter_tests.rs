@@ -116554,3 +116554,97 @@ fn stonecunning_buys_a_dwarf_the_floor_and_not_the_sky() {
         "a dwarf that has not read the stone is as blind as anybody"
     );
 }
+
+/// The thing that slips is the thing with feet on the ice.
+///
+/// A knight in the saddle is standing on a horse, so the horse takes the
+/// save and the knight takes none — the same redirect `is_immersed`
+/// makes, and for the same reason: while the rider is mounted only the
+/// horse's footprint is stamped on the board, so asking the knight's own
+/// 2x2 span from the horse's anchor measures a quarter of the horse.
+///
+/// The panel follows the rule rather than the rider: what a mounted
+/// player needs to read is the horse's footing, because the horse's
+/// problem is about to be theirs.
+#[test]
+fn a_rider_does_not_slip_the_horse_under_it_does() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::warhorses::WARHORSE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // A frozen patch wide enough for the warhorse's whole 4x4 body.
+    freeze_tiles(
+        &mut e,
+        &(2..=5isize)
+            .flat_map(|x| (2..=5isize).map(move |y| (x, y)))
+            .collect::<Vec<_>>(),
+    );
+    let rider = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 1)
+        .unwrap();
+    let horse = e
+        .instantiate_creature(&WARHORSE_TEMPLATE, Coordinate::new(2, 2), 0, 2)
+        .unwrap();
+    // Alongside the horse's east flank (its 4x4 covers x 2..5), and on
+    // dry floor, so the rider is never on the ice in its own right.
+    e.place_actor_at(rider, Coordinate::new(6, 2)).unwrap();
+    assert!(e.mount(rider, horse).is_ok());
+
+    assert!(e.footing_at_risk(horse), "the horse is on the ice");
+    assert!(
+        e.footing_at_risk(rider),
+        "and the panel a mounted player reads shows the horse's footing"
+    );
+
+    // One save between them, and it is the horse's — the ledger is keyed
+    // on the body, so asking the pair twice asks once.
+    e.test_footing(rider);
+    e.test_footing(horse);
+    assert_eq!(
+        footing_checks(&e),
+        1,
+        "a rider and its mount are one pair of feet: {:#?}",
+        e.messages()
+    );
+    assert!(
+        !e.actors[&rider].has_condition(Condition::Prone),
+        "whatever the roll did, it did it to the horse"
+    );
+}
+
+/// Nothing that cannot be knocked over rolls to stay up.
+///
+/// An ooze is immune to Prone, so the ice has nothing to do to it — and
+/// the gate is asked before the die rather than after, so the log does
+/// not carry a save whose outcome was decided by the stat block. Pinned
+/// on both sides: the ooze is silent and the goblin beside it is not.
+#[test]
+fn something_that_cannot_be_knocked_over_never_rolls_for_its_footing() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::gray_oozes::GRAY_OOZE_TEMPLATE;
+
+    let ice = &[(5, 5), (6, 5), (5, 6), (6, 6)];
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, ice);
+    let ooze = e
+        .instantiate_creature(&GRAY_OOZE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&ooze].effectively_immune_to_condition(Condition::Prone),
+        "the fixture's own premise"
+    );
+    assert!(e.on_slippery_ground(ooze), "it is standing on the ice");
+    assert!(!e.footing_at_risk(ooze), "and has no feet to lose");
+    e.start_turn_for(ooze);
+    assert_eq!(footing_checks(&e), 0, "{:#?}", e.messages());
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, ice);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(e.footing_at_risk(goblin));
+    e.start_turn_for(goblin);
+    assert_eq!(footing_checks(&e), 1, "{:#?}", e.messages());
+}

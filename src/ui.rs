@@ -1094,13 +1094,13 @@ pub fn render_sideinfo(
     // the number is worth printing, unlike every spell DC on the board,
     // which belongs to whoever cast it.
     //
-    // Only for a creature that would actually roll it. Anything in the
-    // air over the pond, and anything already down, is told nothing —
-    // the same discipline the Airborne row keeps.
-    if curr_actor.is_grounded()
-        && !curr_actor.has_condition(crate::conditions::Condition::Prone)
-        && encounter.on_slippery_ground(curr_actor_id)
-    {
+    // Asked through the same predicate the resolver asks, so the row
+    // appears exactly when a save is coming: nothing in the air over the
+    // pond is told anything, nor anything already down, nor anything
+    // that cannot be knocked over — and a rider is shown its *horse's*
+    // footing, because the horse is the thing that slips and its problem
+    // is about to be the rider's.
+    if encounter.footing_at_risk(curr_actor_id) {
         stats_lines.push(Line::from(Span::styled(
             format!(
                 "Footing: slippery ice (DC {} DEX or Prone)",
