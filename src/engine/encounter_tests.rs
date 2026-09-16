@@ -116648,3 +116648,131 @@ fn something_that_cannot_be_knocked_over_never_rolls_for_its_footing() {
     e.start_turn_for(goblin);
     assert_eq!(footing_checks(&e), 1, "{:#?}", e.messages());
 }
+
+/// The pathfinder goes round the pond when there is a way round, and
+/// across it when there is not.
+///
+/// Slippery ice is the third walker-dependent sense of bad ground, after
+/// the caster's antimagic field and the drowner's lake, and it is the
+/// clearest of the three: the same tile is a coin flip for a goblin and
+/// open floor for anything that flies, cannot be knocked over, or is
+/// already crawling.
+///
+/// Asked as a *difference* rather than against a fixed coordinate. The
+/// two boards below are the same board with the same barrier in the same
+/// place, and the only thing that changes is what the barrier is made
+/// of: rubble, which costs a goblin movement, and ice, which costs it
+/// its feet. A route that changes between those two is a route the
+/// aversion decided.
+///
+/// The second half is what stops the aversion being a wall.
+/// `step_toward_actor` runs its avoid-the-bad-ground pass first and falls
+/// back to an unrestricted one, so a frozen pond with no way round is
+/// still a floor.
+#[test]
+fn a_walker_that_could_slip_prefers_the_long_way_round() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    /// A board with a barrier of `surface` across the middle and a gap
+    /// in it along the top, plus a goblin on one side and its quarry on
+    /// the other. Hands back `(encounter, walker, quarry)`.
+    fn barricaded(surface: TerrainType) -> (EncounterInstance, usize, usize) {
+        let mut e = ei_with_terrain(24, 24, &[]);
+        for x in 8..=10isize {
+            for y in 0..18isize {
+                assert!(e.set_terrain_at(Coordinate::new(x, y), surface));
+            }
+        }
+        let walker = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let quarry = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(18, 2), 1, 0)
+            .unwrap();
+        (e, walker, quarry)
+    }
+
+    let (rough, walker, quarry) = barricaded(TerrainType::DifficultTerrain);
+    let through = rough
+        .step_toward_actor(walker, quarry)
+        .expect("rubble is a floor");
+    assert!(
+        !rough.has_bad_ground_for_testing(walker),
+        "rubble is nobody's hazard — the control board has nothing to route around"
+    );
+
+    let (icy, walker, quarry) = barricaded(TerrainType::Ice);
+    assert!(
+        icy.footing_at_risk_ignoring_ground(walker),
+        "a goblin is exactly the thing the ice is for"
+    );
+    assert!(
+        icy.has_bad_ground_for_testing(walker),
+        "…so the board now holds something worth walking around"
+    );
+    let around = icy
+        .step_toward_actor(walker, quarry)
+        .expect("the gap along the top is a route");
+    assert_ne!(
+        through, around,
+        "the same barrier made of ice should send the goblin a different way"
+    );
+
+    // Seal the gap and the same walker takes the ice anyway: the
+    // avoidance pass is a preference, and the pass behind it is the one
+    // that has to find an answer.
+    let (mut sealed, walker, quarry) = barricaded(TerrainType::Ice);
+    for x in 8..=10isize {
+        for y in 18..24isize {
+            assert!(sealed.set_terrain_at(Coordinate::new(x, y), TerrainType::Ice));
+        }
+    }
+    let forced = sealed
+        .step_toward_actor(walker, quarry)
+        .expect("ice is still a floor");
+    assert_ne!(
+        forced,
+        sealed.actors[&walker].location(),
+        "a wall of ice is not a wall"
+    );
+}
+
+/// …and nothing that cannot slip pays anything for the detour.
+///
+/// The aversion is keyed on the walker through the same predicate the
+/// resolver uses, so an ooze walks the shortest line across a frozen
+/// pond. Pinned against the goblin above rather than in the abstract:
+/// two walkers, one board, two different routes.
+#[test]
+fn something_that_cannot_slip_walks_straight_across_the_ice() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::gray_oozes::GRAY_OOZE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(
+        &mut e,
+        &(4..=6isize)
+            .flat_map(|x| (0..20isize).map(move |y| (x, y)))
+            .collect::<Vec<_>>(),
+    );
+    let ooze = e
+        .instantiate_creature(&GRAY_OOZE_TEMPLATE, Coordinate::new(1, 1), 0, 0)
+        .unwrap();
+    let quarry = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 1), 1, 0)
+        .unwrap();
+    assert!(
+        !e.footing_at_risk_ignoring_ground(ooze),
+        "an ooze cannot be knocked over"
+    );
+    assert!(
+        !e.has_bad_ground_for_testing(ooze),
+        "so the board holds nothing it needs to route around"
+    );
+    let step = e.step_toward_actor(ooze, quarry).expect("a route exists");
+    assert_eq!(
+        step,
+        Coordinate::new(2, 1),
+        "the shortest line is straight at the goblin"
+    );
+}

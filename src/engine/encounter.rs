@@ -2176,6 +2176,16 @@ struct WalkerAversions {
     /// round it spends in the water costs it a rung of the exhaustion
     /// ladder. See `engine::breath`.
     drowns: bool,
+    /// This walker has feet the ice could take out from under it —
+    /// SRD 5.2's slippery ice, see `crate::engine::footing`.
+    ///
+    /// The third walker-dependent sense of bad ground and the clearest
+    /// of the three, because the tile is *only* bad for some walkers: a
+    /// flier crosses the pond for nothing, an ooze cannot be knocked
+    /// over, and a creature already crawling has nothing left to lose.
+    /// A frozen pond is open floor to all three and a coin flip to
+    /// everybody else.
+    slips: bool,
 }
 
 impl WalkerAversions {
@@ -2185,6 +2195,7 @@ impl WalkerAversions {
     const NONE: WalkerAversions = WalkerAversions {
         casts: false,
         drowns: false,
+        slips: false,
     };
 }
 
@@ -8988,6 +8999,17 @@ impl EncounterInstance {
         self.terrain.iter().any(|t| t.terrain_type.is_water())
     }
 
+    /// True if any tile on the board is slippery ice.
+    ///
+    /// The sibling of `has_water` directly above, and read by the same
+    /// kind of caller: the pathfinder's hazard pre-check, which skips
+    /// its whole avoid-the-bad-ground pass on a board that has none.
+    /// A board-wide scan is cheaper than a per-tile one exactly because
+    /// it short-circuits, and the common board is thawed.
+    pub fn has_slippery_ground(&self) -> bool {
+        self.terrain.iter().any(|t| t.terrain_type.is_slippery())
+    }
+
     /// What 5e's Underwater Combat rules do to one attack — the shared
     /// chokepoint the die and the AI's attack picker both read, so the
     /// two can never disagree about whether a swing is worth making.
@@ -14110,12 +14132,18 @@ impl EncounterInstance {
     /// the water scan behind it is a walk of the whole terrain grid, so
     /// it is gated on the walker actually being in trouble — which is
     /// almost never, and never at all on a board with no lake.
+    #[cfg(test)]
+    pub(crate) fn has_bad_ground_for_testing(&self, actor_id: usize) -> bool {
+        self.has_bad_ground_for(actor_id)
+    }
+
     fn has_bad_ground_for(&self, actor_id: usize) -> bool {
         let aversions = self.aversions_of(actor_id);
         self.zones
             .iter()
             .any(|z| z.deters_walkers() || (z.effect.suppresses_magic && aversions.casts))
             || (aversions.drowns && self.has_water())
+            || (aversions.slips && self.has_slippery_ground())
     }
 
     /// Everything about `actor_id` that makes a tile bad ground for it
@@ -14139,6 +14167,16 @@ impl EncounterInstance {
             drowns: self.actors.get(&actor_id).is_some_and(|a| {
                 a.breath_rounds() == 0 && !a.breathes_underwater()
             }),
+            // Asked of the walker rather than of the tile, and answered
+            // by the same predicate the resolver asks: whatever
+            // `footing_at_risk` exempts here — the flier, the ooze, the
+            // creature already down — walks the ice for free, so the
+            // pathfinder and the rule cannot disagree about who minds
+            // it. The one clause of that predicate this does *not* get
+            // is `on_slippery_ground`, which is about where the walker
+            // is standing now rather than about the walker, and is the
+            // per-tile half the caller asks below.
+            slips: self.footing_at_risk_ignoring_ground(actor_id),
         }
     }
 
@@ -14173,6 +14211,10 @@ impl EncounterInstance {
                 && self
                     .terrain_at(coord)
                     .is_some_and(|t| t.terrain_type.is_water()))
+            || (aversions.slips
+                && self
+                    .terrain_at(coord)
+                    .is_some_and(|t| t.terrain_type.is_slippery()))
     }
 
     /// True if `actor_id` has anything on its action list that is a

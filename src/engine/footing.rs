@@ -179,6 +179,23 @@ impl EncounterInstance {
     ///     it is exempt from either way. The same ordering
     ///     `apply_zone_contact` uses for its size gate.
     pub fn footing_at_risk(&self, actor_id: usize) -> bool {
+        self.footing_at_risk_ignoring_ground(actor_id) && self.on_slippery_ground(actor_id)
+    }
+
+    /// [`EncounterInstance::footing_at_risk`] with the one clause that
+    /// is about the *tile* peeled off: true when this creature is the
+    /// kind of thing slippery ice could knock over, wherever it happens
+    /// to be standing.
+    ///
+    /// The pathfinder is the caller that needs the split. Its hazard
+    /// question is asked once per walker and then applied to a hundred
+    /// candidate tiles, so "does this creature mind ice" and "is there
+    /// ice here" have to come apart — see
+    /// `EncounterInstance::aversions_of`. Splitting it here rather than
+    /// letting the pathfinder assemble its own version is the point:
+    /// whatever this exempts, the resolver exempts, and a walker cannot
+    /// come to route around a tile that would have cost it nothing.
+    pub fn footing_at_risk_ignoring_ground(&self, actor_id: usize) -> bool {
         let body_id = self.movement_body(actor_id);
         let Some(actor) = self.actors.get(&body_id) else {
             return false;
@@ -186,7 +203,6 @@ impl EncounterInstance {
         actor.is_combat_active()
             && actor.is_grounded()
             && !actor.has_condition(Condition::Prone)
-            && self.on_slippery_ground(body_id)
             && !self.actor_immune_to_condition(body_id, Condition::Prone)
     }
 
