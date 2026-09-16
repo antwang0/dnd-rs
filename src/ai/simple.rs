@@ -20999,16 +20999,32 @@ mod tests {
 
         // And the better one wins. Foresight is the head of the table
         // and Blur is eight rows down.
+        //
+        // Asserted on the **order the two were drunk in** rather than on
+        // what survives the fight, which is what this used to check. A
+        // buff runs out: a fight long enough for Foresight's ten rounds
+        // to lapse is a fight where the rung correctly reaches for the
+        // second bottle, and "the cheaper one is still in the pack" then
+        // fails for a reason that has nothing to do with priority. What
+        // the rung actually promises is which one goes first.
         let foresight = find("Potion of Foresight");
         let (e, pc) = run(&[blur, foresight], 2);
+        let log = e.messages().join("\n").to_lowercase();
+        let at = |name: &str| log.find(&name.to_lowercase());
+        assert!(
+            at(foresight.name).is_some(),
+            "the apex row was never reached for"
+        );
         assert!(
             !e.actors[&pc].has_item_named(foresight.name),
             "the apex row lost to a row eight below it"
         );
-        assert!(
-            e.actors[&pc].has_item_named(blur.name),
-            "and the cheaper one should still be in the pack"
-        );
+        if let (Some(f), Some(b)) = (at(foresight.name), at(blur.name)) {
+            assert!(
+                f < b,
+                "Blur was drunk before Foresight, and Foresight is eight rows above it"
+            );
+        }
     }
 
     /// A staff answers to the spell's name, and answers first.

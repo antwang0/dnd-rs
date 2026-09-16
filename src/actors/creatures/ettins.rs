@@ -1,19 +1,29 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{GREATCLUB, Multiattack};
+use crate::actions::monster_attacks::{CompoundAttack, ETTIN_BATTLEAXE, ETTIN_MORNINGSTAR};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-static ETTIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
-    display_name: "two-headed smash",
-    sub_attack: &GREATCLUB,
-    count: 2,
+/// SRD 5.2: *"Multiattack. The ettin makes one Battleaxe attack and one
+/// Morningstar attack."*
+///
+/// A `CompoundAttack` rather than a `Multiattack`, and the difference is
+/// the stat block: the ettin does not swing one weapon twice, it swings
+/// two different ones once each. It used to be two greatclub swings,
+/// which cost it both its printed damage (`2d8` a head, not `1d10`) and
+/// the thing that makes two heads worth modeling — a creature that
+/// deals Slashing *and* Piercing cannot be shrugged off whole by
+/// anything that resists one of them.
+static ETTIN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "axe + morningstar",
+    parts: vec![(&ETTIN_BATTLEAXE, 1), (&ETTIN_MORNINGSTAR, 1)],
 });
 
-/// Ettin — two-headed giant (CR 4, MM p.132). Each head wields a
-/// greatclub, granting a 2-swing multiattack. Size Large to match the
+/// Ettin — two-headed giant (CR 4). One head swings a battleaxe and the
+/// other a morningstar, which is RAW's Multiattack and the reason the
+/// two are separate weapons; see `ETTIN_MULTI`. Size Large to match the
 /// giant footprint.
 ///
 /// Both of the ettin's traits are about having two heads, and each one

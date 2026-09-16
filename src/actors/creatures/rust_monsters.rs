@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::BITE;
+use crate::actions::monster_attacks::RUST_MONSTER_BITE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 pub static RUST_MONSTER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&BITE);
+    actions.push(&RUST_MONSTER_BITE);
     CreatureTemplate {
         name: "Rust Monster",
         glyph: 'r',

@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{FLYING_SWORD_SLASH, SLAM};
+use crate::actions::monster_attacks::{ANIMATED_ARMOR_SLAM, FLYING_SWORD_SLASH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 /// Charm Person all bounce off.
 pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&SLAM);
+    actions.push(&ANIMATED_ARMOR_SLAM);
     CreatureTemplate {
         name: "Animated Armor",
         // 'I' for "iron armor" — distinct from 'A' (Aboleth) and 'a'

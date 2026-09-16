@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{Multiattack, SLAM};
+use crate::actions::monster_attacks::{Multiattack, NIGHTMARE_HOOVES};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size};
 use std::collections::{HashMap, HashSet};
@@ -7,15 +7,18 @@ use std::sync::LazyLock;
 
 static NIGHTMARE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "flaming hooves",
-    sub_attack: &SLAM,
+    sub_attack: &NIGHTMARE_HOOVES,
     count: 2,
 });
 
 /// Nightmare — fiendish steed wreathed in flame (CR 3, MM p.235). A
 /// Large fiend with fire immunity and cold resistance. Two-hoof
-/// multiattack. The hooves deal fire damage RAW but we reuse SLAM
-/// (bludgeoning) for simplicity; the fire immunity covers the thematic
-/// element.
+/// multiattack, and the hooves burn: SRD 5.2 prints *"13 (2d8 + 4)
+/// Bludgeoning damage plus 10 (3d6) Fire damage"*, and both halves are
+/// modeled now. This note used to say the fire was dropped "for
+/// simplicity" and that the steed's own fire immunity covered the
+/// theme — which left ten average points a hoof, twice a round, on a
+/// CR 3 creature, unrolled. See `NIGHTMARE_HOOVES`.
 pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*NIGHTMARE_MULTI);

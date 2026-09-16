@@ -898,9 +898,23 @@ fn death_burst_fires_at_cleanup_and_respects_immunity() {
     );
 }
 
+/// A Large creature's five-foot reach is measured from its footprint,
+/// not from its centre.
+///
+/// The test used to be `ogre_has_large_footprint_and_reach_2` and used
+/// the ogre's greatclub as its reach-2 weapon, which was a bug standing
+/// in for a rule: SRD 5.2's ogre swings at *"reach 5 ft."* and the club
+/// it was borrowing had been built with ten. See `OGRE_GREATCLUB`.
+///
+/// What is left is the part that was always worth checking, and it is
+/// the part the footprint arithmetic makes non-obvious: a Large
+/// creature with an ordinary five-foot reach threatens the whole ring
+/// around a body two tiles on a side, so it can hit a Medium target
+/// standing one tile clear of its edge — and cannot hit one standing
+/// two tiles clear, which a reach-2 weapon could.
 #[test]
-fn ogre_has_large_footprint_and_reach_2() {
-    use crate::actions::monster_attacks::GREATCLUB;
+fn a_large_creatures_five_foot_reach_is_measured_from_its_footprint() {
+    use crate::actions::monster_attacks::OGRE_GREATCLUB;
     use crate::actors::creatures::ogres::OGRE_TEMPLATE;
     use crate::engine::types::Size;
 
@@ -909,25 +923,34 @@ fn ogre_has_large_footprint_and_reach_2() {
         .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     assert_eq!(e.actors[&ogre].size(), Size::Large);
+    assert_eq!(
+        OGRE_GREATCLUB.reach_tiles(),
+        Some(1),
+        "SRD 5.2 — Ogre Greatclub: \"reach 5 ft.\""
+    );
 
-    // Place a target 2-tile-gap away — within Greatclub reach but
-    // outside normal melee. With a 4×4 ogre at (2,2) and Medium 2×2
-    // target at (8,2), gap_x = max(2,8) - min(5,9) - 1 = 8 - 5 - 1 = 2.
-    let target = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+    // Adjacent to the ogre's footprint rather than to its anchor tile:
+    // a Large body occupies (2,2)-(5,5) here, so (6,2) is the first
+    // column outside it and is what "five feet" reaches.
+    let adjacent = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
         .unwrap();
-    assert_eq!(GREATCLUB.reach_tiles(), Some(2));
-    let aei =
-        ActionExecutionInfo::new(&GREATCLUB, ogre, Some(vec![target]), None, None);
-    assert!(aei.validate(&e), "greatclub should reach 2-gap target");
+    let aei = ActionExecutionInfo::new(&OGRE_GREATCLUB, ogre, Some(vec![adjacent]), None, None);
+    assert!(
+        aei.validate(&e),
+        "five feet reaches the tile next to the footprint"
+    );
 
-    // Place a target further out — outside reach.
-    let far = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 1)
+    // One tile further out is the gap a reach weapon buys and an ogre
+    // does not have.
+    let beyond = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 2), 1, 1)
         .unwrap();
-    let aei_far =
-        ActionExecutionInfo::new(&GREATCLUB, ogre, Some(vec![far]), None, None);
-    assert!(!aei_far.validate(&e), "greatclub should not reach gap-7 target");
+    let aei_far = ActionExecutionInfo::new(&OGRE_GREATCLUB, ogre, Some(vec![beyond]), None, None);
+    assert!(
+        !aei_far.validate(&e),
+        "and it does not reach the tile after that"
+    );
 }
 
 #[test]
@@ -44737,6 +44760,122 @@ fn the_reprinted_attack_lines_roll_the_dice_the_book_prints() {
         "SRD 5.2 — Behir Bite: plus 11 (2d10) Lightning"
     );
     assert_eq!(BEHIR_BITE.rider_type, DamageType::Lightning);
+}
+
+/// The five creatures that were swinging somebody else's weapon now
+/// swing their own.
+///
+/// A generic weapon static is a stand-in, and a good one: `SLAM` and
+/// `BITE` and `GREATCLUB` save the file a hundred near-identical
+/// literals. What a stand-in cannot do is be right for every creature
+/// that reaches for it, and nothing was checking which ones it was
+/// wrong for. Five were:
+///
+///   - the **ogre**, whose greatclub is `2d8` and had `1d10` — and which
+///     had no javelin at all, so an ogre with nobody in reach could only
+///     walk;
+///   - the **ettin**, which swung one club twice where the book gives it
+///     an axe and a morningstar, so a creature with two heads dealt one
+///     damage type;
+///   - the **animated armor**, slamming for `2d6` where the book prints
+///     `1d6`, twice a round;
+///   - the **nightmare**, whose hooves are `2d8` *plus 3d6 fire* and
+///     which was rolling `2d6` and no fire at all;
+///   - the **rust monster**, biting a die size short.
+///
+/// The generic statics stay — each is still exactly right for somebody,
+/// and their docstrings now say who.
+#[test]
+fn a_borrowed_weapon_is_only_honest_where_the_book_agrees() {
+    use crate::actions::monster_attacks::{
+        ANIMATED_ARMOR_SLAM, ETTIN_BATTLEAXE, ETTIN_MORNINGSTAR, GREATCLUB, NIGHTMARE_HOOVES,
+        OGRE_GREATCLUB, OGRE_JAVELIN, RUST_MONSTER_BITE,
+    };
+
+    let rows: &[(&str, crate::engine::dice::Dice, u32, u32, &str)] = &[
+        (
+            "ogre greatclub",
+            OGRE_GREATCLUB.damage_dice,
+            2,
+            8,
+            "Ogre Greatclub: 13 (2d8 + 4) Bludgeoning",
+        ),
+        (
+            "ogre javelin",
+            OGRE_JAVELIN.damage_dice,
+            2,
+            6,
+            "Ogre Javelin: 11 (2d6 + 4) Piercing",
+        ),
+        (
+            "ettin battleaxe",
+            ETTIN_BATTLEAXE.damage_dice,
+            2,
+            8,
+            "Ettin Battleaxe: 14 (2d8 + 5) Slashing",
+        ),
+        (
+            "ettin morningstar",
+            ETTIN_MORNINGSTAR.damage_dice,
+            2,
+            8,
+            "Ettin Morningstar: 14 (2d8 + 5) Piercing",
+        ),
+        (
+            "animated armor slam",
+            ANIMATED_ARMOR_SLAM.damage_dice,
+            1,
+            6,
+            "Animated Armor Slam: 5 (1d6 + 2) Bludgeoning",
+        ),
+        (
+            "nightmare hooves",
+            NIGHTMARE_HOOVES.damage_dice,
+            2,
+            8,
+            "Nightmare Hooves: 13 (2d8 + 4) Bludgeoning",
+        ),
+        (
+            "rust monster bite",
+            RUST_MONSTER_BITE.damage_dice,
+            1,
+            8,
+            "Rust Monster Bite: 5 (1d8 + 1) Piercing",
+        ),
+        (
+            "greatclub",
+            GREATCLUB.damage_dice,
+            1,
+            8,
+            "Greatclub (Simple Melee Weapons): 1d8 Bludgeoning",
+        ),
+    ];
+    for (what, dice, count, faces, line) in rows {
+        assert_eq!(
+            (dice.count, dice.faces),
+            (*count, *faces),
+            "{what} — SRD 5.2 prints \"{line}\""
+        );
+    }
+
+    // The nightmare's other half, which is more than half the damage.
+    assert_eq!(
+        (
+            NIGHTMARE_HOOVES.rider_dice.count,
+            NIGHTMARE_HOOVES.rider_dice.faces
+        ),
+        (3, 6),
+        "SRD 5.2 — Nightmare Hooves: plus 10 (3d6) Fire"
+    );
+    assert_eq!(NIGHTMARE_HOOVES.rider_type, DamageType::Fire);
+
+    // The ettin's two heads deal two damage types, which is the point of
+    // giving it two weapons rather than one swung twice.
+    assert_ne!(
+        ETTIN_BATTLEAXE.damage_type, ETTIN_MORNINGSTAR.damage_type,
+        "a two-headed giant that dealt one damage type could be shrugged \
+         off whole by anything that resisted it"
+    );
 }
 
 /// Every ranged weapon in the engine declares a normal range.

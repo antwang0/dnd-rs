@@ -4404,14 +4404,60 @@ pub static LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
 .two_handed()
 .heavy();
 
-/// Generic STR-based 2d6 bludgeoning slam used by zombies. Stays as the
-/// canonical "monster fist" attack so multislams (and tests) reference it.
+/// Generic STR-based 2d6 bludgeoning slam. Stays as the canonical
+/// "monster fist" attack so multislams (and tests) reference it.
+///
+/// **A generic weapon is a stand-in, and the stand-in is only honest
+/// where the book agrees.** This one is exactly the troll's Rend
+/// (*"13 (2d6 + 4) Slashing"* — bar the type) and exactly nothing
+/// else's: SRD 5.2's animated armor slams for `1d6`, its nightmare's
+/// hooves for `2d8` plus fire, its chimera's claw for `1d6`. Three of
+/// those four borrowed this entry and two of them have their own now —
+/// see [`ANIMATED_ARMOR_SLAM`] and [`NIGHTMARE_HOOVES`].
 pub static SLAM: SimpleWeapon = SimpleWeapon::melee(
     "slam",
     &["slm"],
     AbilityScoreType::Strength,
     Dice::new(2, 6),
     DamageType::Bludgeoning,
+);
+
+/// **Animated Armor Slam** — SRD 5.2: *"Melee Attack Roll: +4, reach 5
+/// ft. Hit: 5 (1d6 + 2) Bludgeoning damage."*
+///
+/// A suit of empty plate punches for a `1d6`, not the `2d6` it was
+/// borrowing off the generic fist. On a CR 1 construct that makes two
+/// of them a round, the difference is seven average damage a turn.
+pub static ANIMATED_ARMOR_SLAM: SimpleWeapon = SimpleWeapon::melee(
+    "slam",
+    &["aslam"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 6),
+    DamageType::Bludgeoning,
+);
+
+/// **Nightmare Hooves** — SRD 5.2: *"Melee Attack Roll: +6, reach 5 ft.
+/// Hit: 13 (2d8 + 4) Bludgeoning damage plus 10 (3d6) Fire damage."*
+///
+/// Both clauses, and the second is the horse. The nightmare's own
+/// docstring used to say *"the hooves deal fire damage RAW but we reuse
+/// SLAM (bludgeoning) for simplicity; the fire immunity covers the
+/// thematic element"* — which is the right note to leave when there is
+/// nothing to hang the clause on, and there has been for a long time:
+/// `WeaponWithRider` is what every dragon's elemental Rend rides.
+///
+/// Ten average points of fire on a CR 3 steed that makes two of these a
+/// round is not thematic. It is most of the damage, and it is the half
+/// a fire-resistant party is supposed to be rewarded for having.
+pub static NIGHTMARE_HOOVES: WeaponWithRider = WeaponWithRider::melee(
+    "flaming hooves",
+    &["hooves", "nh"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+    Dice::new(3, 6),
+    DamageType::Fire,
+    "nightmare flame",
 );
 
 /// Scimitar — the armoury's 1d6 slashing sidearm: **Finesse**, Light,
@@ -4595,18 +4641,109 @@ pub static THROWN_HANDAXE: SimpleWeapon = HANDAXE_PROFILE.thrown(
     THROWN_SHORT_LONG,
 );
 
-/// Greatclub — Ogre's signature weapon. STR-based 1d10 bludgeoning with
-/// **reach 2** (10ft) — first polearm-style attack in the codebase.
-pub static GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Greatclub — SRD 5.2's simple melee weapon: *"1d8 Bludgeoning,
+/// Two-Handed, Push."*
+///
+/// **The weapon, not the ogre.** This static's docstring used to open
+/// "Ogre's signature weapon" and it was built to be one: `1d10` at reach
+/// 2, which is neither the weapon table's line nor the ogre's. Two
+/// different printed things were sharing one entry, and each was wrong
+/// in the other's direction — a player's greatclub hit a die too hard
+/// and reached twice as far as any greatclub does, while the ogre swung
+/// for `1d10` where its stat block prints `2d8`.
+///
+/// The ogre has [`OGRE_GREATCLUB`] now and the ettin has its own two
+/// weapons, which leaves this one doing the job its name says: it is the
+/// club a goliath carries, at the numbers the equipment chapter prints.
+/// No reach — RAW gives the greatclub no Reach property, and the ten
+/// feet this used to have came from the monster it was named after.
+pub static GREATCLUB: SimpleWeapon = SimpleWeapon::melee(
     "greatclub",
     &["gc"],
     AbilityScoreType::Strength,
-    Dice::new(1, 10),
+    Dice::new(1, 8),
     DamageType::Bludgeoning,
-    2,
 )
 .mastery(WeaponMastery::Push)
 .two_handed();
+
+/// **Ogre Greatclub** — SRD 5.2: *"Melee Attack Roll: +6, reach 5 ft.
+/// Hit: 13 (2d8 + 4) Bludgeoning damage."*
+///
+/// The ogre's own line, which it had been borrowing the generic weapon
+/// for. The club nearly doubles — `1d10` to `2d8`, five and a half
+/// average to nine — and the reach comes back down to RAW's five feet,
+/// which costs the ogre a tile of threat and is the trade the book
+/// makes: an ogre hits like a falling tree and has to be standing next
+/// to you to do it.
+///
+/// Worth noting what five feet means for a Large creature here: reach is
+/// measured from the *footprint*, so an ogre still threatens the whole
+/// ring around a body two tiles on a side. What it loses is the extra
+/// tile beyond that, which is a polearm's envelope and never was an
+/// ogre's.
+pub static OGRE_GREATCLUB: SimpleWeapon = SimpleWeapon::melee(
+    "greatclub",
+    &["gc"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Bludgeoning,
+)
+.mastery(WeaponMastery::Push)
+.two_handed();
+
+/// **Ogre Javelin** — SRD 5.2: *"Melee or Ranged Attack Roll: +6, reach
+/// 5 ft. or range 30/120 ft. Hit: 11 (2d6 + 4) Piercing damage."*
+///
+/// The ogre's second printed action, and one it did not have: until now
+/// an ogre with nobody in reach could only walk. RAW hands it a javelin
+/// that throws a hundred and twenty feet, which is most of this
+/// engine's board, and that changes what an ogre *is* on an open map —
+/// not a wall that has to be reached but a thing that answers back.
+///
+/// The throw's bands are the javelin's own 30/120, which is the one
+/// thrown weapon in the book that reaches further than
+/// `THROWN_SHORT_NORMAL` — see `JAVELIN`, whose numbers these are.
+pub static OGRE_JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
+    "javelin",
+    &["jav", "throw"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Piercing,
+    48,
+    12,
+)
+.mastery(WeaponMastery::Slow);
+
+/// **Ettin Battleaxe** — SRD 5.2: *"Melee Attack Roll: +7, reach 5 ft.
+/// Hit: 14 (2d8 + 5) Slashing damage."* One of the ettin's two heads.
+pub static ETTIN_BATTLEAXE: SimpleWeapon = SimpleWeapon::melee(
+    "battleaxe",
+    &["axe", "eba"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Slashing,
+)
+.mastery(WeaponMastery::Topple);
+
+/// **Ettin Morningstar** — SRD 5.2: *"Melee Attack Roll: +7, reach 5 ft.
+/// Hit: 14 (2d8 + 5) Piercing damage."* The other head.
+///
+/// Two weapons rather than two swings of one, because that is what the
+/// stat block prints and because the difference is load-bearing: the
+/// axe is Slashing and the star is Piercing, and a bestiary full of
+/// creatures that resist one and not the other is exactly where a
+/// two-headed giant wants two damage types. The ettin used to swing a
+/// greatclub twice and could be shrugged off whole by anything that
+/// halved bludgeoning.
+pub static ETTIN_MORNINGSTAR: SimpleWeapon = SimpleWeapon::melee(
+    "morningstar",
+    &["star", "emo"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 8),
+    DamageType::Piercing,
+)
+.mastery(WeaponMastery::Sap);
 
 /// Warhammer — STR-based 1d8 bludgeoning martial weapon. The classic
 /// dwarven sidearm; in our engine the versatile-2H clause collapses to
@@ -4734,6 +4871,21 @@ pub static BITE: SimpleWeapon = SimpleWeapon::melee(
     &["bt"],
     AbilityScoreType::Strength,
     Dice::new(1, 6),
+    DamageType::Piercing,
+);
+
+/// **Rust Monster Bite** — SRD 5.2: *"Melee Attack Roll: +3, reach 5 ft.
+/// Hit: 5 (1d8 + 1) Piercing damage."*
+///
+/// One die size up from the generic bite it was borrowing. Small, and
+/// worth its own entry for the reason [`ANIMATED_ARMOR_SLAM`] is: a
+/// shared stand-in is honest only where the book agrees with it, and
+/// here it did not.
+pub static RUST_MONSTER_BITE: SimpleWeapon = SimpleWeapon::melee(
+    "bite",
+    &["rmb"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 8),
     DamageType::Piercing,
 );
 

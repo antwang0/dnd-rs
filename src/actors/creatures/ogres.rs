@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GREATCLUB;
+use crate::actions::monster_attacks::{OGRE_GREATCLUB, OGRE_JAVELIN};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -13,7 +13,10 @@ use std::sync::LazyLock;
 /// hits hard without trivially erasing parties.
 pub static OGRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&GREATCLUB);
+    actions.push(&OGRE_GREATCLUB);
+    // RAW's second Action, and one the ogre did not have: a javelin
+    // that throws a hundred and twenty feet. See `OGRE_JAVELIN`.
+    actions.push(&OGRE_JAVELIN);
     CreatureTemplate {
         name: "Ogre",
         glyph: 'O',
