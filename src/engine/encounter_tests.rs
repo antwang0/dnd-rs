@@ -102872,6 +102872,75 @@ fn every_elemental_ring_is_wired_to_its_own_plane() {
     }
 }
 
+/// The Ring of Animal Influence's Fear frightens the wolves and leaves
+/// their handler standing.
+///
+/// RAW prints the clause as a parenthesis — *"Fear (affects Beasts
+/// only)"* — and a parenthesis is exactly the kind of thing that ships
+/// as a docstring and nothing else. The failure it guards against is
+/// silent in both directions and neither is visible from the picker: a
+/// row whose filter never ran is a Wand of Fear with a ring's price tag,
+/// and a row whose filter ran on the wrong side is a ring that does
+/// nothing at all.
+///
+/// Seed-swept because the cone is a save, so the positive half of the
+/// assertion needs a failure somewhere in the range. The negative half
+/// is checked on **every** seed, which is the half that matters: the
+/// goblin standing beside the wolf must never be frightened, however the
+/// dice land.
+#[test]
+fn the_animal_rings_fear_reaches_only_the_beasts_in_the_cone() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::item_actions::ANIMAL_RING_FEAR;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+    use crate::items::item_template::RING_OF_ANIMAL_INFLUENCE;
+
+    let mut any_wolf_frightened = false;
+    for seed in 0..50u64 {
+        let mut e = ei_seeded(20, 20, &[], seed);
+        let wearer = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        let handler = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 3), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&wearer)
+            .unwrap()
+            .pickup_item(&RING_OF_ANIMAL_INFLUENCE);
+
+        let aei = ActionExecutionInfo::new(
+            &ANIMAL_RING_FEAR,
+            wearer,
+            None,
+            Some(vec![Coordinate::new(8, 2)]),
+            None,
+        );
+        assert!(aei.validate(&e), "ring on the finger and a charge in it");
+        e.push_action(aei);
+        e.process_stack();
+
+        assert!(
+            !e.actors[&handler].has_condition(Condition::Frightened),
+            "the goblin in the cone is not a Beast and RAW's parenthesis \
+             says the ring does not touch it (seed {seed})",
+        );
+        if e.actors[&wolf].has_condition(Condition::Frightened) {
+            any_wolf_frightened = true;
+        }
+    }
+    assert!(
+        any_wolf_frightened,
+        "the ring never frightened the wolf across fifty seeds — either the \
+         filter is rejecting everything or the cone is not reaching it"
+    );
+}
+
 /// Elemental Bane, both halves, and the creature it says nothing about.
 ///
 /// The ring is the first item in the engine whose value depends on the

@@ -1829,6 +1829,37 @@ pub static RING_OF_ELEMENTAL_COMMAND_WATER: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Animal Influence** (Ring, Rare) — three charges of a
+/// bestiary-scoped menu. The whole item, and the two rows of RAW's
+/// three that ship, are documented at
+/// `crate::actions::item_actions::RING_OF_ANIMAL_INFLUENCE_NAME`.
+///
+/// Beside the four rings above because it is the other half of one
+/// idea: the Elemental Command rings ask what a creature *is* to decide
+/// how hard it is to hit, and this one asks the same question to decide
+/// whether a cone of dread touches it at all. Between them they are
+/// every item on the table whose text names a creature type.
+///
+/// No attunement, which is RAW and which is most of what separates this
+/// from its Legendary cousins: three charges of Beast control cost a
+/// finger and nothing else.
+pub static RING_OF_ANIMAL_INFLUENCE: Item = Item {
+    name: crate::actions::item_actions::RING_OF_ANIMAL_INFLUENCE_NAME,
+    glyph: '=',
+    on_use: &[
+        &crate::actions::item_actions::ANIMAL_RING_ANIMAL_FRIENDSHIP,
+        &crate::actions::item_actions::ANIMAL_RING_FEAR,
+    ],
+    charges: 3,
+    // RAW's "regains 1d3 expended charges daily at dawn" — the pool the
+    // Bag of Tricks carries, for a pool the same size.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// SRD 5.2's four Rings of Elemental Command, in the order RAW's own
 /// Elemental Focus list gives them.
 ///
@@ -9724,6 +9755,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &RING_OF_ELEMENTAL_COMMAND_EARTH,
     &RING_OF_ELEMENTAL_COMMAND_FIRE,
     &RING_OF_ELEMENTAL_COMMAND_WATER,
+    // The Rare in the same family, at a Rare's weight. It competes with
+    // nothing above it: the engine limits what a creature *attunes* to
+    // and not what it wears, and this ring asks for no bond at all.
+    &RING_OF_ANIMAL_INFLUENCE,
+    &RING_OF_ANIMAL_INFLUENCE,
 ];
 
 #[cfg(test)]

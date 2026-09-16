@@ -2470,6 +2470,28 @@ pub struct AreaSaveConditionItem {
     /// dry must leave a weapon in the wielder's hand, and the
     /// consume-on-use lane would have deleted one mid-fight.
     pub billing: ItemUseBilling,
+    /// Creature types inside the area this row may affect, or empty for
+    /// "everything the shape catches".
+    ///
+    /// SRD 5.2's Ring of Animal Influence prints a Fear with a
+    /// parenthesis on it — *"Fear (affects **Beasts** only)"* — and the
+    /// parenthesis is the item. A ring that frightened everybody would
+    /// be a Wand of Fear with a wider mouth; a ring that frightens the
+    /// wolves and leaves their handler standing is a tool for one kind
+    /// of room.
+    ///
+    /// The sibling of `SingleSaveConditionItem::target_types`, and
+    /// applied at a different place for a reason worth stating: the
+    /// single-target field is a gate on the **aim**, checked in the
+    /// validator so a wrong target is refused before a charge is spent,
+    /// and this one is a filter on the **catch**, applied per target
+    /// inside the sweep. An area is pointed at the ground; there is no
+    /// wrong aim to refuse, only creatures in the cone that the clause
+    /// does not reach.
+    ///
+    /// Empty on every other row on this chassis, and that is the
+    /// expected shape: a Wand of Web catches what it catches.
+    pub target_types: &'static [crate::engine::types::CreatureType],
 }
 
 impl Action for AreaSaveConditionItem {
@@ -2594,6 +2616,20 @@ impl Action for AreaSaveConditionItem {
         // catch allies; this lets the player aim through their own line
         // without burning the consumable on allies that pass / fail RAW.
         for tid in encounter.enemy_area_targets(caster_id, self.shape, center) {
+            // SRD 5.2's Ring of Animal Influence, *"Fear (affects Beasts
+            // only)"* — the bestiary filter, applied per target rather
+            // than to the aim. An area row's filter has to live here:
+            // the cone lands where it lands, and what the clause narrows
+            // is who inside it is affected, not where it may be pointed.
+            // See `AreaSaveConditionItem::target_types`.
+            if !self.target_types.is_empty()
+                && !encounter
+                    .actors
+                    .get(&tid)
+                    .is_some_and(|t| self.target_types.contains(&t.creature_type()))
+            {
+                continue;
+            }
             // Skip targets immune to this condition — the install would
             // no-op at `add_condition` anyway. The bigger reason for the
             // skip is the Sorcerer Heightened Spell prime: it consumes
@@ -2849,6 +2885,7 @@ pub static USE_WAND_OF_WEB: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Pipes of Haunting — Action; 4-tile burst, WIS save vs DC 13, fail =
@@ -2871,6 +2908,7 @@ pub static PLAY_PIPES_OF_HAUNTING: AreaSaveConditionItem = AreaSaveConditionItem
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// **Mace of Terror** — SRD 5.2: *"This magic mace has 3 charges, and it
@@ -2908,6 +2946,7 @@ pub static SOUND_MACE_OF_TERROR: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 const MACE_OF_TERROR_NAME: &str = "Mace of Terror";
@@ -3012,6 +3051,7 @@ pub static CLAP_OF_THUNDER: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Prone,
     timer: ConditionTimer::Permanent,
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 const THUNDEROUS_GREATCLUB_NAME: &str = "Thunderous Greatclub";
@@ -3141,6 +3181,7 @@ pub static USE_WAND_OF_CONFUSION: AreaSaveConditionItem = AreaSaveConditionItem 
     condition: Condition::Confused,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Hypnotic Pattern — Action; 4-tile burst, WIS save vs DC 14,
@@ -3164,6 +3205,7 @@ pub static READ_HYPNOTIC_PATTERN_SCROLL: AreaSaveConditionItem = AreaSaveConditi
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Vitriolic Sphere — Action; 10d4 acid DEX-save burst,
@@ -3557,6 +3599,7 @@ pub static READ_BANE_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Faerie Fire — Action; 4-tile burst, DEX save vs DC 13, fail
@@ -3579,6 +3622,7 @@ pub static READ_FAERIE_FIRE_SCROLL: AreaSaveConditionItem = AreaSaveConditionIte
     condition: Condition::Outlined,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Wand of Polymorph — Action; single-target, WIS save vs DC 15, fail =
@@ -3843,6 +3887,7 @@ pub static READ_SLOW_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Slowed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Stinking Cloud — Action; 4-tile burst, CON save vs DC 15,
@@ -3867,6 +3912,7 @@ pub static READ_STINKING_CLOUD_SCROLL: AreaSaveConditionItem = AreaSaveCondition
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Death Ward — Action; install `DeathWarded` on a single
@@ -4079,6 +4125,7 @@ pub static READ_FEAR_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 const SCROLL_OF_CHARM_PERSON_NAME: &str = "Scroll of Charm Person";
@@ -4212,6 +4259,7 @@ pub static READ_WEB_SCROLL: AreaSaveConditionItem = AreaSaveConditionItem {
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Potion of Resistance — the unlabelled bottle, and the best of the
@@ -4347,6 +4395,7 @@ pub static READ_CALM_EMOTIONS_SCROLL: AreaSaveConditionItem = AreaSaveConditionI
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Wand of Blindness — Action; single-target CON save vs DC 15, fail =
@@ -4927,6 +4976,7 @@ pub static USE_GEM_OF_BRIGHTNESS: AreaSaveConditionItem = AreaSaveConditionItem 
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 const SCROLL_OF_RESILIENT_SPHERE_NAME: &str = "Scroll of Resilient Sphere";
@@ -8186,6 +8236,7 @@ pub static SWIRL_ROBE_OF_SCINTILLATING_COLORS: AreaSaveConditionItem = AreaSaveC
     // Paralysis, and because RAW's own window is that short.
     timer: ConditionTimer::Rounds(1),
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 const ROBE_OF_SCINTILLATING_COLORS_NAME: &str = "Robe of Scintillating Colors";
@@ -8400,6 +8451,7 @@ pub static SOUND_ROD_OF_LORDLY_MIGHT: AreaSaveConditionItem = AreaSaveConditionI
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 pub const AMULET_OF_THE_PLANES_NAME: &str = "Amulet of the Planes";
@@ -8812,6 +8864,7 @@ pub static PRESENT_ROD_OF_RULERSHIP: AreaSaveConditionItem = AreaSaveConditionIt
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 /// **Dust of Sneezing and Choking** (Wondrous item, Uncommon) — *"you
@@ -8854,6 +8907,7 @@ pub static THROW_DUST_OF_SNEEZING_AND_CHOKING: AreaSaveConditionItem = AreaSaveC
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 
@@ -8904,6 +8958,7 @@ pub static HURL_HAMMER_OF_THUNDERBOLTS: AreaSaveConditionItem = AreaSaveConditio
     condition: Condition::Stunned,
     timer: ConditionTimer::Rounds(1),
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 
@@ -9622,6 +9677,7 @@ pub static ACTIVATE_MIRROR_OF_LIFE_TRAPPING: AreaSaveConditionItem = AreaSaveCon
     // an encounter can make use of, and — as on the flask — nothing
     // gives a cell back at dawn: what is in the mirror stays there.
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 /// **Talisman of Ultimate Evil**, Ultimate End — *"you can take a Magic
@@ -11669,4 +11725,77 @@ pub static DANCE_THE_SWORD: DancingSwordItem = DancingSwordItem {
         damage_type: DamageType::Piercing,
     },
     weapon: &DANCING_SWORD_BLADE,
+};
+
+// ---------------------------------------------------------------------
+// Ring of Animal Influence
+// ---------------------------------------------------------------------
+
+/// **Ring of Animal Influence** (Ring, Rare) — *"This ring has 3
+/// charges, and it regains 1d3 expended charges daily at dawn. While
+/// wearing the ring, you can expend 1 charge to cast one of the
+/// following spells (save DC 13) from it: Animal Friendship, Fear
+/// (affects Beasts only), Speak with Animals."*
+///
+/// The second item in the engine whose text names a creature type —
+/// the four Rings of Elemental Command in
+/// `crate::actions::elemental_rings` are the first — and the one that
+/// showed the idea needed two shapes rather than one.
+///
+/// **Two of RAW's three rows.** *Speak with Animals* has no
+/// implementation and no combat surface that would motivate one; the
+/// other two ship, and they ship on different chassis for a reason
+/// that is the whole distinction:
+///
+///   - **Animal Friendship** is a [`crate::actions::staves::StaffSpell`]
+///     wrapping the real spell, which already refuses anything that is
+///     not a Beast in its own validator. A single-target charm has a
+///     *wrong aim*, and the spell owns that question.
+///   - **Fear** is an [`AreaSaveConditionItem`] carrying `target_types`,
+///     because RAW's parenthetical is not about the aim at all. The cone
+///     lands where the wearer points it; what *"affects Beasts only"*
+///     narrows is who inside it is frightened. Wrapping `spells::FEAR`
+///     would have been the shorter code and the wrong one:
+///     `StaffSpell::only_targets` is read through `affects_creature`,
+///     which the picker and the AI consult and which an area spell's own
+///     `side_effects` never asks — so the row would have looked
+///     Beast-only on the menu and frightened everything in the cone.
+///
+/// The restatement of Fear buys a second thing the wrapper could not
+/// carry: RAW's flat *"save DC 13"*. See
+/// `crate::actions::elemental_rings` for why the rings' spell menus
+/// take the other side of that trade, and `WIND_FAN_GUST` for the
+/// standing divergence both are measured against.
+pub const RING_OF_ANIMAL_INFLUENCE_NAME: &str = "Ring of Animal Influence";
+
+/// Animal Friendship from the ring — one charge, RAW's own spell.
+pub static ANIMAL_RING_ANIMAL_FRIENDSHIP: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "animal ring: animal friendship",
+        action_aliases: &["animal-ring-friendship"],
+        item_name: RING_OF_ANIMAL_INFLUENCE_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 1,
+        spell: || &*crate::actions::spells::ANIMAL_FRIENDSHIP,
+        only_targets: None,
+    };
+
+/// Fear from the ring — one charge, RAW's flat DC 13, and Beasts only.
+pub static ANIMAL_RING_FEAR: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "animal ring: fear",
+    action_aliases: &["animal-ring-fear"],
+    item_name: RING_OF_ANIMAL_INFLUENCE_NAME,
+    log_text: "{actor} turns the ring of animal influence; a wave of dread rolls out.",
+    save: AbilityScoreType::Wisdom,
+    dc: 13,
+    // RAW's 30-foot Cone — twelve tiles on the 2.5-ft grid, the same
+    // length `spells::FEAR` projects.
+    shape: AreaShape::Cone { length: 12 },
+    // A projected area is aimed by naming a tile inside it, so the shape
+    // answers its own reach. See the field's docstring.
+    reach: 0,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Charges(1),
+    target_types: &[crate::engine::types::CreatureType::Beast],
 };
