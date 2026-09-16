@@ -13604,6 +13604,11 @@ mod tests {
         /// that leaves the generator room to be unlucky.
         const MIN_TILES_PER_CR_TEAM: f32 = 12.0;
         let families = pc_template_families();
+        // Counted across the sweep so the freeze above cannot be
+        // vacuous: the generator's pools are a ~1% scatter, so a run
+        // that happened to roll fifteen dry boards would have exercised
+        // nothing while still passing.
+        let mut frozen_tiles = 0usize;
         for seed in 0u64..60 {
             let cr_target = 1.0 + (seed % 9) as f32;
             let n_teams = 2 + (seed % 3) as usize;
@@ -13656,6 +13661,24 @@ mod tests {
                 0 => e.set_weather(crate::engine::weather::Weather::StrongWind),
                 1 => e.set_weather(crate::engine::weather::Weather::HeavyPrecipitation),
                 _ => {}
+            }
+            // …and a quarter of them frozen over, so SRD 5.2's slippery
+            // ice is on the driver's path. It is the only rule in the
+            // engine that can knock a creature down for *walking*, which
+            // makes it the shape of thing that could wedge a fight: a
+            // mover that goes Prone mid-path has its speed zeroed and
+            // abandons the rest of its route, and the AI that queued
+            // that route does not know it is going to happen. A fight
+            // where both sides keep slipping on the way to each other
+            // and neither can close is exactly the deadlock this loop
+            // exists to catch.
+            //
+            // Before the traps for the reason `BoardSettings::apply`
+            // freezes before it scatters: `scatter_traps` arms `Floor`
+            // tiles, so freezing afterwards would be the difference
+            // between a trap under the ice and none.
+            if seed.is_multiple_of(4) {
+                frozen_tiles += e.freeze_pools();
             }
             // …and half of them trapped, so the ward lane is on the
             // driver's path with nobody spared by it. Traps are the one
@@ -13750,6 +13773,10 @@ mod tests {
                 e.round()
             );
         }
+        assert!(
+            frozen_tiles > 0,
+            "no board in the sweep had a pool to freeze, so the ice was never on the path"
+        );
     }
 
     /// A party carrying the whole magic armoury still finishes its
