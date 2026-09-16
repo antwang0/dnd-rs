@@ -403,3 +403,50 @@ impl Action for CloudsJauntAction {
 }
 
 pub static CLOUDS_JAUNT: LazyLock<CloudsJauntAction> = LazyLock::new(|| CloudsJauntAction {});
+
+// ---------------------------------------------------------------------
+// The Human
+// ---------------------------------------------------------------------
+
+/// **Resourceful** — *"You gain Heroic Inspiration whenever you finish a
+/// Long Rest."*
+///
+/// The only one of the Human's three traits with a combat surface, and
+/// the only species trait in SRD 5.2 whose payout is a **reroll**.
+///
+/// Heroic Inspiration, in RAW, is a token you hold: *"you can expend it
+/// to reroll any die immediately after rolling it, and you must use the
+/// new roll."* The engine has no reroll lane and adding a general one
+/// would mean threading an opt-in through every d20 in the codebase.
+/// What it does have is `SELF_DISADVANTAGE_CANCELLERS` — a cohort whose
+/// members spend a charge to straighten out a disadvantaged d20 — and
+/// the overlap between that and RAW is the case a player would always
+/// spend the token on anyway. A reroll of a *good* die is not a reroll
+/// anybody takes.
+///
+/// So the trait ships as a one-charge row on that cohort, and the
+/// divergence is stated rather than hidden: a Human here cannot spend
+/// the token on an ordinary bad roll, only on a roll the board has
+/// already taxed. That is narrower than the book and never wider, which
+/// is the direction an approximation should err.
+///
+/// **No row in `FEATURE_CHARGES`, and that is the right number.** A tag
+/// with no row gets one charge per rest, which is exactly what RAW hands
+/// a Human: one Heroic Inspiration per Long Rest, and *"you can't have
+/// more than one at a time"*. That table exists for pools that are
+/// deeper than one and refuses a row asking for one, on the grounds that
+/// such a row changes nothing — which is true here and worth saying out
+/// loud, because a species trait that is absent from the charge table
+/// otherwise reads like a species trait somebody forgot to size.
+///
+/// **The Human's other two traits need no tag, and that is worth saying
+/// once so their absence does not read as an omission.** *"Skillful:
+/// you gain proficiency in one skill of your choice"* is a row in a
+/// template's `skills` set, and *"Versatile: you gain an Origin feat of
+/// your choice"* is a tag from `actions::feats` in a template's
+/// `features`. Both are choices RAW makes at character creation, which
+/// is exactly what a template in this engine is: a finished sheet with
+/// the choices already taken. A trait that says "pick one of the things
+/// the engine already models" wants no machinery of its own — the
+/// Human's template picks, and its docstring says which.
+pub const RESOURCEFUL_TAG: &str = "human.resourceful";

@@ -68,6 +68,8 @@ pub mod drakes;
 pub mod drow;
 pub mod druids;
 pub mod dwarves;
+pub mod elves;
+pub mod humans;
 pub mod earth_elementals;
 pub mod erinyes;
 pub mod ettins;
@@ -588,6 +590,16 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*halflings::HALFLING_SCOUT_TEMPLATE,
                     &*half_orcs::HALF_ORC_TEMPLATE,
                     &*gnomes::GNOME_TEMPLATE,
+                    // The two species SRD 5.2 prints that the engine had
+                    // no sheet for. The Elf is three, because its
+                    // lineage is a required choice at creation and the
+                    // three differ in what they can see, how fast they
+                    // move and what they cast — see
+                    // `elves::elf_chassis`.
+                    &*elves::DROW_ELF_TEMPLATE,
+                    &*elves::HIGH_ELF_TEMPLATE,
+                    &*elves::WOOD_ELF_TEMPLATE,
+                    &*humans::HUMAN_TEMPLATE,
                     // The six Goliath builds. One family member per
                     // Giant Ancestry benefit, for the reason the
                     // dragonborn has one per breath type: RAW makes the

@@ -723,6 +723,10 @@ struct SelfDisadvantageCanceller {
 ///     disadvantaged rolls where the point is certainly worth spending.
 ///     See `crate::actions::feats::LUCKY_TAG` for the narrowing, and for
 ///     the half of the feat that is deliberately absent.
+///   - The Human's **Resourceful** trait, which is a Heroic Inspiration
+///     token narrowed the same way — RAW rerolls any die and this
+///     spends the token on the roll a player would always spend it on.
+///     See `crate::actions::species::RESOURCEFUL_TAG`.
 const SELF_DISADVANTAGE_CANCELLERS: &[SelfDisadvantageCanceller] = &[
     SelfDisadvantageCanceller {
         tag: crate::actions::class_features::DRUNKARDS_LUCK_TAG,
@@ -733,6 +737,17 @@ const SELF_DISADVANTAGE_CANCELLERS: &[SelfDisadvantageCanceller] = &[
         tag: crate::actions::feats::LUCKY_TAG,
         label: "lucky",
         flavour: "spends a luck point and rolls straight.",
+    },
+    // SRD 5.2 Human **Resourceful** — the Heroic Inspiration a Human
+    // wakes up holding, spent on the one reroll it is always worth
+    // spending on. Last of the three because its pool is the shallowest
+    // and refills the most slowly: one charge, per long rest, and a
+    // holder of two rows should burn the renewable one first.
+    // `species::RESOURCEFUL_TAG` carries the reading and its limits.
+    SelfDisadvantageCanceller {
+        tag: crate::actions::species::RESOURCEFUL_TAG,
+        label: "heroic inspiration",
+        flavour: "shakes it off and rolls again.",
     },
 ];
 
