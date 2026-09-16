@@ -103062,6 +103062,145 @@ fn the_staff_of_the_magi_keeps_its_three_free_rows_after_the_pool_is_gone() {
     );
 }
 
+/// The Cubic Gate hands Plane Shift to somebody who cannot cast it.
+///
+/// The whole argument for the item. `spells::PLANE_SHIFT` is the top row
+/// of the AI's lockdown ladder and the only effect in the engine that
+/// ends a creature's participation permanently, and until this cube it
+/// was reachable by a lich, a Legendary staff nobody but a spellcaster
+/// can attune, and nothing else. RAW asks the cube for no attunement at
+/// all, so what is pinned here is a *fighter* using it: three charges,
+/// one spent, and no spell slot anywhere in the price.
+#[test]
+fn the_cubic_gate_casts_plane_shift_for_a_holder_with_no_spells() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::item_actions::CUBIC_GATE_PLANE_SHIFT;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::CUBIC_GATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pc = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&pc).unwrap().pickup_item(&CUBIC_GATE);
+
+    let costs = CUBIC_GATE_PLANE_SHIFT.cost(&e, pc, Some(&vec![ogre]), None, None);
+    assert!(
+        !costs.iter().any(|c| matches!(c, Resource::SpellSlot(_))),
+        "a fighter has no seventh-level slot and should not be asked for one: \
+         {costs:?}"
+    );
+    assert!(costs.contains(&Resource::ItemCharges {
+        item: CUBIC_GATE.name,
+        count: 1,
+    }));
+
+    let aei =
+        ActionExecutionInfo::new(&CUBIC_GATE_PLANE_SHIFT, pc, Some(vec![ogre]), None, None);
+    assert!(aei.validate(&e), "an adjacent ogre and a charged cube");
+    e.push_action(aei);
+    e.process_stack();
+    assert_eq!(
+        e.actors[&pc].item_charges_remaining(CUBIC_GATE.name),
+        2,
+        "one of three"
+    );
+
+    // Spend the other two and the cube stops offering the row, which is
+    // the pool doing the work RAW's "3 charges" asks of it.
+    {
+        let a = e.actors.get_mut(&pc).unwrap();
+        assert!(a.consume_resource(Resource::ItemCharges {
+            item: CUBIC_GATE.name,
+            count: 2,
+        }));
+    }
+    assert!(
+        !ActionExecutionInfo::new(&CUBIC_GATE_PLANE_SHIFT, pc, Some(vec![ogre]), None, None)
+            .validate(&e),
+        "an empty cube is a cube"
+    );
+}
+
+/// The Amulet of the Planes goes both ways, and the check is which.
+///
+/// RAW's two branches are not "it works" and "nothing happens" — they
+/// are "the creature you touched is gone" and "**you** are gone, and so
+/// is everything standing within fifteen feet of you". That asymmetry is
+/// the item, so both halves are pinned, seeded either side of the DC 15
+/// the check rolls against.
+///
+/// The wearer is a fighter for a reason: no Arcana proficiency and an
+/// average Intelligence, which is the holder RAW's failure table is
+/// really written about, and which makes both branches reachable inside
+/// a handful of seeds.
+#[test]
+fn the_amulet_of_the_planes_sends_the_target_or_it_sends_the_wearer() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::item_actions::USE_AMULET_OF_THE_PLANES;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::AMULET_OF_THE_PLANES;
+
+    // (wearer survived, ogre survived) for one seed.
+    let run = |seed: u64| -> (bool, bool, bool) {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let pc = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+            .unwrap();
+        e.actors.get_mut(&pc).unwrap().pickup_item(&AMULET_OF_THE_PLANES);
+        assert!(
+            e.actors[&pc].is_attuned_to(AMULET_OF_THE_PLANES.name),
+            "the amulet wants attunement and a fighter has a slot free"
+        );
+        let aei =
+            ActionExecutionInfo::new(&USE_AMULET_OF_THE_PLANES, pc, Some(vec![ogre]), None, None);
+        assert!(aei.validate(&e), "an adjacent ogre and an amulet in hand");
+        e.push_action(aei);
+        e.process_stack();
+        let failed = e
+            .messages()
+            .iter()
+            .any(|m| m.contains("the amulet opens under their feet"));
+        (
+            e.actors.contains_key(&pc),
+            e.actors.contains_key(&ogre),
+            failed,
+        )
+    };
+
+    let mut saw_misfire = false;
+    let mut saw_success = false;
+    for seed in 0..40 {
+        let (wearer_here, ogre_here, failed) = run(seed);
+        if failed {
+            saw_misfire = true;
+            assert!(
+                !wearer_here && !ogre_here,
+                "seed {seed}: a failed check takes the wearer and everything \
+                 within fifteen feet of them, and the ogre was adjacent"
+            );
+        } else {
+            saw_success = true;
+            assert!(
+                wearer_here,
+                "seed {seed}: a successful check costs the wearer nothing"
+            );
+            // The ogre may or may not be gone — it still gets RAW's
+            // Charisma save, which is the spell's business and not the
+            // amulet's.
+        }
+    }
+    assert!(saw_misfire, "forty seeds and the check never failed");
+    assert!(saw_success, "forty seeds and the check never succeeded");
+}
+
 /// A spent staff is still a staff.
 ///
 /// The difference between this lane and `spend_item_use`, which drops

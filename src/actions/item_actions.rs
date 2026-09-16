@@ -8175,6 +8175,208 @@ pub static CAPE_OF_THE_MOUNTEBANK_STEP: crate::actions::staves::StaffSpell =
 
 const CAPE_OF_THE_MOUNTEBANK_NAME: &str = "Cape of the Mountebank";
 
+/// **Cubic Gate** (Wondrous item, Legendary) — *"The cube has 3 charges
+/// and regains 1d3 expended charges daily at dawn. As a Magic action,
+/// you can expend 1 of the cube's charges to cast one of the following
+/// spells using the cube… **Plane Shift.** Pressing one side of the cube
+/// twice, you cast Plane Shift, transporting the targets to the plane of
+/// existence keyed to that side."*
+///
+/// The loot table's answer to the one enemy the party cannot beat, and
+/// the first object in the file to carry it. `spells::PLANE_SHIFT` is
+/// the top row of `LOCKDOWNS` — *"the target is put on another plane and
+/// does not come back, this fight or ever"* — and until this cube it
+/// shipped on exactly one stat block (the lich) and, since the Staff of
+/// the Magi, on one Legendary staff that only a spellcaster can attune.
+/// The cube requires no attunement at all, which is RAW and which is the
+/// whole of what it adds: a fighter can press it.
+///
+/// Touch range, because Plane Shift's is. That is what keeps three
+/// charges of "remove a creature permanently" from being a Legendary
+/// item that wins fights from across the room — the holder has to walk
+/// up to the thing and put a hand on it, and the target still gets its
+/// Charisma save.
+///
+/// **RAW's other row is Gate, and the engine has no such spell.** It is
+/// the one SRD conjuration with no combat surface at all — a portal
+/// between planes that the board cannot have two of — so the cube ships
+/// as its second sentence only. The charge price is the same either way,
+/// which means nothing is lost but the flavour of which side you press.
+pub const CUBIC_GATE_NAME: &str = "Cubic Gate";
+
+pub static CUBIC_GATE_PLANE_SHIFT: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "cubic gate: plane shift",
+        action_aliases: &["cubic gate", "cube-shift", "press cube"],
+        item_name: CUBIC_GATE_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 7,
+        spell: || &*crate::actions::spells::PLANE_SHIFT,
+        only_targets: None,
+    };
+
+pub const AMULET_OF_THE_PLANES_NAME: &str = "Amulet of the Planes";
+
+/// RAW's DC on the amulet's check. Named rather than inlined because it
+/// is read twice — once to roll against and once by the test that pins
+/// the two branches apart.
+const AMULET_OF_THE_PLANES_DC: i32 = 15;
+
+/// Fifteen feet of misfire, in tiles. RAW: *"you and each creature and
+/// object within 15 feet of you travel to a random destination"*, and
+/// the grid is 2.5 ft a tile.
+const AMULET_MISFIRE_TILES: isize = 6;
+
+/// **Amulet of the Planes** (Wondrous item, Very Rare, requires
+/// attunement) — *"While wearing this amulet, you can take a Magic
+/// action to name a location that you are familiar with on another plane
+/// of existence. Then make a DC 15 Intelligence (Arcana) check. On a
+/// successful check, you cast Plane Shift. On a failed check, you and
+/// each creature and object within 15 feet of you travel to a random
+/// destination."*
+///
+/// **The first object in the engine that rolls an ability check to work,
+/// and the first thing anywhere that rolls Arcana.** The skill has been
+/// on `Skill` since the beginning and on seven stat blocks — the mage,
+/// the gnome, the artificer, the Arcana cleric, the two sphinxes, the
+/// guardian naga — and nothing has ever asked any of them for it. Every
+/// check the engine rolls is one of four: a grapple, a shove, an escape,
+/// a Search or a Hide. This is the fifth, and it is the one where the
+/// proficiency those seven carry finally buys something.
+///
+/// **The misfire is the item.** A Very Rare amulet that cast Plane Shift
+/// at will and cost nothing on a failure would be strictly better than
+/// the Legendary cube one shelf up, and RAW does not sell it: the failed
+/// check does not fizzle, it fires *at the wearer*. Everything within
+/// fifteen feet leaves the board with them — the wearer's own allies
+/// included, which is why standing in the party's line to use it is the
+/// wrong place to stand.
+///
+/// RAW's 1d100 destination table collapses to one outcome here, and
+/// honestly: every row on it is somewhere that is not this fight. Where
+/// exactly the wearer lands is a question for a campaign, and the board
+/// cannot ask it.
+///
+/// **No charges**, which is RAW and which the check replaces. The
+/// engine's usual rate limiter for an at-will cast is a pool; this one's
+/// is the 25-to-70 percent chance that using it removes you.
+pub struct UseAmuletOfThePlanes {}
+
+impl Action for UseAmuletOfThePlanes {
+    fn name(&self) -> &str {
+        "use amulet of the planes"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["amulet of the planes", "planes amulet", "name a plane"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    /// Plane Shift's, because the amulet casts Plane Shift: touch, one
+    /// tile. The wearer has to be standing next to what they are sending
+    /// away — and, on a failed check, standing next to it when the
+    /// amulet sends *them*.
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(1)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, AMULET_OF_THE_PLANES_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::RemoveFromEncounter;
+
+        let wearer = encounter.actor_name(caster_id);
+        let roll = encounter.roll_ability_check(
+            caster_id,
+            AbilityScoreType::Intelligence,
+            Some(crate::engine::types::Skill::Arcana),
+        );
+        if roll >= AMULET_OF_THE_PLANES_DC {
+            encounter.log(format!(
+                "  amulet of the planes: {wearer} names the plane (Arcana {roll} vs \
+                 DC {AMULET_OF_THE_PLANES_DC})."
+            ));
+            // The spell itself, through its own resolver — the wearer's
+            // Charisma DC, the target's Charisma save, the same removal.
+            return crate::actions::spells::PLANE_SHIFT.side_effects(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                overrides,
+            );
+        }
+
+        encounter.log(format!(
+            "  amulet of the planes: {wearer} loses the thread (Arcana {roll} vs \
+             DC {AMULET_OF_THE_PLANES_DC}); the amulet opens under their feet."
+        ));
+        // Everyone the misfire catches, the wearer included. RAW's
+        // "within 15 feet of you" names no team, so this is the one
+        // removal in the engine that is neither aimed nor scoped.
+        let Some(centre) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let mut caught = encounter.neutral_area_targets(
+            caster_id,
+            AreaShape::Burst {
+                radius: AMULET_MISFIRE_TILES,
+            },
+            centre,
+        );
+        caught.push(caster_id);
+        caught
+            .into_iter()
+            .map(|actor_id| {
+                Box::new(RemoveFromEncounter {
+                    actor_id,
+                    log_verb: "is swept to a random plane",
+                }) as Box<dyn ApplicableSideEffect>
+            })
+            .collect()
+    }
+}
+
+pub static USE_AMULET_OF_THE_PLANES: UseAmuletOfThePlanes = UseAmuletOfThePlanes {};
+
 /// **Ring of Telekinesis** (Ring, Very Rare, requires attunement) —
 /// *"While wearing this ring, you can cast Telekinesis from it."*
 ///

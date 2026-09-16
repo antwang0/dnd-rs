@@ -7190,6 +7190,38 @@ pub static CAPE_OF_THE_MOUNTEBANK: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Cubic Gate** (Wondrous item, Legendary) — three charges of Plane
+/// Shift out of an object anybody can hold.
+///
+/// See `item_actions::CUBIC_GATE_PLANE_SHIFT` for the row, RAW's second
+/// side of the cube and the reason the first one is not here.
+pub static CUBIC_GATE: Item = Item {
+    name: crate::actions::item_actions::CUBIC_GATE_NAME,
+    glyph: '#',
+    on_use: &[&crate::actions::item_actions::CUBIC_GATE_PLANE_SHIFT],
+    charges: 3,
+    // RAW: "regains 1d3 expended charges daily at dawn".
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
+/// **Amulet of the Planes** (Wondrous item, Very Rare, requires
+/// attunement) — Plane Shift at will, on a DC 15 Arcana check, and a
+/// failed check sends the wearer instead.
+///
+/// See `item_actions::USE_AMULET_OF_THE_PLANES` for both branches and
+/// for why this is the first item in the engine that rolls a skill.
+pub static AMULET_OF_THE_PLANES: Item = Item {
+    name: crate::actions::item_actions::AMULET_OF_THE_PLANES_NAME,
+    glyph: '"',
+    on_use: &[&crate::actions::item_actions::USE_AMULET_OF_THE_PLANES],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Potion of Fire Breath** (Potion, Uncommon) — three breaths of 4d6
 /// fire at anything within thirty feet.
 ///
@@ -9317,6 +9349,16 @@ pub static LOOT_POOL: &[&Item] = &[
     &CAPE_OF_THE_MOUNTEBANK,
     &POTION_OF_FIRE_BREATH,
     &POTION_OF_FIRE_BREATH,
+    // And the Legendary end of the same argument: three charges of
+    // Plane Shift out of a cube that wants no attunement, so a party
+    // with no caster in it still has an answer to the one creature it
+    // cannot kill. Single entry, at the weight the Staff of Power and
+    // the Staff of the Magi sit on.
+    &CUBIC_GATE,
+    // And the same spell one rarity down, at a price the cube does not
+    // charge: an Arcana check, and a failure that takes the wearer and
+    // everything standing near them off the board instead.
+    &AMULET_OF_THE_PLANES,
     // The rest of the SRD's A–Z that says "you can cast X from it" on
     // something that is not a staff. Four items and seven rows between
     // them, all on the `StaffSpell` chassis the Cape and the Circlet

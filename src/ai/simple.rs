@@ -21163,6 +21163,25 @@ mod tests {
             // attack wanted, every round, for five AC against an attack
             // that may never come.
             ("cube of force: shield", "no reaction window opens before the roll"),
+            // The Amulet of the Planes is the one row on the table that
+            // can lose the fight for the side that uses it. A failed DC
+            // 15 Arcana check does not fizzle — it takes the wearer and
+            // everything within fifteen feet of them off the board,
+            // which on a front line is most of a party. Every rung in
+            // this file ranks a candidate by what it does to the target;
+            // none of them can price a coin flip against the caster's
+            // own team, and a rung that reached for it would be a lich
+            // preferring a gamble to the Plane Shift on its own list —
+            // because `find_printing` prefers the item printing, which
+            // is the right rule for every other object in the file.
+            //
+            // Deliberately paired with the amulet declaring no
+            // `printed_spell_name`: the two together are what keep the
+            // lockdown cohort from finding it by the spell's name.
+            (
+                "use amulet of the planes",
+                "a coin flip that can remove the user's own side",
+            ),
         ];
         let exempt: BTreeMap<&str, &str> = NOT_FOR_THE_AI.iter().copied().collect();
 
@@ -21527,6 +21546,75 @@ mod tests {
             try_item_lockdown(&e, pc).is_none(),
             "the rung spent a charge paralysing something already paralysed"
         );
+    }
+
+    /// An area whose whole effect is a condition does not count a
+    /// creature that already has it.
+    ///
+    /// The spell-list half of the sweep above, and the same bug one lane
+    /// over. `Action::installs_condition` exists because four monsters
+    /// spent every round of every fight re-gazing an already-affected
+    /// party; the fix was applied to the four gazes and to the two
+    /// save-condition item chassis, and the *spells* of exactly that
+    /// shape were left undeclared. Each of these eight is one condition
+    /// and nothing else — no damage die, no rider — so a circle over a
+    /// party that already has it is a turn spent on nothing, and the
+    /// floor that decides whether the cast is worth taking was counting
+    /// those bodies.
+    ///
+    /// Asked through `burst_would_change` rather than through a whole
+    /// fight, for the reason the item test gives: a fight has a second
+    /// way to stop re-casting (the target dies) and this is about the
+    /// answer the picker gives.
+    #[test]
+    fn an_area_whose_whole_effect_is_a_condition_skips_a_creature_that_has_it() {
+        use crate::actions::action_template::Action;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        let cohort: [(&'static (dyn Action + Send + Sync), Condition); 8] = [
+            (&*crate::actions::spells::FAERIE_FIRE, Condition::Outlined),
+            (&*crate::actions::spells::BANE, Condition::Baned),
+            (&*crate::actions::spells::CONFUSION, Condition::Confused),
+            (&*crate::actions::spells::ENTANGLE, Condition::Restrained),
+            (&*crate::actions::spells::SLOW, Condition::Slowed),
+            (&*crate::actions::spells::PLANT_GROWTH, Condition::Entangled),
+            (
+                &*crate::actions::spells::MASS_POLYMORPH,
+                Condition::Polymorphed,
+            ),
+            (
+                &*crate::actions::spells::ENEMIES_ABOUND,
+                Condition::Confused,
+            ),
+        ];
+
+        for (action, condition) in cohort {
+            let mut e = empty_arena_seeded(1);
+            let ogre = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 8), 1, 0)
+                .unwrap();
+            assert_eq!(
+                action.installs_condition(),
+                Some(condition),
+                "{} should declare the one condition it installs",
+                action.name()
+            );
+            assert!(
+                burst_would_change(&e, action, ogre),
+                "{} should be worth casting at a fresh ogre",
+                action.name()
+            );
+            e.actors
+                .get_mut(&ogre)
+                .unwrap()
+                .add_condition(condition, ConditionTimer::Rounds(10));
+            assert!(
+                !burst_would_change(&e, action, ogre),
+                "{} counts an ogre it would not change",
+                action.name()
+            );
+        }
     }
 
     /// The at-will shelf is a shelf the AI reaches for.

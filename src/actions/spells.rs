@@ -3430,6 +3430,20 @@ pub static SHIELD: LazyLock<Shield> = LazyLock::new(|| Shield {});
 pub struct FaerieFire {}
 
 impl Action for FaerieFire {
+    /// Outlined, and the spell is nothing else: no die, no rider, and one
+    /// condition on everything that fails. So a circle drawn over a
+    /// party that already has it changes nothing at all, which is
+    /// exactly the claim `Action::installs_condition` is for.
+    ///
+    /// Eight area spells in this file were the shape that method was
+    /// written to describe and none of them said so, which left the
+    /// AoE picker counting an already-outlined creature towards the
+    /// floor that decides whether the cast is worth a turn. The
+    /// bestiary's four gaze attacks had the same bug and were fixed by
+    /// declaring it; the spell list kept it. See `burst_would_change`.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Outlined)
+    }
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -3770,6 +3784,11 @@ pub static MISTY_STEP: LazyLock<MistyStep> = LazyLock::new(|| MistyStep {});
 pub struct Bane {}
 
 impl Action for Bane {
+    /// Baned, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Baned)
+    }
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -7975,6 +7994,11 @@ pub static HASTE: LazyLock<Haste> = LazyLock::new(|| Haste {});
 pub struct Slow {}
 
 impl Action for Slow {
+    /// Slowed, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Slowed)
+    }
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -16261,6 +16285,11 @@ pub static CREATE_UNDEAD: SummonSpell = SummonSpell {
 pub struct Confusion {}
 
 impl Action for Confusion {
+    /// Confused, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Confused)
+    }
     fn spares_allies(&self) -> bool {
         // Resolved through the enemy-scoped area helpers, so the
         // caster's own side is never in the blast to begin with. The
@@ -16521,6 +16550,11 @@ pub static LEVITATE: LazyLock<Levitate> = LazyLock::new(|| Levitate {});
 pub struct PlantGrowth {}
 
 impl Action for PlantGrowth {
+    /// Entangled, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Entangled)
+    }
     fn spares_allies(&self) -> bool {
         // Resolved through the enemy-scoped area helpers, so the
         // caster's own side is never in the blast to begin with. The
@@ -18954,6 +18988,11 @@ pub static POWER_WORD_PAIN: LazyLock<PowerWordPain> = LazyLock::new(|| PowerWord
 pub struct MassPolymorph {}
 
 impl Action for MassPolymorph {
+    /// Polymorphed, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Polymorphed)
+    }
     fn spares_allies(&self) -> bool {
         // Resolved through the enemy-scoped area helpers, so the
         // caster's own side is never in the blast to begin with. The
@@ -27331,6 +27370,11 @@ impl Entangle {
 }
 
 impl Action for Entangle {
+    /// Restrained, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Restrained)
+    }
     fn holds_concentration(&self) -> bool {
         true
     }
@@ -35461,6 +35505,11 @@ pub static INTELLECT_FORTRESS: LazyLock<IntellectFortress> =
 pub struct EnemiesAbound {}
 
 impl Action for EnemiesAbound {
+    /// Confused, and nothing else — see `FaerieFire::installs_condition`
+    /// for what the declaration buys the AoE picker.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Confused)
+    }
     fn holds_concentration(&self) -> bool {
         true
     }
