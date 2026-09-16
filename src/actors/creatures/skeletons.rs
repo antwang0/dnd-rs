@@ -1,6 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     LONGBOW, MINOTAUR_SKELETON_CHARGE, MINOTAUR_SKELETON_GORE, MINOTAUR_SKELETON_SLAM,
+    SKELETON_SHORTSWORD,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -8,12 +9,28 @@ use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, S
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// 5e-flavored skeleton archer. Lower HP than a zombie but DEX-based ranged
-/// attack — pressure-tests the longbow + LOS path. Vulnerable to bludgeoning
-/// (brittle bones); immune to poison and exhaustion (undead).
+/// Skeleton — lower HP than a zombie, DEX-based, and armed at both
+/// ranges. Vulnerable to bludgeoning (brittle bones); immune to poison
+/// and exhaustion (undead).
+///
+/// **It has a sword now.** SRD 5.2's Gear line is *"Shortbow,
+/// Shortsword"* and it prints both as Actions; this template shipped
+/// with the bow alone, which meant a skeleton with an enemy standing
+/// next to it could only shoot — at disadvantage, into melee, for the
+/// whole fight. See `SKELETON_SHORTSWORD`.
+///
+/// **The bow is a longbow, which is the engine's and not the book's.**
+/// RAW's skeleton carries a shortbow (`1d6` at 80/320). The longbow
+/// hits a die harder and reaches further, and it is what this template
+/// has pressure-tested the ranged + line-of-sight path with since it
+/// was written — a divergence worth naming rather than quietly
+/// correcting, because the whole test suite measures range against it.
 pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&LONGBOW);
+    // The melee half of RAW's Gear line, and the half that was
+    // missing — see `SKELETON_SHORTSWORD`.
+    actions.push(&SKELETON_SHORTSWORD);
     CreatureTemplate {
         name: "Skeleton",
         glyph: 'S',

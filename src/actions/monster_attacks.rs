@@ -6523,9 +6523,17 @@ impl Action for GhoulClaws {
             caster_id,
             target_ids,
             self.name(),
-            AbilityScoreType::Strength,
-            Some(AbilityScoreType::Strength),
-            Dice::new(2, 4),
+            // DEX, not STR. SRD 5.2's ghoul is Str 13 (+1) and Dex 15
+            // (+2), and its Claw is printed at +4 with PB +2 — which is
+            // the Dexterity. The claw swung off Strength for one point
+            // less to hit and one less damage.
+            AbilityScoreType::Dexterity,
+            Some(AbilityScoreType::Dexterity),
+            // RAW: *"Hit: 4 (1d4 + 2) Slashing damage."* This was `2d4`,
+            // which is the previous printing's. The claw is the ghoul's
+            // *weaker* attack in 5.2 and its whole value is the rider —
+            // see below.
+            Dice::new(1, 4),
             DamageType::Slashing,
             true,
         );
@@ -6551,6 +6559,75 @@ impl Action for GhoulClaws {
 }
 
 pub static GHOUL_CLAWS: LazyLock<GhoulClaws> = LazyLock::new(|| GhoulClaws {});
+
+/// **Ghoul Bite** — SRD 5.2: *"Melee Attack Roll: +4, reach 5 ft. Hit: 5
+/// (1d6 + 2) Piercing damage plus 3 (1d6) Necrotic damage."*
+///
+/// The ghoul's *primary* action, and it was not on the sheet. RAW's
+/// Multiattack is *"two Bite attacks"* — the paralysing claw is the
+/// option, not the routine — so a ghoul that had only claws was a
+/// creature making one attack a turn where the book gives it two, and
+/// dealing no necrotic damage at all.
+///
+/// What that cost is most of the monster: two bites are about eighteen
+/// average points against one claw's four and a half, and the choice
+/// between them — lock somebody down, or kill them — is the ghoul's
+/// entire tactical character.
+pub static GHOUL_BITE: WeaponWithRider = WeaponWithRider::melee(
+    "ghoul bite",
+    &["gb", "ghoul-chomp"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    Dice::new(1, 6),
+    DamageType::Necrotic,
+    "ghoul hunger",
+);
+
+/// Ghoul multiattack — SRD 5.2: *"The ghoul makes two Bite attacks."*
+pub static GHOUL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double bite",
+    sub_attack: &GHOUL_BITE,
+    count: 2,
+});
+
+/// **Skeleton Shortsword** — SRD 5.2: *"Melee Attack Roll: +5, reach 5
+/// ft. Hit: 6 (1d6 + 3) Piercing damage."*
+///
+/// The skeleton's melee action, which it did not have. The template
+/// shipped with a longbow and nothing else, so a skeleton with an enemy
+/// standing next to it could only shoot — at disadvantage, into melee,
+/// for the whole fight. RAW's skeleton carries a shortsword *and* a
+/// shortbow and is a perfectly ordinary infantry undead.
+///
+/// DEX, which is what the printed +5 is: the skeleton is Str 10 (+0),
+/// Dex 16 (+3), PB +2.
+pub static SKELETON_SHORTSWORD: SimpleWeapon = SimpleWeapon::melee(
+    "shortsword",
+    &["ss", "skele-sword"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+)
+.light()
+.finesse()
+.mastery(WeaponMastery::Vex);
+
+/// **Gelatinous Cube Pseudopod** — SRD 5.2: *"Melee Attack Roll: +4,
+/// reach 5 ft. Hit: 12 (3d6 + 2) Acid damage."*
+///
+/// The cube's other action, and the one it could not do without. Engulf
+/// is a *move*: it needs somewhere to move through and a creature that
+/// will fit, and a cube already holding a body — or facing one it cannot
+/// swallow — had nothing at all to do with its turn. A pseudopod is what
+/// the book gives it for exactly that case.
+pub static GELATINOUS_CUBE_PSEUDOPOD: SimpleWeapon = SimpleWeapon::melee(
+    "pseudopod",
+    &["gcp", "cube-slap"],
+    AbilityScoreType::Strength,
+    Dice::new(3, 6),
+    DamageType::Acid,
+);
 
 /// Ghast Bite — STR-based 2d8+STR piercing melee. The CR-2 ghast's
 /// heavier-die secondary swing of the bite + claws compound. Pure

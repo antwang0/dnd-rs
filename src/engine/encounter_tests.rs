@@ -44878,6 +44878,86 @@ fn a_borrowed_weapon_is_only_honest_where_the_book_agrees() {
     );
 }
 
+/// Three stat blocks that were missing a printed Action, and the thing
+/// each of them could not do without it.
+///
+/// A missing attack is the quietest bug a bestiary can have. The
+/// creature still fights, still takes its turn, still loses eventually;
+/// what it does not do is the thing the book says it does, and nothing
+/// in the log says so.
+///
+/// Each of these had a shape-of-the-monster consequence:
+///
+///   - the **skeleton** had a bow and no sword, so one standing in melee
+///     could only shoot — at disadvantage, into contact, all fight;
+///   - the **ghoul** had claws and no bite, so a CR 1 undead made one
+///     attack a turn where RAW's Multiattack makes two, and dealt none
+///     of its necrotic damage;
+///   - the **gelatinous cube** had Engulf and nothing else, and Engulf
+///     is a *move*: a cube already holding a body had no action at all.
+#[test]
+fn the_three_stat_blocks_that_were_missing_an_action_can_use_it() {
+    use crate::actions::monster_attacks::{GELATINOUS_CUBE_PSEUDOPOD, GHOUL_BITE};
+    use crate::actors::creatures::gelatinous_cubes::GELATINOUS_CUBE_TEMPLATE;
+    use crate::actors::creatures::ghouls::GHOUL_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+
+    // The skeleton: a sword it can actually swing at the thing next to
+    // it. Asserted through `validate` at contact rather than by looking
+    // for the action on the list, because "is on the sheet" is what was
+    // never the problem.
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let adjacent = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    let sword = e.actors[&skeleton]
+        .find_action("shortsword")
+        .expect("SRD 5.2 gear: \"Shortbow, Shortsword\"");
+    assert!(
+        ActionExecutionInfo::new(sword, skeleton, Some(vec![adjacent]), None, None)
+            .validate(&e),
+        "a skeleton in contact has something better to do than shoot"
+    );
+
+    // The ghoul: two bites is the routine and the claw is the option,
+    // which is RAW's Multiattack and the whole of the creature's
+    // character.
+    let ghoul = e
+        .instantiate_creature(&GHOUL_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+        .unwrap();
+    assert!(
+        e.actors[&ghoul].find_action("double bite").is_some(),
+        "SRD 5.2: \"The ghoul makes two Bite attacks.\""
+    );
+    assert!(
+        e.actors[&ghoul].find_action("ghoul claws").is_some(),
+        "and the paralysing claw stays, as the other half of the choice"
+    );
+    assert_eq!(
+        (GHOUL_BITE.rider_dice.count, GHOUL_BITE.rider_dice.faces),
+        (1, 6),
+        "SRD 5.2 — Ghoul Bite: plus 3 (1d6) Necrotic"
+    );
+    assert_eq!(GHOUL_BITE.rider_type, DamageType::Necrotic);
+
+    // The cube: something to do on a turn it cannot swallow anybody.
+    let cube = e
+        .instantiate_creature(&GELATINOUS_CUBE_TEMPLATE, Coordinate::new(12, 12), 0, 2)
+        .unwrap();
+    assert!(
+        e.actors[&cube].find_action("pseudopod").is_some(),
+        "SRD 5.2 — Gelatinous Cube: \"Pseudopod. … 12 (3d6 + 2) Acid damage.\""
+    );
+    assert_eq!(
+        GELATINOUS_CUBE_PSEUDOPOD.damage_type,
+        DamageType::Acid,
+        "a cube hits with the thing it is made of"
+    );
+}
+
 /// Every ranged weapon in the engine declares a normal range.
 ///
 /// Two separate rules read that number and neither can ask for it a
