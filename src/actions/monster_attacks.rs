@@ -4543,6 +4543,25 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
 
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
 /// Pairs with a primary action attack; reach 12 tiles (≈30ft).
+///
+/// **Three deliberate divergences from RAW's shortbow, and they are one
+/// decision.** SRD 5.2's shortbow is `1d6` Piercing at 80/320 feet and
+/// costs an **Action**; this is `1d4` at 30 feet and costs a **Bonus
+/// Action**. What it models is not the weapon but the *second* attack a
+/// goblin gets out of a turn — the engine has no Multiattack for a
+/// CR 1/4 skirmisher, and a plink it can throw after closing is a
+/// better shape for the creature than a bow it must stand still to
+/// use. The die and the range are paid for that: a bonus-action `1d6`
+/// at eighty feet would be strictly better than the scimitar beside it.
+///
+/// Held in place by `goblin_can_use_action_and_bonus_action_in_one_turn`,
+/// which is a test about the action economy rather than about archery.
+///
+/// A creature that should really shoot a shortbow — one whose stat
+/// block prints it as an Action — wants its own static rather than this
+/// one; `SATYR_SHORTBOW` is the pattern. The name is kept because the
+/// thing in the goblin's hands is still a shortbow, and nothing else in
+/// the file would read as clearly on the picker.
 pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     display_name: "shortbow",
     aliases: &["sb-bow", "shoot2"],
