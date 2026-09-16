@@ -67,7 +67,11 @@ struct Cli {
     ///     at all — see `crate::engine::jumping`. `--rifts` cuts
     ///     `Cli::DEFAULT_RIFTS` cracks in the floor and `--rifts=N` cuts
     ///     N, or as many of them as the board can take without being
-    ///     split in two.
+    ///     split in two;
+    ///   - the **freeze** is the one with nothing to count, because the
+    ///     generator lays no ice — `--frozen` turns the water the room
+    ///     already rolled into SRD 5.2's slippery ice, so how much of it
+    ///     there is remains the map's decision rather than the player's.
     board: BoardSettings,
 }
 
@@ -99,6 +103,7 @@ impl Cli {
         let mut weather = Weather::default();
         let mut traps = 0usize;
         let mut rifts = 0usize;
+        let mut frozen = false;
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
             // Checked before the number parse and before the name
@@ -162,6 +167,16 @@ impl Cli {
                 rifts = count;
                 continue;
             }
+            // The freeze, and the one board setting with nothing to
+            // count. See `BoardSettings::frozen`: the generator lays no
+            // ice, it freezes the water the room already rolled, so
+            // `--frozen=6` would be asking the map for something it has
+            // no way to produce. A bare flag on the same `--` lane
+            // instead.
+            if arg == "--frozen" {
+                frozen = true;
+                continue;
+            }
             match arg.parse::<u64>() {
                 Ok(n) if seed.is_none() => seed = Some(n),
                 _ => name_parts.push(arg),
@@ -181,6 +196,7 @@ impl Cli {
                 weather,
                 traps,
                 rifts,
+                frozen,
             },
         }))
     }
@@ -243,7 +259,7 @@ impl Cli {
         let mut msg =
             String::from(
                 "usage: dnd-rs [seed] [class name] [--light-level] [--weather] \
-                 [--traps[=N]] [--rifts[=N]]\n\n",
+                 [--traps[=N]] [--rifts[=N]] [--frozen]\n\n",
             );
         msg.push_str("Every argument is optional and order-independent: the first\n");
         msg.push_str("argument that parses as a number is the seed, a --flag sets\n");
@@ -263,6 +279,10 @@ impl Cli {
              --rifts cuts {}, --rifts=N cuts N\n\n",
             Self::DEFAULT_RIFTS
         ));
+        msg.push_str(
+            "Frozen water (thawed by default):\n  \
+             --frozen turns every pool to slippery ice\n\n",
+        );
         msg.push_str("Classes:\n");
         msg.push_str(&Self::class_listing());
         msg
@@ -341,7 +361,10 @@ fn main() -> io::Result<()> {
             // listing survives on the terminal instead of being wiped
             // by the TUI teardown.
             eprintln!("{}", msg);
-            eprintln!("usage: dnd-rs [seed] [class name] [--light-level] [--weather]");
+            eprintln!(
+                "usage: dnd-rs [seed] [class name] [--light-level] [--weather] \
+                 [--traps[=N]] [--rifts[=N]] [--frozen]"
+            );
             std::process::exit(2);
         }
     };

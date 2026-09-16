@@ -93,6 +93,50 @@ pub enum TerrainType {
     /// above assumes the creatures can see each other well enough to
     /// swing.
     Water,
+    /// SRD 5.2's **Slippery Ice**, from *Environmental Effects*:
+    /// *"Slippery ice is Difficult Terrain. A creature that moves onto
+    /// slippery ice for the first time on a turn or starts its turn
+    /// there must succeed on a DC 10 Dexterity saving throw or have the
+    /// Prone condition."*
+    ///
+    /// The entry [`crate::engine::weather`] counted and did not take.
+    /// That module opens by sorting the nine Environmental Effects into
+    /// the two a fight can see and the seven measured in hours, and the
+    /// arithmetic never added up: it names six hour-scale entries, and
+    /// slippery ice — which is written in the vocabulary of a *step* and
+    /// a *turn*, the two units this engine is made of — was the ninth,
+    /// counted among the hours and left there. It is not weather. It is
+    /// a tile, so it lives here.
+    ///
+    /// Two clauses, and the split between them is the whole reason this
+    /// is a variant rather than a flavour of `DifficultTerrain`:
+    ///
+    ///   - **It is difficult terrain**, at the same surcharge and under
+    ///     the same waiver. `movement_cost` puts it in the same match
+    ///     arm rubble is in, and `ActorInstance::ignores_difficult_terrain`
+    ///     waives it for the same fliers and the same Land's Stride —
+    ///     RAW says "is Difficult Terrain", not "costs double", and the
+    ///     difference between those two sentences is exactly the waiver.
+    ///
+    ///   - **It asks for a save.** No other tile on the board rolls
+    ///     anything, which is what makes this the first terrain with a
+    ///     *trigger* rather than only a cost — see
+    ///     [`crate::engine::footing`], which owns the rule, the DC and
+    ///     the once-per-turn ledger the two triggers share.
+    ///
+    /// Frozen water, and generated as exactly that: `freeze_pools`
+    /// retypes a board's pools rather than laying ice of its own, so an
+    /// icy map is the map the pool generator already knew how to draw,
+    /// in winter. That is also why it is *not* `is_water` — the whole
+    /// point of a frozen pond is that you walk over it. Nothing is
+    /// immersed in it, nothing swims in it, no bow is spoiled by it and
+    /// nothing drowns under it.
+    ///
+    /// Not `is_diggable` either, for the reason `Water` is not: what is
+    /// under a frozen pond is the pond. A burrower reaching one has run
+    /// out of earth, which is the same answer it got before the ice
+    /// arrived.
+    Ice,
     /// A hole in the floor — SRD 5.2's Long Jump rule names one by
     /// name: *"a jump across a stream or chasm"*.
     ///
@@ -153,7 +197,10 @@ impl TerrainType {
     /// `is_water`.
     pub fn movement_cost(self) -> f32 {
         match self {
-            TerrainType::DifficultTerrain | TerrainType::LowWall | TerrainType::Water => 2.0,
+            TerrainType::DifficultTerrain
+            | TerrainType::LowWall
+            | TerrainType::Ice
+            | TerrainType::Water => 2.0,
             _ => 1.0,
         }
     }
@@ -173,6 +220,27 @@ impl TerrainType {
         matches!(self, TerrainType::Water)
     }
 
+    /// True if standing on this tile costs a creature its footing —
+    /// SRD 5.2's slippery ice, and the predicate
+    /// [`crate::engine::footing`] is keyed on.
+    ///
+    /// A named property rather than a bare `== TerrainType::Ice` at the
+    /// one site that asks, for the reason `is_water` is one: the
+    /// question is about the *surface*, and the next slick tile — a
+    /// greased floor a spell leaves behind, the deck of a ship in a
+    /// storm — should answer it by joining this match arm rather than by
+    /// being forgotten at a call site that names a variant.
+    ///
+    /// Deliberately not folded into `movement_cost`'s difficult-terrain
+    /// arm as "the difficult terrain that also trips you". The two
+    /// clauses are waived by different things: a druid's Land's Stride
+    /// takes the surcharge off and leaves the ice just as slippery,
+    /// because RAW's waiver is about *"difficult terrain"* costing
+    /// movement and says nothing about staying upright.
+    pub fn is_slippery(self) -> bool {
+        matches!(self, TerrainType::Ice)
+    }
+
     /// True if there is **earth under this tile** for a burrower to
     /// move through — see `crate::engine::burrowing`.
     ///
@@ -185,6 +253,11 @@ impl TerrainType {
     ///     burrow speed is not a swim speed and RAW never lets one
     ///     stand in for the other — an ankheg at the bottom of a pool
     ///     is swimming badly, not tunnelling.
+    ///   - **`Ice`** is a lid on that same pool, and excluded for the
+    ///     same reason rather than a new one: what is under it is the
+    ///     water, so a burrower that reaches the shore of a frozen pond
+    ///     has run out of earth exactly where it ran out before the
+    ///     pond froze.
     ///   - **`Chasm`** is the floor's absence, so there is nothing to
     ///     tunnel through and nothing to come up out of.
     ///   - **`Wall`** is solid rock, and RAW gates it behind a clause
@@ -291,7 +364,8 @@ impl TerrainType {
     /// would tax the same shot twice for the same reason. `Chasm` is
     /// excluded because it is a hole rather than a parapet: the floor
     /// being absent does not put anything between an archer and the
-    /// creature on the far lip.
+    /// creature on the far lip. `Ice` is excluded because it is a floor
+    /// — flat, and at eye level with the floor around it.
     pub fn grants_cover(self) -> bool {
         matches!(self, TerrainType::LowWall)
     }

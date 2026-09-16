@@ -2406,6 +2406,17 @@ pub struct EncounterInstance {
     /// a creature shoved into a web on somebody else's turn triggers it,
     /// and shoving them back in on that same turn does not.
     zone_contacts_this_turn: std::collections::HashSet<(usize, usize)>,
+    /// The same ledger, one layer down: actors who have already tested
+    /// their footing on this turn's slippery ground — see
+    /// `crate::engine::footing`.
+    ///
+    /// A second set rather than a row on `zone_contacts_this_turn`,
+    /// because the pair above is keyed on a zone id and the ice is not a
+    /// zone; there is nothing to put in the first slot. Cleared at the
+    /// same moment and for the same reason, which is the half these two
+    /// genuinely share — RAW's *"for the first time on a turn"* scopes
+    /// both to the turn rather than to the holder's own turn.
+    pub(crate) footing_checks_this_turn: std::collections::HashSet<usize>,
     /// SRD 5.2's *"Success: The target is immune to this X's Y for 24
     /// hours"* clause, as `(victim id, source id, trait name)` triples
     /// that have already made the save once and are done with that
@@ -8260,6 +8271,22 @@ impl EncounterInstance {
             && (coord.y as usize) < self.height
     }
 
+    /// Every tile on the map, row-major.
+    ///
+    /// The board walk, which half a dozen passes and tests had each
+    /// written out as the same nested `for y in 0..self.height as isize
+    /// { for x in .. }` with the same two casts — `scatter_traps`,
+    /// `carve_rifts`, the freeze in `engine::footing`, and a fixture in
+    /// `app` that spelled it as a `flat_map` because it needed an
+    /// iterator rather than a loop.
+    ///
+    /// Row-major, matching `idx`'s own layout, so anything that collects
+    /// the tiles gets them in the order the map is stored and drawn in.
+    pub fn board_coordinates(&self) -> impl Iterator<Item = Coordinate> + '_ {
+        let (w, h) = (self.width as isize, self.height as isize);
+        (0..h).flat_map(move |y| (0..w).map(move |x| Coordinate::new(x, y)))
+    }
+
     pub fn is_spawnable(&self, coord: Coordinate) -> bool {
         if !self.in_bounds(coord) {
             return false;
@@ -10344,6 +10371,35 @@ impl EncounterInstance {
         for id in self.ride_pair(actor_id) {
             self.touch_zones_alone(id);
         }
+    }
+
+    /// **A creature is now standing here** — the single hook for
+    /// everything the board does to whoever arrives on a tile.
+    ///
+    /// Two layers answer that, and they answer it to the same RAW
+    /// sentence: *"enters the area for the first time on a turn or
+    /// starts its turn there."* `touch_zones` is the overlay — a web, a
+    /// cloud, a glyph, a trap — and `test_footing` is the tile itself,
+    /// which under SRD 5.2's slippery ice can take a creature's feet out
+    /// from under it (see `crate::engine::footing`).
+    ///
+    /// One call rather than two at each site, and that is the point of
+    /// it. Nine places in the engine are "this creature has arrived
+    /// somewhere": every step of a walk, a teleport, a shove, a pull, a
+    /// drag, a banishment lapsing, a swallowed creature cut free, and
+    /// the top of a turn. All nine already knew to fire the zone half,
+    /// and a second layer added as a second line at each would have
+    /// been a list to keep in step by hand — with the failure mode that
+    /// the one site somebody forgot is the one where a creature crosses
+    /// a frozen pond for free.
+    ///
+    /// The zone half runs first. A zone that drops the arriving creature
+    /// leaves nobody to test the footing of, and `test_footing`'s own
+    /// liveness gate is what makes that ordering safe rather than
+    /// lucky.
+    pub fn touch_ground(&mut self, actor_id: usize) {
+        self.touch_zones(actor_id);
+        self.test_footing(actor_id);
     }
 
     /// `touch_zones` for exactly one creature. The body of the old
@@ -14855,6 +14911,7 @@ impl EncounterInstance {
             zones: Vec::new(),
             zone_id_next: 0,
             zone_contacts_this_turn: std::collections::HashSet::new(),
+            footing_checks_this_turn: std::collections::HashSet::new(),
             trait_immunities: std::collections::HashSet::new(),
             staged_saves: std::collections::HashMap::new(),
             repeat_saves: std::collections::HashMap::new(),
@@ -16911,6 +16968,10 @@ impl EncounterInstance {
         // web during somebody else's turn has entered it for the first
         // time on that turn and saves for it.
         self.zone_contacts_this_turn.clear();
+        // …and the same clear for the tile layer's copy of the same
+        // clause, in the same breath and for the same reason. See
+        // `crate::engine::footing`.
+        self.footing_checks_this_turn.clear();
         // "The cloud moves 10 feet away from you at the start of each of
         // your turns", and the attached sphere's "it moves with you".
         // Runs after the ledger clear, so a creature the cloud arrives
@@ -16922,8 +16983,11 @@ impl EncounterInstance {
         // "…or starts its turn there." Runs after the clear so the
         // creature standing in the web pays this turn's save, and after
         // `reconcile_footprints` so a creature that just grew into the
-        // area is caught by it.
-        self.touch_zones(actor_id);
+        // area is caught by it. Through `touch_ground`, so the same
+        // clause on the tile under them — the ice they woke up on — is
+        // asked at the same moment rather than at a site of its own that
+        // could drift out of step with this one.
+        self.touch_ground(actor_id);
     }
 
     /// 5e Conquest Paladin **Aura of Conquest** (subclass level 7), both
@@ -20687,7 +20751,7 @@ impl EncounterInstance {
                 grappler_name, captive_name, dest
             ));
             self.pickup_items_at(captive_id, dest);
-            self.touch_zones(captive_id);
+            self.touch_ground(captive_id);
         }
     }
 

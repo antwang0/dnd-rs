@@ -1,17 +1,25 @@
 //! **Weather** — SRD 5.2's *Environmental Effects*, or the half of them
 //! a fight can see.
 //!
-//! The section prints nine entries and seven of them are measured in
-//! hours: deep water, extreme cold, extreme heat, frigid water, high
-//! altitude are all "at the end of each hour, save or gain a level of
-//! Exhaustion", and thin ice is a weight budget for a party crossing a
-//! lake. None of those has a surface on a board whose longest fight is
-//! twenty rounds — two minutes.
+//! The section prints nine entries and six of them are measured in
+//! something longer than a fight: deep water, extreme cold, extreme
+//! heat, frigid water and high altitude are all "at the end of each
+//! hour, save or gain a level of Exhaustion", and thin ice is a weight
+//! budget for a party crossing a lake. None of those has a surface on a
+//! board whose longest fight is twenty rounds — two minutes.
 //!
-//! Two do. **Strong Wind** and **Heavy Precipitation** are written
+//! Three do. **Strong Wind** and **Heavy Precipitation** are written
 //! entirely in the vocabulary of a round: an attack roll, a flying
 //! creature's turn, a light source, an obscurement. They are what this
 //! module is.
+//!
+//! The third is **Slippery Ice**, and it is not here — it is a *tile*,
+//! not a sky, so it lives in [`crate::engine::terrain::TerrainType::Ice`]
+//! with its rule in [`crate::engine::footing`]. This paragraph used to
+//! sort the table into "two a fight can see" and "seven measured in
+//! hours" while naming only six of the seven, which is what an entry
+//! that belongs to neither half looks like from inside the half that
+//! does not want it.
 //!
 //! ## Why a board-level enum
 //!

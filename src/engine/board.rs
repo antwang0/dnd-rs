@@ -79,6 +79,20 @@ pub struct BoardSettings {
     /// have cut the board in two is put back, so a room with no space
     /// for four gets fewer.
     pub rifts: usize,
+    /// Whether the water on each board is frozen over — SRD 5.2's
+    /// slippery ice, and the fifth answer this struct's own docs
+    /// predicted. See [`crate::engine::footing`].
+    ///
+    /// A flag rather than a density, and it is the one setting here that
+    /// could not be one: the generator lays no ice of its own, so what
+    /// `freeze_pools` freezes is however much water the room happened to
+    /// roll. Asking for "six tiles of ice" would be asking the map a
+    /// question it cannot answer, where asking for six traps is asking
+    /// it for six of something it makes.
+    ///
+    /// Carried across the room boundary like the rest: a `--frozen` run
+    /// is a dungeon in winter, not one cold room.
+    pub frozen: bool,
 }
 
 impl BoardSettings {
@@ -98,6 +112,17 @@ impl BoardSettings {
     pub fn apply(&self, encounter: &mut EncounterInstance) {
         encounter.set_ambient_light(self.ambient);
         encounter.set_weather(self.weather);
+        // The freeze sits between the sky and the scatter, and both
+        // sides of that are the rule. After the weather, because a
+        // frozen board is what the cold *did* to the room rather than a
+        // second thing the sky is doing. Before the traps and the
+        // rifts, because both of those read the map they are laid on:
+        // `scatter_traps` arms `Floor` tiles only, so freezing afterward
+        // would have been the difference between a trap under the ice
+        // and none.
+        if self.frozen {
+            encounter.freeze_pools();
+        }
         encounter.scatter_traps(self.traps);
         encounter.carve_rifts(self.rifts);
     }
@@ -119,5 +144,6 @@ mod tests {
         assert_eq!(board.weather, Weather::Calm);
         assert_eq!(board.traps, 0);
         assert_eq!(board.rifts, 0);
+        assert!(!board.frozen);
     }
 }

@@ -58,6 +58,46 @@ pub fn get_tiles_from_size(size: Size) -> usize {
     }
 }
 
+/// Every tile a `size` footprint anchored at `anchor` sits on.
+///
+/// The loop this engine writes more than any other. A creature on this
+/// board is a square block of tiles rather than a point — Medium is
+/// 2×2, Gargantuan 8×8 — so "what is under this creature" is a nested
+/// `for` over `get_tiles_from_size(size)`, and it had been written out
+/// at a dozen sites in four shapes: `for x_off in 0..width { for y_off
+/// .. }` where the answer is a side effect, `(0..width).all(..)` where
+/// it is a predicate over every tile, `(0..width).any(..)` where it is
+/// one over some tile, and a private copy in `engine::areas` that took
+/// a span instead of a `Size`.
+///
+/// One iterator serves all four, because all four differ only in what
+/// they do with it: `.all`, `.any`, `.for_each`, `.collect`. What that
+/// buys is not brevity — it is that the *conversion* from a `Size` to a
+/// span happens in one place, so a site cannot quietly ask a Large
+/// creature's question over a 2×2 box.
+///
+/// Row-major (`dy` outer), matching `engine::areas`'s copy, so anything
+/// that collects the tiles gets them in the order the map is drawn in.
+pub fn footprint_tiles(anchor: Coordinate, size: Size) -> impl Iterator<Item = Coordinate> {
+    footprint_tiles_of_span(anchor, get_tiles_from_size(size) as isize)
+}
+
+/// [`footprint_tiles`] for a caller that already has the span in tiles
+/// rather than a `Size` — the geometry half, with the size lookup
+/// peeled off.
+///
+/// Two callers want this: the area code, whose spans come out of a
+/// spell's radius rather than off a creature, and the resize lane,
+/// which asks the counterfactual *"would this actor fit here one
+/// category bigger"* and therefore holds a span that belongs to no
+/// creature on the board.
+pub fn footprint_tiles_of_span(
+    anchor: Coordinate,
+    span: isize,
+) -> impl Iterator<Item = Coordinate> {
+    (0..span).flat_map(move |dy| (0..span).map(move |dx| Coordinate::new(anchor.x + dx, anchor.y + dy)))
+}
+
 /// Map glyph + team-keyed (fg, bg) for an actor. The glyph comes from the
 /// creature template (capital letter per species); the team color uses the
 /// 16-color ANSI palette. Team 0 gets a lighter bg so it stands out as

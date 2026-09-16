@@ -14,6 +14,7 @@ pub mod emanations;
 pub mod encounter;
 pub mod errors;
 pub mod falling;
+pub mod footing;
 pub mod hovering_blade;
 pub mod incorporeal;
 pub mod jumping;

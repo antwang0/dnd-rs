@@ -679,7 +679,7 @@ impl ApplicableSideEffect for MoveActor {
             // drops the walker is caught by the liveness check at the
             // top of the next iteration, the same as an opportunity
             // attack that does.
-            ei.touch_zones(self.actor_id);
+            ei.touch_ground(self.actor_id);
             // …and the tile-billed trigger, which is a different
             // sentence: Spike Growth charges for every 5 ft travelled,
             // so it is asked on every step rather than once per
@@ -921,7 +921,7 @@ impl ApplicableSideEffect for TeleportActor {
                 // destination: a Misty Step that lands inside a web is
                 // an entry into it, and RAW gives no exemption for
                 // arriving by magic.
-                ei.touch_zones(self.actor_id);
+                ei.touch_ground(self.actor_id);
             }
             Err(e) => ei.log(format!("TeleportActor failed: {}", e)),
         }
@@ -2616,7 +2616,7 @@ fn forced_move(
     // RAW makes no exception for *how* a creature got into the area:
     // shoved into a web by a Thunderwave, it has still entered the area
     // for the first time on this turn, and it saves.
-    ei.touch_zones(actor_id);
+    ei.touch_ground(actor_id);
 }
 
 /// Forced movement toward a fixed point, up to `max_tiles` steps, without

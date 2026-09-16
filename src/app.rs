@@ -1437,6 +1437,7 @@ mod tests {
             weather: Weather::HeavyPrecipitation,
             traps: 4,
             rifts: 2,
+            frozen: true,
         };
         app.board.apply(&mut app.encounter);
         app.encounter
@@ -1465,16 +1466,14 @@ mod tests {
         // terrain rather than a zone, so it is counted off the map
         // directly; `carve_rifts` puts back anything that would have
         // split the board, so the count is "some" rather than a number.
-        let rift_tiles = |app: &App| {
+        let tiles_of = |app: &App, want: crate::engine::terrain::TerrainType| {
             let e = &app.encounter;
-            (0..e.height as isize)
-                .flat_map(|y| (0..e.width as isize).map(move |x| Coordinate::new(x, y)))
-                .filter(|&c| {
-                    e.terrain_at(c)
-                        .is_some_and(|t| t.terrain_type == crate::engine::terrain::TerrainType::Chasm)
-                })
+            e.board_coordinates()
+                .filter(|&c| e.terrain_at(c).is_some_and(|t| t.terrain_type == want))
                 .count()
         };
+        let rift_tiles =
+            |app: &App| tiles_of(app, crate::engine::terrain::TerrainType::Chasm);
         assert!(rift_tiles(&app) > 0, "the fixture's own premise");
 
         assert!(app.start_next_encounter(), "the next room generates");
@@ -1497,6 +1496,28 @@ mod tests {
         assert!(
             rift_tiles(&app) > 0,
             "the second room's floor was quietly mended"
+        );
+        // …and the freeze, asked the only way a generated room can be
+        // asked it. The ice *count* is the map's business — a room that
+        // rolled no pools has no ice and is not a bug — so what is
+        // pinned is the invariant `freeze_pools` promises: after it, no
+        // open water is left. The tiles it spares are the ones with a
+        // body standing in them, so the survivors are counted against
+        // the creatures rather than against zero.
+        let unoccupied_water = |app: &App| {
+            let e = &app.encounter;
+            e.board_coordinates()
+                .filter(|&c| {
+                    e.terrain_at(c)
+                        .is_some_and(|t| t.terrain_type.is_water())
+                        && e.actor_id_at(c).is_none()
+                })
+                .count()
+        };
+        assert_eq!(
+            unoccupied_water(&app),
+            0,
+            "the second room thawed out on the way in"
         );
     }
 

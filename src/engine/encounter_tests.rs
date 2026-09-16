@@ -21479,7 +21479,7 @@ fn cloud_of_daggers_cuts_what_walks_into_it() {
     // Standing two tiles away costs nothing.
     let untouched = e.actors[&goblin].hitpoints();
     // Walk onto the blades: 4d4 with no save, so any roll hurts.
-    MoveActor {
+    crate::engine::side_effects::MoveActor {
         actor_id: goblin,
         path: vec![Coordinate::new(9, 8), blades],
     }
@@ -112474,6 +112474,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/encounter.rs", include_str!("encounter.rs")),
         ("engine/errors.rs", include_str!("errors.rs")),
         ("engine/falling.rs", include_str!("falling.rs")),
+        ("engine/footing.rs", include_str!("footing.rs")),
         ("engine/hovering_blade.rs", include_str!("hovering_blade.rs")),
         ("engine/incorporeal.rs", include_str!("incorporeal.rs")),
         ("engine/jumping.rs", include_str!("jumping.rs")),
@@ -115902,4 +115903,311 @@ fn a_weapons_bonus_stays_off_a_spell_attack_and_a_wands_stays_off_a_swing() {
         0,
         "and not on the cantrip"
     );
+}
+
+// ─── SRD 5.2 Slippery Ice ────────────────────────────────────────────
+//
+// See `crate::engine::footing`, which owns the rule, and
+// `TerrainType::Ice`, which is the tile. The tests below are the two
+// RAW triggers, the four exemptions, and the price of a crossing.
+
+/// Lay a band of ice across `e` at the given tiles.
+fn freeze_tiles(e: &mut EncounterInstance, tiles: &[(isize, isize)]) {
+    for &(x, y) in tiles {
+        assert!(
+            e.set_terrain_at(Coordinate::new(x, y), TerrainType::Ice),
+            "({}, {}) should be on the board",
+            x,
+            y
+        );
+    }
+}
+
+/// How many times the ice has spoken this fight — one line per resolved
+/// save, whichever way it went.
+fn footing_checks(e: &EncounterInstance) -> usize {
+    e.messages()
+        .iter()
+        .filter(|m| m.contains("slippery ice"))
+        .count()
+}
+
+/// SRD 5.2 **Slippery Ice**: *"A creature that moves onto slippery ice
+/// for the first time on a turn … must succeed on a DC 10 Dexterity
+/// saving throw or have the Prone condition."*
+///
+/// **For the first time on a turn** is the whole test. A goblin skating
+/// four tiles across a frozen pond makes one save, not four — the same
+/// ledger discipline `touch_zones` keeps for a web, at the layer below
+/// it.
+#[test]
+fn a_crossing_of_slippery_ice_is_one_save_however_many_tiles_it_takes() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(
+        &mut e,
+        &[(5, 5), (6, 5), (7, 5), (8, 5), (5, 6), (6, 6), (7, 6), (8, 6)],
+    );
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    // A failed save ends the walk where it started — Prone zeros the
+    // mover's speed and `MoveActor` abandons the rest of the path — so
+    // what is counted below is the *ledger* rather than the outcome of
+    // the roll, which is the same either way.
+    crate::engine::side_effects::MoveActor {
+        actor_id: goblin,
+        path: vec![
+            Coordinate::new(3, 5),
+            Coordinate::new(4, 5),
+            Coordinate::new(5, 5),
+            Coordinate::new(6, 5),
+            Coordinate::new(7, 5),
+        ],
+    }
+    .apply(&mut e);
+
+    assert_eq!(
+        footing_checks(&e),
+        1,
+        "one crossing is one save: {:#?}",
+        e.messages()
+    );
+}
+
+/// The second trigger, and the one that catches a creature that never
+/// moves: *"…or starts its turn there."*
+///
+/// The ledger is cleared for the whole board at the top of every turn,
+/// so the goblin that skated on last turn is asked again this turn.
+#[test]
+fn ice_asks_again_at_the_top_of_every_turn_spent_standing_on_it() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, &[(5, 5), (6, 5), (5, 6), (6, 6)]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // Standing there from the start: the install itself rolls nothing,
+    // exactly as a zone laid over a creature does not fire on install.
+    assert_eq!(footing_checks(&e), 0, "arriving on the board is not a turn");
+
+    for turn in 1..=3 {
+        // A creature that went down on an earlier turn cannot fall over
+        // again, so it is stood back up between turns — the question
+        // here is whether the *trigger* fires every turn.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .remove_condition(Condition::Prone);
+        e.start_turn_for(goblin);
+        assert_eq!(
+            footing_checks(&e),
+            turn,
+            "turn {} should have asked once: {:#?}",
+            turn,
+            e.messages()
+        );
+    }
+}
+
+/// Nothing that is not standing on the ice is asked about it.
+///
+/// Three exemptions, one board. A flier is over the pond rather than on
+/// it; a creature already Prone has no footing left to lose; and a
+/// creature on the floor beside the ice was never on it. The fourth
+/// exemption — immunity to Prone — is `actor_immune_to_condition`'s and
+/// is pinned where that is.
+#[test]
+fn only_something_standing_on_the_ice_tests_its_footing() {
+    use crate::actors::creatures::giant_owls::GIANT_OWL_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let ice = &[(5, 5), (6, 5), (5, 6), (6, 6)];
+
+    // The flier, which crosses for nothing.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, ice);
+    let owl = e
+        .instantiate_creature(&GIANT_OWL_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&owl].is_airborne(),
+        "the fixture wants a bird in the air"
+    );
+    e.start_turn_for(owl);
+    assert_eq!(footing_checks(&e), 0, "nothing in the air slips");
+
+    // The creature that is already down.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, ice);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Prone, ConditionTimer::Permanent);
+    e.start_turn_for(goblin);
+    assert_eq!(footing_checks(&e), 0, "you cannot fall over from the floor");
+
+    // And the one standing next to it.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, ice);
+    let bystander = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    e.start_turn_for(bystander);
+    assert_eq!(footing_checks(&e), 0, "the shore is not the pond");
+}
+
+/// One foot on the ice is enough.
+///
+/// A Large body straddling the shoreline is not *on* the pond by the
+/// standard `footprint_is_water` uses for immersion — that one wants
+/// every tile — and it is emphatically standing on it by the standard
+/// that matters here. The asymmetry is deliberate and is each rule's
+/// own; see `on_slippery_ground`.
+#[test]
+fn a_large_body_with_one_corner_on_the_ice_is_on_the_ice() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // The ogre's 4x4 footprint anchors at (5,5); only its far corner
+    // tile is frozen.
+    freeze_tiles(&mut e, &[(8, 8)]);
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        e.on_slippery_ground(ogre),
+        "one frozen tile under a 4x4 body is a foot on the ice"
+    );
+    e.start_turn_for(ogre);
+    assert_eq!(footing_checks(&e), 1);
+}
+
+/// SRD 5.2: *"Slippery ice is Difficult Terrain."*
+///
+/// The same surcharge rubble charges, under the same waiver — a fact
+/// about the tile rather than about this rule, which is why it is
+/// asserted against `DifficultTerrain` rather than against a number.
+#[test]
+fn slippery_ice_costs_what_rubble_costs_and_is_not_water() {
+    assert_eq!(
+        TerrainType::Ice.movement_cost(),
+        TerrainType::DifficultTerrain.movement_cost(),
+        "RAW says 'is Difficult Terrain', not 'costs double'"
+    );
+    assert!(TerrainType::Ice.is_slippery());
+    assert!(!TerrainType::DifficultTerrain.is_slippery());
+    // The lid is not the pond. Nothing is immersed in ice, nothing
+    // swims in it, and no bow is spoiled by it.
+    assert!(!TerrainType::Ice.is_water());
+    assert!(TerrainType::Ice.is_passable());
+    assert!(!TerrainType::Ice.blocks_sight());
+    assert!(!TerrainType::Ice.grants_cover());
+    assert!(!TerrainType::Ice.is_diggable());
+    assert!(!TerrainType::Ice.is_gap());
+}
+
+/// Standing on a frozen pond is not standing in one.
+///
+/// The check that would be easiest to get wrong by making `Ice` a
+/// flavour of `Water`: an archer on the ice keeps its bow, and a
+/// creature on it is not drowning.
+#[test]
+fn nothing_is_immersed_in_a_frozen_pond() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let tiles = &[(5, 5), (6, 5), (5, 6), (6, 6)];
+    for &(x, y) in tiles {
+        assert!(e.set_terrain_at(Coordinate::new(x, y), TerrainType::Water));
+    }
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(e.is_immersed(goblin), "the fixture's own premise");
+    freeze_tiles(&mut e, tiles);
+    assert!(!e.is_immersed(goblin), "the pond froze under it");
+}
+
+/// `freeze_pools` freezes around whoever is standing in the water.
+///
+/// The clause that keeps [`crate::engine::actor_gen`]'s aquatic
+/// creatures honest: freezing a shark's pool over would beach it on the
+/// lid of the thing it has to breathe. What it leaves is a
+/// creature-shaped hole in the ice, which closes when the creature
+/// swims out.
+#[test]
+fn the_freeze_leaves_a_hole_where_something_is_standing() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let pool: Vec<Coordinate> = (4..10)
+        .flat_map(|x| (4..10).map(move |y| Coordinate::new(x, y)))
+        .collect();
+    for &c in &pool {
+        assert!(e.set_terrain_at(c, TerrainType::Water));
+    }
+    let swimmer = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+
+    let frozen = e.freeze_pools();
+    assert_eq!(
+        frozen,
+        pool.len() - 4,
+        "everything but the swimmer's own 2x2 footprint"
+    );
+    assert!(
+        e.is_immersed(swimmer),
+        "the creature in the water is still in the water"
+    );
+    assert!(
+        !e.on_slippery_ground(swimmer),
+        "the hole is water, not ice — it is standing in what it was in"
+    );
+    // The ice starts one tile out, which is where the hole ends.
+    assert!(
+        e.terrain_at(Coordinate::new(7, 7))
+            .is_some_and(|t| t.terrain_type.is_slippery()),
+        "…and the pond around it froze"
+    );
+    // The board is otherwise dry.
+    assert_eq!(
+        e.board_coordinates()
+            .filter(|&c| e.terrain_at(c).is_some_and(|t| t.terrain_type.is_water())
+                && e.actor_id_at(c).is_none())
+            .count(),
+        0
+    );
+}
+
+/// The freeze draws no dice.
+///
+/// Which is what makes `--frozen` free to add to any run: the map a seed
+/// names is the same map frozen or thawed, so nothing in the suite that
+/// pins a seeded board shifts under it.
+#[test]
+fn freezing_a_board_does_not_move_the_map() {
+    let tiles: Vec<TerrainType> = {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        freeze_tiles(&mut e, &[(5, 5), (6, 5)]);
+        e.freeze_pools();
+        e.board_coordinates()
+            .map(|c| e.terrain_at(c).unwrap().terrain_type)
+            .collect()
+    };
+    let mut e = ei_with_terrain(20, 20, &[]);
+    freeze_tiles(&mut e, &[(5, 5), (6, 5)]);
+    let before: Vec<TerrainType> = e
+        .board_coordinates()
+        .map(|c| e.terrain_at(c).unwrap().terrain_type)
+        .collect();
+    assert_eq!(e.freeze_pools(), 0, "a board with no water freezes nothing");
+    assert_eq!(before, tiles, "and the map it leaves is the map it found");
 }

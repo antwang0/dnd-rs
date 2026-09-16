@@ -418,7 +418,7 @@ impl EncounterInstance {
         // The host's square is a new space as far as the map layers are
         // concerned: a stirge that latches onto somebody standing in a
         // Web has been dragged into the Web.
-        self.touch_zones(attacher_id);
+        self.touch_ground(attacher_id);
         Ok(())
     }
 
@@ -484,7 +484,7 @@ impl EncounterInstance {
             cause.describe(),
             host_name
         ));
-        self.touch_zones(attacher_id);
+        self.touch_ground(attacher_id);
         true
     }
 

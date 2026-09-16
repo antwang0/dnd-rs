@@ -257,7 +257,7 @@ impl EncounterInstance {
         // for the same reason — a body that arrives on a tile without
         // walking there has still arrived on it, and the zone layer's
         // only other entry point is the pathfinder.
-        self.touch_zones(actor_id);
+        self.touch_ground(actor_id);
     }
 
     /// The tile a returning body lands on: `origin` if a `size`

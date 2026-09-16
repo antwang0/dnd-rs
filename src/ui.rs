@@ -371,6 +371,17 @@ pub fn render_map(
                     // it is still in play.
                     Some(TerrainType::ForceWall) => ('╬', None),
                     Some(TerrainType::Water) => ('≈', Some(Color::Blue)),
+                    // The one tile that needs both channels, and the
+                    // reason is that it is two rules at once. Ice *is*
+                    // difficult terrain, so it keeps rubble's place on
+                    // the shade ramp and the player who has learned
+                    // "'▒' is slow" has learned something true about
+                    // it. And it does a second thing the ramp has no
+                    // way to say, so it takes the colour too — the only
+                    // channel left, used here for the reason water uses
+                    // it. Cyan against water's blue, which is the
+                    // relationship: this is that pool, frozen.
+                    Some(TerrainType::Ice) => ('▒', Some(Color::Cyan)),
                     // Off the shade ramp for the same reason water is,
                     // and from the other end of it: the ramp says "this
                     // tile costs you something to cross", and a chasm
@@ -1071,6 +1082,31 @@ pub fn render_sideinfo(
         stats_lines.push(Line::from(Span::styled(
             format!("Burrow: {:.0} ft", curr_actor.base_burrow_speed()),
             Style::default().fg(Color::Yellow),
+        )));
+    }
+    // SRD 5.2 **Slippery Ice** — see `crate::engine::footing`.
+    //
+    // The tile is already drawn on the map, and that is not enough: the
+    // map says *what is under you* and this row says *what it is going
+    // to cost*, which is the only part the player is deciding on. A
+    // creature standing on the ice has a save waiting for it at the top
+    // of its next turn whether it moves or not, and the DC is flat — so
+    // the number is worth printing, unlike every spell DC on the board,
+    // which belongs to whoever cast it.
+    //
+    // Only for a creature that would actually roll it. Anything in the
+    // air over the pond, and anything already down, is told nothing —
+    // the same discipline the Airborne row keeps.
+    if curr_actor.is_grounded()
+        && !curr_actor.has_condition(crate::conditions::Condition::Prone)
+        && encounter.on_slippery_ground(curr_actor_id)
+    {
+        stats_lines.push(Line::from(Span::styled(
+            format!(
+                "Footing: slippery ice (DC {} DEX or Prone)",
+                crate::engine::footing::SLIPPERY_ICE_SAVE_DC
+            ),
+            Style::default().fg(Color::Cyan),
         )));
     }
     // SRD 5.2 **Strength Drain**, and the one thing on this panel that
@@ -2573,6 +2609,131 @@ mod tests {
                 "water must not borrow a glyph from the movement-cost ramp"
             );
         }
+    }
+
+    /// Ice is drawn on the ramp *and* in colour, which is the only tile
+    /// on the map that needs both channels.
+    ///
+    /// The ramp's lesson — "this tile costs you something to cross" — is
+    /// true of ice, so it keeps rubble's '▒' rather than borrowing
+    /// water's off-ramp glyph. What the ramp cannot say is that the tile
+    /// also asks for a saving throw, and the colour is the only channel
+    /// left to say it in. Cyan against water's blue, because the
+    /// relationship between the two tiles is that one is the other
+    /// frozen.
+    ///
+    /// Pinned in both directions: the ice must be cyan, and the rubble
+    /// beside it must not be, or the distinction is a glyph both tiles
+    /// share and nothing else.
+    #[test]
+    fn ice_keeps_the_ramps_glyph_and_takes_a_colour_of_its_own() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        /// Every (glyph, fg) pair the map drew, so a test can ask about
+        /// a tile the ramp shares rather than about a glyph it doesn't.
+        fn drawn_cells(encounter: &EncounterInstance) -> Vec<(String, Option<Color>)> {
+            let mut terminal = Terminal::new(TestBackend::new(60, 24)).expect("test backend");
+            terminal
+                .draw(|f| {
+                    let area = f.area();
+                    render_map(encounter, f, area, None, &std::collections::HashSet::new());
+                })
+                .expect("draw");
+            let buffer = terminal.backend().buffer().clone();
+            (0..buffer.area.height)
+                .flat_map(|y| {
+                    (0..buffer.area.width)
+                        .map(move |x| (x, y))
+                })
+                .map(|(x, y)| {
+                    let cell = &buffer[(x, y)];
+                    (cell.symbol().to_string(), cell.style().fg)
+                })
+                .collect()
+        }
+
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0)]);
+        let icy = |cells: &[(String, Option<Color>)]| {
+            cells
+                .iter()
+                .filter(|(g, fg)| g == "▒" && *fg == Some(Color::Cyan))
+                .count()
+        };
+        let before = icy(&drawn_cells(&e));
+
+        let mut frozen = 0;
+        for x in 3..=6isize {
+            for y in 3..=6isize {
+                let c = Coordinate::new(x, y);
+                if e.terrain_at(c).map(|t| t.terrain_type) == Some(TerrainType::Floor) {
+                    assert!(e.set_terrain_at(c, TerrainType::Ice));
+                    frozen += 1;
+                }
+            }
+        }
+        assert!(frozen > 0, "the fixture map has open floor to freeze");
+        let cells = drawn_cells(&e);
+        assert_eq!(
+            icy(&cells),
+            before + frozen,
+            "every frozen tile is drawn as ice"
+        );
+        // …and the rubble it shares a glyph with is not.
+        let rough = Coordinate::new(8, 8);
+        assert!(e.set_terrain_at(rough, TerrainType::DifficultTerrain));
+        assert_eq!(
+            icy(&drawn_cells(&e)),
+            before + frozen,
+            "rubble borrowed the ice's colour"
+        );
+    }
+
+    /// The panel names the ice under the current creature's feet, and
+    /// prints the DC.
+    ///
+    /// The map already says *what* is under them; this row says what it
+    /// is going to cost, which is the part the player is deciding on —
+    /// and the DC is worth printing precisely because it is the one save
+    /// DC on the board that belongs to nobody. Three creatures, one
+    /// board: the one on the ice is told, the one beside it is not, and
+    /// the one already Prone is not either, because it has no footing
+    /// left to lose.
+    #[test]
+    fn the_panel_names_the_footing_only_for_something_that_could_lose_it() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::terrain::TerrainType;
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !rendered_panel(&e).contains("Footing"),
+            "dry ground says nothing about footing"
+        );
+
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        let anchor = e.actors[&id].location();
+        for tile in crate::engine::util::footprint_tiles(anchor, e.actors[&id].size()) {
+            assert!(e.set_terrain_at(tile, TerrainType::Ice));
+        }
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("Footing: slippery ice") && panel.contains("DC 10"),
+            "a creature on the ice is told what it is standing on:\n{}",
+            panel
+        );
+
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(
+                crate::conditions::Condition::Prone,
+                crate::conditions::ConditionTimer::Permanent,
+            );
+        assert!(
+            !rendered_panel(&e).contains("Footing"),
+            "a creature already on the floor has nothing left to lose"
+        );
     }
 
     /// A chasm is drawn, and drawn as nothing — off the shade ramp for
