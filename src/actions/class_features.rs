@@ -10,6 +10,7 @@ use crate::{
     conditions::{Condition, ConditionTimer},
     engine::{
         action_overrides::ActionOverride,
+        areas::AreaShape,
         dice::Dice,
         encounter::EncounterInstance,
         saves::SaveDamagePolicy,
@@ -109,7 +110,6 @@ pub const SHORT_REST_FEATURES: &[&str] = &[
     // finish a short or long rest", the same cadence as every other
     // burst on the `TurnBurst` chassis.
     ENTHRALLING_PERFORMANCE_TAG,
-    BREATH_WEAPON_TAG,
     // 5e Oath of the Crown Paladin Channel Divinity — Champion Challenge
     // and Turn the Tide. Same short-rest cadence as every other Channel
     // Divinity on the roster.
@@ -703,6 +703,19 @@ pub const FEATURE_CHARGES: &[(&str, u32)] = &[
     // engine has no Hit Dice. See `LIFEDRINKER_USES` for why the pool
     // is two.
     (LIFEDRINKER_TAG, LIFEDRINKER_USES),
+    // SRD 5.2 Dragonborn **Breath Weapon**: "a number of times equal to
+    // your Proficiency Bonus", and — unlike the orc's Adrenaline Rush
+    // two rows up — regained on a *Long* Rest, which is why the tag is
+    // not on `SHORT_REST_FEATURES`. See `BREATH_WEAPON_USES`.
+    (BREATH_WEAPON_TAG, BREATH_WEAPON_USES),
+    // SRD 5.2 Dwarf **Stonecunning**, the third species pool written as
+    // "a number of times equal to your Proficiency Bonus" and the second
+    // of the three regained on a Long Rest. See
+    // `species::STONECUNNING_USES`.
+    (
+        crate::actions::species::STONECUNNING_TAG,
+        crate::actions::species::STONECUNNING_USES,
+    ),
     // 5e Arcane Archer Fighter (XGE, subclass level 3): "You can use
     // this feature twice. You regain all expended uses of it when you
     // finish a short or long rest." RAW to the number.
@@ -10224,37 +10237,103 @@ pub static INFERNAL_LEGACY_REBUKE: LazyLock<InfernalLegacyRebuke> =
 /// alongside the other once-per-rest features.
 pub const BREATH_WEAPON_TAG: &str = "dragonborn.breath_weapon";
 
-/// Dragonborn Breath Weapon — racial action. 2-tile burst from the
-/// dragonborn's footprint, DEX save vs the dragonborn's CON-based DC
-/// (8 + prof + CON), 2d6 of the draconic ancestor's damage type, half
-/// on save. Once per short rest. Scales by character level (3d6 at
-/// L6, 4d6 at L11, 5d6 at L16).
+/// How many breaths a dragonborn gets — SRD 5.2's *"a number of times
+/// equal to your Proficiency Bonus, and you regain all expended uses
+/// when you finish a Long Rest."*
 ///
-/// The damage type is sourced from the actor's `draconic_ancestry()` —
-/// `None` means the actor has no ancestor and the action falls back to
-/// fire (defensive default; the action is gated to dragonborn templates
-/// in `custom_validate_input` so the fallback should never fire in
-/// gameplay).
-pub struct BreathWeapon {}
+/// Two, because that is the proficiency bonus of the level-3 Champion
+/// chassis every dragonborn template on the roster is built to. Sized
+/// the same way — and named for the same reason — as
+/// `species::ADRENALINE_RUSH_USES` and `species::GIANT_ANCESTRY_USES`,
+/// the other two SRD 5.2 species pools written as "equal to your
+/// Proficiency Bonus": the engine builds finished stat blocks rather
+/// than levelling characters, so a pool that scales with a number that
+/// never moves is that number.
+pub const BREATH_WEAPON_USES: u32 = 2;
+
+/// How many d10 the breath rolls at `level` — SRD 5.2's *"This damage
+/// increases by 1d10 when you reach character levels 5 (2d10), 11
+/// (3d10), and 17 (4d10)."*
+///
+/// Written as three thresholds rather than as arithmetic on the level
+/// because RAW's are three thresholds and they are not evenly spaced:
+/// the old implementation used `1 + level / 5`, which is the 2014
+/// trait's 1/6/11/16 ladder and lands a level-16 dragonborn on 4d10
+/// where SRD 5.2 still has it at 3d10.
+pub fn breath_weapon_dice(level: u32) -> u32 {
+    1 + [5, 11, 17].iter().filter(|&&rung| level >= rung).count() as u32
+}
+
+/// SRD 5.2 Dragonborn **Breath Weapon**:
+///
+/// > When you take the Attack action on your turn, you can replace one
+/// > of your attacks with an exhalation of magical energy in either a
+/// > 15-foot Cone or a 30-foot Line that is 5 feet wide (choose the
+/// > shape each time). Each creature in that area must make a Dexterity
+/// > saving throw (DC 8 plus your Constitution modifier and Proficiency
+/// > Bonus). On a failed save, a creature takes 1d10 damage of the type
+/// > determined by your Draconic Ancestry trait. On a successful save, a
+/// > creature takes half as much damage.
+///
+/// **The shape is the feature, and it used to be missing.** This action
+/// shipped as a 2-tile burst under a comment conceding the swap — *"5e
+/// RAW: 15-ft cone (or 5x30-ft line). We collapse to a 2-tile burst …
+/// so the AI's `try_attack_aoe` lane picks it up"* — and that reason had
+/// expired: `TargetingSchema::area_shape` unified the three area
+/// variants, and every lane that used to ask "is this a `Burst`, and how
+/// big" now picks up cones and lines without knowing they exist. What
+/// the burst cost was the same thing it cost forty dragons before
+/// `monster_attacks::BreathWeapon` was given an `AreaShape` (see that
+/// struct's `shape` field, which makes this argument from the other
+/// side): a ball that can be thrown round a corner and dropped behind
+/// the breather is a different rule from a wedge that comes out of its
+/// face.
+///
+/// **RAW's choice of shape is two statics off one struct**, which is
+/// what *"choose the shape each time"* actually is — two things a player
+/// can name on their turn. The cone is short and wide and the line is
+/// long and thin, and the whole decision is which of those the enemy
+/// line is standing in. They share the `BREATH_WEAPON_TAG` pool, so
+/// picking one spends the same breath.
+///
+/// **The damage was the 2014 trait's.** 2d6 rising on a 1/6/11/16 ladder
+/// is the trait as the previous printing wrote it; SRD 5.2 prints 1d10
+/// on a 1/5/11/17 one. See `breath_weapon_dice`.
+///
+/// **Once per short rest was too.** RAW 5.2 is a pool the size of the
+/// proficiency bonus, refilled on a *long* rest — see
+/// `BREATH_WEAPON_USES`, and note that the tag has left
+/// `SHORT_REST_FEATURES` for it.
+///
+/// **What is still an approximation**: RAW's *"when you take the Attack
+/// action … replace one of your attacks"* is a swap inside the Attack
+/// action, and this engine has no such lane — an action is the unit. It
+/// costs an Action, which is what a single-attack chassis is trading
+/// anyway.
+pub struct BreathWeapon {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// RAW's printed area. See the struct docs, and
+    /// `monster_attacks::BreathWeapon::shape`, which is the same field
+    /// on the dragons' side of the same rule.
+    pub shape: AreaShape,
+}
 
 impl Action for BreathWeapon {
     fn name(&self) -> &str {
-        "breath weapon"
+        self.display_name
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["breath", "bw"]
+        self.aliases.to_vec()
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 5e RAW: 15-ft cone (or 5x30-ft line). We collapse to a
-        // 2-tile burst — same envelope as Burning Hands — so the
-        // AI's `try_attack_aoe` lane picks it up alongside the
-        // sorcerer / wizard cone spells.
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::from_area(self.shape)
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 15-ft cone RAW — we approximate as a 2-tile burst targeted
-        // anywhere within ~6 tiles (the cone's reach).
-        Some(6)
+        // A projected area is aimed by naming a tile inside it, so its
+        // reach is its own length — the same answer
+        // `monster_attacks::BreathWeapon` gives, off the same helper.
+        self.shape.aim_reach()
     }
     fn requires_los(&self) -> bool {
         true
@@ -10306,23 +10385,25 @@ impl Action for BreathWeapon {
         // ability — `spell_save_dc` reuses the same arithmetic.
         let dc = caster.spell_save_dc(AbilityScoreType::Constitution);
         let damage_type = caster.draconic_ancestry().unwrap_or(DamageType::Fire);
-        // RAW scaling: 2d6 at L1, 3d6 at L6, 4d6 at L11, 5d6 at L16.
-        // We use 1 + level/5 (clamped at 1) which yields 2d6 / 3d6 / 4d6
-        // / 5d6 at the listed breakpoints.
-        let dice_count = (1 + caster.level() / 5).max(1);
+        let dice_count = breath_weapon_dice(caster.level());
         if let Some(c) = encounter.actors.get_mut(&caster_id) {
             c.spend_feature(BREATH_WEAPON_TAG);
         }
-        let raw = encounter.roll(&Dice::new(dice_count, 6));
+        let raw = encounter.roll(&Dice::new(dice_count, 10));
         encounter.log(format!(
-            "  breath weapon: {}d6({}) = {} {} cone",
-            dice_count, raw, raw, damage_type
+            "  {}: {}d10({}) = {} {} in a {}",
+            self.display_name,
+            dice_count,
+            raw,
+            raw,
+            damage_type,
+            self.shape.label()
         ));
-        crate::actions::action_template::resolve_burst_save_damage(
+        crate::actions::action_template::resolve_area_save_damage(
             encounter,
             caster_id,
+            self.shape,
             point,
-            2,
             AbilityScoreType::Dexterity,
             dc,
             raw,
@@ -10331,7 +10412,36 @@ impl Action for BreathWeapon {
     }
 }
 
-pub static BREATH_WEAPON: LazyLock<BreathWeapon> = LazyLock::new(|| BreathWeapon {});
+/// RAW's 15-foot Cone, in tiles on the 2.5-ft grid.
+const BREATH_CONE_TILES: isize = 6;
+
+/// RAW's 30-foot Line, in tiles. The width is `half_width: 1`, which is
+/// how `AreaShape::Line` spells *"5 feet wide"* — see that variant.
+const BREATH_LINE_TILES: isize = 12;
+
+/// The cone half of RAW's *"choose the shape each time"*, and the one
+/// that keeps the plain name: it is the shape the trait is pictured as,
+/// and the one every dragonborn stat block in the wild prints first.
+pub static BREATH_WEAPON: LazyLock<BreathWeapon> = LazyLock::new(|| BreathWeapon {
+    display_name: "breath weapon",
+    aliases: &["breath", "bw"],
+    shape: AreaShape::Cone {
+        length: BREATH_CONE_TILES,
+    },
+});
+
+/// The line half. Twice the reach of the cone and a third of its width
+/// at the far end, which is the entire decision RAW hands the player:
+/// the cone answers a crowd in front of you and the line answers a
+/// corridor.
+pub static BREATH_WEAPON_LINE: LazyLock<BreathWeapon> = LazyLock::new(|| BreathWeapon {
+    display_name: "breath line",
+    aliases: &["bwl", "breath-line"],
+    shape: AreaShape::Line {
+        length: BREATH_LINE_TILES,
+        half_width: 1,
+    },
+});
 
 /// Warlock Eldritch Invocation — **Agonizing Blast**. Passive feature:
 /// when the holder casts Eldritch Blast, they add their Charisma

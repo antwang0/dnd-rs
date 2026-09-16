@@ -2244,6 +2244,29 @@ pub enum Condition {
     /// Not concentration-bound and not dispellable-as-a-buff, matching
     /// RAW's plain 8-hour duration — this is a spell you cast before
     /// the corridor, not one you hold through a fight.
+    /// Stone-Attuned — SRD 5.2 Dwarf **Stonecunning**: *"As a Bonus
+    /// Action, you gain Tremorsense with a range of 60 feet for 10
+    /// minutes."*
+    ///
+    /// The sense half of the trait, held the way the Darkvision spell's
+    /// is held directly above: a *floor* under
+    /// `ActorInstance::tremorsense_tiles` rather than a replacement, so
+    /// a dwarf riding a purple worm's chassis keeps whichever envelope
+    /// is wider. Ten minutes is a hundred rounds, which is the same
+    /// number `Darkvisioned` carries and is longer than any fight — the
+    /// duration is a bookkeeping fact rather than a decision.
+    ///
+    /// **RAW's stone-surface clause is not modelled**, and it is the one
+    /// absence worth naming: *"You must be on a stone surface or
+    /// touching a stone surface to use this Tremorsense."* The terrain
+    /// layer knows about floors, rubble, walls and water but has no
+    /// notion of what any of them are *made of* — a `Floor` is
+    /// flagstone in a dungeon and packed earth in a clearing, and the
+    /// map does not say which. Every board the generator lays is a
+    /// dungeon, so the clause is satisfied by construction on all of
+    /// them; the honest reading is that the engine answers "yes"
+    /// because it can only answer "yes", not because it checked.
+    StoneAttuned,
     Darkvisioned,
     /// Water-Walking (5e **Water Walk**, level-3 transmutation, 1
     /// hour). "Grants the ability to move across any liquid surface as
@@ -4111,6 +4134,7 @@ impl Condition {
             Condition::CloudGiantStrong => "strong as a cloud giant",
             Condition::StormGiantStrong => "strong as a storm giant",
             Condition::Darkvisioned => "seeing in the dark",
+            Condition::StoneAttuned => "feeling the stone",
             Condition::WaterWalking => "walking on water",
             Condition::WaterBreathing => "breathing water",
             Condition::Swimming => "swimming",

@@ -16,9 +16,11 @@ use std::sync::LazyLock;
 /// used. Read at every d20 site via `EncounterInstance::roll_d20_lucky`.
 ///
 /// Mechanically identical to the baseline Rogue (Sneak Attack, Cunning
-/// Action trio, Evasion, Uncanny Dodge) but at a smaller body. Speed is
-/// 25 (RAW: 5ft slower than Medium humanoids) and size is Small. Stats
-/// target a level-3 build: 21 HP (3d8+3), AC 14 (leather + DEX +2).
+/// Action trio, Evasion, Uncanny Dodge) but at a smaller body — smaller
+/// and no slower, since SRD 5.2 dropped the previous printing's
+/// five-foot Small-species tax and prints the halfling at 30 feet.
+/// Stats target a level-3 build: 21 HP (3d8+3), AC 14 (leather + DEX
+/// +2).
 pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*ROGUE_SHORTSWORD);
@@ -36,8 +38,10 @@ pub static HALFLING_SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
         glyph: 'h',
         ac: 14,
         hitpoints: "3d8+3".parse().unwrap(),
-        // Halflings have 25 ft speed per RAW.
-        speed: 25.,
+        // SRD 5.2 Halfling: *"Speed: 30 feet"*. The previous printing's
+        // Small-species speed tax is gone — see the gnome, which paid
+        // the same five feet for the same reason.
+        speed: 30.,
         strength: 8,
         dexterity: 16, // primary
         constitution: 12,

@@ -1145,6 +1145,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3k''. The dwarf's own answer to the same question — SRD 5.2
+        //       **Stonecunning**, which buys tremorsense out to sixty
+        //       feet for a Bonus Action. Directly below the wand rung
+        //       because it answers the narrower case: the wand finds
+        //       anything that is Hiding, and this finds anything that is
+        //       *on the floor*, which is most of what hides and none of
+        //       what flies. See `try_stonecunning` for the gate, which
+        //       is the reason the rung can sit this high without
+        //       costing anybody a turn.
+        if let Some(aei) = try_stonecunning(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3l. The concentration self-buff cohort, lower half — the four
         //     Investitures, Wind Wall, Shadow Blade, Antilife Shell, the
         //     two paladin auras, Holy Weapon and Pass Without Trace. See
@@ -4214,6 +4227,48 @@ fn try_reveal_hidden_enemies(
     HIDDEN_ENEMY_FINDERS
         .iter()
         .find_map(|name| try_self_action(encounter, actor_id, name))
+}
+
+/// SRD 5.2 Dwarf **Stonecunning**, spent the one turn it is worth
+/// spending.
+///
+/// Two gates, and between them they are the whole of the decision:
+///
+///   - **Nothing hostile is visible.** Tremorsense is a sense, and a
+///     sense is worth nothing to a creature that can already see what it
+///     is fighting. A row on `SELF_BUFFS_BELOW_DUPLICITY` could not have
+///     said this — that table's gates are about distance and about who
+///     is standing nearby, and the question here is about whether the
+///     dwarf can see at all.
+///   - **Something hostile is inside the envelope.** A dwarf that reads
+///     the stone in an empty room has spent a charge on an empty room;
+///     RAW's sixty feet is what the trait can actually reach, so it is
+///     also the distance at which spending it can pay.
+///
+/// The action's own validator carries the rest — the charge, the Bonus
+/// Action, and the refusal to re-attune while the last reading is still
+/// running.
+///
+/// What this deliberately does not check is whether the thing it cannot
+/// see is *on the floor*. Tremorsense loses a flier, so a dwarf that
+/// spends its charge on a wraith round a corner has wasted it — and the
+/// alternative is asking the AI to know where an enemy it cannot see is
+/// standing, which is the question the charge is being spent to answer.
+fn try_stonecunning(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if encounter.can_see_any_hostile(actor_id) {
+        return None;
+    }
+    if !any_enemy_within(
+        encounter,
+        actor_id,
+        crate::actions::species::STONECUNNING_TREMORSENSE_TILES,
+    ) {
+        return None;
+    }
+    try_self_action(encounter, actor_id, "stonecunning")
 }
 
 /// The pack's **primes** — the item actions that sharpen or shield their

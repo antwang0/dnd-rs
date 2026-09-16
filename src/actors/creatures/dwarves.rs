@@ -3,6 +3,7 @@ use crate::actions::class_features::{
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WARHAMMER;
+use crate::actions::species::{STONECUNNING, STONECUNNING_TAG};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -32,6 +33,10 @@ pub static DWARF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&WARHAMMER);
     actions.push(&*SECOND_WIND);
     actions.push(&*ACTION_SURGE);
+    // SRD 5.2 Dwarf **Stonecunning** — the species trait that had no
+    // surface until tremorsense grew one. See
+    // `crate::actions::species::STONECUNNING_TAG`.
+    actions.push(&*STONECUNNING);
     CreatureTemplate {
         name: "Mountain Dwarf Defender",
         // 'D' — distinct from 'd' (drow, druid). Mountain dwarf reads as
@@ -43,19 +48,27 @@ pub static DWARF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // into the dice expression as +12 since the engine doesn't yet
         // model per-level HP bumps separately.
         hitpoints: "3d10+12".parse().unwrap(),
-        // 5e Dwarf: 25 ft speed, unmodified by armor (the "speed not
-        // reduced by heavy armor" RAW clause is the dwarven trait).
-        // We don't model armor speed penalties, so the 25 ft cap is the
-        // load-bearing part.
-        speed: 25.,
+        // SRD 5.2 Dwarf: *"Speed: 30 feet"*. The species used to be
+        // written here at 25 with a comment calling that RAW — which it
+        // was, in the previous printing, where the dwarf traded five
+        // feet for the clause about heavy armour. SRD 5.2 prints 30 and
+        // drops the trade, so the engine's dwarf was paying a price for
+        // a rule it never had (this engine models no armour speed
+        // penalty, so the clause was worth nothing and the five feet
+        // were worth five feet).
+        speed: 30.,
         strength: 16,
         dexterity: 11,
         constitution: 16,
         intelligence: 10,
         wisdom: 12,
         charisma: 10,
-        // 5e Dwarf: Darkvision out to 60 ft.
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        // SRD 5.2 Dwarf: *"Darkvision. You have Darkvision with a
+        // range of 120 feet."* Twice the sixty the previous printing
+        // gave, and the same 120 the Orc lineage already carries — the
+        // two are the deep-dark species and the sheet should say so on
+        // both.
+        senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Common, Language::Dwarvish]),
         cr: 3.0,
         size: Size::Medium,
@@ -76,6 +89,7 @@ pub static DWARF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([
             SECOND_WIND_TAG,
             ACTION_SURGE_TAG,
+            STONECUNNING_TAG,
             crate::actions::feats::CRUSHER_TAG,
         ]),
         // 5e Dwarven Resilience: advantage on saves vs poison AND

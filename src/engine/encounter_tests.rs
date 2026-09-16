@@ -6198,12 +6198,19 @@ fn metallic_dragonborn_variants_wire_ancestry_resistance_and_breath() {
     ]);
 }
 
-/// Breath Weapon: once-per-short-rest feature; spending it removes
-/// the feature flag from `features_remaining`. Short rest refreshes
-/// the charge via the `SHORT_REST_FEATURES` registry.
+/// SRD 5.2 Dragonborn **Breath Weapon**: *"a number of times equal to
+/// your Proficiency Bonus, and you regain all expended uses when you
+/// finish a Long Rest."*
+///
+/// Both halves of that sentence, and both of them changed when the
+/// trait was brought forward from the previous printing. The pool is
+/// two rather than one, so a dragonborn that opens a fight with a cone
+/// still has a line in it; and it is a *long*-rest pool, which is why
+/// the tag is no longer on `SHORT_REST_FEATURES` — a short rest leaves
+/// a spent breath spent.
 #[test]
-fn breath_weapon_consumes_feature_and_short_rest_refreshes() {
-    use crate::actions::class_features::BREATH_WEAPON_TAG;
+fn a_dragonborn_gets_two_breaths_and_gets_them_back_on_a_long_rest() {
+    use crate::actions::class_features::{BREATH_WEAPON_TAG, BREATH_WEAPON_USES};
     use crate::actors::creatures::dragonborn::DRAGONBORN_TEMPLATE;
 
     let mut e = ei_with_terrain(15, 15, &[]);
@@ -6211,13 +6218,103 @@ fn breath_weapon_consumes_feature_and_short_rest_refreshes() {
         .instantiate_creature(&DRAGONBORN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let actor = e.actors.get_mut(&id).unwrap();
-    assert!(actor.spend_feature(BREATH_WEAPON_TAG));
-    assert!(!actor.feature_available(BREATH_WEAPON_TAG));
-    // Short rest refreshes the breath weapon (registered in
-    // SHORT_REST_FEATURES).
+    for _ in 0..BREATH_WEAPON_USES {
+        assert!(actor.spend_feature(BREATH_WEAPON_TAG), "the pool is deeper than one");
+    }
+    assert!(!actor.feature_available(BREATH_WEAPON_TAG), "…and no deeper than RAW's");
+
     let mut roller = crate::engine::dice::FastRandRoller::with_seed(0);
     actor.short_rest(&mut roller);
+    assert!(
+        !actor.feature_available(BREATH_WEAPON_TAG),
+        "RAW 5.2 gives the breath back on a long rest, not a short one"
+    );
+    actor.long_rest();
     assert!(actor.feature_available(BREATH_WEAPON_TAG));
+}
+
+/// The two shapes RAW lets a dragonborn choose between are two actions
+/// on one pool.
+///
+/// *"Either a 15-foot Cone or a 30-foot Line that is 5 feet wide (choose
+/// the shape each time)"* — so both are on the sheet, they are genuinely
+/// different areas, and spending either spends the same breath. The
+/// third assertion is the one that would have caught the old
+/// implementation: neither of them is a burst.
+#[test]
+fn the_breath_comes_in_a_cone_and_a_line_off_one_pool() {
+    use crate::actions::action_template::Action;
+    use crate::actions::class_features::{
+        BREATH_WEAPON, BREATH_WEAPON_LINE, BREATH_WEAPON_TAG,
+    };
+    use crate::actors::creatures::dragonborn::DRAGONBORN_TEMPLATE;
+
+    let cone = BREATH_WEAPON.targeting_schema().area_shape();
+    let line = BREATH_WEAPON_LINE.targeting_schema().area_shape();
+    assert!(
+        matches!(cone, Some(crate::engine::areas::AreaShape::Cone { length: 6 })),
+        "15 ft of cone on the 2.5-ft grid: {cone:?}"
+    );
+    assert!(
+        matches!(
+            line,
+            Some(crate::engine::areas::AreaShape::Line {
+                length: 12,
+                half_width: 1
+            })
+        ),
+        "30 ft of line, 5 ft wide: {line:?}"
+    );
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e
+        .instantiate_creature(&DRAGONBORN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let names: Vec<String> = e.actors[&id]
+        .available_actions()
+        .iter()
+        .map(|a| a.name().to_string())
+        .collect();
+    assert!(names.iter().any(|n| n == "breath weapon"), "{names:?}");
+    assert!(names.iter().any(|n| n == "breath line"), "{names:?}");
+
+    // One pool behind both: the line refuses once the cone has emptied
+    // it.
+    let actor = e.actors.get_mut(&id).unwrap();
+    while actor.feature_available(BREATH_WEAPON_TAG) {
+        actor.spend_feature(BREATH_WEAPON_TAG);
+    }
+    assert!(!BREATH_WEAPON.custom_validate_input(&e, id, None, None, None));
+    assert!(!BREATH_WEAPON_LINE.custom_validate_input(&e, id, None, None, None));
+}
+
+/// SRD 5.2's damage ladder, which is not the one the trait shipped with.
+///
+/// 1d10, rising at character levels 5, 11 and 17. The old
+/// implementation rolled `1 + level / 5` d6 — the 2014 trait's 1/6/11/16
+/// ladder — and the level-16 row is where the two disagree outright:
+/// RAW 5.2 still has 3d10 there, and the arithmetic had already paid out
+/// the fourth die.
+#[test]
+fn the_breath_scales_on_raws_own_rungs() {
+    use crate::actions::class_features::breath_weapon_dice;
+
+    for (level, want) in [
+        (1, 1),
+        (4, 1),
+        (5, 2),
+        (10, 2),
+        (11, 3),
+        (16, 3),
+        (17, 4),
+        (20, 4),
+    ] {
+        assert_eq!(
+            breath_weapon_dice(level),
+            want,
+            "level {level} breathes {want}d10"
+        );
+    }
 }
 
 /// Quickened Spell metamagic: costs 2 SP + a Bonus Action and
@@ -116210,4 +116307,191 @@ fn freezing_a_board_does_not_move_the_map() {
         .collect();
     assert_eq!(e.freeze_pools(), 0, "a board with no water freezes nothing");
     assert_eq!(before, tiles, "and the map it leaves is the map it found");
+}
+
+// ─── SRD 5.2 species sheets ──────────────────────────────────────────
+//
+// The engine's SRD is 5.2.1 and four of the nine playable species were
+// still carrying numbers from the previous printing. These pin the ones
+// that moved.
+
+/// SRD 5.2 prints every playable species at 30 feet except the goliath,
+/// and the wood elf, whose lineage raises it.
+///
+/// The previous printing charged Small species five feet for being
+/// Small, and three templates were still paying it — the dwarf (which
+/// paid it for a heavy-armour clause this engine does not model, so it
+/// was five feet for nothing), the gnome and the halfling. Pinned as a
+/// table rather than three asserts so a fourth species arriving at 25
+/// has to argue with this list.
+#[test]
+fn every_playable_species_walks_at_the_speed_srd_52_prints() {
+    use crate::actors::creatures::{
+        dragonborn::DRAGONBORN_TEMPLATE, dwarves::DWARF_TEMPLATE, elves::HIGH_ELF_TEMPLATE,
+        elves::WOOD_ELF_TEMPLATE, gnomes::GNOME_TEMPLATE, goliaths::CLOUD_GOLIATH_TEMPLATE,
+        halflings::HALFLING_SCOUT_TEMPLATE, humans::HUMAN_TEMPLATE,
+        orc_lineage::ORC_LINEAGE_TEMPLATE, tieflings::TIEFLING_TEMPLATE,
+    };
+
+    for (template, want) in [
+        (&*DRAGONBORN_TEMPLATE, 30.),
+        (&*DWARF_TEMPLATE, 30.),
+        (&*HIGH_ELF_TEMPLATE, 30.),
+        (&*GNOME_TEMPLATE, 30.),
+        (&*HALFLING_SCOUT_TEMPLATE, 30.),
+        (&*HUMAN_TEMPLATE, 30.),
+        (&*ORC_LINEAGE_TEMPLATE, 30.),
+        (&*TIEFLING_TEMPLATE, 30.),
+        // The two RAW exceptions, both of them upward.
+        (&*CLOUD_GOLIATH_TEMPLATE, 35.),
+        (&*WOOD_ELF_TEMPLATE, 35.),
+    ] {
+        assert_eq!(
+            template.speed, want,
+            "{} walks {} ft in SRD 5.2",
+            template.name, want
+        );
+    }
+}
+
+/// The darkvision column of the same sheet.
+///
+/// Two rows were wrong and in opposite ways: the dwarf's was the
+/// previous printing's sixty where SRD 5.2 prints a hundred and twenty,
+/// and the dragonborn's was absent entirely — the one species on the
+/// roster that RAW gives darkvision to and the engine had not.
+#[test]
+fn every_playable_species_sees_as_far_into_the_dark_as_srd_52_says() {
+    use crate::actors::actor_template::CreatureTemplate;
+    use crate::actors::creatures::{
+        dragonborn::DRAGONBORN_TEMPLATE, dwarves::DWARF_TEMPLATE, elves::DROW_ELF_TEMPLATE,
+        elves::HIGH_ELF_TEMPLATE, gnomes::GNOME_TEMPLATE, goliaths::CLOUD_GOLIATH_TEMPLATE,
+        halflings::HALFLING_SCOUT_TEMPLATE, humans::HUMAN_TEMPLATE,
+        orc_lineage::ORC_LINEAGE_TEMPLATE, tieflings::TIEFLING_TEMPLATE,
+    };
+    use crate::engine::types::SpecialSense;
+
+    let darkvision = |t: &CreatureTemplate| -> u32 {
+        t.senses
+            .iter()
+            .filter_map(|s| match s {
+                SpecialSense::Darkvision(feet) => Some(*feet),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0)
+    };
+
+    for (template, want) in [
+        (&*DRAGONBORN_TEMPLATE, 60),
+        (&*DWARF_TEMPLATE, 120),
+        (&*HIGH_ELF_TEMPLATE, 60),
+        (&*DROW_ELF_TEMPLATE, 120),
+        (&*GNOME_TEMPLATE, 60),
+        (&*TIEFLING_TEMPLATE, 60),
+        (&*ORC_LINEAGE_TEMPLATE, 120),
+        // The three species RAW leaves in the dark.
+        (&*CLOUD_GOLIATH_TEMPLATE, 0),
+        (&*HALFLING_SCOUT_TEMPLATE, 0),
+        (&*HUMAN_TEMPLATE, 0),
+    ] {
+        assert_eq!(
+            darkvision(template),
+            want,
+            "{} sees {} ft into the dark in SRD 5.2",
+            template.name,
+            want
+        );
+    }
+}
+
+/// SRD 5.2 Dwarf **Stonecunning**: *"As a Bonus Action, you gain
+/// Tremorsense with a range of 60 feet for 10 minutes."*
+///
+/// The trait needed no new sense — tremorsense was already a
+/// first-class one, carried by seven burrowers and read by
+/// `nonvisual_sense_reaches` — only a way for a condition to grant it.
+/// So what is pinned here is the grant and the shape of what it buys:
+/// the dwarf finds what is standing on the floor and still loses what
+/// is in the air, which is RAW's own *"in contact with the same
+/// ground"*.
+#[test]
+fn stonecunning_buys_a_dwarf_the_floor_and_not_the_sky() {
+    use crate::actions::action_template::Action;
+    use crate::actions::species::{STONECUNNING, STONECUNNING_TAG, STONECUNNING_TREMORSENSE_TILES};
+    use crate::actors::creatures::dwarves::DWARF_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let dwarf = e
+        .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert_eq!(
+        e.actors[&dwarf].tremorsense_tiles(),
+        0,
+        "a dwarf that has not read the stone feels nothing"
+    );
+
+    for eff in STONECUNNING.side_effects(&mut e, dwarf, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(e.actors[&dwarf].has_condition(Condition::StoneAttuned));
+    assert_eq!(
+        e.actors[&dwarf].tremorsense_tiles(),
+        STONECUNNING_TREMORSENSE_TILES,
+        "60 ft on the 2.5-ft grid"
+    );
+    assert!(
+        !e.actors[&dwarf].feature_available(STONECUNNING_TAG)
+            || e.actors[&dwarf].feature_charges_remaining(STONECUNNING_TAG)
+                < crate::actions::species::STONECUNNING_USES,
+        "reading the stone spends a charge"
+    );
+
+    // RAW's subject-side gate, which is the whole character of the
+    // sense: an invisible goblin standing on the floor is found by the
+    // vibrations, and the same goblin in the air is not.
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 14), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        Condition::Invisible,
+        crate::conditions::ConditionTimer::Permanent,
+    );
+    assert!(
+        e.viewer_can_see(dwarf, goblin),
+        "the stone tells the dwarf where the invisible goblin is standing"
+    );
+    e.actors.get_mut(&goblin).unwrap().add_condition(
+        Condition::Flying,
+        crate::conditions::ConditionTimer::Permanent,
+    );
+    e.reconcile_altitudes();
+    assert!(
+        e.actors[&goblin].is_airborne(),
+        "the fixture wants it off the floor"
+    );
+    assert!(
+        !e.viewer_can_see(dwarf, goblin),
+        "…and loses it the moment it leaves the ground"
+    );
+
+    // The same pair without the attunement, so the assertions above are
+    // about Stonecunning rather than about invisibility being weak.
+    let mut bare = ei_with_terrain(40, 40, &[]);
+    let blind_dwarf = bare
+        .instantiate_creature(&DWARF_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let sneak = bare
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 14), 1, 0)
+        .unwrap();
+    bare.actors.get_mut(&sneak).unwrap().add_condition(
+        Condition::Invisible,
+        crate::conditions::ConditionTimer::Permanent,
+    );
+    assert!(
+        !bare.viewer_can_see(blind_dwarf, sneak),
+        "a dwarf that has not read the stone is as blind as anybody"
+    );
 }

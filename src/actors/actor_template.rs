@@ -10601,10 +10601,18 @@ impl ActorInstance {
     /// Tarrasque, Ankheg, Umber Hulk, Xorn, Chuul, Galeb Duhr — where
     /// it was declared and read nowhere until this accessor.
     pub fn tremorsense_tiles(&self) -> isize {
-        self.sense_tiles(|s| match s {
+        let innate = self.sense_tiles(|s| match s {
             SpecialSense::Tremorsense(feet) => Some(*feet),
             _ => None,
-        })
+        });
+        // SRD 5.2 Dwarf **Stonecunning**, held as a floor rather than a
+        // replacement for the reason `darkvision_tiles` holds the
+        // Darkvision spell as one: a creature that was born with a
+        // wider envelope keeps it. See `Condition::StoneAttuned`.
+        if self.has_condition(Condition::StoneAttuned) {
+            return innate.max(crate::actions::species::STONECUNNING_TREMORSENSE_TILES);
+        }
+        innate
     }
 
     /// True while this actor is held aloft by magic — the `Fly` /

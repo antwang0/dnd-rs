@@ -19,7 +19,8 @@ use std::sync::LazyLock;
 /// saves matches RAW well in practice (read by `compute_save_mode`).
 ///
 /// Stat shape targets a level-3 wizard build: 18 HP (3d6+6), AC 13
-/// (mage armor + DEX), INT 16. Speed 25 (RAW Small-race speed).
+/// (mage armor + DEX), INT 16. Speed 30 — SRD 5.2 charges Small
+/// species nothing for being Small.
 /// Loadout leans on the wizard's signature lv1 staples — Magic Missile
 /// / Shield / Mage Armor — plus a Sleep / Charm Person enchantment
 /// lane and a Web for area control. Mirror Image at lv2 covers the
@@ -49,8 +50,11 @@ pub static GNOME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         glyph: 'G',
         ac: 13, // unarmored + DEX (mage armor at floor 13)
         hitpoints: "3d6+6".parse().unwrap(),
-        // 5e Rock Gnome: 25 ft speed (Small race).
-        speed: 25.,
+        // SRD 5.2 Gnome: *"Speed: 30 feet"*. Small no longer means
+        // slow — the previous printing's five-foot tax on Small species
+        // is gone, and the gnome, the halfling and the dwarf all print
+        // 30 now.
+        speed: 30.,
         strength: 8,
         dexterity: 14,
         constitution: 14,

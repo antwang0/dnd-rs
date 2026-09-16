@@ -1,11 +1,12 @@
 use crate::actions::class_features::{
-    ACTION_SURGE, ACTION_SURGE_TAG, BREATH_WEAPON, BREATH_WEAPON_TAG, SECOND_WIND, SECOND_WIND_TAG,
+    ACTION_SURGE, ACTION_SURGE_TAG, BREATH_WEAPON, BREATH_WEAPON_LINE, BREATH_WEAPON_TAG,
+    SECOND_WIND, SECOND_WIND_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREATSWORD;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -47,8 +48,13 @@ fn dragonborn_champion_template(
     actions.push(&GREATSWORD);
     actions.push(&*SECOND_WIND);
     actions.push(&*ACTION_SURGE);
-    // Racial: Breath Weapon — once per short rest.
+    // Racial: Breath Weapon, both shapes. SRD 5.2 lets the dragonborn
+    // *"choose the shape each time"*, and on a board that is two things
+    // to name rather than one thing with a setting — the cone answers a
+    // crowd in front of it and the line answers a corridor. They share
+    // one pool, so naming either spends the same breath.
     actions.push(&*BREATH_WEAPON);
+    actions.push(&*BREATH_WEAPON_LINE);
     CreatureTemplate {
         name,
         glyph,
@@ -60,6 +66,12 @@ fn dragonborn_champion_template(
         intelligence: 10,
         wisdom: 11,
         charisma: 14, // mild CHA bump per Dragonborn racial
+        // SRD 5.2 Dragonborn: *"Darkvision. You have Darkvision with a
+        // range of 60 feet."* The trait was simply absent — every other
+        // species on the roster that RAW gives darkvision to carried it
+        // (dwarf, elf, gnome, tiefling, orc), and the dragonborn was the
+        // one that had been born blind in the dark.
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: 2.0,
         size: Size::Medium,
@@ -88,12 +100,13 @@ fn dragonborn_champion_template(
 /// traits are the **Draconic Ancestry** pair:
 ///   - **Damage Resistance**: resistance to the ancestor's damage type
 ///     (fire for Red Dragonborn). Folded into `damage_modifiers`.
-///   - **Breath Weapon**: once per short rest, exhale a 15-ft cone of
-///     the ancestor's damage type (DEX save half, scales with level).
-///     Gated by the `BREATH_WEAPON_TAG` feature flag and the
-///     `BreathWeapon` action — refreshes on short rest via the
-///     `SHORT_REST_FEATURES` registry, mirroring Second Wind / Action
-///     Surge / Arcane Recovery's short-rest cadence.
+///   - **Breath Weapon**: a 15-ft Cone or a 30-ft Line of the
+///     ancestor's damage type, chosen each time (DEX save for half,
+///     1d10 scaling on RAW's 5/11/17 ladder). Gated by the
+///     `BREATH_WEAPON_TAG` feature flag, whose pool is the
+///     dragonborn's proficiency bonus and refills on a **long** rest —
+///     which is what separates it from the Second Wind / Action Surge
+///     charges beside it on this chassis.
 ///
 /// Glyph 'Δ' (uppercase delta) — a flavorful sigil that doesn't
 /// collide with any existing humanoid glyph. The four chromatic

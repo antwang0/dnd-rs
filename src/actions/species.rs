@@ -568,3 +568,137 @@ impl Action for AdrenalineRushAction {
 
 pub static ADRENALINE_RUSH: LazyLock<AdrenalineRushAction> =
     LazyLock::new(|| AdrenalineRushAction {});
+
+// ---------------------------------------------------------------------
+// The Dwarf
+// ---------------------------------------------------------------------
+
+/// How many times a Dwarf can spend **Stonecunning** between long
+/// rests — RAW's *"a number of times equal to your Proficiency Bonus,
+/// and you regain all expended uses when you finish a Long Rest."*
+///
+/// Two, on the level-3 chassis the species ships on, and named here for
+/// the reason `ADRENALINE_RUSH_USES` and `GIANT_ANCESTRY_USES` are:
+/// three SRD 5.2 species pools are written as the same sentence, and
+/// each of them is that sentence's arithmetic on the one level the
+/// engine builds.
+///
+/// A **long**-rest pool, unlike the orc's directly above. The two
+/// sentences differ by one word and the word is the whole difference
+/// between them at this engine's scale: a dungeon run rests long
+/// between rooms, so a short-rest pool is a per-fight resource and a
+/// long-rest one is a per-fight resource too — but a dwarf that spends
+/// both of these in room one and then takes a *short* rest still has
+/// none.
+pub const STONECUNNING_USES: u32 = 2;
+
+/// The tremorsense envelope Stonecunning grants, in tiles — RAW's 60
+/// feet on the 2.5-ft grid.
+///
+/// Read by `ActorInstance::tremorsense_tiles` as a floor, so this is
+/// also the number that decides whether the trait is worth anything to
+/// a creature that already has the sense. Nothing on the PC roster
+/// does, which is the point of it being a floor rather than a grant:
+/// the rule is written once and cannot be wrong for the one chassis
+/// that breaks the assumption.
+pub const STONECUNNING_TREMORSENSE_TILES: isize = crate::engine::util::tiles_from_feet(60) as isize;
+
+/// **Stonecunning** — *"As a Bonus Action, you gain Tremorsense with a
+/// range of 60 feet for 10 minutes."*
+///
+/// The dwarf's answer to everything the board hides. Tremorsense is
+/// already a first-class sense in this engine — `nonvisual_sense_reaches`
+/// is what lets a purple worm pinpoint an invisible rogue — and it is
+/// the *only* sense on that list with a subject-side gate: RAW's
+/// *"provided that the creature and the source of the vibrations are in
+/// contact with the same ground"*. So the trait is precisely a
+/// dwarf-shaped counter to the things that hide on the floor (a rogue in
+/// the dark, a creature under Invisibility, an ambusher inside a fog
+/// cloud) and precisely no help at all against the ones that do not (a
+/// wizard under Fly, a wraith). That asymmetry is the trait, and it
+/// falls out of the sense rather than being written here.
+///
+/// A Bonus Action and a charge, both RAW. What it is deliberately *not*
+/// is a passive: a dwarf who has spent both uses is a dwarf who cannot
+/// see the invisible, and the decision about when to spend them is the
+/// whole of what the trait asks.
+///
+/// See `Condition::StoneAttuned` for the duration and for RAW's
+/// stone-surface clause, which the terrain layer has nothing to answer
+/// with.
+pub const STONECUNNING_TAG: &str = "dwarf.stonecunning";
+
+pub struct StonecunningAction {}
+
+impl Action for StonecunningAction {
+    fn name(&self) -> &str {
+        "stonecunning"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["stone", "sc"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && a.feature_available(STONECUNNING_TAG)
+                // Re-attuning while already attuned would spend a
+                // charge to refresh a hundred-round timer, which no
+                // fight outlives.
+                && !a.has_condition(Condition::StoneAttuned)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(actor) = encounter.actors.get_mut(&caster_id) else {
+            return Vec::new();
+        };
+        actor.spend_feature(STONECUNNING_TAG);
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "  stonecunning: {} reads the stone underfoot.",
+            name
+        ));
+        vec![Box::new(crate::engine::side_effects::ApplyCondition {
+            actor_id: caster_id,
+            condition: Condition::StoneAttuned,
+            // Ten minutes. The same hundred rounds the Darkvision
+            // spell's eight hours collapse to, and for the same reason:
+            // both outlast every fight, so the number is bookkeeping.
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static STONECUNNING: LazyLock<StonecunningAction> = LazyLock::new(|| StonecunningAction {});
