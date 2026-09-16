@@ -2093,7 +2093,13 @@ mod tests {
     /// changes nothing and says why.
     #[test]
     fn an_ambiguous_attunement_command_is_refused_rather_than_guessed() {
-        use crate::items::item_template::{RING_OF_FIRE_RESISTANCE, RING_OF_PROTECTION};
+        // Two rings that both *bond*, which is what makes the command
+        // ambiguous: an unattune that names "ring" has to pick one, and
+        // the point of the test is that it refuses. The Ring of Fire
+        // Resistance used to be the second of the pair and no longer
+        // qualifies — SRD 5.2 asks for no attunement on it, so it would
+        // never have been in the list the command searches.
+        use crate::items::item_template::{RING_OF_FREE_ACTION, RING_OF_PROTECTION};
         let mut app = app_with_empty_board();
         let pc = app
             .encounter
@@ -2105,7 +2111,7 @@ mod tests {
             )
             .expect("the fighter fits");
         spawn(&mut app, 1, Coordinate::new(9, 5));
-        for item in [&RING_OF_PROTECTION, &RING_OF_FIRE_RESISTANCE] {
+        for item in [&RING_OF_PROTECTION, &RING_OF_FREE_ACTION] {
             app.encounter.actors.get_mut(&pc).unwrap().pickup_item(item);
         }
         app.encounter.process_stack();

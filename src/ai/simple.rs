@@ -13793,11 +13793,28 @@ mod tests {
         ];
         let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
         let families = pc_template_families();
-        // Twenty-four fights rather than twelve, because the attunement
-        // ceiling made each one narrower: three live bound items per
-        // seed instead of the whole shelf, so the sweep needs twice as
-        // many turns of the window to reach the same lanes.
-        for seed in 0u64..24 {
+        // Seventy-two fights, and the count has grown twice for the
+        // same reason: every item that joins the **bound** half of the
+        // kit makes each individual fight narrower. Three live bound
+        // items per seed out of a shelf of twenty-eight means the window
+        // below has to turn further to put any given rider in a hand —
+        // and a rider that also wants a natural 20 has to be in that
+        // hand on a seed where somebody rolls one.
+        //
+        // Twelve → twenty-four when attunement landed at all, and
+        // twenty-four → seventy-two when the Sword of Life Stealing
+        // joined the bound half (SRD 5.2 asks for a bond on it and the
+        // engine was not asking). A single item shifts the window by a
+        // place on *every* seed, which reshuffles which triples are live
+        // together, so coverage is chaotic in the kit rather than
+        // monotone in the seed count: twenty-four fights reached sixteen
+        // lanes before that one field flipped and eleven after, and
+        // seventy-two is where it comes back up — to seventeen, which is
+        // more than the sweep ever reached before.
+        //
+        // That is also why the check at the bottom is a floor and not a
+        // list.
+        for seed in 0u64..72 {
             let cr_target = 2.0 + (seed % 6) as f32;
             let tp = TerrainGenParams {
                 width: 34,
@@ -13944,19 +13961,20 @@ mod tests {
         for required in ["vicious weapon", "frost brand"] {
             assert!(
                 seen.contains(required),
-                "the {required} rider never fired across twenty-four full fights, \
+                "the {required} rider never fired across seventy-two full fights, \
                  and it has no gate that could have stopped it: {seen:?}"
             );
         }
-        // Seventeen of the nineteen fire on the current seeds; the floor
-        // is set below that rather than at it, because the two that
-        // do not are draw-dependent — the two slayers need a dragon and
-        // a giant in the room — and pinning the exact number would make
-        // this test a tripwire for the encounter generator rather than
-        // for the armoury.
+        // Seventeen of the twenty fire on the current seeds; the floor
+        // is set well below that rather than at it, because what is
+        // missing is draw-dependent — the Holy Avenger wants a paladin's
+        // hand, the Dwarven Thrower a dwarf's, and the Vorpal Sword a
+        // natural 20 on a seed where it is one of the three bound items.
+        // Pinning the exact number would make this a tripwire for the
+        // encounter generator rather than for the armoury.
         assert!(
             seen.len() >= 12,
-            "only {} of the armoury's {} logged lanes fired in twenty-four fights: {seen:?}",
+            "only {} of the armoury's {} logged lanes fired in seventy-two full fights: {seen:?}",
             seen.len(),
             WATCHED.len()
         );

@@ -1080,11 +1080,18 @@ pub static BOOTS_OF_ELVENKIND: Item = Item {
 ///
 /// The second sentence — making out a two-foot object at extreme range
 /// — is the overland-travel half, and there is no overland travel.
+/// **Eyes of the Eagle** (Wondrous Item, Uncommon) — *"you have
+/// Advantage on Wisdom (Perception) checks that rely on sight."*
+///
+/// **No attunement.** SRD 5.2's header is *"Wondrous Item, Uncommon"*
+/// and nothing else; the lenses asked for a bond the book does not.
+/// The other direction from the ten resistance rings and the same
+/// mistake — see `RING_OF_FIRE_RESISTANCE`, which carries the audit
+/// that found both.
 pub static EYES_OF_THE_EAGLE: Item = Item {
     name: "Eyes of the Eagle",
     glyph: 'o',
     skill_check_advantages: &[crate::engine::types::Skill::Perception],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1483,6 +1490,9 @@ pub static PERIAPT_OF_PROOF_AGAINST_POISON: Item = Item {
     glyph: 'y',
     condition_immunities: &[crate::conditions::Condition::Poisoned],
     damage_immunities: &[crate::engine::types::DamageType::Poison],
+    // SRD 5.2: *"Wondrous Item, Rare (Requires Attunement)"*. See
+    // `RING_OF_FIRE_RESISTANCE` for the audit this came out of.
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1548,17 +1558,30 @@ pub static ROBE_OF_THE_ARCHMAGI: Item = Item {
 };
 
 /// Ring of Fire Resistance — passive trinket. Grants resistance to fire
-/// damage while worn. 5e RAW: "you have resistance to fire damage." Sits
-/// in the same "single-typed-resistance ring" tier as Brooch of Shielding
-/// (force) and Boots of the Winterlands (cold) — distinct entries per
-/// elemental type let the loot table cover a spread of common AoE
-/// damage profiles without piling every resistance onto a single
-/// overloaded slot.
+/// damage while worn. SRD 5.2: *"You have Resistance to one damage type
+/// while wearing this ring."* Sits in the same "single-typed-resistance
+/// ring" tier as Brooch of Shielding (force) and Boots of the
+/// Winterlands (cold) — distinct entries per elemental type let the loot
+/// table cover a spread of common AoE damage profiles without piling
+/// every resistance onto a single overloaded slot.
+///
+/// **No attunement**, and the whole family was wrong about that. SRD
+/// 5.2's header is *"Ring, Rare"* with no parenthesis — the Ring of
+/// Protection two shelves up prints *"Ring, Rare (Requires
+/// Attunement)"*, and the difference between those two lines is a rule.
+/// All ten of these shipped asking for a bond the book does not, which
+/// is not a rounding error in an engine that caps attunements at three:
+/// it meant a party that found two of them could wear one, and a party
+/// that found a ring and a Cloak of Protection had to choose.
+///
+/// It is a real buff and it is RAW's. The book prices these as
+/// Rare-and-free precisely because a single typed resistance is narrow;
+/// what it buys is that a fighter can wear one *and* still attune to the
+/// thing they actually found.
 pub static RING_OF_FIRE_RESISTANCE: Item = Item {
     name: "Ring of Fire Resistance",
     glyph: 'f',
     damage_resistances: &[crate::engine::types::DamageType::Fire],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1571,7 +1594,6 @@ pub static RING_OF_COLD_RESISTANCE: Item = Item {
     name: "Ring of Cold Resistance",
     glyph: 'o',
     damage_resistances: &[crate::engine::types::DamageType::Cold],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1583,7 +1605,6 @@ pub static RING_OF_ACID_RESISTANCE: Item = Item {
     name: "Ring of Acid Resistance",
     glyph: 'd',
     damage_resistances: &[crate::engine::types::DamageType::Acid],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1594,7 +1615,6 @@ pub static RING_OF_LIGHTNING_RESISTANCE: Item = Item {
     name: "Ring of Lightning Resistance",
     glyph: 'g',
     damage_resistances: &[crate::engine::types::DamageType::Lightning],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1608,7 +1628,6 @@ pub static RING_OF_POISON_RESISTANCE: Item = Item {
     name: "Ring of Poison Resistance",
     glyph: 'j',
     damage_resistances: &[crate::engine::types::DamageType::Poison],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1620,7 +1639,6 @@ pub static RING_OF_RADIANT_RESISTANCE: Item = Item {
     name: "Ring of Radiant Resistance",
     glyph: 'u',
     damage_resistances: &[crate::engine::types::DamageType::Radiant],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1632,7 +1650,6 @@ pub static RING_OF_NECROTIC_RESISTANCE: Item = Item {
     name: "Ring of Necrotic Resistance",
     glyph: 'e',
     damage_resistances: &[crate::engine::types::DamageType::Necrotic],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1644,7 +1661,6 @@ pub static RING_OF_THUNDER_RESISTANCE: Item = Item {
     name: "Ring of Thunder Resistance",
     glyph: 'v',
     damage_resistances: &[crate::engine::types::DamageType::Thunder],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1658,7 +1674,6 @@ pub static RING_OF_PSYCHIC_RESISTANCE: Item = Item {
     name: "Ring of Psychic Resistance",
     glyph: 'x',
     damage_resistances: &[crate::engine::types::DamageType::Psychic],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -1681,7 +1696,6 @@ pub static RING_OF_FORCE_RESISTANCE: Item = Item {
     name: "Ring of Force Resistance",
     glyph: 'y',
     damage_resistances: &[crate::engine::types::DamageType::Force],
-    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -4084,6 +4098,9 @@ pub static PERIAPT_OF_HEALTH: Item = Item {
     name: "Periapt of Health",
     glyph: '*',
     condition_immunities: &[crate::conditions::Condition::Poisoned],
+    // SRD 5.2: *"Wondrous Item, Uncommon (Requires Attunement)"*. See
+    // `RING_OF_FIRE_RESISTANCE` for the audit this came out of.
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -6042,6 +6059,10 @@ pub static SWORD_OF_LIFE_STEALING: Item = Item {
     glyph: '\\',
     grants_magical_attacks: true,
     passive_conditions: &[crate::conditions::Condition::LifeStealing],
+    // SRD 5.2: *"… Rare (Requires Attunement)"*, which every other
+    // sword in the armoury already asked for. See
+    // `RING_OF_FIRE_RESISTANCE` for the audit this came out of.
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -6968,6 +6989,10 @@ pub static CLOAK_OF_THE_MANTA_RAY: Item = Item {
         crate::conditions::Condition::Swimming,
         crate::conditions::Condition::WaterBreathing,
     ],
+    // SRD 5.2: *"Wondrous Item, Uncommon (Requires Attunement)"*. The
+    // cloak shipped without the bond — see `RING_OF_FIRE_RESISTANCE`
+    // for the audit that found this and four others like it.
+    requires_attunement: true,
     ..Item::DEFAULTS
 };
 
@@ -10906,8 +10931,9 @@ mod tests {
                 ring.name
             );
             assert!(
-                ring.requires_attunement,
-                "{} is a Rare ring and the book asks for a bond",
+                !ring.requires_attunement,
+                "{} asks for a bond and SRD 5.2's header is \"Ring, Rare\" with \
+                 no parenthesis — see `RING_OF_FIRE_RESISTANCE`",
                 ring.name
             );
         }
