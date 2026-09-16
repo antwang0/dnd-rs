@@ -49776,6 +49776,7 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::READ_HOLD_PERSON_SCROLL;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::conditions::Condition;
     use crate::items::item_template::SCROLL_OF_HOLD_PERSON;
@@ -49787,17 +49788,35 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
         let caster = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .unwrap();
+        // RAW: *"Choose a **Humanoid** that you can see."* The zombie is
+        // here to be refused — it used to be the only creature in this
+        // test, and the scroll paralysed it happily, which is the bug
+        // the Person / Monster pair exists to not have.
         let zombie = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 4), 1, 1)
             .unwrap();
         e.actors
             .get_mut(&caster)
             .unwrap()
             .pickup_item(&SCROLL_OF_HOLD_PERSON);
+        assert!(
+            !ActionExecutionInfo::new(
+                &READ_HOLD_PERSON_SCROLL,
+                caster,
+                Some(vec![zombie]),
+                None,
+                None,
+            )
+            .validate(&e),
+            "a zombie is not a Humanoid and Hold Person says so (seed {seed})",
+        );
         let aei = ActionExecutionInfo::new(
             &READ_HOLD_PERSON_SCROLL,
             caster,
-            Some(vec![zombie]),
+            Some(vec![goblin]),
             None,
             None,
         );
@@ -49809,7 +49828,7 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
             "scroll should be consumed (seed {})",
             seed
         );
-        if e.actors[&zombie].has_condition(Condition::Paralyzed) {
+        if e.actors[&goblin].has_condition(Condition::Paralyzed) {
             any_paralyzed = true;
             break;
         }
@@ -102870,6 +102889,72 @@ fn every_elemental_ring_is_wired_to_its_own_plane() {
             );
         }
     }
+}
+
+/// The **Person** spells mean what their name says, and the **Monster**
+/// ones are worth the extra slot levels again.
+///
+/// RAW writes three pairs — Charm Person / Charm Monster, Hold Person /
+/// Hold Monster, Dominate Person / Dominate Monster — and in every pair
+/// the cheaper spell buys a narrower bestiary. *"Choose a Humanoid that
+/// you can see"* against *"Choose a creature that you can see"*, at two
+/// slot levels' difference.
+///
+/// The engine enforced neither side for most of its life: Dominate
+/// Beast's own gate carried a comment saying Dominate Person was
+/// "Humanoid-coded, though our engine doesn't enforce that side", and
+/// the Hold Monster scroll's docstring said its niche over Hold Person
+/// was "purely the harder DC and longer reach". Both were true, and what
+/// they added up to was a ladder nobody had a reason to climb — a
+/// warlock could paralyse an ooze with the level-2 slot.
+///
+/// Asserted through `validate` rather than by casting, because the
+/// refusal is the rule: a cast aimed at the wrong kind of creature is
+/// one the picker never offers and the parser turns away.
+#[test]
+fn the_person_spells_refuse_what_the_monster_spells_accept() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::slimes::SLIME_TEMPLATE;
+    use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let warlock = e
+        .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    // An Ooze: not a Humanoid by anybody's reading, and squarely inside
+    // "a creature".
+    let ooze = e
+        .instantiate_creature(&SLIME_TEMPLATE, Coordinate::new(6, 4), 1, 1)
+        .unwrap();
+
+    let aimed = |e: &EncounterInstance, name: &str, target: usize| {
+        let action = e.actors[&warlock]
+            .find_action(name)
+            .unwrap_or_else(|| panic!("the warlock should know {name}"));
+        ActionExecutionInfo::new(action, warlock, Some(vec![target]), None, None).validate(e)
+    };
+
+    assert!(
+        aimed(&e, "hold person", goblin),
+        "a goblin is a Humanoid and Hold Person is for Humanoids"
+    );
+    assert!(
+        !aimed(&e, "hold person", ooze),
+        "Hold Person on an ooze is the thing the level-5 sibling is sold for"
+    );
+    assert!(
+        aimed(&e, "hold monster", ooze),
+        "Hold Monster says \"a creature\", and that is the whole of what \
+         the extra slot levels buy"
+    );
+    assert!(
+        aimed(&e, "charm person", goblin) && !aimed(&e, "charm person", ooze),
+        "the same clause, one pair down the ladder"
+    );
 }
 
 /// The Ring of Animal Influence's Fear frightens the wolves and leaves

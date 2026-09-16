@@ -2495,6 +2495,19 @@ pub struct AreaSaveConditionItem {
 }
 
 impl Action for AreaSaveConditionItem {
+    /// RAW's bestiary filter, for the one row that prints one — see
+    /// [`AreaSaveConditionItem::target_types`].
+    ///
+    /// Declared beside the per-target skip in `side_effects` rather than
+    /// instead of it, because the two answer different callers: the skip
+    /// is what actually spares the creature, and this is what stops the
+    /// AI counting it towards the cone. Without it a wearer would aim
+    /// the Ring of Animal Influence at the biggest cluster of bodies on
+    /// the board and frighten whichever of them happened to be wolves.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        self.target_types.is_empty() || self.target_types.contains(&target.creature_type())
+    }
+
     fn name(&self) -> &str {
         self.action_name
     }
@@ -2754,6 +2767,20 @@ impl SingleSaveConditionItem {
 impl Action for SingleSaveConditionItem {
     fn name(&self) -> &str {
         self.action_name
+    }
+
+    /// RAW's targeting line, for the two rows that print one — see
+    /// [`SingleSaveConditionItem::target_types`].
+    ///
+    /// The same predicate `custom_validate_input` refuses a bad aim
+    /// with, declared here as well because the two are read by
+    /// different callers: this is what the picker and the AI's
+    /// candidate walks consult, so an ineligible creature never reaches
+    /// the list, and that is what refuses a cast aimed at one anyway.
+    /// Wiring only the validator is how an AI comes to spend its whole
+    /// turn offering to compel something the ring cannot touch.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        self.target_types.is_empty() || self.target_types.contains(&target.creature_type())
     }
 
     /// The whole of what this row does — see
@@ -3135,16 +3162,21 @@ pub static READ_HOLD_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
-    target_types: &[],
+    target_types: &[crate::engine::types::CreatureType::Humanoid],
 };
 
 /// Scroll of Hold Monster — Action; single-target, WIS save vs DC 15,
 /// fail = Paralyzed for 10 rounds. 5e RAW: level-5 enchantment, same
-/// shape as Hold Person but lifts the "humanoid only" restriction. The
-/// engine doesn't model creature types beyond template, so the scroll's
-/// niche over Hold Person is purely the harder DC and longer reach
-/// (90 ft RAW). Fires through the shared `SingleSaveConditionItem`
-/// impl.
+/// shape as Hold Person but lifts the "Humanoid only" restriction.
+///
+/// That restriction is real now, which is what this scroll is *for*.
+/// The docstring used to say "the engine doesn't model creature types
+/// beyond template, so the scroll's niche over Hold Person is purely the
+/// harder DC and longer reach" — and that was true and was the bug: the
+/// Hold Person scroll paralysed oozes, and a party holding both had no
+/// reason to read this one. `target_types` on the Person row is the
+/// difference, and this row's empty slice is the sentence RAW writes
+/// here. Fires through the shared `SingleSaveConditionItem` impl.
 pub static READ_HOLD_MONSTER_SCROLL: SingleSaveConditionItem = SingleSaveConditionItem {
     action_name: "read hold monster scroll",
     action_aliases: &["hm scroll", "monster scroll"],
@@ -4155,7 +4187,7 @@ pub static READ_CHARM_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
-    target_types: &[],
+    target_types: &[crate::engine::types::CreatureType::Humanoid],
 };
 
 /// Wand of Charm Monster — Action; single-target WIS save vs DC 15, fail =

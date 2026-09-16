@@ -1938,6 +1938,37 @@ fn install_charmed_by(
     )
 }
 
+/// The targeting line RAW prints on the spells that name a kind of
+/// creature — *"One **Humanoid** you can see within range"*, *"One
+/// **Beast** you can see"* — asked of one declared target.
+///
+/// Fail-closed on a missing target or a missing actor, which is this
+/// file's convention for every gate of this shape: a cast with nobody
+/// named is a cast that has not been aimed yet, and a validator that
+/// said yes to it would be vouching for a target it never saw.
+///
+/// The predicate half of a pair. Every spell that uses it also overrides
+/// [`Action::affects_creature`] with the same test, and the two are not
+/// redundant: `affects_creature` is what the picker and the AI's
+/// candidate walks read, so it keeps an ineligible creature off the list
+/// in the first place, and this is what refuses a cast that was aimed
+/// anyway — the gate a typed command comes through. Wiring only one of
+/// them is how a cleric comes to spend its whole turn offering to
+/// paralyse a zombie.
+fn target_is_of_type(
+    encounter: &EncounterInstance,
+    target_ids: Option<&Vec<usize>>,
+    kind: crate::engine::types::CreatureType,
+) -> bool {
+    let Some(target_id) = first_target_id(target_ids) else {
+        return false;
+    };
+    encounter
+        .actors
+        .get(&target_id)
+        .is_some_and(|a| a.creature_type() == kind)
+}
+
 /// Install the canonical Dominate spell payload: Charmed by the caster
 /// (via `install_charmed_by`) plus Dominated (the
 /// `imposes_attacker_disadvantage` clause) for `Rounds(10)`, anchored
@@ -2315,6 +2346,36 @@ pub static SACRED_BURST: LazyLock<SacredBurst> = LazyLock::new(|| SacredBurst {}
 pub struct HoldPerson {}
 
 impl Action for HoldPerson {
+    /// RAW's targeting line: *"Choose a Humanoid that you can see within range"*.
+    ///
+    /// The clause that separates this spell from **Hold Monster**, which
+    /// prints "a creature" and costs three more slot levels. It went unenforced for
+    /// most of this engine's life — `Dominate Beast`'s own gate carried
+    /// a comment saying so — and what that cost was the whole point of
+    /// the pair: a caster holding both had no reason to prepare the
+    /// wider one, because the narrow one already worked on the ooze.
+    ///
+    /// Two methods, one predicate. See [`target_is_of_type`] for why
+    /// both are needed.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        target.creature_type() == crate::engine::types::CreatureType::Humanoid
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        target_is_of_type(
+            encounter,
+            target_ids,
+            crate::engine::types::CreatureType::Humanoid,
+        )
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -5565,6 +5626,36 @@ pub static SLEEP: LazyLock<Sleep> = LazyLock::new(|| Sleep {});
 pub struct CharmPerson {}
 
 impl Action for CharmPerson {
+    /// RAW's targeting line: *"One Humanoid you can see within range makes a Wisdom saving throw"*.
+    ///
+    /// The clause that separates this spell from **Charm Monster**, which
+    /// prints "a creature" and costs three more slot levels. It went unenforced for
+    /// most of this engine's life — `Dominate Beast`'s own gate carried
+    /// a comment saying so — and what that cost was the whole point of
+    /// the pair: a caster holding both had no reason to prepare the
+    /// wider one, because the narrow one already worked on the ooze.
+    ///
+    /// Two methods, one predicate. See [`target_is_of_type`] for why
+    /// both are needed.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        target.creature_type() == crate::engine::types::CreatureType::Humanoid
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        target_is_of_type(
+            encounter,
+            target_ids,
+            crate::engine::types::CreatureType::Humanoid,
+        )
+    }
+
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -16627,6 +16718,36 @@ pub static PLANT_GROWTH: LazyLock<PlantGrowth> = LazyLock::new(|| PlantGrowth {}
 pub struct DominatePerson {}
 
 impl Action for DominatePerson {
+    /// RAW's targeting line: *"One Humanoid you can see within range must succeed on a Wisdom saving throw"*.
+    ///
+    /// The clause that separates this spell from **Dominate Monster**, which
+    /// prints "a creature" and costs three more slot levels. It went unenforced for
+    /// most of this engine's life — `Dominate Beast`'s own gate carried
+    /// a comment saying so — and what that cost was the whole point of
+    /// the pair: a caster holding both had no reason to prepare the
+    /// wider one, because the narrow one already worked on the ooze.
+    ///
+    /// Two methods, one predicate. See [`target_is_of_type`] for why
+    /// both are needed.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        target.creature_type() == crate::engine::types::CreatureType::Humanoid
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        target_is_of_type(
+            encounter,
+            target_ids,
+            crate::engine::types::CreatureType::Humanoid,
+        )
+    }
+
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
     /// trading a landed concentration effect for an unlanded one
@@ -16755,6 +16876,19 @@ impl Action for DominateBeast {
     ) -> Vec<Resource> {
         action_and_slot(4)
     }
+    /// RAW's *"One Beast you can see within range"* — the gate that
+    /// distinguishes level-4 Dominate Beast from level-5 Dominate
+    /// Person and level-8 Dominate Monster.
+    ///
+    /// This comment used to note that Dominate Person was
+    /// "Humanoid-coded, though our engine doesn't enforce that side".
+    /// It does now, through the same helper, and the ladder means
+    /// something for the first time: each rung buys a wider bestiary
+    /// for a bigger slot.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        target.creature_type() == crate::engine::types::CreatureType::Beast
+    }
+
     fn custom_validate_input(
         &self,
         encounter: &EncounterInstance,
@@ -16763,20 +16897,11 @@ impl Action for DominateBeast {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        // RAW Beast-only gate — distinguishes lv4 Dominate Beast from
-        // lv5 Dominate Person (Humanoid-coded, though our engine doesn't
-        // enforce that side) and lv8 Dominate Monster (any creature
-        // type). Fail-closed on missing target / actor — same convention
-        // as the recharge gates on the dao / mammoth / dragon side.
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| {
-                a.creature_type() == crate::engine::types::CreatureType::Beast
-            })
+        target_is_of_type(
+            encounter,
+            target_ids,
+            crate::engine::types::CreatureType::Beast,
+        )
     }
     fn side_effects(
         &self,
@@ -37111,6 +37236,13 @@ pub static PASSWALL: LazyLock<Passwall> = LazyLock::new(|| Passwall {});
 pub struct AnimalFriendship {}
 
 impl Action for AnimalFriendship {
+    /// RAW's *"One Beast you can see within range"*, declared for the
+    /// picker and the AI as well as for the validator below — see
+    /// [`target_is_of_type`] for why both.
+    fn affects_creature(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
+        target.creature_type() == crate::engine::types::CreatureType::Beast
+    }
+
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -37158,14 +37290,13 @@ impl Action for AnimalFriendship {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         // Beast-only, the same gate and the same fail-closed convention
-        // as Dominate Beast one tier up.
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        encounter
-            .actors
-            .get(&target_id)
-            .is_some_and(|a| a.creature_type() == crate::engine::types::CreatureType::Beast)
+        // as Dominate Beast one tier up — and now literally the same
+        // helper. See [`target_is_of_type`].
+        target_is_of_type(
+            encounter,
+            target_ids,
+            crate::engine::types::CreatureType::Beast,
+        )
     }
     fn side_effects(
         &self,
