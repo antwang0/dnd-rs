@@ -44642,6 +44642,103 @@ fn the_krakens_tentacle_is_a_melee_attack_however_far_it_reaches() {
     );
 }
 
+/// Six attack lines the book reprinted, pinned to the numbers SRD 5.2
+/// actually gives them.
+///
+/// The bestiary is built from SRD 5.2 — a sweep of every stat block's
+/// AC, hit points and six ability scores against the PDF in this repo
+/// finds exactly one disagreement, and that one is the class chassis
+/// named "Druid" rather than the book's CR-2 NPC. The *attack* lines
+/// were not all rebuilt with them. Six creatures carried a die from the
+/// previous printing on a stat block that was otherwise current, which
+/// is the failure mode a per-creature test cannot see and a reader
+/// cannot either: every one of them looked like a monster that was
+/// simply a bit weaker or a bit stronger than expected.
+///
+/// Pinned here rather than left to the docstrings, because a docstring
+/// is what was wrong in four of the six cases — three of them quoted the
+/// 2014 line verbatim while the block around them was 5.2's, and one
+/// argued at length for keeping a number the book had already changed.
+///
+/// Deliberately a short explicit list and not a sweep. There is nothing
+/// in the repository to sweep *against*: the PDF is not parsed at build
+/// time and should not be, so what this test can honestly do is hold
+/// the six numbers somebody has checked by hand.
+#[test]
+fn the_reprinted_attack_lines_roll_the_dice_the_book_prints() {
+    use crate::actions::monster_attacks::{
+        BARBED_DEVIL_HURL_FLAME, BEHIR_BITE, DOPPELGANGER_SLAM, GIANT_APE_FIST,
+        GRICK_TENTACLES_WEAPON, TRICERATOPS_GORE,
+    };
+
+    // (what it is, RAW's dice, the SRD 5.2 line it comes from). Read
+    // off the statics' own fields rather than through the `Action`
+    // trait, which has no "what die do you roll" method and should not
+    // grow one for a test: two chassis are involved here and both
+    // publish the field directly.
+    let rows: &[(&str, crate::engine::dice::Dice, u32, u32, &str)] = &[
+        (
+            "behir bite",
+            BEHIR_BITE.damage_dice,
+            2,
+            12,
+            "Behir Bite: 19 (2d12 + 6) Piercing",
+        ),
+        (
+            "giant ape fist",
+            GIANT_APE_FIST.damage_dice,
+            3,
+            10,
+            "Giant Ape Fist: 22 (3d10 + 6) Bludgeoning",
+        ),
+        (
+            "grick tentacles",
+            GRICK_TENTACLES_WEAPON.damage_dice,
+            1,
+            10,
+            "Grick Tentacles: 7 (1d10 + 2) Slashing",
+        ),
+        (
+            "triceratops gore",
+            TRICERATOPS_GORE.damage_dice,
+            2,
+            12,
+            "Triceratops Gore: 19 (2d12 + 6) Piercing",
+        ),
+        (
+            "barbed devil hurl flame",
+            BARBED_DEVIL_HURL_FLAME.damage_dice,
+            5,
+            6,
+            "Barbed Devil Hurl Flame: 17 (5d6) Fire",
+        ),
+        (
+            "doppelganger slam",
+            DOPPELGANGER_SLAM.damage_dice,
+            2,
+            6,
+            "Doppelganger Slam: 11 (2d6 + 4) Bludgeoning",
+        ),
+    ];
+    for (what, dice, count, faces, line) in rows {
+        assert_eq!(
+            (dice.count, dice.faces),
+            (*count, *faces),
+            "{what} — SRD 5.2 prints \"{line}\""
+        );
+    }
+
+    // The behir's other half, and the reason its die was only half the
+    // bug: RAW's bite is *"plus 11 (2d10) Lightning damage"*, and the
+    // lightning serpent was biting for pure piercing.
+    assert_eq!(
+        (BEHIR_BITE.rider_dice.count, BEHIR_BITE.rider_dice.faces),
+        (2, 10),
+        "SRD 5.2 — Behir Bite: plus 11 (2d10) Lightning"
+    );
+    assert_eq!(BEHIR_BITE.rider_type, DamageType::Lightning);
+}
+
 /// Every ranged weapon in the engine declares a normal range.
 ///
 /// Two separate rules read that number and neither can ask for it a

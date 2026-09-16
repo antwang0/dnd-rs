@@ -88,7 +88,22 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 18,
         // 26d20+208 ≈ 481 average per MM (CR 23).
         hitpoints: "26d20+208".parse().unwrap(),
-        speed: 20.,
+        // SRD 5.2: *"Speed 30 ft., Swim 120 ft."* The engine keeps one
+        // speed per creature and collapses an aquatic stat block's two
+        // magnitudes into it — see `SWIM_SPEED_TAG` for why there is no
+        // second number — so every swimmer on the roster lands
+        // somewhere between its walk and its swim: the water elemental's
+        // 30/90 is 50, the merrow's 10/40 is 20.
+        //
+        // This was **20**, which is below RAW's own walking speed and
+        // below the merrow's collapse. The largest thing in the sea
+        // crossed the board slower than the creature that serves it,
+        // and slower than the thirty feet it walks on land — the one
+        // entry on the aquatic bench that collapsed *downward*. Fifty
+        // puts it beside the water elemental, which is the closest
+        // profile the book has (30/90 against this 30/120) and still
+        // the conservative end of the band.
+        speed: 50.,
         strength: 30,
         intelligence: 22,
         dexterity: 11,

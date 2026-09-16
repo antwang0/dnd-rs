@@ -7524,21 +7524,25 @@ pub static HIPPOGRIFF_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattac
     count: 2,
 });
 
-/// Doppelganger Slam — melee, **DEX**-based 1d6 + DEX bludgeoning.
-/// RAW's slam is *"+6 to hit, Hit: 7 (1d6 + 4)"*, and the +6 is the
-/// doppelganger's Dexterity of 18: its Strength is 11, so the engine's
-/// declared ability put the swing at **+2 for 3.5** — four points of
-/// accuracy and half the damage on a CR 3 shapeshifter whose whole
+/// Doppelganger Slam — melee, **DEX**-based 2d6 + DEX bludgeoning.
+/// SRD 5.2: *"Melee Attack Roll: +6 (with Advantage during the first
+/// round of each combat), reach 5 ft. Hit: 11 (2d6 + 4) Bludgeoning
+/// damage."* The +6 is the doppelganger's Dexterity of 18: its Strength
+/// is 11, so the engine's declared ability is what puts the swing at
+/// the printed number.
+///
+/// The die was `1d6`, from RAW's *previous* printing — and this
+/// docstring used to argue for keeping it, on the strength of a `1d6+4`
+/// quoted from that printing. SRD 5.2 rolls `2d6 + 4` for eleven, which
+/// is four more average damage on a CR 3 shapeshifter whose whole
 /// design is that it gets the first round.
 ///
-/// The die stays `1d6`, which is what the docstring's own `1d6+4`
-/// always said; with the right modifier the line reads as printed.
 /// Pairs with the multiattack for the signature double-slam pattern.
 pub static DOPPELGANGER_SLAM: SimpleWeapon = SimpleWeapon::melee(
     "slam",
     &["dslam"],
     AbilityScoreType::Dexterity,
-    Dice::new(1, 6),
+    Dice::new(2, 6),
     DamageType::Bludgeoning,
 );
 
@@ -11865,12 +11869,18 @@ pub static GIANT_SCORPION_STING: LazyLock<GiantScorpionSting> =
 
 // ─── Grick ───────────────────────────────────────────────────────────
 
-/// Grick tentacles — DEX-based 2d6+2 slashing melee.
+/// Grick tentacles — SRD 5.2: *"Melee Attack Roll: +4, reach 5 ft. Hit:
+/// 7 (1d10 + 2) Slashing damage."*
+///
+/// The die was `2d6`, which is the 2014 printing's, on a stat block
+/// whose AC, hit points and abilities are all 5.2's. One die size and
+/// half a point of average — the kind of drift that is only ever found
+/// by reading the book beside the file.
 pub static GRICK_TENTACLES_WEAPON: SimpleWeapon = SimpleWeapon::melee(
     "tentacles",
     &["grick-tent"],
     AbilityScoreType::Dexterity,
-    Dice::new(2, 6),
+    Dice::new(1, 10),
     DamageType::Slashing,
 );
 
@@ -12115,15 +12125,23 @@ pub static LIZARDFOLK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     parts: vec![(&LIZARDFOLK_BITE, 1), (&HEAVY_CLUB, 1)],
 });
 
-/// Giant Ape fist — STR-based 3d6 bludgeoning melee. Pure punch with no
-/// rider; the ape's brute melee is its calling card and dual fists land
-/// twice per Action via the multi.
-pub static GIANT_APE_FIST: SimpleWeapon = SimpleWeapon::melee(
+/// Giant Ape fist — SRD 5.2: *"Melee Attack Roll: +9, reach 10 ft. Hit:
+/// 22 (3d10 + 6) Bludgeoning damage."* Pure punch with no rider; the
+/// ape's brute melee is its calling card and dual fists land twice per
+/// Action via the multi.
+///
+/// The die was `3d6`, which is neither this printing's number nor the
+/// last one's — a CR-7 Huge beast punching for the same average as a
+/// brown bear's claw.
+pub static GIANT_APE_FIST: SimpleWeapon = SimpleWeapon::reach_melee(
     "fist",
     &["punch", "slam"],
     AbilityScoreType::Strength,
-    Dice::new(3, 6),
+    Dice::new(3, 10),
     DamageType::Bludgeoning,
+    // RAW's "reach 10 ft.", which a Huge ape has and the melee
+    // constructor's default five feet does not.
+    2,
 );
 
 /// Giant Ape rock — STR-based 7d6 bludgeoning thrown rock with extreme
@@ -12361,14 +12379,31 @@ pub static PSEUDODRAGON_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     DamageType::Piercing,
 );
 
-/// Behir bite — STR 3d10+6 piercing. The lightning serpent's signature
-/// melee chomp; pairs with the constrict in the multi.
-pub static BEHIR_BITE: SimpleWeapon = SimpleWeapon::melee(
+/// Behir bite — SRD 5.2: *"Melee Attack Roll: +10, reach 10 ft. Hit: 19
+/// (2d12 + 6) Piercing damage plus 11 (2d10) Lightning damage."* The
+/// lightning serpent's signature chomp; pairs with the constrict in the
+/// multi.
+///
+/// **Both halves, and neither was here.** The die was `3d10` — the 2014
+/// printing's number, on a stat block whose AC, hit points and every
+/// ability score match SRD 5.2 exactly — and the lightning clause,
+/// which is a third of the bite's damage and the whole reason the thing
+/// is called a lightning serpent, was not modeled at all. A behir that
+/// bit for pure piercing was a large crocodile.
+///
+/// Reach 2 (10 ft) per RAW, and on `WeaponWithRider` rather than
+/// `SimpleWeapon` because that is the chassis for *"X damage plus Y
+/// damage"* — the same one the dragons' elemental Rend rides.
+pub static BEHIR_BITE: WeaponWithRider = WeaponWithRider::reach_melee(
     "bite",
     &["b", "chomp"],
     AbilityScoreType::Strength,
-    Dice::new(3, 10),
+    Dice::new(2, 12),
     DamageType::Piercing,
+    2,
+    Dice::new(2, 10),
+    DamageType::Lightning,
+    "behir lightning",
 );
 
 /// Behir **Constrict** — 2d10+STR bludgeoning plus a flat 2d10
@@ -12698,17 +12733,31 @@ pub static WINTER_WOLF_BREATH: BreathWeapon = BreathWeapon {
     enemies_only: false,
 };
 
-/// Triceratops Gore — STR-based 4d8+STR piercing, reach 2 (10 ft). The
-/// huge ceratopsian's signature charge: high single-die damage that
-/// rewards reach over multi-strike spam. RAW's **Trampling Charge** —
-/// Prone on a failed STR save after a straight-line move-then-hit, then
-/// a bonus-action stomp on the target it flattens — rides this weapon
+/// Triceratops Gore — SRD 5.2: *"Melee Attack Roll: +9, reach 5 ft.
+/// Hit: 19 (2d12 + 6) Piercing damage."*
+///
+/// The huge ceratopsian's signature charge: one big die that rewards
+/// reach over multi-strike spam. RAW's **Trampling Charge** — Prone on a
+/// failed STR save after a straight-line move-then-hit, then a
+/// bonus-action stomp on the target it flattens — rides this weapon
 /// through `TRICERATOPS_CHARGE` in `engine::attack`.
+///
+/// The die was `4d8`, from RAW's previous printing, on a stat block
+/// whose AC, hit points and abilities are all 5.2's — five fewer
+/// average points and a much flatter spread than the `2d12` the book
+/// prints.
+///
+/// **Reach 2 (10 ft) is the engine's, not the book's.** SRD 5.2 prints
+/// five feet. A Huge creature's footprint is two tiles on a side here,
+/// and a five-foot reach measured from a footprint edge is a horn that
+/// cannot touch anything its own head is next to on the diagonal; the
+/// extra tile is what makes the charge land. Kept deliberately, and
+/// named so it is not mistaken for the dice mistake above it.
 pub static TRICERATOPS_GORE: SimpleWeapon = SimpleWeapon::reach_melee(
     "gore",
     &["gr", "horn-charge"],
     AbilityScoreType::Strength,
-    Dice::new(4, 8),
+    Dice::new(2, 12),
     DamageType::Piercing,
     2,
 );
@@ -20666,10 +20715,15 @@ pub static BARBED_DEVIL_TAIL: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Barbed Devil Hurl Flame — CHA-based 3d6 fire at range. RAW: "Hurl
-/// Flame. Ranged Spell Attack: +5 to hit, range 150 ft., one target.
-/// Hit: 10 (3d6) fire damage. If the target is a flammable object that
-/// isn't being worn or carried, it also catches fire."
+/// Barbed Devil Hurl Flame — CHA-based 5d6 fire at range. SRD 5.2:
+/// *"Hurl Flame. Ranged Attack Roll: +5, range 150 ft. Hit: 17 (5d6)
+/// Fire damage. If the target is a flammable object that isn't being
+/// worn or carried, it starts burning."*
+///
+/// The dice were `3d6` and the quotation above used to be the 2014
+/// printing's, which is where that number comes from: SRD 5.2 nearly
+/// doubled the bolt, and a hamatula that opens at a hundred and fifty
+/// feet is the whole shape of the fight it wants.
 ///
 /// Filed as a ranged weapon rather than as a spell, which is a
 /// deliberate divergence from RAW's "Ranged Spell Attack" label. The
@@ -20683,7 +20737,7 @@ pub static BARBED_DEVIL_HURL_FLAME: SimpleWeapon = SimpleWeapon::ranged(
     "hurl flame",
     &["bdv-flame", "hurl-flame"],
     AbilityScoreType::Charisma,
-    Dice::new(3, 6),
+    Dice::new(5, 6),
     DamageType::Fire,
     24,
     16,
