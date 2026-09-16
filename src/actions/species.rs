@@ -5,9 +5,17 @@
 //! direction, a feat is the thing none of those decided; a species is
 //! the body all three are hung on. SRD 5.2 prints nine of them —
 //! Dragonborn, Dwarf, Elf, Gnome, Goliath, Halfling, Human, Orc,
-//! Tiefling — and the engine carries traits for six, every one of them
-//! declared in `actions::class_features` beside the class features it
-//! is named for.
+//! Tiefling — and for a long time the engine carried traits for six,
+//! every one of them declared in `actions::class_features` beside the
+//! class features it is named for.
+//!
+//! **All nine are here now.** The Goliath was the first to land in this
+//! module, and the last three followed it: the Elf, whose four shared
+//! traits all reach lanes that already existed (see
+//! `creatures::elves`), the Human's `RESOURCEFUL_TAG`, and the Orc's
+//! `ADRENALINE_RUSH_TAG`. Two of those three needed nothing new at all
+//! — which is the strongest thing that can be said for the cohorts the
+//! engine cuts its rules into.
 //!
 //! That was fine while a species trait was a boolean (`has_lucky`,
 //! `has_dwarven_resilience`) or a single action (the Dragonborn's
@@ -450,3 +458,113 @@ pub static CLOUDS_JAUNT: LazyLock<CloudsJauntAction> = LazyLock::new(|| CloudsJa
 /// the engine already models" wants no machinery of its own — the
 /// Human's template picks, and its docstring says which.
 pub const RESOURCEFUL_TAG: &str = "human.resourceful";
+
+// ---------------------------------------------------------------------
+// The Orc
+// ---------------------------------------------------------------------
+
+/// How many times an Orc can spend **Adrenaline Rush** between rests.
+///
+/// RAW is *"a number of times equal to your Proficiency Bonus"*, which
+/// is +2 on the CR-2 chassis this species ships on — so, like
+/// `GIANT_ANCESTRY_USES` above, this is RAW to the number rather than a
+/// collapse. It refills on a **short** rest, which is the other half of
+/// RAW's sentence and the thing that separates this pool from the
+/// goliath's: an orc arrives at the next room with it.
+pub const ADRENALINE_RUSH_USES: u32 = 2;
+
+/// **Adrenaline Rush** — *"You can take the Dash action as a Bonus
+/// Action. When you do so, you gain a number of Temporary Hit Points
+/// equal to your Proficiency Bonus."*
+///
+/// Two clauses, one Bonus Action, and the second is what makes the first
+/// worth a species slot. A Dash for a bonus action is the Rogue's
+/// Cunning Action; a Dash that *also* pays out temporary hit points is a
+/// charge an orc can spend standing still, which is the case RAW's
+/// wording does not forbid and the engine's `GiveResource` makes
+/// harmless — unspent movement evaporates at end of turn like anybody
+/// else's.
+///
+/// The temp HP is read off the holder's own `proficiency_bonus` rather
+/// than off `ADRENALINE_RUSH_USES`, even though the two are the same
+/// number on this chassis. They are the same number by RAW's arithmetic
+/// and not by RAW's sentence — the pool and the payout are two separate
+/// clauses that happen to cite the same bonus — and a shared constant
+/// would make a future orc at a different level wrong in one of the two.
+pub const ADRENALINE_RUSH_TAG: &str = "orc.adrenaline_rush";
+
+pub struct AdrenalineRushAction {}
+
+impl Action for AdrenalineRushAction {
+    fn name(&self) -> &str {
+        "adrenaline rush"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["rush", "adrenaline", "ar"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        bonus_action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|a| a.is_combat_active() && a.feature_available(ADRENALINE_RUSH_TAG))
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(actor) = encounter.actors.get_mut(&caster_id) else {
+            return Vec::new();
+        };
+        actor.spend_feature(ADRENALINE_RUSH_TAG);
+        let temp = actor.proficiency_bonus().max(0) as u32;
+        // `travel_speed`, not the actor's own — the same reason the Dash
+        // action reads it: a second helping of whatever is carrying you,
+        // which for a mounted orc is the horse.
+        let speed = encounter.travel_speed(caster_id);
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!("  adrenaline rush: {} surges forward.", name));
+        vec![
+            Box::new(crate::engine::side_effects::GiveResource {
+                actor_id: caster_id,
+                resource: Resource::Movement(speed),
+            }),
+            Box::new(crate::engine::side_effects::GainTempHp {
+                actor_id: caster_id,
+                amount: temp,
+            }),
+        ]
+    }
+}
+
+pub static ADRENALINE_RUSH: LazyLock<AdrenalineRushAction> =
+    LazyLock::new(|| AdrenalineRushAction {});

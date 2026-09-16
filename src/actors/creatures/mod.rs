@@ -70,6 +70,7 @@ pub mod druids;
 pub mod dwarves;
 pub mod elves;
 pub mod humans;
+pub mod orc_lineage;
 pub mod earth_elementals;
 pub mod erinyes;
 pub mod ettins;
@@ -600,6 +601,12 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
                     &*elves::HIGH_ELF_TEMPLATE,
                     &*elves::WOOD_ELF_TEMPLATE,
                     &*humans::HUMAN_TEMPLATE,
+                    // SRD 5.2's Orc *species*, beside the 2014-shaped
+                    // Half-Orc Marauder rather than instead of it — see
+                    // `orc_lineage::ORC_LINEAGE_TEMPLATE` for what the
+                    // two trade, and for why it is not in
+                    // `creatures::orcs`, which is the monster.
+                    &*orc_lineage::ORC_LINEAGE_TEMPLATE,
                     // The six Goliath builds. One family member per
                     // Giant Ancestry benefit, for the reason the
                     // dragonborn has one per breath type: RAW makes the

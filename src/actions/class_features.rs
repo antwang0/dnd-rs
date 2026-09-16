@@ -36,6 +36,11 @@ use crate::{
 /// registered PC template — a registry entry whose feature has moved on
 /// is invisible otherwise.
 pub const SHORT_REST_FEATURES: &[&str] = &[
+    // SRD 5.2 Orc **Adrenaline Rush**: "you regain all expended uses
+    // when you finish a Short or Long Rest." The clause that separates
+    // this pool from the goliath's Giant Ancestry, which is a long-rest
+    // pool — an orc arrives at the next room with its charges back.
+    crate::actions::species::ADRENALINE_RUSH_TAG,
     // SRD 5.2 Warlock **Lifedrinker**. RAW's Hit Dice come back on a
     // long rest and half of them at that; the short-rest cadence here
     // matches the warlock's own Pact Magic slots, which is the class's
@@ -687,6 +692,13 @@ pub fn shared_pool_for(tag: &str) -> Option<&'static str> {
 /// RAW pools of two or more, and all three would spend the second charge
 /// refreshing a timer that had eight rounds left on it.
 pub const FEATURE_CHARGES: &[(&str, u32)] = &[
+    // SRD 5.2 Orc **Adrenaline Rush**: "a number of times equal to your
+    // Proficiency Bonus", which is +2 on the chassis the species ships
+    // on — RAW to the number. See `species::ADRENALINE_RUSH_USES`.
+    (
+        crate::actions::species::ADRENALINE_RUSH_TAG,
+        crate::actions::species::ADRENALINE_RUSH_USES,
+    ),
     // SRD 5.2 Warlock **Lifedrinker**: RAW spends a Hit Die, and the
     // engine has no Hit Dice. See `LIFEDRINKER_USES` for why the pool
     // is two.

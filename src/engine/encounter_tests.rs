@@ -17559,6 +17559,66 @@ fn a_giant_ancestry_keeps_its_charge_against_a_target_it_cannot_touch() {
     );
 }
 
+/// SRD 5.2 Orc **Adrenaline Rush**: *"You can take the Dash action as a
+/// Bonus Action. When you do so, you gain a number of Temporary Hit
+/// Points equal to your Proficiency Bonus."*
+///
+/// Both clauses, and the pool underneath them. The Dash half is the easy
+/// one to get right and the temporary hit points are why the trait is
+/// worth a species slot — a version that granted the movement and forgot
+/// the cushion would look, from every angle the UI offers, like a
+/// Cunning Action with a different name.
+///
+/// Beside the goliath's jaunt below because the two are the same shape
+/// from opposite ends: a bonus-action movement trait, rationed per rest,
+/// on a species whose whole character is the ration. The orc's refills
+/// on a **short** rest and the goliath's does not, which is the
+/// difference that decides which of them is still dangerous in the third
+/// room.
+#[test]
+fn adrenaline_rush_buys_a_dash_and_a_cushion_twice() {
+    use crate::actions::species::{ADRENALINE_RUSH_TAG, ADRENALINE_RUSH_USES};
+    use crate::actors::creatures::orc_lineage::ORC_LINEAGE_TEMPLATE;
+
+    let mut e = ei_with_terrain(24, 24, &[]);
+    let orc = e
+        .instantiate_creature(&ORC_LINEAGE_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    let rush = e.actors[&orc]
+        .actions
+        .iter()
+        .find(|a| a.name() == "adrenaline rush")
+        .copied()
+        .expect("the orc carries its species' action");
+
+    for _ in 0..ADRENALINE_RUSH_USES {
+        // A fresh round each time: the trait is priced as a Bonus Action
+        // and an actor outside its own turn has none to spend.
+        e.actors.get_mut(&orc).unwrap().reset_for_new_round();
+        let aei = ActionExecutionInfo::new(rush, orc, None, None, None);
+        assert!(aei.validate(&e), "an unspent rush is takeable");
+        e.push_action(aei);
+        e.process_stack();
+    }
+    assert!(
+        e.actors[&orc].temp_hp() > 0,
+        "RAW's second clause: \"you gain a number of Temporary Hit Points \
+         equal to your Proficiency Bonus\""
+    );
+    assert_eq!(
+        e.actors[&orc].feature_charges_remaining(ADRENALINE_RUSH_TAG),
+        0
+    );
+
+    e.actors.get_mut(&orc).unwrap().reset_for_new_round();
+    let aei = ActionExecutionInfo::new(rush, orc, None, None, None);
+    assert!(
+        !aei.validate(&e),
+        "an exhausted pool refuses the third rush until a Short Rest"
+    );
+}
+
 /// SRD 5.2 Goliath **Cloud's Jaunt**: *"As a Bonus Action, you
 /// magically teleport up to 30 feet to an unoccupied space you can
 /// see."*
