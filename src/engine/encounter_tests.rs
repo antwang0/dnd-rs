@@ -44958,6 +44958,63 @@ fn the_three_stat_blocks_that_were_missing_an_action_can_use_it() {
     );
 }
 
+/// Four monsters that could be walked away from, and now cannot.
+///
+/// SRD 5.2 gave most of its melee bruisers a ranged option; four of the
+/// engine's had none at all. A treant, a stone golem, a djinni and a
+/// dryad could each be backed away from and shot at for the whole
+/// fight, which does not make a monster hard — it makes it slow, and it
+/// makes the boss of a room a statue.
+///
+/// Asserted as "has a weapon attack that is not melee", which is the
+/// property that was missing, rather than by name: what matters is that
+/// the creature has *an* answer at range, and a future rewrite that
+/// renamed the bolt should not fail here.
+#[test]
+fn the_four_monsters_that_had_no_answer_at_range_have_one() {
+    use crate::actions::action_template::MELEE_BAND_REACH;
+    use crate::actors::creatures::djinn::DJINNI_TEMPLATE;
+    use crate::actors::creatures::dryads::DRYAD_TEMPLATE;
+    use crate::actors::creatures::stone_golems::STONE_GOLEM_TEMPLATE;
+    use crate::actors::creatures::treants::TREANT_TEMPLATE;
+
+    for t in [
+        &*TREANT_TEMPLATE,
+        &*STONE_GOLEM_TEMPLATE,
+        &*DJINNI_TEMPLATE,
+        &*DRYAD_TEMPLATE,
+    ] {
+        let reaches = t
+            .actions
+            .iter()
+            .filter(|a| a.is_weapon_attack() && !a.is_melee_attack())
+            .filter_map(|a| a.reach_tiles())
+            .max();
+        let reach = reaches.unwrap_or_else(|| {
+            panic!(
+                "{} has no ranged weapon attack, and SRD 5.2 prints one for it",
+                t.name
+            )
+        });
+        assert!(
+            reach > MELEE_BAND_REACH,
+            "{}'s longest ranged attack reaches {reach} tiles, which is still \
+             inside the melee band",
+            t.name
+        );
+    }
+
+    // The djinni's bolt is the one with a clause on it: RAW installs
+    // Prone on the hit, with no save, on a Large or smaller target.
+    // Both halves are easy to lose — a knockdown that needed a save
+    // would be a different rule, and one with no size gate would floor
+    // a storm giant at a hundred and twenty feet.
+    use crate::actions::monster_attacks::DJINNI_STORM_BOLT;
+    use crate::engine::types::Size;
+    assert_eq!(DJINNI_STORM_BOLT.conditions, &[Condition::Prone]);
+    assert_eq!(DJINNI_STORM_BOLT.max_target_size, Some(Size::Large));
+}
+
 /// Every ranged weapon in the engine declares a normal range.
 ///
 /// Two separate rules read that number and neither can ask for it a

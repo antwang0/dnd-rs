@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{TREANT_MULTIATTACK, TREANT_SLAM};
+use crate::actions::monster_attacks::{TREANT_HAIL_OF_BARK, TREANT_MULTIATTACK, TREANT_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size};
@@ -16,6 +16,9 @@ use std::sync::LazyLock;
 pub static TREANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&TREANT_SLAM);
+    // RAW's ranged Action, and the answer a treant had none of — see
+    // `TREANT_HAIL_OF_BARK`.
+    actions.push(&TREANT_HAIL_OF_BARK);
     actions.push(&*TREANT_MULTIATTACK);
     CreatureTemplate {
         name: "Treant",

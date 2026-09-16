@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{DRYAD_CLUB, DRYAD_FEY_CHARM};
+use crate::actions::monster_attacks::{DRYAD_CLUB, DRYAD_FEY_CHARM, DRYAD_THORN_BURST};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
@@ -22,6 +22,8 @@ use std::sync::LazyLock;
 pub static DRYAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&DRYAD_CLUB);
+    // RAW's ranged Action — see `DRYAD_THORN_BURST`.
+    actions.push(&DRYAD_THORN_BURST);
     actions.push(&DRYAD_FEY_CHARM);
     CreatureTemplate {
         name: "Dryad",

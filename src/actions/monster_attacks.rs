@@ -20866,6 +20866,115 @@ pub static MAGE_ARCANE_BURST: SimpleWeapon = SimpleWeapon::ranged(
     48,
 );
 
+// ─── The four stat blocks that could be kited forever ────────────────
+//
+// SRD 5.2 gave most of its melee bruisers a ranged option, and four of
+// the engine's had none at all: a treant, a stone golem, a djinni and a
+// dryad could each be walked away from and shot at for the whole fight.
+// A monster with no answer at range is not a hard monster, it is a slow
+// one — and every one of these is printed with an answer.
+
+/// **Treant Hail of Bark** — SRD 5.2: *"Ranged Attack Roll: +10, range
+/// 180 ft. Hit: 28 (4d10 + 6) Piercing damage."*
+///
+/// The heaviest single ranged attack in the bestiary, on a CR 9 boss
+/// that had nothing but a slam. A treant standing in the open with a
+/// party thirty feet away used to be a statue.
+///
+/// One range rather than two — a monster's printed *"range 180 ft."*
+/// has no long band, so `normal_range == reach` and there is no
+/// disadvantage window. Same encoding as `MAGE_ARCANE_BURST` above.
+pub static TREANT_HAIL_OF_BARK: SimpleWeapon = SimpleWeapon::ranged(
+    "hail of bark",
+    &["bark", "hob"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 10),
+    DamageType::Piercing,
+    72,
+    72,
+);
+
+/// **Stone Golem Force Bolt** — SRD 5.2: *"Ranged Attack Roll: +9,
+/// range 120 ft. Hit: 22 (4d10) Force damage."*
+///
+/// Force, which almost nothing in the bestiary resists, out of a
+/// construct that resists almost everything. RAW's Multiattack is *"two
+/// attacks, using Slam or Force Bolt in any combination"*, so a golem
+/// that cannot reach you throws twice rather than walking.
+///
+/// A flat `4d10` with no ability modifier, which is what the printed
+/// line says: `22` is the average of four d10s and nothing else.
+pub static STONE_GOLEM_FORCE_BOLT: SimpleWeapon = SimpleWeapon {
+    display_name: "force bolt",
+    aliases: &["fbolt", "sgfb"],
+    attack_ability: AbilityScoreType::Constitution,
+    // No modifier on the damage — see the docstring.
+    damage_ability: None,
+    damage_dice: Dice::new(4, 10),
+    damage_type: DamageType::Force,
+    reach: 48,
+    is_melee: false,
+    requires_los: true,
+    cost_resource: Resource::Action,
+    normal_range: Some(48),
+    requires_condition: None,
+    min_effective_range: None,
+    is_light: false,
+    is_finesse: false,
+    is_two_handed: false,
+    is_versatile: false,
+    mastery: None,
+    is_polearm: false,
+    is_heavy: false,
+    is_loading: false,
+    bloodied_dice: None,
+    damage_type_menu: None,
+};
+
+/// **Djinni Storm Bolt** — SRD 5.2: *"Ranged Attack Roll: +9, range 120
+/// feet. Hit: 13 (3d8) Thunder damage. If the target is a Large or
+/// smaller creature, it has the Prone condition."*
+///
+/// A knockdown at a hundred and twenty feet, three times a round off
+/// RAW's Multiattack, on a creature that hovers. The djinni had a
+/// scimitar and nothing else, which made a CR 11 elemental noble
+/// something a party could back away from.
+///
+/// On `WeaponWithCondition` rather than the plain ranged chassis
+/// because the Prone is not a save — RAW installs it on the hit — and
+/// because the size clause is exactly what `against_at_most` is for. A
+/// storm bolt does not floor a storm giant.
+pub static DJINNI_STORM_BOLT: WeaponWithCondition = WeaponWithCondition::ranged(
+    "storm bolt",
+    &["sbolt", "dsb"],
+    AbilityScoreType::Charisma,
+    Dice::new(3, 8),
+    DamageType::Thunder,
+    &[Condition::Prone],
+    ConditionTimer::Permanent,
+    "storm bolt knockdown",
+    48,
+    48,
+)
+.against_at_most(Size::Large);
+
+/// **Dryad Thorn Burst** — SRD 5.2: *"Ranged Attack Roll: +6, range 60
+/// ft. Hit: 7 (1d6 + 4) Piercing damage."*
+///
+/// The smallest of the four and the one whose absence bit hardest in
+/// play: a dryad's whole kit is a charm and a club, so a party that
+/// saved against the charm could stand six tiles away and take it apart
+/// at leisure.
+pub static DRYAD_THORN_BURST: SimpleWeapon = SimpleWeapon::ranged(
+    "thorn burst",
+    &["thorns", "dtb"],
+    AbilityScoreType::Charisma,
+    Dice::new(1, 6),
+    DamageType::Piercing,
+    24,
+    24,
+);
+
 /// Mage Multiattack — three Arcane Bursts per Action. RAW: "The mage
 /// makes three Arcane Burst attacks."
 pub static MAGE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {

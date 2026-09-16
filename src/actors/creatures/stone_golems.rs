@@ -1,7 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{
-    STONE_GOLEM_MULTI, STONE_GOLEM_SLAM, STONE_GOLEM_SLOW,
-};
+use crate::actions::monster_attacks::{STONE_GOLEM_FORCE_BOLT, STONE_GOLEM_MULTI, STONE_GOLEM_SLAM, STONE_GOLEM_SLOW};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size};
@@ -40,6 +38,9 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*STONE_GOLEM_MULTI);
     actions.push(&STONE_GOLEM_SLAM);
+    // RAW: "two attacks, using Slam or Force Bolt in any combination."
+    // See `STONE_GOLEM_FORCE_BOLT`.
+    actions.push(&STONE_GOLEM_FORCE_BOLT);
     actions.push(&*STONE_GOLEM_SLOW);
     CreatureTemplate {
         name: "Stone Golem",
