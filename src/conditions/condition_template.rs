@@ -3767,6 +3767,39 @@ pub enum Condition {
     /// creature, and the DC is the staff's printed 17 rather than the
     /// wielder's own — a stick does not get sharper in a wizard's hand.
     StaffThundering,
+    /// **Rod of Lordly Might**, Drain Life armed — SRD 5.2's *"When you
+    /// hit a creature with a melee attack using the rod, you can force
+    /// the target to make a DC 17 Constitution saving throw. On a failed
+    /// save, the target takes an extra 4d6 Necrotic damage, and you
+    /// regain a number of Hit Points equal to half that Necrotic
+    /// damage."*
+    ///
+    /// A prime on the staff markers' chassis, on an object that is not a
+    /// staff. The rod is a mace with three once-a-dawn properties and
+    /// two of them are this shape — a clause that fires on the next
+    /// melee hit and has to be *committed* before the d20, for the
+    /// reason `StaffStriking` gives.
+    ///
+    /// The half the rider table could not say before this rod is the
+    /// second clause: RAW pays the *wielder*, in real hit points, at
+    /// half what the target took. `FollowUpEffect::TempHpToAttacker` was
+    /// the only attacker-facing follow-up and it is neither of those
+    /// things — see `FollowUpEffect::Drain`.
+    RodDrainingLife,
+    /// **Rod of Lordly Might**, Paralyze armed — SRD 5.2's *"When you hit
+    /// a creature with a melee attack using the rod, you can force the
+    /// target to make a DC 17 Constitution saving throw. On a failed
+    /// save, the target has the Paralyzed condition for 1 minute. The
+    /// target repeats the save at the end of each of its turns, ending
+    /// the effect on a success."*
+    ///
+    /// Zero dice, like `StaffThundering`: the whole rider is the
+    /// follow-up. What it buys is the strongest thing any prime in the
+    /// engine does to one creature — Paralyzed is Stunned plus
+    /// auto-critical melee hits — and RAW prices it accordingly, at one
+    /// of the rod's three charges and a save the target re-rolls at the
+    /// end of every one of its turns.
+    RodParalyzing,
     /// **Withered** — what a failed save against the Staff of Withering
     /// leaves behind: *"Disadvantage for 1 hour on any ability check or
     /// saving throw that uses Strength or Constitution."*
@@ -3850,6 +3883,8 @@ impl Condition {
             Condition::StaffWithering => "staff of withering charged",
             Condition::StaffLightning => "staff lightning charged",
             Condition::StaffThundering => "staff thunder charged",
+            Condition::RodDrainingLife => "rod drain charged",
+            Condition::RodParalyzing => "rod paralysis charged",
             Condition::Withered => "withered",
             Condition::Prone => "prone",
             Condition::Stunned => "stunned",

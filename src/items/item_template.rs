@@ -7208,6 +7208,30 @@ pub static CUBIC_GATE: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Rod of Lordly Might** (Rod, Legendary, requires attunement) — a
+/// `+3` mace with three once-a-dawn properties on three different lanes.
+///
+/// See `item_actions::ROD_OF_LORDLY_MIGHT_NAME` for what ships, what
+/// does not, and why three properties share one pool of three charges.
+pub static ROD_OF_LORDLY_MIGHT: Item = Item {
+    name: crate::actions::item_actions::ROD_OF_LORDLY_MIGHT_NAME,
+    glyph: '|',
+    bonuses: ItemBonuses { attack_bonus: 3, damage_bonus: 3, ..ItemBonuses::ZERO },
+    on_use: &[
+        &crate::actions::item_actions::CHARGE_ROD_PARALYZE,
+        &crate::actions::item_actions::CHARGE_ROD_DRAIN_LIFE,
+        &crate::actions::item_actions::SOUND_ROD_OF_LORDLY_MIGHT,
+    ],
+    grants_magical_attacks: true,
+    charges: 3,
+    // RAW returns each property "at the next dawn", which is a full
+    // refill rather than a die — the flat sibling of the Cape of the
+    // Mountebank's one.
+    recharge: Some(DiceExpr { dice: None, constant: 3 }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Amulet of the Planes** (Wondrous item, Very Rare, requires
 /// attunement) — Plane Shift at will, on a DC 15 Arcana check, and a
 /// failed check sends the wearer instead.
@@ -8294,6 +8318,11 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &SCIMITAR_OF_SPEED,
     &ADAMANTINE_ARMOR,
     &QUARTERSTAFF_OF_THE_ACROBAT,
+    // The armoury's one *rod*, and on this list for the reason the
+    // Quarterstaff of the Acrobat is: RAW opens the entry by calling it
+    // "a magic Mace", so it sharpens a swing and a wraith cannot halve
+    // what it hits with.
+    &ROD_OF_LORDLY_MIGHT,
 ];
 
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
@@ -9359,6 +9388,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // charge: an Arcana check, and a failure that takes the wearer and
     // everything standing near them off the board instead.
     &AMULET_OF_THE_PLANES,
+    // And the martial end of the same shelf: a `+3` mace whose three
+    // charges buy the strongest single-target lock any weapon in the
+    // file puts up, a bite that heals its wielder, and a room-wide
+    // fright.
+    &ROD_OF_LORDLY_MIGHT,
     // The rest of the SRD's A–Z that says "you can cast X from it" on
     // something that is not a staff. Four items and seven rows between
     // them, all on the `StaffSpell` chassis the Cape and the Circlet
@@ -9574,6 +9608,16 @@ mod tests {
             (&VORPAL_SWORD, Condition::Vorpal, false),
             (&MACE_OF_SMITING, Condition::MaceSmiting, false),
             (&THUNDEROUS_GREATCLUB, Condition::Thundering, false),
+            // The Rod of Lordly Might takes **two** rows, which no other
+            // entry does and which is why the length assertion below
+            // counts items rather than rows. RAW gives the rod three
+            // once-a-dawn properties and two of them are on-hit clauses,
+            // so the object arms two different markers off the same
+            // three-charge pool. Both are kindled in the column's sense
+            // — neither arrives on pickup, each is a bonus action and a
+            // charge.
+            (&ROD_OF_LORDLY_MIGHT, Condition::RodDrainingLife, true),
+            (&ROD_OF_LORDLY_MIGHT, Condition::RodParalyzing, true),
         ];
         // The entries whose value is not a die on a swing, and so have
         // no rider row to be wired to. Named rather than counted — see
@@ -9665,11 +9709,23 @@ mod tests {
                 );
             }
         }
+        // Counted by **item** rather than by row, because one item may
+        // arm more than one marker — the Rod of Lordly Might is the
+        // first, with an on-hit clause per button. A row count would
+        // have read the rod as two entries and quietly cancelled the
+        // next missing one out.
+        let covered: std::collections::BTreeSet<&str> = wiring
+            .iter()
+            .map(|(item, _, _)| item.name)
+            .chain(no_rider.iter().map(|item| item.name))
+            .chain(other_lane.iter().map(|(item, _)| item.name))
+            .collect();
+        let shelved: std::collections::BTreeSet<&str> =
+            MAGIC_ARMOURY.iter().map(|item| item.name).collect();
         assert_eq!(
-            wiring.len() + no_rider.len() + other_lane.len(),
-            MAGIC_ARMOURY.len(),
-            "the armoury grew and this sweep did not — every entry on it needs a row \
-             in `wiring`, in `other_lane`, or a place in `no_rider`"
+            covered, shelved,
+            "the armoury and this sweep disagree — every entry on the shelf needs a \
+             row in `wiring`, in `other_lane`, or a place in `no_rider`"
         );
     }
 

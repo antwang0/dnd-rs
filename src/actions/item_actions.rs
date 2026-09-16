@@ -8215,6 +8215,105 @@ pub static CUBIC_GATE_PLANE_SHIFT: crate::actions::staves::StaffSpell =
         only_targets: None,
     };
 
+/// **Rod of Lordly Might** (Rod, Legendary, requires attunement) —
+/// *"…a magic Mace that grants a +3 bonus to attack rolls and damage
+/// rolls made with it. The rod has properties associated with six
+/// different buttons… It has three other properties as well."*
+///
+/// Three of RAW's nine clauses ship, and they are the three that happen
+/// in a fight. Each lands on a lane the engine already has, which is
+/// what makes the rod worth a Legendary slot rather than a `+3` mace
+/// with flavour text:
+///
+///   - **Drain Life** and **Paralyze** are bonus-action primes on the
+///     staff-marker chassis — see `CHARGE_ROD_DRAIN_LIFE` and
+///     `CHARGE_ROD_PARALYZE`, and the two `ON_HIT_RIDERS` rows that
+///     collect them.
+///   - **Terrify** is a thirty-foot emanation on
+///     `AreaSaveConditionItem`, the Mace of Terror's own shape and its
+///     own DC — see `SOUND_ROD_OF_LORDLY_MIGHT`.
+///
+/// **The six buttons are not modeled**, and the split between them is
+/// clean. Buttons 4 through 6 are a ladder, a battering ram and a
+/// compass: a climbing pole for a board with no third dimension, a
+/// bonus on breaking down doors the engine has none of, and magnetic
+/// north. Buttons 1 through 3 turn the rod into a flaming blade, a
+/// battleaxe or a spear, and those need the one thing the attack
+/// pipeline cannot do: bind a swing to the *object* that made it. The
+/// `+3` already reaches every attack its holder makes, which is the
+/// standing over-wideness of `ItemBonuses::attack_bonus` — see
+/// `conditions::Condition::DragonSlaying` for the same absence from the
+/// other end — so a button that changed which weapon the rod *is* would
+/// have nothing to change.
+///
+/// **Three properties, one pool.** RAW gives Drain Life, Paralyze and
+/// Terrify a once-a-dawn ledger each; `Item::charges` is one pool per
+/// object, so the rod carries three charges and each property costs one.
+/// That is the Staff of Thunder and Lightning's bargain exactly — four
+/// once-a-dawn properties, four shared charges — and it is generous in
+/// one direction: a holder may Terrify three times in a fight where RAW
+/// would allow once. The alternative, one charge for the whole rod, is
+/// wrong in the direction that matters more, because it would make two
+/// of the three properties unreachable in any fight where the third was
+/// worth using.
+pub const ROD_OF_LORDLY_MIGHT_NAME: &str = "Rod of Lordly Might";
+
+/// One charge of three, for a DC 17 Constitution save on the next melee
+/// hit against 4d6 necrotic and half of it back — SRD 5.2's *Drain
+/// Life*.
+pub static CHARGE_ROD_DRAIN_LIFE: crate::actions::staves::StaffPrime =
+    crate::actions::staves::StaffPrime {
+        action_name: "charge rod drain life",
+        action_aliases: &["rod-drain", "drain life"],
+        item_name: ROD_OF_LORDLY_MIGHT_NAME,
+        charges: 1,
+        condition: Condition::RodDrainingLife,
+        log_text: "{actor} thumbs the Rod of Lordly Might; it goes cold and hungry.",
+    };
+
+/// One charge of three, for a DC 17 Constitution save on the next melee
+/// hit against a minute of Paralyzed — SRD 5.2's *Paralyze*.
+pub static CHARGE_ROD_PARALYZE: crate::actions::staves::StaffPrime =
+    crate::actions::staves::StaffPrime {
+        action_name: "charge rod paralyze",
+        action_aliases: &["rod-paralyze", "paralyze"],
+        item_name: ROD_OF_LORDLY_MIGHT_NAME,
+        charges: 1,
+        condition: Condition::RodParalyzing,
+        log_text: "{actor} thumbs the Rod of Lordly Might; the air around it stiffens.",
+    };
+
+/// **Terrify** — *"While holding the rod, you can take a Magic action to
+/// force each creature you can see within 30 feet of yourself to make a
+/// DC 17 Wisdom saving throw. On a failed save, a target has the
+/// Frightened condition for 1 minute."*
+///
+/// The Mace of Terror's clause with two numbers changed — DC 17 rather
+/// than 15, and RAW's own repeat-save tail, which this chassis does not
+/// carry and which is the row's one admitted divergence. Ten rounds flat
+/// is what every other `AreaSaveConditionItem` install lasts, and the
+/// difference from RAW's "repeats the save at the end of each of its
+/// turns" is the difference between a fright that lifts and one that
+/// does not. The rod's *other* frightening clause, Paralyze, does carry
+/// the repeats — it is on the rider lane, which has somewhere to put
+/// them.
+pub static SOUND_ROD_OF_LORDLY_MIGHT: AreaSaveConditionItem = AreaSaveConditionItem {
+    action_name: "brandish rod of lordly might",
+    action_aliases: &["terrify", "rod of lordly might", "brandish rod"],
+    item_name: ROD_OF_LORDLY_MIGHT_NAME,
+    log_text: "{actor} brandishes the Rod of Lordly Might and the room recoils.",
+    save: AbilityScoreType::Wisdom,
+    dc: 17,
+    // 30 ft radius RAW, centred on the holder; 12 tiles on the 2.5-ft
+    // grid, and the reach is the same number for the reason the Mace of
+    // Terror's is.
+    shape: AreaShape::Burst { radius: 12 },
+    reach: 12,
+    condition: Condition::Frightened,
+    timer: ConditionTimer::Rounds(10),
+    billing: ItemUseBilling::Charges(1),
+};
+
 pub const AMULET_OF_THE_PLANES_NAME: &str = "Amulet of the Planes";
 
 /// RAW's DC on the amulet's check. Named rather than inlined because it

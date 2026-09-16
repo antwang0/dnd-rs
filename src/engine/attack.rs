@@ -6644,6 +6644,29 @@ pub enum FollowUpEffect {
     /// Paired with `save_ability: None` at every site — nothing saves
     /// against somebody else feeling better.
     TempHpToAttacker,
+    /// Damage the target with a pool of the follow-up's own, and heal
+    /// the **attacker** for half of what was rolled — SRD 5.2's Rod of
+    /// Lordly Might: *"the target takes an extra 4d6 Necrotic damage,
+    /// and you regain a number of Hit Points equal to half that Necrotic
+    /// damage."*
+    ///
+    /// The third attacker-facing variant and the first that heals.
+    /// Neither of the other two is this sentence: `TempHpToAttacker`
+    /// pays a *temporary* pool (a Sword of Life Stealing's clause, and
+    /// temp HP does not stack with itself or restore a downed wielder),
+    /// and `Damage` pays nobody but the target. Two halves of one
+    /// sentence, so one variant — an author writing the drain as
+    /// `Damage` plus a second follow-up would have nowhere to put the
+    /// second, since `SmiteFollowUp` holds exactly one effect.
+    ///
+    /// The heal is half the **rolled** pool rather than half the damage
+    /// the target actually took, which is RAW read literally: *"half
+    /// that Necrotic damage"* names the die pool, and a necrotic-immune
+    /// target does not stop the rod drinking. That is also the only
+    /// reading this lane can implement — the damage is queued as a side
+    /// effect and resistance is applied when it lands, long after the
+    /// follow-up has decided what to heal.
+    Drain { dice: Dice, damage_type: DamageType },
     /// Damage the creature that was hit, on the branch the follow-up
     /// landed on.
     ///
@@ -9651,6 +9674,80 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             attacker_link: None,
             spends_item_charge: None,
         },
+        // SRD 5.2 **Rod of Lordly Might**, *Drain Life*: "When you hit a
+        // creature with a melee attack using the rod, you can force the
+        // target to make a DC 17 Constitution saving throw. On a failed
+        // save, the target takes an extra 4d6 Necrotic damage, and you
+        // regain a number of Hit Points equal to half that Necrotic
+        // damage."
+        //
+        // Zero dice on the row itself and the whole pool behind the
+        // save, which is what `FollowUpEffect::Drain` is for: RAW's 4d6
+        // only happens on a failure, and a rider whose dice sat in
+        // `OnHitRider::dice` would pay them out on a target that made
+        // its save.
+        OnHitRider {
+            condition: Condition::RodDrainingLife,
+            dice: Dice::new(0, 0),
+            label: "rod of lordly might: drain life",
+            damage_type: RiderDamage::Fixed(DamageType::Necrotic),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(17),
+                effect: FollowUpEffect::Drain {
+                    dice: Dice::new(4, 6),
+                    damage_type: DamageType::Necrotic,
+                },
+                label: "rod of lordly might: drain life",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+            attacker_gate: None,
+            attacker_link: None,
+            spends_item_charge: None,
+        },
+        // …and *Paralyze*, the same sentence with a different second
+        // half: "On a failed save, the target has the Paralyzed
+        // condition for 1 minute. The target repeats the save at the end
+        // of each of its turns, ending the effect on a success."
+        //
+        // Zero dice like the Staff of Thunder's row, and the ten rounds
+        // are RAW's minute — a cap the repeats race rather than a
+        // sentence. See `ROD_PARALYSIS`.
+        OnHitRider {
+            condition: Condition::RodParalyzing,
+            dice: Dice::new(0, 0),
+            label: "rod of lordly might: paralyze",
+            damage_type: RiderDamage::Fixed(DamageType::Necrotic),
+            lane: RiderLane::MeleeWeapon,
+            consume_on_trigger: true,
+            follow_up: Some(SmiteFollowUp {
+                save_ability: Some(AbilityScoreType::Constitution),
+                dc_ability: AbilityScoreType::Constitution,
+                fixed_dc: Some(17),
+                effect: FollowUpEffect::RepeatingCondition {
+                    clause: &ROD_PARALYSIS,
+                    timer: ConditionTimer::Rounds(10),
+                },
+                label: "rod of lordly might: paralyze",
+                hp_threshold: None,
+                size_cap: None,
+                on_success: None,
+            }),
+            once_per_turn_tag: None,
+            target_gate: None,
+            requires_natural_twenty: false,
+            attacker_gate: None,
+            attacker_link: None,
+            spends_item_charge: None,
+        },
         OnHitRider {
             condition: Condition::StaffWithering,
             dice: Dice::new(2, 10),
@@ -9697,6 +9794,26 @@ pub static SWORD_WOUND: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Wounded,
         ability: AbilityScoreType::Constitution,
         escaped_flavor: "closes the wound at last",
+    };
+
+/// SRD 5.2 **Rod of Lordly Might**, Paralyze: *"The target repeats the
+/// save at the end of each of its turns, ending the effect on a
+/// success."*
+///
+/// The second weapon-borne clause on the repeat-save ledger, and the
+/// heavier of the two by a distance: the Sword of Wounding's escape is
+/// from a bleed, and this one is from Paralyzed — no actions, no
+/// movement, auto-failed Strength and Dexterity saves, and every melee
+/// hit against the victim an automatic critical. The escape is what
+/// keeps a once-a-dawn rod property from simply ending a creature: RAW's
+/// minute is ten rounds here, and the repeats are what the victim races
+/// it with.
+pub static ROD_PARALYSIS: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "rod of lordly might",
+        condition: Condition::Paralyzed,
+        ability: AbilityScoreType::Constitution,
+        escaped_flavor: "shakes the stiffness out of its limbs",
     };
 
 /// Every once-per-turn ledger key `ON_HIT_RIDERS` writes through, read
@@ -10152,6 +10269,29 @@ fn push_follow_up_effect(
                 actor_id: caster_id,
                 amount: rider_damage,
             }));
+        }
+        FollowUpEffect::Drain { dice, damage_type } => {
+            let rolled = encounter.roll(&dice);
+            // Half, rounded down, which is the engine's standing rule for
+            // every "half as much" in the book.
+            let drawn = rolled / 2;
+            let (attacker, target) =
+                (encounter.actor_name(caster_id), encounter.actor_name(target_id));
+            encounter.log(format!(
+                "  {label}: +{rolled} {damage_type:?} out of {target}, and {attacker} \
+                 takes {drawn} of it back"
+            ));
+            effects.push(Box::new(DealDamage {
+                actor_id: target_id,
+                amount: rolled,
+                damage_type,
+            }));
+            if drawn > 0 {
+                effects.push(Box::new(crate::engine::side_effects::Heal {
+                    actor_id: caster_id,
+                    amount: drawn,
+                }));
+            }
         }
     }
 }

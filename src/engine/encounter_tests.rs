@@ -103062,6 +103062,145 @@ fn the_staff_of_the_magi_keeps_its_three_free_rows_after_the_pool_is_gone() {
     );
 }
 
+/// The Rod of Lordly Might's two buttons pay out in two different
+/// currencies, and one of them pays the wielder.
+///
+/// Drain Life is the first follow-up in the engine to *heal* — SRD 5.2's
+/// *"the target takes an extra 4d6 Necrotic damage, and you regain a
+/// number of Hit Points equal to half that Necrotic damage"* — and the
+/// distinction from the Sword of Life Stealing's clause one shelf over
+/// is the whole reason `FollowUpEffect::Drain` exists: that sword pays
+/// temporary hit points, which do not stack and do not lift a wounded
+/// wielder off the floor, and this rod pays real ones.
+///
+/// Paralyze is checked for the thing the rider lane can say and the area
+/// chassis cannot: the escape. RAW's minute is ten rounds, raced by a
+/// Constitution save at the end of each of the victim's turns, and a
+/// paralysis with no way out would be a strictly crueller rod than the
+/// one in the book.
+#[test]
+fn the_rod_of_lordly_might_drains_into_its_wielder_and_paralyses_with_a_way_out() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::item_actions::{CHARGE_ROD_DRAIN_LIFE, CHARGE_ROD_PARALYZE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::ROD_OF_LORDLY_MIGHT;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let holder = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 4), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&holder)
+        .unwrap()
+        .pickup_item(&ROD_OF_LORDLY_MIGHT);
+
+    // Wound the wielder so the heal has somewhere to land — a full
+    // fighter would cap and the assertion would read as a heal of zero.
+    let full = e.actors[&holder].hitpoints();
+    e.actors.get_mut(&holder).unwrap().take_damage(full / 2);
+    let hurt = e.actors[&holder].hitpoints();
+    assert!(hurt > 0, "the wielder should still be standing");
+
+    let aei = ActionExecutionInfo::new(&CHARGE_ROD_DRAIN_LIFE, holder, None, None, None);
+    assert!(aei.validate(&e), "an attuned holder with a melee swing");
+    e.push_action(aei);
+    e.process_stack();
+    assert!(e.actors[&holder].has_condition(Condition::RodDrainingLife));
+    assert_eq!(
+        e.actors[&holder].item_charges_remaining(ROD_OF_LORDLY_MIGHT.name),
+        2,
+        "the prime cost one of three"
+    );
+
+    // Swing until the ogre fails the DC 17 save and the drain lands.
+    let mut drained = false;
+    for _ in 0..60 {
+        let before = e.messages().len();
+        for ef in crate::engine::attack::resolve_attack(
+            &mut e,
+            crate::engine::attack::AttackParams {
+                caster_id: holder,
+                target_id: ogre,
+                action_name: "rod",
+                attack_bonus: 100,
+                damage_dice: Dice::new(1, 6),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                ..crate::engine::attack::AttackParams::DEFAULTS
+            },
+        ) {
+            ef.apply(&mut e);
+        }
+        if e.messages()[before..]
+            .iter()
+            .any(|m| m.contains("takes") && m.contains("of it back"))
+        {
+            drained = true;
+            break;
+        }
+        // Re-arm and re-float the ogre for the next attempt.
+        e.actors.get_mut(&ogre).unwrap().heal(100);
+        e.actors
+            .get_mut(&holder)
+            .unwrap()
+            .add_condition(Condition::RodDrainingLife, ConditionTimer::Permanent);
+    }
+    assert!(drained, "sixty swings and the drain never landed");
+    assert!(
+        e.actors[&holder].hitpoints() > hurt,
+        "the rod drinks into its wielder: {} → {}",
+        hurt,
+        e.actors[&holder].hitpoints()
+    );
+    assert!(
+        !e.actors[&holder].has_condition(Condition::RodDrainingLife),
+        "the prime is consumed by the swing that cashes it"
+    );
+
+    // The other button, and the escape it comes with. A fresh round,
+    // because the drain above spent this turn's Bonus Action.
+    e.actors.get_mut(&holder).unwrap().reset_for_new_round();
+    let aei = ActionExecutionInfo::new(&CHARGE_ROD_PARALYZE, holder, None, None, None);
+    assert!(aei.validate(&e), "two charges left, and a swing to spend one on");
+    e.push_action(aei);
+    e.process_stack();
+
+    let mut paralysed = false;
+    for _ in 0..60 {
+        for ef in crate::engine::attack::resolve_attack(
+            &mut e,
+            crate::engine::attack::AttackParams {
+                caster_id: holder,
+                target_id: ogre,
+                action_name: "rod",
+                attack_bonus: 100,
+                damage_dice: Dice::new(1, 4),
+                damage_bonus: 0,
+                damage_type: DamageType::Bludgeoning,
+                ..crate::engine::attack::AttackParams::DEFAULTS
+            },
+        ) {
+            ef.apply(&mut e);
+        }
+        if e.actors[&ogre].has_condition(Condition::Paralyzed) {
+            paralysed = true;
+            break;
+        }
+        e.actors.get_mut(&ogre).unwrap().heal(100);
+        e.actors
+            .get_mut(&holder)
+            .unwrap()
+            .add_condition(Condition::RodParalyzing, ConditionTimer::Permanent);
+    }
+    assert!(paralysed, "sixty swings and the paralysis never landed");
+    assert!(
+        e.repeat_save_pending(ogre, Condition::Paralyzed),
+        "a paralysis from this rod is one the victim rolls its way out of"
+    );
+}
+
 /// The Cubic Gate hands Plane Shift to somebody who cannot cast it.
 ///
 /// The whole argument for the item. `spells::PLANE_SHIFT` is the top row
