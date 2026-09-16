@@ -11954,23 +11954,26 @@ impl ActorInstance {
         self.total_item_bonuses().save
     }
 
-    /// Sum of every carried item's `attack_bonus` field. Folded into the
-    /// caster-side attack-roll buff lane via
-    /// `EncounterInstance::caster_attack_buffs` so weapon swings AND spell
-    /// attacks both pick up the passive without the call sites re-summing
-    /// the inventory. Symmetric with `item_save_bonus` on the save lane.
+    /// Sum of every carried item's `attack_bonus` field — the weapon
+    /// half of the to-hit lane. Folded into
+    /// `EncounterInstance::caster_attack_buffs` on the **weapon** side of
+    /// its `is_spell` gate; `item_spell_attack_bonus` below is what the
+    /// other side reads. Symmetric with `item_save_bonus` on the save
+    /// lane.
     pub fn item_attack_bonus(&self) -> i32 {
         self.total_item_bonuses().attack_bonus
     }
 
-    /// Sum of every carried item's `spell_attack_bonus` field — the
-    /// Wand of the War Mage's tier, and nothing else on the loot table.
+    /// Sum of every carried item's `spell_attack_bonus` field — the Wand
+    /// of the War Mage's tier, the Robe of the Archmagi, the Talisman,
+    /// and the two staves whose RAW names spell attack rolls in a
+    /// sentence of their own.
     ///
-    /// Kept out of `item_attack_bonus` above and folded in at the
-    /// spell-attack chokepoint instead, because RAW's clause names
-    /// spell attack rolls: a lane shared with the weapon chokepoint
-    /// would hand the wand's bonus to the sword in the holder's other
-    /// hand. See `items::item_template::ItemBonuses::spell_attack_bonus`.
+    /// The **spell** half of the same lane, chosen over
+    /// `item_attack_bonus` by `caster_attack_buffs`'s `is_spell`
+    /// parameter. The split is RAW's: a `+1 Weapon` says *"made with
+    /// this magic weapon"* and a wand says *"spell attack rolls"*, and
+    /// neither sentence is about the other's roll.
     pub fn item_spell_attack_bonus(&self) -> i32 {
         self.total_item_bonuses().spell_attack_bonus
     }

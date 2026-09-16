@@ -252,18 +252,13 @@ pub fn spell_attack_roll(
     // +3 (and any other `condition_attack_bonus` contribution) is
     // still active when we sum the bonus. Mirrors the same ordering
     // fix in `resolve_attack`.
-    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(caster_id);
-    // And the one flat to-hit source that is *not* shared with weapon
-    // swings: SRD 5.2's Wand of the War Mage, whose bonus RAW confines
-    // to spell attack rolls. It is summed here rather than inside
-    // `caster_attack_buffs` for exactly that reason — a lane that
-    // reached both chokepoints would hand a wizard's wand to the sword
-    // in their other hand. See `ItemBonuses::spell_attack_bonus`.
-    let wand = encounter
-        .actors
-        .get(&caster_id)
-        .map_or(0, |a| a.item_spell_attack_bonus());
-    let buff = buff + wand;
+    // `true`, because everything through this chokepoint is a spell
+    // attack roll — which is what picks the Wand of the War Mage's
+    // `spell_attack_bonus` over the `+N` sword's `attack_bonus`. The
+    // wand used to be summed here by hand, beside a `caster_attack_buffs`
+    // that had already added the sword; both halves now come out of the
+    // one call, and the sword stays in its scabbard.
+    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(caster_id, true);
     let (bless_die, bless_note) = encounter.bless_bane_attack_die(caster_id);
     // Burn through the one-shot rider stack (Helped, Hidden, per-target
     // help grant, Invisibility concentration, Inspired). Same hook as
@@ -547,7 +542,7 @@ fn spell_attack_outcome_exploding(
     // nobody else's beam picks it up. Added here rather than to
     // `caster_damage_buffs` because that helper takes no target — the
     // whole point of this bonus is that it depends on who is being hit.
-    let caster_damage_buff = encounter.caster_damage_buffs(caster_id)
+    let caster_damage_buff = encounter.caster_damage_buffs(caster_id, true)
         + encounter.curse_damage_bonus(caster_id, target_id)
         + crate::engine::attack::attack_damage_penalty(encounter, caster_id);
     let total_damage_bonus = damage_bonus + caster_damage_buff;

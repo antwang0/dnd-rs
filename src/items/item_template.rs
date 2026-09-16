@@ -52,21 +52,38 @@ pub struct ItemBonuses {
     /// Bardic Inspiration die) and the exhaustion tax, which is where
     /// every other flat term on a check already meets.
     pub check: i32,
-    /// Flat bonus added to every attack roll the holder makes (weapon
-    /// and spell attacks alike — folded into `caster_attack_buffs` so
-    /// the install-side `attack_bonus_buff` lane is shared with item
-    /// passives). Matches the `+1 weapon` / Bracers of Archery loot
-    /// archetype. 5e RAW: a +1 weapon adds to both attack AND damage
-    /// rolls — we ride the attack half here; the damage half lives on
-    /// `damage_bonus` below so weapon swings AND spell attacks both
-    /// see the bonus once (no double-dipping). 0 by default — most
-    /// trinkets leave this alone.
+    /// Flat bonus added to every **weapon** attack roll the holder
+    /// makes — the `+1 Weapon` / Bracers of Archery archetype, and RAW's
+    /// *"a +1 bonus to attack rolls and damage rolls made with this
+    /// magic weapon"*. The damage half of that sentence is
+    /// `damage_bonus` below. 0 by default — most trinkets leave this
+    /// alone.
+    ///
+    /// **Weapon attacks only**, which it was not for most of its life:
+    /// the lane reached the spell chokepoint too, so a wizard carrying a
+    /// `+3 Vorpal Sword` they cannot swing fired Fire Bolt at `+3`. The
+    /// gate is `EncounterInstance::caster_attack_buffs`'s `is_spell`
+    /// parameter, and the other side of it is
+    /// [`Self::spell_attack_bonus`] — an item whose RAW names spell
+    /// attack rolls says so on that field. Two staves used to get theirs
+    /// out of this one and now carry both, which is what the field split
+    /// is for: the number was right and the reason was wrong.
+    ///
+    /// Still summed across the **whole pack** rather than per weapon,
+    /// which is the armoury's standing approximation and a different
+    /// one: see `conditions::Condition::DragonSlaying` for the engine's
+    /// missing "which object made this swing".
     pub attack_bonus: i32,
-    /// Flat bonus added to every damage roll the holder lands on a hit
-    /// (weapon and spell attacks alike). Used by `+1 weapon`-style items
-    /// to grant the RAW "+N to attack AND damage" pair. Read at the
-    /// damage-roll site in `engine::attack` / `spells.rs`'s spell-attack
-    /// chokepoint. 0 by default.
+    /// Flat bonus added to every **weapon** damage roll the holder lands
+    /// — the other half of the `+1 Weapon`'s sentence, and gated the
+    /// same way its to-hit twin is. Read at the damage-roll site in
+    /// `engine::attack`. 0 by default.
+    ///
+    /// There is no spell-damage sibling of [`Self::spell_attack_bonus`]
+    /// because SRD 5.2 prints no item that grants one: every `+N` on the
+    /// loot table names a weapon, and the two items whose clause names
+    /// spell attacks (the Wand of the War Mage, the Robe of the
+    /// Archmagi) give a to-hit bonus and no damage at all.
     pub damage_bonus: i32,
     /// Armour Class that answers a **ranged** attack roll and nothing
     /// else — SRD 5.2's Arrow-Catching Shield, *"you gain a +2 bonus to
@@ -8046,13 +8063,20 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
 /// honest cost of the omission: a Staff of the Magi here empties like
 /// any other stick.
 ///
-/// **The `+2` is wider than RAW in the direction the Staff of Power's
-/// is.** RAW gives the attack bonus to the quarterstaff and to spell
-/// attack rolls — which is exactly what `attack_bonus` reaches — and
-/// gives the damage bonus only to the staff, where `damage_bonus`
-/// reaches a Fire Bolt too. One clause too generous on one lane, and
-/// the same trade the Staff of Power and the Staff of the Woodlands
-/// already took.
+/// **Both halves of the `+2` are RAW now**, and the staff is one of the
+/// two items that made the distinction worth drawing. RAW gives the
+/// bonus twice in two different sentences — *"a magic Quarterstaff that
+/// grants a +2 bonus to attack rolls and damage rolls made with it"*,
+/// and *"while you hold it, you gain a +2 bonus to spell attack
+/// rolls"* — so the staff carries it on two fields, `attack_bonus` for
+/// the swing and `spell_attack_bonus` for the Fire Bolt. It used to
+/// carry only the first, on a lane that reached spell attacks anyway;
+/// the number came out right and the reason was wrong, which is the
+/// kind of accident that stops being one the moment a plain `+3` sword
+/// is in the same pack. See `EncounterInstance::caster_attack_buffs`.
+///
+/// The damage half stays on the swing alone, which is also RAW: the
+/// second sentence names attack rolls and not damage.
 ///
 /// **Retributive Strike is not modeled**, for the reason the module
 /// docstring gives for every destruction clause on the shelf: it is an
@@ -8061,7 +8085,12 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
 pub static STAFF_OF_THE_MAGI: Item = Item {
     name: crate::actions::staves::STAFF_OF_THE_MAGI_NAME,
     glyph: '/',
-    bonuses: ItemBonuses { attack_bonus: 2, damage_bonus: 2, ..ItemBonuses::ZERO },
+    bonuses: ItemBonuses {
+        attack_bonus: 2,
+        damage_bonus: 2,
+        spell_attack_bonus: 2,
+        ..ItemBonuses::ZERO
+    },
     on_use: &[
         &crate::actions::staves::STAFF_OF_THE_MAGI_LIGHT,
         &crate::actions::staves::STAFF_OF_THE_MAGI_PROTECTION,
@@ -8101,6 +8130,12 @@ pub static STAFF_OF_POWER: Item = Item {
         save: 2,
         attack_bonus: 2,
         damage_bonus: 2,
+        // RAW's *"+2 bonus to Armor Class, saving throws, and spell
+        // attack rolls"* — the fourth of the sentence's four numbers,
+        // and the one the staff used to collect by accident off
+        // `attack_bonus`. See `STAFF_OF_THE_MAGI`, whose entry says the
+        // same thing at length.
+        spell_attack_bonus: 2,
         ..ItemBonuses::ZERO
     },
     on_use: &[

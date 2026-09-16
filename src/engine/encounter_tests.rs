@@ -2857,9 +2857,9 @@ fn weapon_plus_one_folds_into_caster_attack_buffs() {
             0,
         )
         .unwrap();
-    let (base_buff, base_cond) = e.caster_attack_buffs(id);
+    let (base_buff, base_cond) = e.caster_attack_buffs(id, false);
     e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
-    let (post_buff, post_cond) = e.caster_attack_buffs(id);
+    let (post_buff, post_cond) = e.caster_attack_buffs(id, false);
     assert_eq!(post_buff, base_buff + 1, "weapon +1 should bump install buff");
     assert_eq!(post_cond, base_cond, "weapon +1 must not touch the condition lane");
 }
@@ -2883,17 +2883,17 @@ fn weapon_plus_one_folds_into_item_damage_bonus() {
             0,
         )
         .unwrap();
-    let base_dmg = e.caster_damage_buffs(id);
+    let base_dmg = e.caster_damage_buffs(id, false);
     e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
-    assert_eq!(e.caster_damage_buffs(id), base_dmg + 1);
+    assert_eq!(e.caster_damage_buffs(id, false), base_dmg + 1);
     // Bracers add +2 damage but no attack bump.
-    let (pre_buff, _) = e.caster_attack_buffs(id);
+    let (pre_buff, _) = e.caster_attack_buffs(id, false);
     e.actors
         .get_mut(&id)
         .unwrap()
         .pickup_item(&BRACERS_OF_ARCHERY);
-    assert_eq!(e.caster_damage_buffs(id), base_dmg + 3);
-    let (post_buff, _) = e.caster_attack_buffs(id);
+    assert_eq!(e.caster_damage_buffs(id, false), base_dmg + 3);
+    let (post_buff, _) = e.caster_attack_buffs(id, false);
     assert_eq!(
         post_buff, pre_buff,
         "bracers of archery must NOT bump the attack lane"
@@ -18780,12 +18780,12 @@ fn caster_damage_buffs_folds_item_and_spell_lanes() {
             0,
         )
         .unwrap();
-    let base = e.caster_damage_buffs(id);
+    let base = e.caster_damage_buffs(id, false);
     e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
-    assert_eq!(e.caster_damage_buffs(id), base + 1, "item lane alone");
+    assert_eq!(e.caster_damage_buffs(id, false), base + 1, "item lane alone");
     AdjustDamageBuff { actor_id: id, delta: 1 }.apply(&mut e);
     assert_eq!(
-        e.caster_damage_buffs(id),
+        e.caster_damage_buffs(id, false),
         base + 2,
         "spell + item lanes should sum"
     );
@@ -31174,7 +31174,7 @@ fn exhaustion_taxes_every_d20_test_from_the_first_level() {
         .unwrap();
     let wis = crate::engine::types::AbilityScoreType::Wisdom;
     let base_save = e.actors[&attacker].save_modifier(wis);
-    let (base_attack, _) = e.caster_attack_buffs(attacker);
+    let (base_attack, _) = e.caster_attack_buffs(attacker, false);
 
     for level in 1..=3 {
         e.actors
@@ -31194,7 +31194,7 @@ fn exhaustion_taxes_every_d20_test_from_the_first_level() {
             "the save total carries it"
         );
         assert_eq!(
-            e.caster_attack_buffs(attacker).0,
+            e.caster_attack_buffs(attacker, false).0,
             base_attack + owed,
             "and so does the attack roll"
         );
@@ -49242,14 +49242,14 @@ fn weapon_plus_three_folds_into_caster_buffs() {
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     // Before: no item bonuses.
-    let (atk_before, _) = e.caster_attack_buffs(id);
-    let dmg_before = e.caster_damage_buffs(id);
+    let (atk_before, _) = e.caster_attack_buffs(id, false);
+    let dmg_before = e.caster_damage_buffs(id, false);
     e.actors
         .get_mut(&id)
         .unwrap()
         .pickup_item(&WEAPON_PLUS_THREE);
-    let (atk_after, _) = e.caster_attack_buffs(id);
-    let dmg_after = e.caster_damage_buffs(id);
+    let (atk_after, _) = e.caster_attack_buffs(id, false);
+    let dmg_after = e.caster_damage_buffs(id, false);
     assert_eq!(atk_after - atk_before, 3, "+3 weapon should add +3 attack");
     assert_eq!(dmg_after - dmg_before, 3, "+3 weapon should add +3 damage");
 }
@@ -107288,8 +107288,8 @@ fn a_defender_moves_only_the_bonus_its_swing_was_not_using() {
         "the arithmetic below is written against this number"
     );
     let ac_before = e.actors[&wielder].armor_class();
-    let (to_hit_before, _) = e.caster_attack_buffs(wielder);
-    let damage_before = e.caster_damage_buffs(wielder);
+    let (to_hit_before, _) = e.caster_attack_buffs(wielder, false);
+    let damage_before = e.caster_damage_buffs(wielder, false);
 
     open_turn_for(&mut e, wielder);
     assert!(
@@ -107309,12 +107309,12 @@ fn a_defender_moves_only_the_bonus_its_swing_was_not_using() {
         "and the two points are standing on the wielder's AC"
     );
     assert_eq!(
-        e.caster_attack_buffs(wielder).0,
+        e.caster_attack_buffs(wielder, false).0,
         to_hit_before - 2,
         "off the blade by exactly what went onto the arm"
     );
     assert_eq!(
-        e.caster_damage_buffs(wielder),
+        e.caster_damage_buffs(wielder, false),
         damage_before - 2,
         "RAW moves the attack and damage halves as one clause"
     );
@@ -107341,7 +107341,7 @@ fn a_defender_against_a_hard_target_keeps_its_bonus_on_the_blade() {
     let (mut e, wielder, mark) = defender_wielder_against(&SKELETON_TEMPLATE);
     assert_eq!(e.actors[&mark].armor_class(), 14, "a real defence");
     let ac_before = e.actors[&wielder].armor_class();
-    let (to_hit_before, _) = e.caster_attack_buffs(wielder);
+    let (to_hit_before, _) = e.caster_attack_buffs(wielder, false);
 
     open_turn_for(&mut e, wielder);
     swing_at(&mut e, wielder, mark);
@@ -107357,7 +107357,7 @@ fn a_defender_against_a_hard_target_keeps_its_bonus_on_the_blade() {
         "so the wielder is no harder to hit"
     );
     assert_eq!(
-        e.caster_attack_buffs(wielder).0,
+        e.caster_attack_buffs(wielder, false).0,
         to_hit_before,
         "and the swing kept everything it was paying for"
     );
@@ -107483,7 +107483,7 @@ fn a_defender_takes_its_guard_with_it_when_the_bond_breaks() {
         "no AC left over from a weapon that is no longer live"
     );
     assert_eq!(
-        e.caster_attack_buffs(wielder).0,
+        e.caster_attack_buffs(wielder, false).0,
         bare_to_hit,
         "and no to-hit penalty left over either"
     );
@@ -114947,5 +114947,83 @@ fn every_spell_in_the_file_is_one_something_in_the_game_can_cast() {
          nobody can cast is a spell nobody wrote:\n  {}",
         orphans.len(),
         orphans.join("\n  ")
+    );
+}
+
+/// A sword sharpens a swing and a wand sharpens a spell, and neither
+/// does the other's job.
+///
+/// `ItemBonuses::attack_bonus` reached **both** attack chokepoints for
+/// most of the engine's life, which made two clauses wrong at once in
+/// the same direction. A wizard carrying a `+3 Vorpal Sword` — a weapon
+/// they are not proficient with, cannot lift usefully and will never
+/// swing — fired Fire Bolt at `+3`; and the Staff of Power's RAW *"+2
+/// bonus to … spell attack rolls"*, a sentence separate from its
+/// quarterstaff's, was being paid out of the quarterstaff's field. The
+/// number came out right on the staff and wrong on the sword, off the
+/// same line of code.
+///
+/// Three holders, four claims, and the point of the middle one is that
+/// it goes both ways: the wand is worth nothing to a sword arm, exactly
+/// as the sword is worth nothing to a cantrip.
+#[test]
+fn a_weapons_bonus_stays_off_a_spell_attack_and_a_wands_stays_off_a_swing() {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::{
+        STAFF_OF_POWER, WAND_OF_THE_WAR_MAGE_PLUS_TWO, WEAPON_PLUS_THREE,
+    };
+
+    // (weapon-lane bonus, spell-lane bonus) for a wizard holding `item`,
+    // net of whatever the bare chassis already carries.
+    let lanes = |item: &'static crate::items::item_template::Item| -> (i32, i32) {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let id = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let (weapon_before, _) = e.caster_attack_buffs(id, false);
+        let (spell_before, _) = e.caster_attack_buffs(id, true);
+        e.actors.get_mut(&id).unwrap().pickup_item(item);
+        let (weapon_after, _) = e.caster_attack_buffs(id, false);
+        let (spell_after, _) = e.caster_attack_buffs(id, true);
+        (weapon_after - weapon_before, spell_after - spell_before)
+    };
+
+    assert_eq!(
+        lanes(&WEAPON_PLUS_THREE),
+        (3, 0),
+        "a +3 weapon is worth +3 to a swing and nothing to a Fire Bolt"
+    );
+    assert_eq!(
+        lanes(&WAND_OF_THE_WAR_MAGE_PLUS_TWO),
+        (0, 2),
+        "and the wand is the same sentence the other way round"
+    );
+    // The staff is the item that needs both fields, because RAW gives it
+    // the bonus twice in two sentences.
+    assert_eq!(
+        lanes(&STAFF_OF_POWER),
+        (2, 2),
+        "the Staff of Power is a +2 quarterstaff *and* a +2 to spell attacks"
+    );
+
+    // And the damage half, which has only the one lane: RAW prints no
+    // item that adds to spell damage, so the `+3` weapon's damage is
+    // worth nothing to a Fire Bolt either.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let weapon_before = e.caster_damage_buffs(id, false);
+    let spell_before = e.caster_damage_buffs(id, true);
+    e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_THREE);
+    assert_eq!(
+        e.caster_damage_buffs(id, false) - weapon_before,
+        3,
+        "the +3 is on the swing"
+    );
+    assert_eq!(
+        e.caster_damage_buffs(id, true) - spell_before,
+        0,
+        "and not on the cantrip"
     );
 }

@@ -17697,25 +17697,44 @@ impl EncounterInstance {
     /// — two lanes so callers can keep the log breakdown if they want
     /// to. Missing actor returns `(0, 0)`.
     ///
-    /// The install-buff lane also folds in the carried-item
-    /// `attack_bonus` (`+1 Weapon`, Bracers of Archery, Ioun Stone of
-    /// Mastery, …) so a single chokepoint handles every flat to-hit
-    /// source. Mirrors `item_save_bonus`'s seat in `roll_save`.
+    /// The install-buff lane also folds in **one** of the two carried-item
+    /// to-hit lanes, and `is_spell` is what picks which. RAW writes the
+    /// two as different clauses about different rolls:
+    ///
+    ///   - `ItemBonuses::attack_bonus` is a *weapon's* bonus — *"a +1
+    ///     bonus to attack rolls and damage rolls made with this magic
+    ///     weapon"* — and reaches a swing;
+    ///   - `ItemBonuses::spell_attack_bonus` is the Wand of the War
+    ///     Mage's and the Robe of the Archmagi's, and reaches a spell
+    ///     attack roll.
+    ///
+    /// This helper used to add the first unconditionally and leave the
+    /// second to the spell chokepoint to remember, which got both
+    /// halves wrong in the same direction: a wizard carrying a `+3
+    /// Vorpal Sword` they cannot swing fired Fire Bolt at `+3`, and the
+    /// staves whose RAW *does* name spell attacks got theirs by
+    /// accident, off a field that means something else. Asking the
+    /// attack which kind it is costs one parameter and makes both
+    /// clauses true.
     ///
     /// And the one flat source that is a penalty rather than a bonus:
     /// SRD 5.2 exhaustion's "the roll is reduced by 2 times your
     /// Exhaustion level", which is a D20 Test tax and so belongs
-    /// wherever the D20 Test's flat terms are summed. It rides the
-    /// install lane rather than the condition lane because the
-    /// condition lane is keyed by condition and this is keyed by a
-    /// number.
-    pub fn caster_attack_buffs(&self, caster_id: usize) -> (i32, i32) {
+    /// wherever the D20 Test's flat terms are summed — on both lanes,
+    /// because a spell attack is a D20 Test too. It rides the install
+    /// lane rather than the condition lane because the condition lane is
+    /// keyed by condition and this is keyed by a number.
+    pub fn caster_attack_buffs(&self, caster_id: usize, is_spell: bool) -> (i32, i32) {
         self.actors
             .get(&caster_id)
             .map(|a| {
                 (
                     a.attack_bonus_buff()
-                        + a.item_attack_bonus()
+                        + if is_spell {
+                            a.item_spell_attack_bonus()
+                        } else {
+                            a.item_attack_bonus()
+                        }
                         + a.exhaustion_d20_penalty()
                         // SRD 5.2 Defender: whatever the wielder moved
                         // onto their AC this turn is no longer on the
@@ -17732,21 +17751,30 @@ impl EncounterInstance {
             .unwrap_or((0, 0))
     }
 
-    /// Sum the caster-side flat damage-roll bonuses that ride every
-    /// damage roll (weapon or spell): the item-passive `damage_bonus`
-    /// lane (`+1 Weapon` / Bracers of Archery) and the spell-installed
-    /// `damage_bonus_buff` lane (Magic Weapon / Elemental Weapon).
-    /// Folded at the damage-roll site in `engine::attack` and the
-    /// spell-attack chokepoint so a single chokepoint handles every
-    /// flat damage source. Missing actor returns 0. Symmetric with
-    /// `caster_attack_buffs` on the to-hit lane.
-    pub fn caster_damage_buffs(&self, caster_id: usize) -> i32 {
+    /// Sum the caster-side flat damage-roll bonuses: the item-passive
+    /// `damage_bonus` lane (`+1 Weapon` / Bracers of Archery) and the
+    /// spell-installed `damage_bonus_buff` lane (Magic Weapon /
+    /// Elemental Weapon). Missing actor returns 0. Symmetric with
+    /// `caster_attack_buffs` on the to-hit lane, including in the
+    /// `is_spell` gate.
+    ///
+    /// The item lane is a **weapon's** bonus and is charged to weapon
+    /// damage only, for the reason the to-hit twin gives: RAW's `+1`
+    /// says *"made with this magic weapon"*, and the armoury has no
+    /// second field for a spell-damage bonus because SRD 5.2 prints no
+    /// item that grants one. The spell-installed lane crosses freely —
+    /// Magic Weapon and Elemental Weapon are cast *onto* a weapon and
+    /// their die is that weapon's — so it is summed on both.
+    pub fn caster_damage_buffs(&self, caster_id: usize, is_spell: bool) -> i32 {
         self.actors
             .get(&caster_id)
             // Defender's other half — RAW transfers the bonus to
             // "attack rolls *and* damage rolls" as one clause, so the
             // damage lane pays the same points the to-hit lane does.
-            .map(|a| a.item_damage_bonus() + a.damage_bonus_buff() - a.defender_guard())
+            .map(|a| {
+                (if is_spell { 0 } else { a.item_damage_bonus() }) + a.damage_bonus_buff()
+                    - a.defender_guard()
+            })
             .unwrap_or(0)
     }
 

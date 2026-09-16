@@ -2726,7 +2726,7 @@ pub fn set_defender_guard_for_swing(
     if pool <= 0 || !attacker.defender_guard_undecided() {
         return;
     }
-    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
+    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id, p.is_spell);
     let modifier = p.attack_bonus
         + buff
         + cond_attack_bonus
@@ -3416,7 +3416,7 @@ pub fn resolve_attack_outcome_with_rider(
     // effective AC — cover, Multiattack Defense and all — is known,
     // which is the number the decision is made against.
     set_defender_guard_for_swing(encounter, &p, target_ac);
-    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id);
+    let (buff, cond_attack_bonus) = encounter.caster_attack_buffs(p.caster_id, p.is_spell);
     // 5e Fighting Style: **Archery** — +2 to attack rolls made with ranged
     // weapons. RAW carves out spell attack rolls ("ranged weapon attacks"
     // specifically), so the bonus is gated on `!p.is_melee && !p.is_spell`.
@@ -3885,7 +3885,7 @@ pub fn resolve_attack_outcome_with_rider(
     // helper takes no target, and this bonus is defined by who is on
     // the receiving end. The spell-attack chokepoint in
     // `spells::spell_attack_outcome` sums the same pair.
-    let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id)
+    let caster_damage_buff = encounter.caster_damage_buffs(p.caster_id, p.is_spell)
         + encounter.curse_damage_bonus(p.caster_id, p.target_id)
         + attack_damage_penalty(encounter, p.caster_id);
     let total_damage_bonus = p.damage_bonus + caster_damage_buff;
