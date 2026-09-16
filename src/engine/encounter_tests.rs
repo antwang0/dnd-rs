@@ -102547,37 +102547,41 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
     //
     // A staff row's price is an `ItemUseBilling` now rather than a bare
     // count, because the chassis it shares with the loot table's
-    // non-staff casters had to learn the other two arms. **Every staff
-    // row is still a charge row**, and that is the first thing this
-    // sweep asserts: a staff whose spell was free, or that spent the
-    // stick, would be a different object.
-    let rows: Vec<(&str, &str, u32)> = STAFF_SPELLS
+    // non-staff casters had to learn the other two arms. A staff row may
+    // be `Charges` or `Free`, and never `Consumed`: an object that is
+    // spent by casting from it is a scroll, not a staff.
+    //
+    // `Free` used to be refused here too, on the grounds that "a staff
+    // whose spell was free would be a different object". It is a
+    // different object and the engine now carries it — SRD 5.2's Staff
+    // of the Magi prints a **0** in the charge column beside Light,
+    // Protection from Evil and Good and Enlarge/Reduce. Three rows on
+    // one staff are the whole exception, so the price below is an
+    // `Option`: `None` is RAW's zero and is checked against nothing,
+    // because there is no pool for it to fit in.
+    let price = |name: &'static str, billing: ItemUseBilling| -> Option<u32> {
+        match billing {
+            ItemUseBilling::Charges(n) => Some(n),
+            ItemUseBilling::Free => None,
+            ItemUseBilling::Consumed => panic!(
+                "{name} is on a staff and consumes it — a row whose price is the \
+                 object is a scroll, not a staff"
+            ),
+        }
+    };
+    let rows: Vec<(&str, &str, Option<u32>)> = STAFF_SPELLS
         .iter()
-        .map(|r| {
-            let ItemUseBilling::Charges(n) = r.billing else {
-                panic!(
-                    "{} is on a staff and is not priced in charges — a staff row \
-                     that is free or that consumes the staff is a different item",
-                    r.action_name
-                )
-            };
-            (r.action_name, r.item_name, n)
-        })
+        .map(|r| (r.action_name, r.item_name, price(r.action_name, r.billing)))
         .chain(
             STAFF_PRIMES
                 .iter()
-                .map(|r| (r.action_name, r.item_name, r.charges)),
+                .map(|r| (r.action_name, r.item_name, Some(r.charges))),
         )
-        .chain(STAFF_AREAS.iter().map(|r| {
-            let ItemUseBilling::Charges(n) = r.billing else {
-                panic!(
-                    "{} is on a staff and is not priced in charges — a staff row \
-                     that is free or that consumes the staff is a different item",
-                    r.action_name
-                )
-            };
-            (r.action_name, r.item_name, n)
-        }))
+        .chain(
+            STAFF_AREAS
+                .iter()
+                .map(|r| (r.action_name, r.item_name, price(r.action_name, r.billing))),
+        )
         .chain(ALL_SUMMON_ITEMS.iter().filter_map(|r| {
             // Only the summon rows billed against a staff; the gems, the
             // horn, the bag and the nine figurines are not staves and
@@ -102585,14 +102589,7 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
             if !STAVES.iter().any(|s| s.name == r.item_name) {
                 return None;
             }
-            let ItemUseBilling::Charges(n) = r.billing else {
-                panic!(
-                    "{} is on a staff and is not priced in charges — a staff row \
-                     that is free or that consumes the staff is a different item",
-                    r.action_name
-                )
-            };
-            Some((r.action_name, r.item_name, n))
+            Some((r.action_name, r.item_name, price(r.action_name, r.billing)))
         }))
         .collect();
 
@@ -102607,15 +102604,33 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
             action_name,
             staff.name
         );
-        assert!(
-            *charges > 0 && *charges <= staff.charges,
-            "{} costs {} charges and the {} holds {}",
-            action_name,
-            charges,
-            staff.name,
-            staff.charges
-        );
+        if let Some(charges) = charges {
+            assert!(
+                *charges > 0 && *charges <= staff.charges,
+                "{} costs {} charges and the {} holds {}",
+                action_name,
+                charges,
+                staff.name,
+                staff.charges
+            );
+        }
     }
+
+    // A free row is a rarity and should stay one: every staff on the
+    // shelf but one prices every row it offers, and a second staff
+    // growing a free row is far more likely to be a forgotten
+    // `billing` field than a second printing of RAW's zero.
+    let free_staves: std::collections::HashSet<&str> = rows
+        .iter()
+        .filter(|(_, _, charges)| charges.is_none())
+        .map(|(_, item, _)| *item)
+        .collect();
+    assert_eq!(
+        free_staves,
+        std::collections::HashSet::from([crate::actions::staves::STAFF_OF_THE_MAGI_NAME]),
+        "the Staff of the Magi is the only staff in the book with a 0 in its \
+         charge column; a free row anywhere else is a missing price"
+    );
 
     // The other direction, plus the two things that make a staff a
     // staff: a pool to spend and something to spend it on.
@@ -102896,6 +102911,154 @@ fn a_staff_row_the_pool_cannot_pay_for_is_refused_and_the_cheap_one_is_not() {
         )
         .validate(&e),
         "and the row the pool still covers is still there"
+    );
+}
+
+/// The level printed beside a staff's row is the level the spell is
+/// cast at — all the way down to the dice.
+///
+/// SRD 5.2 prints three Fireballs on three sticks and charges three
+/// different prices for them: *"Fireball — 3"* on the Staff of Fire,
+/// *"Fireball (level 5 version) — 5"* on the Staff of Power, *"Fireball
+/// (level 7 version) — 7"* on the Staff of the Magi. For as long as
+/// `StaffSpell` dropped every override on the way through, all three
+/// rolled 8d6 and the parenthesis was a label: the two dearer staves
+/// charged four and seven charges for the cheap staff's spell and told
+/// the cast frame a different number than they rolled.
+///
+/// `StaffSpell::row_overrides` is what delivers it, and the log line is
+/// where it shows: Fireball prints its own dice count, so the three rows
+/// can be pinned without a word about randomness.
+#[test]
+fn a_staff_row_casts_its_spell_at_the_level_the_book_prints_beside_it() {
+    use crate::actions::action_template::ActionExecutionInfo;
+    use crate::actions::staves::{
+        STAFF_OF_FIRE_FIREBALL, STAFF_OF_POWER_FIREBALL, STAFF_OF_THE_MAGI_FIREBALL, StaffSpell,
+    };
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::items::item_template::{STAFF_OF_FIRE, STAFF_OF_POWER, STAFF_OF_THE_MAGI};
+
+    let dice_rolled = |staff: &'static crate::items::item_template::Item,
+                       row: &'static StaffSpell|
+     -> String {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+            .unwrap();
+        let at = e.actors[&zombie].location();
+        e.actors.get_mut(&wizard).unwrap().pickup_item(staff);
+        let aei = ActionExecutionInfo::new(row, wizard, None, Some(vec![at]), None);
+        assert!(aei.validate(&e), "{} should be castable", row.action_name);
+        e.push_action(aei);
+        e.process_stack();
+        e.messages()
+            .iter()
+            .find_map(|m| m.split_once("fireball: ").map(|(_, rest)| rest.to_string()))
+            .unwrap_or_else(|| panic!("{} logged no fireball", row.action_name))
+            .split('(')
+            .next()
+            .unwrap()
+            .to_string()
+    };
+
+    assert_eq!(dice_rolled(&STAFF_OF_FIRE, &STAFF_OF_FIRE_FIREBALL), "8d6");
+    assert_eq!(dice_rolled(&STAFF_OF_POWER, &STAFF_OF_POWER_FIREBALL), "10d6");
+    assert_eq!(
+        dice_rolled(&STAFF_OF_THE_MAGI, &STAFF_OF_THE_MAGI_FIREBALL),
+        "12d6"
+    );
+}
+
+/// The Staff of the Magi's free rows are free, and stay usable when the
+/// pool is empty.
+///
+/// SRD 5.2 prints a **0** in the charge column beside Light, Protection
+/// from Evil and Good and Enlarge/Reduce, and this is the only staff in
+/// the book that prints one. So the thing to pin is not that the rows
+/// cost nothing — that is a field — but that the *engine* charges
+/// nothing for them: no `ItemCharges` in the cost list, and a holder who
+/// has spent all fifty charges can still cast them.
+#[test]
+fn the_staff_of_the_magi_keeps_its_three_free_rows_after_the_pool_is_gone() {
+    use crate::actions::action_template::{Action, ActionExecutionInfo};
+    use crate::actions::staves::{
+        STAFF_OF_THE_MAGI_ENLARGE_REDUCE, STAFF_OF_THE_MAGI_FIREBALL, STAFF_OF_THE_MAGI_LIGHT,
+        STAFF_OF_THE_MAGI_PROTECTION,
+    };
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::STAFF_OF_THE_MAGI;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 2), 1, 0)
+        .unwrap();
+    let at = e.actors[&zombie].location();
+    e.actors.get_mut(&wizard).unwrap().pickup_item(&STAFF_OF_THE_MAGI);
+
+    let free = [
+        &STAFF_OF_THE_MAGI_LIGHT,
+        &STAFF_OF_THE_MAGI_PROTECTION,
+        &STAFF_OF_THE_MAGI_ENLARGE_REDUCE,
+    ];
+    for row in free {
+        let costs = row.cost(&e, wizard, Some(&vec![wizard]), None, None);
+        assert!(
+            !costs
+                .iter()
+                .any(|c| matches!(c, Resource::ItemCharges { .. })),
+            "{} prints a 0 and should name no pool: {costs:?}",
+            row.action_name
+        );
+        assert!(
+            costs.contains(&Resource::Action),
+            "{} is still an Action",
+            row.action_name
+        );
+    }
+
+    // Empty the staff down to the last charge and then past it.
+    {
+        let a = e.actors.get_mut(&wizard).unwrap();
+        assert!(a.consume_resource(Resource::ItemCharges {
+            item: STAFF_OF_THE_MAGI.name,
+            count: 50,
+        }));
+        assert_eq!(a.item_charges_remaining(STAFF_OF_THE_MAGI.name), 0);
+    }
+
+    assert!(
+        !ActionExecutionInfo::new(
+            &STAFF_OF_THE_MAGI_FIREBALL,
+            wizard,
+            None,
+            Some(vec![at]),
+            None
+        )
+        .validate(&e),
+        "seven charges out of an empty pool is still a refusal"
+    );
+    // And the free rows are still on offer with nothing left in the
+    // stick. Which of the three validates on a given board is the
+    // *spell's* business — Light declines a board that is already lit —
+    // so the claim is about the set, not about any one row.
+    assert!(
+        free.iter().any(|row| ActionExecutionInfo::new(
+            *row,
+            wizard,
+            Some(vec![wizard]),
+            None,
+            None
+        )
+        .validate(&e)),
+        "the rows the book prices at zero should survive the pool that paid \
+         for everything else"
     );
 }
 

@@ -114,6 +114,12 @@ use crate::engine::types::{Coordinate, DamageType};
 /// staff has nothing to upcast with — RAW prints one level per row and
 /// charges for it. Dropping them at this boundary is what makes
 /// `cast_frame_level`'s fixed answer true rather than merely usual.
+///
+/// What *is* forwarded is the row's own level, as a `CastLevel` the row
+/// synthesises for itself — see [`StaffSpell::row_overrides`]. The two
+/// are not the same channel pointed at the same field: the caller's is a
+/// choice made at the moment of casting, which a staff does not offer,
+/// and the row's is a number RAW printed on the item.
 pub struct StaffSpell {
     /// Player-facing name, and the handle the picker sorts under.
     /// Convention: `"<staff>: <spell>"`, so a holder's rows group.
@@ -151,9 +157,21 @@ pub struct StaffSpell {
     /// re-validated by hand. See `custom_validate_input` below, which
     /// does.
     pub billing: ItemUseBilling,
-    /// The level the spell is cast at, for the cast frame. RAW's printed
-    /// level for the row — a staff never casts anything at a level the
-    /// item did not choose.
+    /// The level the spell is cast at. RAW's printed level for the row —
+    /// a staff never casts anything at a level the item did not choose.
+    ///
+    /// Read twice, and for most of this chassis's life only once. It has
+    /// always been the number [`Action::cast_frame_level`] stamps on the
+    /// frame, which is what every level-gated *feature* in the engine
+    /// then reads; it is now also the number the **spell itself** is
+    /// handed, through [`StaffSpell::row_overrides`].
+    ///
+    /// Those are two different questions and the row only answered the
+    /// first. SRD 5.2 prints *"Fireball (5th-level version, 5 charges)"*
+    /// on the Staff of Power and *"Fireball (level 7 version)"* on the
+    /// Staff of the Magi, and both rows used to roll a base-level
+    /// Fireball's 8d6 while telling the cast frame they were a 5th- and
+    /// a 7th-level spell. The five charges bought a label.
     pub spell_level: u32,
     /// The spell itself, reached through a function because every spell
     /// in `actions::spells` is a `LazyLock` and a `static` initializer
@@ -197,6 +215,26 @@ impl StaffSpell {
     /// every row that has none — see [`StaffSpell::only_targets`].
     fn admits(&self, target: &crate::actors::actor_template::ActorInstance) -> bool {
         self.only_targets.is_none_or(|gate| gate(target))
+    }
+
+    /// The override set this row hands the spell underneath it: its own
+    /// [`StaffSpell::spell_level`], as the `CastLevel` the spell's dice
+    /// read.
+    ///
+    /// **Not the caller's overrides.** Those are dropped at this
+    /// boundary and stay dropped — see the struct docstring. This is the
+    /// row telling the spell what the item says it is, which is a
+    /// different sentence from a caster choosing a slot.
+    ///
+    /// Safe on every row including the ones that do not upcast, because
+    /// `action_overrides::cast_level` clamps with `.max(base)`: a row
+    /// whose printed level is the spell's own base level forwards a
+    /// number the spell was going to use anyway, and a cantrip row
+    /// forwarding 0 cannot push anything below its floor. That clamp is
+    /// why this is one unconditional helper rather than a per-row
+    /// opt-in — there is no row it can get wrong.
+    fn row_overrides(&self) -> HashSet<ActionOverride> {
+        HashSet::from([ActionOverride::CastLevel(self.spell_level)])
     }
 
     /// What this row adds to its spell's action-economy cost — a charge
@@ -385,7 +423,13 @@ impl Action for StaffSpell {
     ) -> Vec<Resource> {
         let mut costs: Vec<Resource> = self
             .spell()
-            .cost(encounter, caster_id, target_ids, target_locations, None)
+            .cost(
+                encounter,
+                caster_id,
+                target_ids,
+                target_locations,
+                Some(&self.row_overrides()),
+            )
             .into_iter()
             .filter(|r| !matches!(r, Resource::SpellSlot(_)))
             .collect();
@@ -490,7 +534,7 @@ impl Action for StaffSpell {
             caster_id,
             target_ids,
             target_locations,
-            None,
+            Some(&self.row_overrides()),
         )
     }
 
@@ -516,8 +560,13 @@ impl Action for StaffSpell {
         if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
-        self.spell()
-            .side_effects(encounter, caster_id, target_ids, target_locations, None)
+        self.spell().side_effects(
+            encounter,
+            caster_id,
+            target_ids,
+            target_locations,
+            Some(&self.row_overrides()),
+        )
     }
 }
 
@@ -551,6 +600,21 @@ pub static STAFF_SPELLS: &[&StaffSpell] = &[
     &STAFF_OF_POWER_HOLD_MONSTER,
     &STAFF_OF_POWER_WALL_OF_FORCE,
     &STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY,
+    &STAFF_OF_THE_MAGI_LIGHT,
+    &STAFF_OF_THE_MAGI_PROTECTION,
+    &STAFF_OF_THE_MAGI_ENLARGE_REDUCE,
+    &STAFF_OF_THE_MAGI_FLAMING_SPHERE,
+    &STAFF_OF_THE_MAGI_INVISIBILITY,
+    &STAFF_OF_THE_MAGI_WEB,
+    &STAFF_OF_THE_MAGI_DISPEL_MAGIC,
+    &STAFF_OF_THE_MAGI_ICE_STORM,
+    &STAFF_OF_THE_MAGI_WALL_OF_FIRE,
+    &STAFF_OF_THE_MAGI_PASSWALL,
+    &STAFF_OF_THE_MAGI_TELEKINESIS,
+    &STAFF_OF_THE_MAGI_CONJURE_ELEMENTAL,
+    &STAFF_OF_THE_MAGI_FIREBALL,
+    &STAFF_OF_THE_MAGI_LIGHTNING_BOLT,
+    &STAFF_OF_THE_MAGI_PLANE_SHIFT,
 ];
 
 // ---------------------------------------------------------------------
@@ -806,9 +870,11 @@ pub static STAFF_OF_POWER_FIREBALL: StaffSpell = StaffSpell {
     action_aliases: &["staff-power-fireball"],
     item_name: STAFF_OF_POWER_NAME,
     billing: ItemUseBilling::Charges(5),
-    // RAW: "fireball (5th-level version, 5 charges)". The five charges
-    // buy the upcast, not just the cast — which is why this row's level
-    // is 5 where the Staff of Fire's is 3.
+    // RAW: "Fireball (level 5 version) — 5". The five charges buy the
+    // upcast, not just the cast, which is why this row's level is 5
+    // where the Staff of Fire's is 3 — and, since `row_overrides`, why
+    // its dice are 10d6 where the Staff of Fire's are 8d6. The sentence
+    // above was written before anything delivered the number.
     spell_level: 5,
     spell: || &*crate::actions::spells::FIREBALL,
     only_targets: None,
@@ -819,6 +885,8 @@ pub static STAFF_OF_POWER_LIGHTNING_BOLT: StaffSpell = StaffSpell {
     action_aliases: &["staff-lightning-bolt"],
     item_name: STAFF_OF_POWER_NAME,
     billing: ItemUseBilling::Charges(5),
+    // RAW: "Lightning Bolt (level 5 version) — 5", the Fireball row's
+    // twin in every respect including the two extra dice.
     spell_level: 5,
     spell: || &*crate::actions::spells::LIGHTNING_BOLT,
     only_targets: None,
@@ -861,6 +929,203 @@ pub static STAFF_OF_POWER_GLOBE_OF_INVULNERABILITY: StaffSpell = StaffSpell {
     billing: ItemUseBilling::Charges(6),
     spell_level: 6,
     spell: || &*crate::actions::spells::GLOBE_OF_INVULNERABILITY,
+    only_targets: None,
+};
+
+// ---------------------------------------------------------------------
+// Staff of the Magi — 50 charges, nineteen rows in the book, and the
+// first staff on the shelf with rows that cost nothing at all.
+// ---------------------------------------------------------------------
+
+/// SRD 5.2's **Staff of the Magi** (Staff, Legendary), and the top of
+/// this shelf in all three directions at once: the deepest menu, the
+/// biggest pool, and the only staff whose table prints a **0** in the
+/// charge column.
+///
+/// That zero is the reason this staff needed more than a block of row
+/// literals. Every other staff in the book prices every row in charges,
+/// and `every_staff_row_is_wired_to_the_staff_it_names` said so as an
+/// invariant — *"a staff row that is free or that consumes the staff is
+/// a different item"*. It is not a different item; it is this one. Six
+/// of RAW's nineteen rows are free, and four of those six are spells
+/// the engine has, so [`ItemUseBilling::Free`] — the arm written for
+/// the Rope of Entanglement and the Wind Fan, items with no pool at all
+/// — turns out to describe a *row* on an item with fifty charges.
+///
+/// **Fifteen of RAW's nineteen rows ship.** The four that do not are the
+/// four with nowhere to land: Arcane Lock and Knock are about doors,
+/// Detect Magic is about a question the board cannot be asked, and Mage
+/// Hand has no host — see `spells.rs` on the same absence.
+pub const STAFF_OF_THE_MAGI_NAME: &str = "Staff of the Magi";
+
+/// Free, and the cheapest light source in the game once somebody is
+/// holding the staff. RAW's table prints `Light — 0`.
+pub static STAFF_OF_THE_MAGI_LIGHT: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: light",
+    action_aliases: &["magi-light"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Free,
+    spell_level: 0,
+    spell: || &*crate::actions::spells::LIGHT,
+    only_targets: None,
+};
+
+/// Free. RAW: `Protection from Evil and Good — 0`.
+pub static STAFF_OF_THE_MAGI_PROTECTION: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: protection from evil and good",
+    action_aliases: &["magi-protection"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Free,
+    spell_level: 1,
+    spell: || &*crate::actions::spells::PROTECTION_FROM_EVIL_AND_GOOD,
+    only_targets: None,
+};
+
+/// Free. RAW: `Enlarge/Reduce — 0`, and the strangest entry on the
+/// table — a level-2 concentration spell at the same price as a cantrip.
+pub static STAFF_OF_THE_MAGI_ENLARGE_REDUCE: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: enlarge/reduce",
+    action_aliases: &["magi-enlarge", "magi-reduce"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Free,
+    spell_level: 2,
+    spell: || &*crate::actions::spells::ENLARGE_REDUCE,
+    only_targets: None,
+};
+
+/// RAW: `Flaming Sphere — 2`.
+pub static STAFF_OF_THE_MAGI_FLAMING_SPHERE: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: flaming sphere",
+    action_aliases: &["magi-flaming-sphere"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(2),
+    spell_level: 2,
+    spell: || &*crate::actions::spells::FLAMING_SPHERE,
+    only_targets: None,
+};
+
+/// RAW: `Invisibility — 2`.
+pub static STAFF_OF_THE_MAGI_INVISIBILITY: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: invisibility",
+    action_aliases: &["magi-invisibility"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(2),
+    spell_level: 2,
+    spell: || &*crate::actions::spells::INVISIBILITY,
+    only_targets: None,
+};
+
+/// RAW: `Web — 2`.
+pub static STAFF_OF_THE_MAGI_WEB: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: web",
+    action_aliases: &["magi-web"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(2),
+    spell_level: 2,
+    spell: || &*crate::actions::spells::WEB,
+    only_targets: None,
+};
+
+/// RAW: `Dispel Magic — 3`.
+pub static STAFF_OF_THE_MAGI_DISPEL_MAGIC: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: dispel magic",
+    action_aliases: &["magi-dispel"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(3),
+    spell_level: 3,
+    spell: || &*crate::actions::spells::DISPEL_MAGIC,
+    only_targets: None,
+};
+
+/// RAW: `Ice Storm — 4`.
+pub static STAFF_OF_THE_MAGI_ICE_STORM: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: ice storm",
+    action_aliases: &["magi-ice-storm"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(4),
+    spell_level: 4,
+    spell: || &*crate::actions::spells::ICE_STORM,
+    only_targets: None,
+};
+
+/// RAW: `Wall of Fire — 4`.
+pub static STAFF_OF_THE_MAGI_WALL_OF_FIRE: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: wall of fire",
+    action_aliases: &["magi-wall-of-fire"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(4),
+    spell_level: 4,
+    spell: || &*crate::actions::spells::WALL_OF_FIRE,
+    only_targets: None,
+};
+
+/// RAW: `Passwall — 5`.
+pub static STAFF_OF_THE_MAGI_PASSWALL: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: passwall",
+    action_aliases: &["magi-passwall"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(5),
+    spell_level: 5,
+    spell: || &*crate::actions::spells::PASSWALL,
+    only_targets: None,
+};
+
+/// RAW: `Telekinesis — 5`.
+pub static STAFF_OF_THE_MAGI_TELEKINESIS: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: telekinesis",
+    action_aliases: &["magi-telekinesis"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(5),
+    spell_level: 5,
+    spell: || &*crate::actions::spells::TELEKINESIS,
+    only_targets: None,
+};
+
+/// RAW: `Conjure Elemental — 7`. The dearest body on the loot table and
+/// the only one a staff buys.
+pub static STAFF_OF_THE_MAGI_CONJURE_ELEMENTAL: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: conjure elemental",
+    action_aliases: &["magi-conjure-elemental"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(7),
+    spell_level: 5,
+    spell: || &crate::actions::spells::CONJURE_ELEMENTAL,
+    only_targets: None,
+};
+
+/// RAW: `Fireball (level 7 version) — 7`, and the reason the level and
+/// the price disagree everywhere else on this table: seven charges buy
+/// four extra dice on top of the cast. 12d6 rather than 8d6.
+pub static STAFF_OF_THE_MAGI_FIREBALL: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: fireball",
+    action_aliases: &["magi-fireball"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(7),
+    spell_level: 7,
+    spell: || &*crate::actions::spells::FIREBALL,
+    only_targets: None,
+};
+
+/// RAW: `Lightning Bolt (level 7 version) — 7`. The Fireball row's twin,
+/// in a line rather than a sphere.
+pub static STAFF_OF_THE_MAGI_LIGHTNING_BOLT: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: lightning bolt",
+    action_aliases: &["magi-lightning-bolt"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(7),
+    spell_level: 7,
+    spell: || &*crate::actions::spells::LIGHTNING_BOLT,
+    only_targets: None,
+};
+
+/// RAW: `Plane Shift — 7`.
+pub static STAFF_OF_THE_MAGI_PLANE_SHIFT: StaffSpell = StaffSpell {
+    action_name: "staff of the magi: plane shift",
+    action_aliases: &["magi-plane-shift"],
+    item_name: STAFF_OF_THE_MAGI_NAME,
+    billing: ItemUseBilling::Charges(7),
+    spell_level: 7,
+    spell: || &*crate::actions::spells::PLANE_SHIFT,
     only_targets: None,
 };
 

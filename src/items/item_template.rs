@@ -7960,6 +7960,83 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
 /// clause, which destroys the item and the holder along with it. It is
 /// an ending for an object with a tomorrow, and the engine's clock stops
 /// with the fight.
+/// **Staff of the Magi** (Staff, Legendary, requires attunement by a
+/// spellcaster) — *"This staff has 50 charges and can be wielded as a
+/// magic Quarterstaff that grants a +2 bonus to attack rolls and damage
+/// rolls made with it. While you hold it, you gain a +2 bonus to spell
+/// attack rolls."*
+///
+/// The most item in the book, and the reason the shelf above it is
+/// arranged the way it is: fifty charges is two and a half Staves of
+/// Power, and the menu is nineteen rows against that staff's nine.
+/// Fifteen ship — see `staves::STAFF_OF_THE_MAGI_NAME` for the four that
+/// do not and why.
+///
+/// **The three free rows are the item.** Light, Protection from Evil and
+/// Good and Enlarge/Reduce cost 0 charges on RAW's own table, which
+/// makes this the only staff a holder can use in a fight they are
+/// saving the pool for. Everything else on the shelf is a budget; three
+/// of these rows are simply things a wizard can now always do.
+///
+/// **Spell Absorption ships as its save clause.** RAW: *"While holding
+/// the staff, you have Advantage on saving throws against spells"* —
+/// `grants_spell_save_advantage`, the lane the Mantle of Spell
+/// Resistance and the Spellguard Shield already ride. Its second
+/// sentence, the Reaction that eats a spell aimed at the holder and
+/// banks its level as charges, needs the counter-a-spell-by-shape
+/// reaction lane the engine does not have; see `STAFF_OF_CHARMING`,
+/// whose enchantment clause is absent for the same reason. What is lost
+/// with it is the clause that makes this staff *refill*, which is the
+/// honest cost of the omission: a Staff of the Magi here empties like
+/// any other stick.
+///
+/// **The `+2` is wider than RAW in the direction the Staff of Power's
+/// is.** RAW gives the attack bonus to the quarterstaff and to spell
+/// attack rolls — which is exactly what `attack_bonus` reaches — and
+/// gives the damage bonus only to the staff, where `damage_bonus`
+/// reaches a Fire Bolt too. One clause too generous on one lane, and
+/// the same trade the Staff of Power and the Staff of the Woodlands
+/// already took.
+///
+/// **Retributive Strike is not modeled**, for the reason the module
+/// docstring gives for every destruction clause on the shelf: it is an
+/// ending for an object with a tomorrow, and the engine's clock stops
+/// with the fight.
+pub static STAFF_OF_THE_MAGI: Item = Item {
+    name: crate::actions::staves::STAFF_OF_THE_MAGI_NAME,
+    glyph: '/',
+    bonuses: ItemBonuses { attack_bonus: 2, damage_bonus: 2, ..ItemBonuses::ZERO },
+    on_use: &[
+        &crate::actions::staves::STAFF_OF_THE_MAGI_LIGHT,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_PROTECTION,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_ENLARGE_REDUCE,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_FLAMING_SPHERE,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_INVISIBILITY,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_WEB,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_DISPEL_MAGIC,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_ICE_STORM,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_WALL_OF_FIRE,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_PASSWALL,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_TELEKINESIS,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_CONJURE_ELEMENTAL,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_FIREBALL,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_LIGHTNING_BOLT,
+        &crate::actions::staves::STAFF_OF_THE_MAGI_PLANE_SHIFT,
+    ],
+    grants_magical_attacks: true,
+    grants_spell_save_advantage: true,
+    charges: 50,
+    // RAW: "regains 4d6 + 2 expended charges daily at dawn", a long rest
+    // here like every other staff's dawn — see the module docstring.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(4, 6)),
+        constant: 2,
+    }),
+    requires_attunement: true,
+    attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
+    ..Item::DEFAULTS
+};
+
 pub static STAFF_OF_POWER: Item = Item {
     name: crate::actions::staves::STAFF_OF_POWER_NAME,
     glyph: '/',
@@ -8073,6 +8150,7 @@ pub static STAVES: &[&Item] = &[
     &STAFF_OF_STRIKING,
     &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
+    &STAFF_OF_THE_MAGI,
     &STAFF_OF_THUNDER_AND_LIGHTNING,
     // The one whose charge buys a body rather than a spell — see
     // `item_actions::THROW_STAFF_OF_THE_PYTHON`. On this list because it
@@ -9201,7 +9279,8 @@ pub static LOOT_POOL: &[&Item] = &[
     // the table (three to nine spells and a pool big enough to matter)
     // and should be the rarest thing a party walks away with. Ordered
     // by tier: the four rare ones, then the two that carry a `+2`, then
-    // the Staff of Power at the top of the whole file.
+    // the Staff of Power, and then the one Legendary staff — fifty
+    // charges and fifteen rows, the deepest single object in the file.
     &STAFF_OF_FIRE,
     &STAFF_OF_FROST,
     &STAFF_OF_HEALING,
@@ -9211,6 +9290,7 @@ pub static LOOT_POOL: &[&Item] = &[
     &STAFF_OF_STRIKING,
     &STAFF_OF_WITHERING,
     &STAFF_OF_POWER,
+    &STAFF_OF_THE_MAGI,
     // The rest of the SRD's armour shelf, which had exactly two entries
     // on it (the `+N` ladder and the Adamantine Armor) until now. Every
     // one of these is a defensive slot that competes with a ring rather
@@ -9335,9 +9415,9 @@ mod tests {
             );
         }
         // The staves are the third road onto the allowlist, and the
-        // narrowest: five of the eleven are quarterstaffs in RAW and the
+        // narrowest: six of the twelve are quarterstaffs in RAW and the
         // other six are sticks that cast. The flag has to track which is
-        // which, so the four are named rather than allowed wholesale — a
+        // which, so the six are named rather than allowed wholesale — a
         // Staff of Charming that quietly started sharpening swings would
         // be caught here, and a Staff of Power that stopped would be too.
         //
@@ -9352,6 +9432,7 @@ mod tests {
             "Staff of Striking",
             "Staff of Withering",
             "Staff of Thunder and Lightning",
+            "Staff of the Magi",
         ];
         for item in STAVES {
             assert_eq!(

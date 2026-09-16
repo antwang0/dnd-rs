@@ -12887,6 +12887,21 @@ impl Action for Telekinesis {
     fn name(&self) -> &str {
         "telekinesis"
     }
+    /// `Lifted`, and the spell is the condition: the one-tile pull is a
+    /// single translation on the turn it lands, and everything the
+    /// target loses for the rest of the fight is the condition's own
+    /// zeroed movement. A creature already hoisted gains nothing from
+    /// being hoisted again, which is exactly the claim this method makes.
+    ///
+    /// Declared late, and the omission cost the spell a lane. Every
+    /// condition-keyed cohort in the AI reads this method — including
+    /// `ITEM_ATTRITION_CONDITIONS`, which has carried `Lifted` since it
+    /// was written — so a Telekinesis printed on an item answered "I
+    /// install nothing" and fell off the ladder between the lockdown
+    /// tier and the attrition one.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Lifted)
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Transmutation)
     }

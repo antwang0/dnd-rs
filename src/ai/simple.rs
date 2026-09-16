@@ -3500,7 +3500,11 @@ fn try_dispel_magic(
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    let action = actor.find_action("dispel magic")?;
+    // `find_printing` rather than `find_action`: the Staff of the Magi
+    // prints Dispel Magic for three charges, and a rung that asked the
+    // stat block alone would have walked past the stick in the holder's
+    // hand and then spent a 3rd-level slot on the same spell.
+    let action = find_printing(actor, "dispel magic")?;
     let my_team = actor.team();
     let mut best: Option<(u8, ActionExecutionInfo)> = None;
     for target_id in encounter.sorted_actor_ids() {
@@ -10335,7 +10339,10 @@ fn try_open_a_wall(
     let doorways: Vec<&'static (dyn crate::actions::action_template::Action + Send + Sync)> =
         DOORWAY_SPELLS
             .iter()
-            .filter_map(|name| actor.find_action(name))
+            // `find_printing`, for the reason `try_dispel_magic` uses it:
+            // the Staff of the Magi prints Passwall, and the cheapest
+            // way through a wall is the one that does not cost a slot.
+            .filter_map(|name| find_printing(actor, name))
             .collect();
     if doorways.is_empty() {
         return None;
@@ -21183,6 +21190,11 @@ mod tests {
             // "dimension door".
             .chain(SELF_TELEPORT_ESCAPES.iter().copied())
             .chain(std::iter::once(SUSTAINED_TELEPORT_ESCAPE))
+            // The doorway rung and the dispel rung, both of which name a
+            // spell and reach it through `find_printing` — so a staff row
+            // that is a printing of either is reachable.
+            .chain(DOORWAY_SPELLS.iter().copied())
+            .chain(std::iter::once("dispel magic"))
             // The rungs that name one item apiece inline rather than
             // through a table.
             .chain([
