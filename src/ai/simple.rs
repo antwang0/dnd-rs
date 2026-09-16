@@ -10104,14 +10104,26 @@ fn try_attack_aoe(
 /// wall for a caster who intends to keep casting, because it is
 /// transparent, so the line it cuts is the enemy's and not the
 /// caster's own. Wall of Stone blinds both sides equally and is
-/// therefore the fallback. Prismatic Wall costs four slot levels more
-/// and is last for that alone — it is the better wall on every other
-/// axis (opaque like the stone, but free of concentration, and with
-/// twenty feet of save-or-Blinded around it), and a caster who reaches
-/// it has nothing cheaper left. On this roster that is the wizard with
-/// its grip already full: the two panes in front of it would each cost
-/// the spell it is holding, and this one costs only the slot.
-const WALL_SPELLS: &[&str] = &["wall of force", "wall of stone", "prismatic wall"];
+/// therefore the fallback. Wall of Ice is the same opaque pane one slot
+/// dearer with 10d6 of cold paid out on the way up — which is why it
+/// sits below the stone rather than above it: the damage is worth a
+/// slot level and not worth *choosing* over a wall that leaves the sixth
+/// level free. It is on this list at all because it only recently became
+/// a wall; until then the spell raised nothing and reached the AI, if at
+/// all, through the area-damage picker. Prismatic Wall costs three slot
+/// levels more again and is last for that alone — it is the better wall
+/// on every other axis (opaque like the stone, but free of
+/// concentration, and with twenty feet of save-or-Blinded around it),
+/// and a caster who reaches it has nothing cheaper left. On this roster
+/// that is the wizard with its grip already full: the three panes in
+/// front of it would each cost the spell it is holding, and this one
+/// costs only the slot.
+const WALL_SPELLS: &[&str] = &[
+    "wall of force",
+    "wall of stone",
+    "wall of ice",
+    "prismatic wall",
+];
 
 /// How far along the line to the threat the wall goes up. Two tiles is
 /// close enough that a wall aimed at an enemy eight tiles out still
@@ -24054,12 +24066,13 @@ mod tests {
             ("grease", false),
             ("stinking cloud", true),
             ("wall of sand", true),
-            // The three walls the AI will raise across an approach.
-            // Both level-5 panes cost the grip; Prismatic Wall's ten
-            // minutes do not, which is the whole reason a bard already
+            // The four walls the AI will raise across an approach.
+            // Three of them cost the grip; Prismatic Wall's ten minutes
+            // do not, which is the whole reason a bard already
             // concentrating can still put one up. See `WALL_SPELLS`.
             ("wall of force", true),
             ("wall of stone", true),
+            ("wall of ice", true),
             ("prismatic wall", false),
             ("crown of thorns", true),
             ("slow", true),

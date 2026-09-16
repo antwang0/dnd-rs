@@ -24898,17 +24898,77 @@ fn adjacent_landing_for(
 
 pub static STEEL_WIND_STRIKE: LazyLock<SteelWindStrike> = LazyLock::new(|| SteelWindStrike {});
 
-/// Wall of Ice — level-6 evocation (wizard), concentration. The caster
-/// summons a wall of ice up to 60 ft long, 10 ft high, and 1 ft thick.
-/// Mechanically we collapse the panel to the load-bearing combat hook:
-/// every enemy whose footprint touches the burst at cast time takes
-/// 10d6 cold damage on a failed DEX save (half on success) and is
-/// knocked Prone (the wall fractures around them). Concentration anchors
-/// on the caster — dropping concentration ends the wall. Distinct from
-/// Wall of Force (no damage, just blocking) and Sleet Storm (no damage,
-/// movement debuff). Wall of Ice's defining feature is the damage burst
-/// at install plus the prone slip.
+/// **Wall of Ice** — SRD 5.2 level-6 evocation (wizard),
+/// concentration.
+///
+/// > You create a wall of ice on a solid surface within range. […] If
+/// > the wall cuts through a creature's space when it appears, the
+/// > creature is pushed to one side of the wall (you choose which side)
+/// > and makes a Dexterity saving throw, taking 10d6 Cold damage on a
+/// > failed save or half as much damage on a successful one.
+///
+/// **It is a wall now.** For most of its life this spell was a burst of
+/// cold with no wall in it at all, under a docstring that conceded the
+/// swap — *"mechanically we collapse the panel to the load-bearing
+/// combat hook"* — and named Wall of Force and Sleet Storm as the two
+/// things it was distinct from. It was distinct from Wall of Force in
+/// the worst possible way: that spell raised a real barrier through
+/// `crate::engine::conjured_terrain`, and so did Wall of Stone one level
+/// below this one, and so did Prismatic Wall three above it. A level-6
+/// slot bought a level-3 Fireball's worth of cold and nothing to hide
+/// behind, on a board whose whole terrain layer had been built for
+/// exactly this.
+///
+/// So the panel is `wall_tiles` at the same `REACH` its two siblings
+/// use, and everything that follows from that is already written: the
+/// pathfinder routes around it, the line-of-sight walk stops at it, the
+/// caster's grip holds it up, and `dispel_conjured_terrain` hands the
+/// floor back when the grip fails.
+///
+/// **RAW's push is the gap the wall leaves.** *"The creature is pushed
+/// to one side of the wall"* — `conjure_terrain` never buries anybody,
+/// so a tile with a body on it is skipped and the wall closes around it.
+/// That is the same shape the rule produces, reached without a
+/// forced-movement resolution, and it is the standing approximation the
+/// conjured-terrain layer documents for all four of its walls. What
+/// replaced here is *worse* than that: the old implementation knocked
+/// failed saves Prone, under a comment calling it a stand-in for the
+/// push. Prone is not a push. It is a speed of zero, advantage for
+/// every melee attacker, and half a turn to undo — a rider RAW never
+/// wrote, invented to stand in for a rule the engine had already
+/// solved a different way.
+///
+/// **The damage follows the wall.** Every creature standing where the
+/// panel comes down saves, which is RAW's *"cuts through a creature's
+/// space"*, rather than everything within a tile of the aim point.
+///
+/// **What is deliberately not modelled**: *"The wall is an object that
+/// can be damaged and thus breached. It has AC 12 and 30 Hit Points per
+/// 10-foot section […] Reducing a 10-foot section of wall to 0 Hit
+/// Points destroys it and leaves behind a sheet of frigid air."* Nothing
+/// on this board can be attacked that is not a creature — `AttackParams`
+/// names a target actor, and there is no object lane for a swing to
+/// travel down. Breaching would need that lane, per-section hit points
+/// on `ConjuredTerrain`, and the damage-modifier table an object carries
+/// (immune Cold / Poison / Psychic, vulnerable Fire); the remnant would
+/// then be a zone with a Constitution save on it. Named here rather than
+/// quietly dropped, because it is the clause that separates this wall
+/// from the Wall of Stone one level below — without it the two differ by
+/// a burst of cold and a slot.
 pub struct WallOfIce {}
+
+impl WallOfIce {
+    /// Nine tiles of panel, four either side of the anchor — the same
+    /// reach `WallOfStone` uses and for the same reason. Both spells
+    /// print ten 10-foot panels, which is a hundred feet and forty tiles
+    /// on this grid, and a wall that long does not divide a room so much
+    /// as replace it.
+    const REACH: isize = 4;
+
+    /// RAW's 10d6, rolled once and shared across everyone the panel
+    /// comes down on.
+    const DAMAGE: Dice = Dice::new(10, 6);
+}
 
 impl Action for WallOfIce {
     /// Queues a `StartConcentration`. Declared so the AI's
@@ -24928,7 +24988,11 @@ impl Action for WallOfIce {
         vec!["woice", "ice-wall"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 1 }
+        // One point, as the other three walls take: `wall_tiles` derives
+        // the orientation from the line the caster is looking down, so
+        // an angle would be an argument for an answer the engine can
+        // already work out.
+        TargetingSchema::SinglePoint
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft RAW = 48 tiles.
@@ -24974,32 +25038,63 @@ impl Action for WallOfIce {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
+        let caster_at = caster.location();
         let dc = caster.best_spell_save_dc([
             AbilityScoreType::Intelligence,
             AbilityScoreType::Charisma,
         ]);
-        let (mut effects, saves) = enemy_burst_save_for_half(
+        let tiles = wall_tiles(caster_at, point, Self::REACH);
+        // RAW's *"cuts through a creature's space"*, asked of the tiles
+        // the panel is about to take. Sorted and de-duplicated because a
+        // Large body straddles several of them and saves once, and
+        // because every other multi-target walk in the engine resolves
+        // in id order so the dice fall the same way twice.
+        let mut caught: Vec<usize> = tiles
+            .iter()
+            .filter_map(|&c| encounter.actor_id_at(c))
+            .filter(|&id| {
+                id != caster_id
+                    && encounter
+                        .actors
+                        .get(&id)
+                        .is_some_and(|a| a.is_combat_active())
+            })
+            .collect();
+        caught.sort_unstable();
+        caught.dedup();
+        let raw = encounter.roll(&Self::DAMAGE);
+        encounter.log(format!(
+            "  wall of ice: 10d6({}) cold to whatever the panel comes down on",
+            raw
+        ));
+        let (mut effects, _saves) = crate::actions::action_template::resolve_burst_targets(
             encounter,
             caster_id,
             point,
-            1,
+            &caught,
             AbilityScoreType::Dexterity,
             dc,
-            Dice::new(10, 6),
+            raw,
             DamageType::Cold,
-            "wall of ice",
+            crate::engine::saves::SaveDamagePolicy::HalfOnSave,
+            &HashSet::new(),
         );
-        // RAW: failed-save targets are forced out of the wall's space —
-        // the engine has no "shove out" primitive, so we approximate
-        // by knocking them Prone (the wall fractures around them and
-        // they slip on the ice). Passed-save targets dodge clear.
-        push_condition_on_failed_save(
-            &mut effects,
-            caster_id,
-            &saves,
-            Condition::Prone,
-            ConditionTimer::Permanent,
-        );
+        effects.push(Box::new(ConjureTerrain {
+            patch: ConjuredTerrain::new(
+                "wall of ice",
+                caster_id,
+                // Opaque and solid. RAW is silent on line of sight and
+                // a foot of ice is not a window; `ForceWall` is the
+                // variant for the barrier you shoot through, and it is
+                // reserved for the spell whose entire point is that you
+                // can.
+                TerrainType::Wall,
+                tiles,
+                10,
+                true,
+            )
+            .with_verb("freezes a panel of ice across"),
+        }));
         effects.push(Box::new(StartConcentration {
             caster_id,
             data: ConcentrationData::new("Wall of Ice"),

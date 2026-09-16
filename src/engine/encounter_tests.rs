@@ -42064,18 +42064,28 @@ fn steel_wind_strike_damages_primary_and_extra_targets() {
     );
 }
 
-/// Wall of Ice: lv6 concentration burst. Verifies the lv6 slot cost,
-/// damage to an in-burst enemy, the prone rider eventually lands
-/// across seeds, and the caster picks up concentration.
+/// **Wall of Ice** raises a wall.
+///
+/// The spell spent most of its life as a burst of cold with no wall in
+/// it, one level above a Wall of Stone that had been raising a real one
+/// through `conjured_terrain` all along. So the assertions here are
+/// about the barrier first: tiles retyped, a line of sight stopped, and
+/// the whole thing handed back when the caster's grip goes.
+///
+/// The damage is asserted second and in the shape RAW gives it —
+/// *"cuts through a creature's space"*, so the goblin standing where the
+/// panel comes down pays and the one three tiles behind it does not.
+/// And the Prone rider is asserted *absent*: it was a stand-in for RAW's
+/// push, which the conjured-terrain layer already answers by leaving the
+/// creature a gap, and a knocked-down target is not a shoved one.
 #[test]
-fn wall_of_ice_damages_and_prones_in_burst() {
+fn wall_of_ice_raises_a_wall_and_bills_whoever_it_comes_down_on() {
     use crate::actions::spells::WALL_OF_ICE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::engine::side_effects::Resource;
 
     let mut damaged = false;
-    let mut prone_landed = false;
     let mut concentrated = false;
     for seed in 0..30u64 {
         let mut e = ei_with_terrain(30, 30, &[]);
@@ -42085,38 +42095,87 @@ fn wall_of_ice_damages_and_prones_in_burst() {
         let wiz = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
             .unwrap();
-        let g = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 0)
+        // Standing on the panel but off the wizard's own line of sight,
+        // so the gap the wall leaves around it is not the gap the
+        // line-of-sight assertion below would have walked through.
+        let caught = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 7), 1, 0)
+            .unwrap();
+        // Far enough down the wizard's own line to be well clear of the
+        // panel, which stands *across* it.
+        let bystander = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(22, 5), 1, 1)
             .unwrap();
         let center = Coordinate::new(15, 5);
         let costs = WALL_OF_ICE.cost(&e, wiz, None, Some(&vec![center]), None);
         assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(6))));
-        let hp_before = e.actors[&g].hitpoints();
+        let (hp_before, bystander_hp) = (
+            e.actors[&caught].hitpoints(),
+            e.actors[&bystander].hitpoints(),
+        );
+
         for ef in WALL_OF_ICE.side_effects(&mut e, wiz, None, Some(&vec![center]), None) {
             ef.apply(&mut e);
         }
+
+        // The wall itself. It runs north-south across the wizard's
+        // east-west line of sight, and it is not laid over the goblin
+        // standing in it — `conjure_terrain` never buries anybody, which
+        // is this engine's reading of RAW's push.
+        assert!(
+            !e.conjured_terrain().is_empty(),
+            "seed {seed}: the spell should have left a patch on the board"
+        );
+        let wall_tiles = (1..=4isize)
+            .flat_map(|k| [Coordinate::new(15, 5 + k), Coordinate::new(15, 5 - k)])
+            .filter(|c| {
+                e.terrain_at(*c)
+                    .is_some_and(|t| t.terrain_type == TerrainType::Wall)
+            })
+            .count();
+        assert!(
+            wall_tiles >= 6,
+            "seed {seed}: the panel should have taken most of its eight free tiles, got {wall_tiles}"
+        );
+        assert_eq!(
+            e.terrain_at(Coordinate::new(15, 7)).map(|t| t.terrain_type),
+            Some(TerrainType::Floor),
+            "seed {seed}: the tile with a goblin on it stays floor"
+        );
+        assert!(
+            !e.actor_has_line_of_sight(wiz, bystander),
+            "seed {seed}: a wall of ice is not a window"
+        );
+
         if e.actors[&wiz].is_concentrating() {
             concentrated = true;
         }
-        if e.actors[&g].hitpoints() < hp_before {
+        if e.actors[&caught].hitpoints() < hp_before {
             damaged = true;
         }
-        if e.actors
-            .get(&g)
-            .is_some_and(|a| a.has_condition(Condition::Prone))
-        {
-            prone_landed = true;
-        }
-        if damaged && prone_landed && concentrated {
-            break;
-        }
+        assert_eq!(
+            e.actors[&bystander].hitpoints(),
+            bystander_hp,
+            "seed {seed}: RAW bills the creatures the panel cuts through, and nobody else"
+        );
+        assert!(
+            !e.actors[&caught].has_condition(Condition::Prone),
+            "seed {seed}: the Prone rider was a stand-in for a push and RAW never wrote it"
+        );
+
+        // …and the floor comes back when the grip goes.
+        e.drop_concentration(wiz);
+        assert!(
+            e.conjured_terrain().is_empty(),
+            "seed {seed}: the panel should melt with the concentration"
+        );
+        assert!(
+            e.actor_has_line_of_sight(wiz, bystander),
+            "seed {seed}: and the room should be one room again"
+        );
     }
     assert!(concentrated, "Wall of Ice should anchor caster concentration");
-    assert!(damaged, "Wall of Ice should damage in-burst enemies");
-    assert!(
-        prone_landed,
-        "Wall of Ice's prone rider should eventually land across seeds"
-    );
+    assert!(damaged, "Wall of Ice should bill the creature it freezes around");
 }
 
 /// `best_spell_attack_modifier` should mirror `best_spell_save_dc` —
