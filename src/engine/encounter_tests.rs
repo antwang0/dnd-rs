@@ -85930,6 +85930,15 @@ fn enemies_abound_confuses_a_single_mind_off_an_int_save() {
 /// template pushes is a spell nobody can cast, and nothing else in the
 /// suite would notice. `Warding Wind` shipped that way once — see the
 /// note on the wizard's list.
+///
+/// The **stronger** of two claims, and the reason this list stayed
+/// hand-written after the weaker one was generalised: these eight have
+/// to be on a *playable* chassis, which is where a spell written for a
+/// player belongs. That every spell in the file is carried by
+/// *something* — a monster, an item, a summoned spirit — is the claim
+/// `every_spell_in_the_file_is_one_something_in_the_game_can_cast`
+/// makes about all three hundred and sixty-one of them, without a list
+/// anybody has to remember to extend.
 #[test]
 fn every_spell_in_the_new_batch_is_carried_by_some_playable_template() {
     use crate::actors::creatures::pc_template_families;
@@ -114739,4 +114748,204 @@ fn only_a_burrower_is_offered_the_two_rows_it_can_use() {
     }
     assert!(seen_digger >= 10, "the roster has burrowers: {seen_digger}");
     assert!(seen_walker > 100, "…and plenty that walk: {seen_walker}");
+}
+
+
+/// **Every spell in `spells.rs` is one something in the game can cast.**
+///
+/// The general form of `every_spell_in_the_new_batch_is_carried_by_some_playable_template`
+/// above, which makes the same claim about eight named spells out of
+/// three hundred and sixty-one. That list is hand-maintained, which
+/// means it covers exactly the batch whose author remembered to extend
+/// it — and the failure it exists to catch is precisely the one an
+/// author who forgets is making: *"a complete `impl Action` that no
+/// template pushes is a spell nobody can cast, and nothing else in the
+/// suite would notice."*
+///
+/// Both tests stay, because they make different claims. That one says
+/// its eight are on a **playable** chassis, which is where a spell
+/// written for a player belongs; this one says every spell is on
+/// *something* — a monster, a magic item, a summoned spirit's list —
+/// which is the weaker claim and the one that can be made about all of
+/// them.
+///
+/// **Why the source is read rather than a registry walked.** There is no
+/// `ALL_SPELLS`, and a registry would have the same hole the `ADDED`
+/// list has: it is a second place to forget. `include_str!` cannot be
+/// forgotten — a spell that exists is in the file by construction —
+/// and it is the same blunt instrument
+/// `every_spell_that_prices_an_upcast_declares_it` and
+/// `every_summon_item_is_registered_and_reachable` already use.
+///
+/// The parse is in two halves because the file declares spells two ways:
+/// most are a bespoke `impl Action` whose `name()` is a literal, and
+/// forty-odd are config-struct literals (`HealSpell`, `SmiteSpell`,
+/// `SummonSpell`, `SizeShiftSpell`, `PartyBuffSpell`) carrying the name
+/// in a field. **A static the parse cannot resolve fails the test**
+/// rather than being skipped, which is the guard that stops the sweep
+/// going quietly vacuous the next time the file grows a third shape.
+#[test]
+fn every_spell_in_the_file_is_one_something_in_the_game_can_cast() {
+    use crate::actors::creatures::pc_template_families;
+    use crate::items::item_template::{LOOT_POOL, MAGIC_ARMOURY, STAVES};
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let source = include_str!("../actions/spells.rs");
+
+    // Half one: `impl Action for T { … fn name(&self) -> &str { "x" } }`.
+    // Splitting on the header leaves one impl block per chunk, so the
+    // first `fn name` in a chunk is that block's.
+    let mut printed: BTreeMap<&str, &str> = BTreeMap::new();
+    for chunk in source.split("impl Action for ").skip(1) {
+        let ty = chunk
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("");
+        let Some(at) = chunk.find("fn name(&self) -> &str {") else {
+            continue;
+        };
+        // The method's own body, and no further. A `name()` that
+        // forwards to a field — `self.display_name`, the config-struct
+        // shape — has no literal in it, and an unbounded search would
+        // walk on to the next quote in the file and call a format
+        // string a spell.
+        let rest = &chunk[at..];
+        let body = match rest.find("\n    }") {
+            Some(end) => &rest[..end],
+            None => continue,
+        };
+        let Some(open) = body.find('"') else { continue };
+        let lit = &body[open + 1..];
+        let Some(close) = lit.find('"') else { continue };
+        printed.insert(ty, &lit[..close]);
+    }
+
+    // Half two: the statics themselves, resolved through the map above
+    // or out of the literal's own name field.
+    const NAME_FIELDS: [&str; 3] = ["display_name: \"", "action_name: \"", "name: \""];
+    let mut declared: BTreeSet<&str> = BTreeSet::new();
+    let mut unresolved: Vec<&str> = Vec::new();
+    for chunk in source.split("\npub static ").skip(1) {
+        let Some(colon) = chunk.find(':') else { continue };
+        let ident = chunk[..colon].trim();
+        if ident.is_empty()
+            || !ident
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        {
+            continue;
+        }
+        let ty: String = chunk[colon + 1..]
+            .trim_start()
+            .trim_start_matches("LazyLock<")
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        // A slice static is a registry rather than a spell — its type
+        // starts with `&` and so parses to nothing. `ALL_SMITE_SPELLS`
+        // and its ranged sibling are the only two, and neither is a
+        // thing anybody casts.
+        if ty.is_empty() {
+            continue;
+        }
+        if let Some(name) = printed.get(ty.as_str()) {
+            declared.insert(name);
+            continue;
+        }
+        // The literal's own body, and no further: `\n};` is where every
+        // static in the file closes. Bounding the window matters more
+        // than it looks — the field patterns below are ordinary enough
+        // English that a docstring two items down will match one, and a
+        // sweep that reads a comment as a spell name reports an orphan
+        // nobody can find.
+        let body = match chunk.find("\n};") {
+            Some(at) => &chunk[..at],
+            None => &chunk[..chunk.len().min(800)],
+        };
+        // A field, not a substring: the line has to *start* with it,
+        // which a format string inside the body never does.
+        let found = body.lines().find_map(|line| {
+            let line = line.trim_start();
+            NAME_FIELDS
+                .iter()
+                .find_map(|field| line.strip_prefix(field))
+                .and_then(|rest| rest.find('"').map(|close| &rest[..close]))
+        });
+        match found {
+            Some(name) => {
+                declared.insert(name);
+            }
+            None => unresolved.push(ident),
+        }
+    }
+    assert!(
+        unresolved.is_empty(),
+        "the parse could not find a name for {:?} — spells.rs has grown a \
+         declaration shape this sweep does not read, and every spell of that \
+         shape is now unchecked",
+        unresolved
+    );
+    // And the anti-vacuity floor: a refactor that stopped the parse
+    // finding anything would otherwise leave every assertion below
+    // trivially true.
+    assert!(
+        declared.len() > 300,
+        "only {} spells parsed out of a file with hundreds; the sweep has \
+         stopped reading it",
+        declared.len()
+    );
+
+    // What anything in the game can reach: every playable chassis, the
+    // whole spawnable bestiary, and every shelf of the loot table.
+    //
+    // `CreatureTemplate::actions` is read **beside** `available_actions`
+    // rather than instead of it, and Counterspell is why: a reaction
+    // that no live actor is currently able to take is absent from the
+    // second list and present on the first, and a spell that only ever
+    // fires out of turn is still a spell somebody carries.
+    let mut reachable: BTreeSet<String> = BTreeSet::new();
+    let mut templates: Vec<&'static crate::actors::actor_template::CreatureTemplate> = Vec::new();
+    for (_family, family_templates) in pc_template_families() {
+        templates.extend(family_templates);
+    }
+    templates.extend(EncounterInstance::template_pool());
+    for tpl in templates {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let Ok(id) = e.instantiate_creature(tpl, Coordinate::new(5, 5), 0, 0) else {
+            continue;
+        };
+        for action in e.actors[&id]
+            .available_actions()
+            .into_iter()
+            .chain(tpl.actions.iter().copied())
+        {
+            reachable.insert(action.name().to_string());
+            if let Some(printed) = action.printed_spell_name() {
+                reachable.insert(printed.to_string());
+            }
+        }
+    }
+    for shelf in [LOOT_POOL, STAVES, MAGIC_ARMOURY] {
+        for item in shelf {
+            for action in item.on_use {
+                reachable.insert(action.name().to_string());
+                if let Some(printed) = action.printed_spell_name() {
+                    reachable.insert(printed.to_string());
+                }
+            }
+        }
+    }
+
+    let orphans: Vec<&str> = declared
+        .iter()
+        .copied()
+        .filter(|name| !reachable.contains(*name))
+        .collect();
+    assert!(
+        orphans.is_empty(),
+        "implemented and carried by nothing in the game ({} of them) — a spell \
+         nobody can cast is a spell nobody wrote:\n  {}",
+        orphans.len(),
+        orphans.join("\n  ")
+    );
 }
