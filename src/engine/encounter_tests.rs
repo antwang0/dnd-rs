@@ -102666,6 +102666,294 @@ fn every_staff_row_is_wired_to_the_staff_it_names() {
     }
 }
 
+/// Each Ring of Elemental Command is wired to its own plane, and to no
+/// other.
+///
+/// Four items built by the same hand out of the same shape, which is
+/// exactly the family where a copy-paste breaks something silently.
+/// Three ways it can, all of which compile and all of which look like
+/// an item that is simply not very good:
+///
+///   - **A lost bane slice.** The two `Item` fields that carry
+///     *"Advantage on attack rolls against Elementals and they have
+///     Disadvantage on attack rolls against you"* are two fields, and a
+///     ring that grew one and not the other is a legendary item that is
+///     half a rule — visible only as a wearer who hits easily and is
+///     hit just as easily.
+///   - **The wrong plane's menu.** A row's `item_name` is the key its
+///     charges are billed against, so a fire ring offering the water
+///     ring's Tsunami would sit greyed out forever: the ledger would be
+///     looking for a ring the wearer does not have.
+///   - **The wrong focus.** The four foci are the whole reason there
+///     are four rings, and they are four one-line fields. A water ring
+///     that resisted fire would be an item nobody could tell was wrong
+///     without the book open.
+///
+/// Also the sweep that makes both row registries reachable — see
+/// `every_action_written_is_an_action_something_can_reach`, which asks
+/// whether anything outside `src/actions/` names them.
+#[test]
+fn every_elemental_ring_is_wired_to_its_own_plane() {
+    use crate::actions::elemental_rings::{
+        ELEMENTAL_RING_COMPULSIONS, ELEMENTAL_RING_SPELLS,
+    };
+    use crate::actions::item_actions::ItemUseBilling;
+    use crate::engine::types::{CreatureType, DamageType};
+    use crate::items::item_template::{
+        ELEMENTAL_COMMAND_RINGS, RING_OF_ELEMENTAL_COMMAND_AIR,
+        RING_OF_ELEMENTAL_COMMAND_EARTH, RING_OF_ELEMENTAL_COMMAND_FIRE,
+        RING_OF_ELEMENTAL_COMMAND_WATER,
+    };
+
+    const ELEMENTAL: &[CreatureType] = &[CreatureType::Elemental];
+
+    assert_eq!(
+        ELEMENTAL_COMMAND_RINGS.len(),
+        4,
+        "SRD 5.2 prints one ring per Elemental Plane and there are four"
+    );
+
+    // What every ring shares: the bane, the pool, and the bond.
+    for ring in ELEMENTAL_COMMAND_RINGS {
+        assert_eq!(
+            ring.attack_advantage_against, ELEMENTAL,
+            "{} lost the first half of Elemental Bane",
+            ring.name
+        );
+        assert_eq!(
+            ring.taxes_attackers_of_type, ELEMENTAL,
+            "{} lost the second half of Elemental Bane",
+            ring.name
+        );
+        assert_eq!(
+            ring.charges, 5,
+            "{} holds a pool RAW does not print — every ring is 5 charges",
+            ring.name
+        );
+        assert!(
+            ring.requires_attunement,
+            "{} is a Legendary ring and RAW requires attunement to every one",
+            ring.name
+        );
+        assert!(
+            !ring.on_use.is_empty(),
+            "{} carries charges and offers nothing to spend them on",
+            ring.name
+        );
+    }
+
+    // What each ring does *not* share: its focus. Written out per ring
+    // rather than derived, because there is nothing to derive it from —
+    // the plane is a fact about the book, and the point of the
+    // assertion is that the four rows have not drifted into each other.
+    assert_eq!(
+        RING_OF_ELEMENTAL_COMMAND_AIR.damage_resistances,
+        &[DamageType::Lightning]
+    );
+    assert!(
+        RING_OF_ELEMENTAL_COMMAND_AIR
+            .passive_conditions
+            .contains(&Condition::Flying),
+        "the air ring's focus is a fly speed and hovering"
+    );
+    assert!(
+        RING_OF_ELEMENTAL_COMMAND_AIR
+            .passive_conditions
+            .contains(&Condition::Feathered),
+        "RAW prints Feather Fall at 0 charges, which is a passive and not a row"
+    );
+    assert_eq!(
+        RING_OF_ELEMENTAL_COMMAND_EARTH.damage_resistances,
+        &[DamageType::Acid]
+    );
+    assert_eq!(
+        RING_OF_ELEMENTAL_COMMAND_FIRE.damage_immunities,
+        &[DamageType::Fire],
+        "fire is the one focus RAW writes as Immunity rather than Resistance"
+    );
+    assert!(
+        RING_OF_ELEMENTAL_COMMAND_FIRE.damage_resistances.is_empty(),
+        "an immunity that also resisted would be reading RAW twice"
+    );
+    assert!(
+        RING_OF_ELEMENTAL_COMMAND_WATER.grants_swim_speed
+            && RING_OF_ELEMENTAL_COMMAND_WATER.grants_unfettered_breathing,
+        "the water ring prints a swim speed and a lungful in one sentence, \
+         and the engine keeps those on two cohorts"
+    );
+
+    // Every row names a ring on this shelf, that ring offers it, and the
+    // price fits the pool.
+    let rows: Vec<(&str, &str, u32)> = ELEMENTAL_RING_SPELLS
+        .iter()
+        .map(|r| {
+            let ItemUseBilling::Charges(n) = r.billing else {
+                panic!(
+                    "{} is a row on a ring with a pool and is not priced in it",
+                    r.action_name
+                )
+            };
+            (r.action_name, r.item_name, n)
+        })
+        .collect();
+    for (action_name, item_name, charges) in &rows {
+        let ring = ELEMENTAL_COMMAND_RINGS
+            .iter()
+            .find(|r| r.name == *item_name)
+            .unwrap_or_else(|| panic!("{action_name} names a ring nothing carries"));
+        assert!(
+            ring.on_use.iter().any(|a| a.name() == *action_name),
+            "{} is written and the {} does not offer it",
+            action_name,
+            ring.name
+        );
+        assert!(
+            *charges > 0 && *charges <= ring.charges,
+            "{} costs {} charges and the {} holds {}",
+            action_name,
+            charges,
+            ring.name,
+            ring.charges
+        );
+    }
+
+    // The compulsions: one per ring, free, and pointed only at
+    // Elementals. The type gate is the clause the chassis grew for this
+    // item — a compulsion that had lost it would compel a dragon.
+    assert_eq!(
+        ELEMENTAL_RING_COMPULSIONS.len(),
+        ELEMENTAL_COMMAND_RINGS.len(),
+        "every ring prints Elemental Compulsion and only one of them"
+    );
+    for row in ELEMENTAL_RING_COMPULSIONS {
+        assert_eq!(
+            row.target_types, ELEMENTAL,
+            "{} would compel something RAW does not let it touch",
+            row.action_name
+        );
+        assert_eq!(
+            row.dc, 18,
+            "{} does not print RAW's flat DC 18",
+            row.action_name
+        );
+        assert!(
+            matches!(row.billing, ItemUseBilling::Free),
+            "{} charges for a clause RAW prints no price on",
+            row.action_name
+        );
+        let ring = ELEMENTAL_COMMAND_RINGS
+            .iter()
+            .find(|r| r.name == row.item_name)
+            .unwrap_or_else(|| panic!("{} names a ring nothing carries", row.action_name));
+        assert!(
+            ring.on_use.iter().any(|a| a.name() == row.action_name),
+            "{} is written and the {} does not offer it",
+            row.action_name,
+            ring.name
+        );
+    }
+
+    // …and the other direction: nothing a ring offers is off both
+    // registries, which is where a row goes to become invisible to
+    // every sweep above.
+    for ring in ELEMENTAL_COMMAND_RINGS {
+        for action in ring.on_use {
+            assert!(
+                rows.iter().any(|(name, _, _)| *name == action.name())
+                    || ELEMENTAL_RING_COMPULSIONS
+                        .iter()
+                        .any(|c| c.action_name == action.name()),
+                "the {} offers `{}` and it is on neither ELEMENTAL_RING_SPELLS \
+                 nor ELEMENTAL_RING_COMPULSIONS",
+                ring.name,
+                action.name()
+            );
+        }
+    }
+}
+
+/// Elemental Bane, both halves, and the creature it says nothing about.
+///
+/// The ring is the first item in the engine whose value depends on the
+/// *other* stat block, so the thing worth proving is the negative: a
+/// wearer swinging at something that is not an Elemental rolls exactly
+/// as they would with no ring on. A lane that read the wrong side — or
+/// read no side, and simply granted Advantage — would pass every
+/// assertion about the elemental and turn the ring into a Legendary
+/// +Advantage-against-everything.
+///
+/// The two halves are asserted separately and on two different rolls,
+/// which is the whole reason RAW's sentence is two clauses: they never
+/// meet, so they never cancel.
+#[test]
+fn the_elemental_ring_sharpens_only_what_it_names() {
+    use crate::actors::creatures::fire_elementals::FIRE_ELEMENTAL_TEMPLATE;
+    use crate::engine::dice::RollMode;
+    use crate::items::item_template::RING_OF_ELEMENTAL_COMMAND_FIRE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wearer = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let elemental = e
+        .instantiate_creature(&FIRE_ELEMENTAL_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 7), 1, 0)
+        .unwrap();
+
+    // Before the ring: nothing about any of these three rolls is
+    // unusual. Asserted so the assertions below are about the ring
+    // rather than about the fire elemental.
+    assert_eq!(
+        e.compute_attack_mode(wearer, elemental, true),
+        RollMode::Normal
+    );
+    assert_eq!(
+        e.compute_attack_mode(elemental, wearer, true),
+        RollMode::Normal
+    );
+
+    e.actors
+        .get_mut(&wearer)
+        .unwrap()
+        .pickup_item(&RING_OF_ELEMENTAL_COMMAND_FIRE);
+
+    assert_eq!(
+        e.compute_attack_mode(wearer, elemental, true),
+        RollMode::Advantage,
+        "Elemental Bane's first half: the wearer swings at an Elemental"
+    );
+    assert_eq!(
+        e.compute_attack_mode(elemental, wearer, true),
+        RollMode::Disadvantage,
+        "Elemental Bane's second half: the Elemental swings back"
+    );
+    assert_eq!(
+        e.compute_attack_mode(wearer, bystander, true),
+        RollMode::Normal,
+        "the ring says nothing about anything that is not an Elemental"
+    );
+    assert_eq!(
+        e.compute_attack_mode(bystander, wearer, true),
+        RollMode::Normal,
+        "…and nothing about anything that is not an Elemental swinging back"
+    );
+
+    // The ring is Legendary and requires attunement, so a wearer who has
+    // it in the pack rather than on a finger gets none of this. Proved
+    // by taking the bond away rather than by never forming it, because
+    // `pickup_item` attunes on the way in.
+    e.actors.get_mut(&wearer).unwrap().end_attunement(
+        crate::actions::elemental_rings::RING_OF_ELEMENTAL_COMMAND_FIRE_NAME,
+    );
+    assert_eq!(
+        e.compute_attack_mode(wearer, elemental, true),
+        RollMode::Normal,
+        "an unattuned ring is jewellery"
+    );
+}
+
 /// Every row on the whole loot table that is priced in charges is one
 /// its own item can pay for.
 ///
@@ -111572,6 +111860,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("actions/class_attacks.rs", include_str!("../actions/class_attacks.rs")),
         ("actions/class_features.rs", include_str!("../actions/class_features.rs")),
         ("actions/default_actions.rs", include_str!("../actions/default_actions.rs")),
+        ("actions/elemental_rings.rs", include_str!("../actions/elemental_rings.rs")),
         ("actions/feats.rs", include_str!("../actions/feats.rs")),
         ("actions/item_actions.rs", include_str!("../actions/item_actions.rs")),
         ("actions/metamagic.rs", include_str!("../actions/metamagic.rs")),

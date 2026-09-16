@@ -459,6 +459,44 @@ pub struct Item {
     /// files this one under Cursed Items, and a loot table where the
     /// ordinary drops could hurt you would be a different game.
     pub damage_vulnerabilities: &'static [crate::engine::types::DamageType],
+    /// Creature types the holder rolls **Advantage** against — the first
+    /// half of SRD 5.2's Elemental Bane: *"you have Advantage on attack
+    /// rolls against Elementals."*
+    ///
+    /// The item table's first clause that reads the *counterparty's*
+    /// stat block rather than the holder's own. Everything above this
+    /// line is a fact about the wearer — an AC, a resistance, a
+    /// condition they carry — and answers the same way whoever is
+    /// standing opposite. This one does not: the identical ring is a
+    /// legendary advantage against a fire elemental and nothing at all
+    /// against the goblin next to it.
+    ///
+    /// Deliberately a slice of `CreatureType` rather than a predicate
+    /// closure, which is what the on-hit rider table next door uses for
+    /// the same question (`Dragon Slayer`'s `target_gate`). The riders
+    /// need a closure because some of their gates are not about type at
+    /// all — a hit-point threshold, a size cap — and this lane is only
+    /// ever a list of types. A list is comparable, printable, and
+    /// checkable by an invariant; a `fn` pointer is none of the three.
+    ///
+    /// Read by `EncounterInstance::attack_mode_tally` on the attacker
+    /// side, so it joins the tally as a source rather than being folded
+    /// onto an already-resolved mode — see `RollModeTally` for why that
+    /// distinction is load-bearing.
+    pub attack_advantage_against: &'static [crate::engine::types::CreatureType],
+    /// Creature types that roll at **Disadvantage** when they attack the
+    /// holder — the second half of Elemental Bane: *"and they have
+    /// Disadvantage on attack rolls against you."*
+    ///
+    /// The mirror of the field directly above, on the target side of the
+    /// same sweep. Two fields rather than one symmetrical one because
+    /// RAW does not always print both halves: a hypothetical *Bane of
+    /// Fiends* that only sharpened its wielder's swings would set the
+    /// first and leave this empty, and an armour that only made its
+    /// wearer hard for undead to hit would do the reverse. The ring that
+    /// motivated the lane happens to print both, which is a fact about
+    /// the ring rather than about the shape of the rule.
+    pub taxes_attackers_of_type: &'static [crate::engine::types::CreatureType],
     /// Conditions the wearer has installed (Permanent) for as long as the
     /// item is carried. Used by passive-buff trinkets like Slippers of
     /// Spider Climbing (SpiderClimbing) and Winged Boots (Flying) so the
@@ -553,6 +591,30 @@ pub struct Item {
     /// `EncounterInstance::can_breathe` for the order the two are asked
     /// in.
     pub grants_unfettered_breathing: bool,
+    /// True when wearing this item gives the holder a **swimming speed**
+    /// — SRD 5.2's Ring of Elemental Command (water), *"you gain a Swim
+    /// Speed of 60 feet, and you can breathe underwater"*.
+    ///
+    /// Its own flag rather than a second meaning for the breathing one
+    /// directly above, because the engine has spent a lot of care
+    /// keeping those two apart: `SWIM_SPEED_SOURCES` and
+    /// `UNDERWATER_BREATH_SOURCES` are separate cohorts precisely
+    /// because a creature can have either without the other, and the
+    /// water ring is the item that prints both in one sentence and
+    /// would have been the first thing to blur them.
+    ///
+    /// What it buys, concretely: the wearer crosses `TerrainType::Water`
+    /// without the movement surcharge, and swings in it without 5e's
+    /// Underwater Combat disadvantage — *"a creature that doesn't have a
+    /// swimming speed … has Disadvantage on the attack roll."* That
+    /// second clause is the one worth the field. A ring that let its
+    /// wearer breathe at the bottom of a lake and still fight at
+    /// disadvantage there would be most of an item.
+    ///
+    /// Read by a row on `SWIM_SPEED_SOURCES`, so it composes with the
+    /// natural and granted swim speeds already on that cohort rather
+    /// than being asked separately at the two sites that care.
+    pub grants_swim_speed: bool,
     /// True when wearing this item turns every critical hit against the
     /// holder into an ordinary one — 5e's Adamantine Armor, and nothing
     /// else on the roster.
@@ -915,11 +977,14 @@ impl Item {
         damage_resistances: &[],
         damage_immunities: &[],
         damage_vulnerabilities: &[],
+        attack_advantage_against: &[],
+        taxes_attackers_of_type: &[],
         passive_conditions: &[],
         grants_magical_attacks: false,
         grants_silvered_attacks: false,
         shiftable_bonus: 0,
         grants_unfettered_breathing: false,
+        grants_swim_speed: false,
         blunts_critical_hits: false,
         halves_ranged_weapon_damage: false,
         ignores_half_cover_on_spells: false,
@@ -939,6 +1004,16 @@ impl Item {
 /// of Power, which rolls `2d8+4`. Named once because nine items say it.
 const DAILY_1D6_PLUS_1: DiceExpr = DiceExpr {
     dice: Some(crate::engine::dice::Dice::new(1, 6)),
+    constant: 1,
+};
+
+/// *"Regains 1d4 + 1 expended charges daily at dawn"* — the smaller of
+/// RAW's two standard recharge lines, and the one the four Rings of
+/// Elemental Command print. A named constant beside its sibling above
+/// for the same reason: four items say it, and a hand-written
+/// `DiceExpr` in each is four chances to write a d6.
+const DAILY_1D4_PLUS_1: DiceExpr = DiceExpr {
+    dice: Some(crate::engine::dice::Dice::new(1, 4)),
     constant: 1,
 };
 
@@ -1609,6 +1684,169 @@ pub static RING_OF_FORCE_RESISTANCE: Item = Item {
     requires_attunement: true,
     ..Item::DEFAULTS
 };
+
+/// **Ring of Elemental Command (air)** (Ring, Legendary, attunement) —
+/// the first of RAW's four, and the first item on this table whose
+/// value depends on who is standing opposite.
+///
+/// The whole item is documented in `crate::actions::elemental_rings`,
+/// including the two clauses that do not ship and why. What lives here
+/// is the four rings' data, and the one line worth reading twice is the
+/// pair of creature-type slices: every other field in this file is a
+/// fact about the wearer, and those two are a fact about their enemy.
+///
+/// **Elemental Focus (air)** — *"you have Resistance to Lightning
+/// damage, and you have a Fly Speed equal to your Speed and can
+/// hover."* The resistance rides `damage_resistances` like the ten
+/// resistance rings above it; the flight rides `Condition::Flying`,
+/// which is the lane the Winged Boots opened and which is exactly "a
+/// fly speed, hovering".
+///
+/// **Feather Fall** is here rather than on the spell menu, and that is
+/// RAW's doing: the ring's own table prints *"Feather Fall (**0**
+/// charges)"*, and a spell that costs nothing out of a pool is not a
+/// draw on the pool — it is something the ring simply does. It rides
+/// `Condition::Feathered`, the Ring of Feather Falling's own lane.
+pub static RING_OF_ELEMENTAL_COMMAND_AIR: Item = Item {
+    name: crate::actions::elemental_rings::RING_OF_ELEMENTAL_COMMAND_AIR_NAME,
+    glyph: '=',
+    damage_resistances: &[crate::engine::types::DamageType::Lightning],
+    attack_advantage_against: &[crate::engine::types::CreatureType::Elemental],
+    taxes_attackers_of_type: &[crate::engine::types::CreatureType::Elemental],
+    passive_conditions: &[
+        crate::conditions::Condition::Flying,
+        crate::conditions::Condition::Feathered,
+    ],
+    on_use: &[
+        &crate::actions::elemental_rings::COMPEL_ELEMENTAL_AIR,
+        &crate::actions::elemental_rings::AIR_RING_CHAIN_LIGHTNING,
+        &crate::actions::elemental_rings::AIR_RING_GUST_OF_WIND,
+        &crate::actions::elemental_rings::AIR_RING_WIND_WALL,
+    ],
+    charges: 5,
+    recharge: Some(DAILY_1D4_PLUS_1),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Elemental Command (earth)** — see
+/// [`RING_OF_ELEMENTAL_COMMAND_AIR`] for the family.
+///
+/// **Elemental Focus (earth)** — *"you have Resistance to Acid
+/// damage"*, and two clauses that do not ship: rubble is not made easy
+/// going, and the wearer does not glide through stone. Both are scoped
+/// in RAW to a *material* — "rubble, rocks, or dirt", "solid earth or
+/// rock" — and the terrain layer records how hard a tile is to cross
+/// rather than what it is made of, so the only available readings were
+/// "waive every kind of difficult terrain including the magical ones"
+/// and "waive none". None is the smaller lie: a ring that let its
+/// wearer stroll through a Web and a Spike Growth would be a better
+/// item than the book's, and wrong in a direction nobody would notice
+/// until it mattered.
+pub static RING_OF_ELEMENTAL_COMMAND_EARTH: Item = Item {
+    name: crate::actions::elemental_rings::RING_OF_ELEMENTAL_COMMAND_EARTH_NAME,
+    glyph: '=',
+    damage_resistances: &[crate::engine::types::DamageType::Acid],
+    attack_advantage_against: &[crate::engine::types::CreatureType::Elemental],
+    taxes_attackers_of_type: &[crate::engine::types::CreatureType::Elemental],
+    on_use: &[
+        &crate::actions::elemental_rings::COMPEL_ELEMENTAL_EARTH,
+        &crate::actions::elemental_rings::EARTH_RING_EARTHQUAKE,
+        &crate::actions::elemental_rings::EARTH_RING_STONE_SHAPE,
+        &crate::actions::elemental_rings::EARTH_RING_STONESKIN,
+        &crate::actions::elemental_rings::EARTH_RING_WALL_OF_STONE,
+    ],
+    charges: 5,
+    recharge: Some(DAILY_1D4_PLUS_1),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Elemental Command (fire)** — see
+/// [`RING_OF_ELEMENTAL_COMMAND_AIR`] for the family.
+///
+/// **Elemental Focus (fire)** — *"you have **Immunity** to Fire
+/// damage"*, which is the only focus of the four that is not a
+/// resistance, and the reason this ring is the pick against half the
+/// bestiary's heavy hitters. It rides `damage_immunities` beside the
+/// Periapt of Proof against Poison, one lane over from the ten
+/// resistance rings: an immunity short-circuits the damage pipeline
+/// before resistance is ever consulted, which is what RAW's word
+/// choice means.
+pub static RING_OF_ELEMENTAL_COMMAND_FIRE: Item = Item {
+    name: crate::actions::elemental_rings::RING_OF_ELEMENTAL_COMMAND_FIRE_NAME,
+    glyph: '=',
+    damage_immunities: &[crate::engine::types::DamageType::Fire],
+    attack_advantage_against: &[crate::engine::types::CreatureType::Elemental],
+    taxes_attackers_of_type: &[crate::engine::types::CreatureType::Elemental],
+    on_use: &[
+        &crate::actions::elemental_rings::COMPEL_ELEMENTAL_FIRE,
+        &crate::actions::elemental_rings::FIRE_RING_BURNING_HANDS,
+        &crate::actions::elemental_rings::FIRE_RING_FIREBALL,
+        &crate::actions::elemental_rings::FIRE_RING_FIRE_STORM,
+        &crate::actions::elemental_rings::FIRE_RING_WALL_OF_FIRE,
+    ],
+    charges: 5,
+    recharge: Some(DAILY_1D4_PLUS_1),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Ring of Elemental Command (water)** — see
+/// [`RING_OF_ELEMENTAL_COMMAND_AIR`] for the family.
+///
+/// **Elemental Focus (water)** — *"you gain a Swim Speed of 60 feet,
+/// and you can breathe underwater."* Both halves, on two lanes, and the
+/// split is deliberate: `grants_swim_speed` puts the wearer on
+/// `SWIM_SPEED_SOURCES` so they cross water free and swing in it
+/// without 5e's Underwater Combat disadvantage, and
+/// `grants_unfettered_breathing` puts them on
+/// `UNDERWATER_BREATH_SOURCES` so the round-end breath clock never
+/// starts. A creature can have either without the other — that is why
+/// the engine keeps two cohorts — and this ring is the item that prints
+/// both in one sentence.
+///
+/// Alone among the four it grants no damage modifier, which is RAW's
+/// own reading: water's focus buys a place to fight rather than a thing
+/// to shrug off.
+pub static RING_OF_ELEMENTAL_COMMAND_WATER: Item = Item {
+    name: crate::actions::elemental_rings::RING_OF_ELEMENTAL_COMMAND_WATER_NAME,
+    glyph: '=',
+    attack_advantage_against: &[crate::engine::types::CreatureType::Elemental],
+    taxes_attackers_of_type: &[crate::engine::types::CreatureType::Elemental],
+    grants_swim_speed: true,
+    grants_unfettered_breathing: true,
+    on_use: &[
+        &crate::actions::elemental_rings::COMPEL_ELEMENTAL_WATER,
+        &crate::actions::elemental_rings::WATER_RING_ICE_STORM,
+        &crate::actions::elemental_rings::WATER_RING_TSUNAMI,
+        &crate::actions::elemental_rings::WATER_RING_WALL_OF_ICE,
+        &crate::actions::elemental_rings::WATER_RING_WATER_WALK,
+    ],
+    charges: 5,
+    recharge: Some(DAILY_1D4_PLUS_1),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// SRD 5.2's four Rings of Elemental Command, in the order RAW's own
+/// Elemental Focus list gives them.
+///
+/// A cohort rather than four loose statics, for the reason
+/// [`DRAGON_SCALE_MAILS`] and [`ARMORS_OF_VULNERABILITY`] are ones: the
+/// family has invariants a copy-paste can break silently. All four must
+/// carry the Elemental Bane slices (a ring that lost one half would be
+/// a legendary item that is half a rule), all four must hold the same
+/// five charges, and every row each offers must be one of *its own*
+/// menu — a fire ring offering the water ring's Tsunami would compile,
+/// drop, be worn, and sit greyed out forever because the charge ledger
+/// is keyed on a ring the wearer does not have.
+pub static ELEMENTAL_COMMAND_RINGS: &[&Item] = &[
+    &RING_OF_ELEMENTAL_COMMAND_AIR,
+    &RING_OF_ELEMENTAL_COMMAND_EARTH,
+    &RING_OF_ELEMENTAL_COMMAND_FIRE,
+    &RING_OF_ELEMENTAL_COMMAND_WATER,
+];
 
 /// **Armor of Vulnerability (bludgeoning)** (Armor: any, Rare, cursed)
 /// — *"While wearing this armor, you have Resistance to one of the
@@ -9471,6 +9709,21 @@ pub static LOOT_POOL: &[&Item] = &[
     &OIL_OF_SLIPPERINESS,
     &OIL_OF_SLIPPERINESS,
     &DECANTER_OF_ENDLESS_WATER,
+    // The four Rings of Elemental Command — one entry each, which is the
+    // weight a Legendary wants, and four entries rather than one because
+    // the plane is the item: the fire ring is immunity and a Fireball,
+    // and the water ring is a swim speed and a Tsunami, and a party that
+    // found "a Ring of Elemental Command" without finding out which
+    // would have found nothing to decide.
+    //
+    // Deliberately not folded to a single row behind a random plane
+    // roll, which is how RAW words it. The loot table is already the
+    // randomiser; a second one inside the entry would mean the same drop
+    // was a different item each time it was looked at.
+    &RING_OF_ELEMENTAL_COMMAND_AIR,
+    &RING_OF_ELEMENTAL_COMMAND_EARTH,
+    &RING_OF_ELEMENTAL_COMMAND_FIRE,
+    &RING_OF_ELEMENTAL_COMMAND_WATER,
 ];
 
 #[cfg(test)]

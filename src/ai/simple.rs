@@ -8106,9 +8106,21 @@ fn try_darkvision(encounter: &EncounterInstance, actor_id: usize) -> Option<Acti
 /// whole failure mode a speculative buff rung has.
 fn try_water_walk(encounter: &EncounterInstance, actor_id: usize) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    // Presence of the action on the sheet is the cheap gate; the
-    // action's own validator owns the rest and runs at `try_self_action`.
-    actor.find_action("water walk")?;
+    // Presence of the action is the cheap gate; the action's own
+    // validator owns the rest and runs at `try_self_action`.
+    //
+    // `find_printing` rather than `find_action`, and the difference is
+    // the whole of what the gate is for. `find_action` searches the
+    // *stat block*, which answers "does this creature's template know
+    // Water Walk" — and `try_self_action` two lines down searches
+    // `available_actions`, which answers "can this creature cast it
+    // right now". The two disagree by exactly the carried items, so the
+    // narrow gate in front of the wide one turned every item printing
+    // of this spell into a rung that refused before the real check ran.
+    // SRD 5.2's Ring of Elemental Command (water) is the first object
+    // to print one; see `try_self_action` for the same warning in its
+    // own docstring.
+    find_printing(actor, "water walk")?;
     let (team, from) = (actor.team(), actor.location());
     let water_in_the_way = encounter.actors.iter().any(|(id, other)| {
         if *id == actor_id || other.team() == team || !other.is_combat_active() {
@@ -8170,7 +8182,11 @@ fn try_water_breathing(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
-    encounter.actors.get(&actor_id)?.find_action("water breathing")?;
+    // `find_printing`, for the reason `try_water_walk` next door gives:
+    // the cheap gate has to ask the same question the wide check below
+    // it asks, or an item printing of the spell is refused by the
+    // narrower of the two before the wider one ever runs.
+    find_printing(encounter.actors.get(&actor_id)?, "water breathing")?;
     if !anyone_on_our_side_is_drowning(encounter, actor_id) {
         return None;
     }
@@ -21246,6 +21262,16 @@ mod tests {
                 // and nothing at all on every other. The rung's own gate
                 // is the map.
                 "turn ring of jumping",
+                // `try_water_walk` and `try_water_breathing`, both of
+                // which reach their row through `find_printing` and so
+                // find an *item's* printing of the spell as readily as a
+                // caster's own. Listed by the spell's name rather than
+                // by any row's, for that reason: SRD 5.2's Ring of
+                // Elemental Command (water) prints Water Walk under a
+                // name of its own, and neither rung ever asks what the
+                // object is called.
+                "water walk",
+                "water breathing",
             ])
             .collect();
 

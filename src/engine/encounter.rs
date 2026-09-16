@@ -4897,6 +4897,22 @@ impl EncounterInstance {
             if !is_melee && self.oathbow_quarry(attacker_id) == Some(target_id) {
                 tally.add(RollMode::Advantage);
             }
+            // SRD 5.2 **Elemental Bane**, first half: *"while wearing
+            // the ring, you have Advantage on attack rolls against
+            // Elementals."* See `Item::attack_advantage_against`.
+            //
+            // The only clause in this sweep that reads an *item* against
+            // the target's **creature type**, which is why it is a
+            // lookup rather than a named condition: the ring grants
+            // nothing the wearer carries around and everything about who
+            // they happen to be pointed at. Not gated on `is_melee` —
+            // RAW writes "attack rolls" without qualification, so the
+            // wearer's bow is as sharp as their sword.
+            if let Some(target) = self.actors.get(&target_id)
+                && attacker.item_attack_advantage_against(target.creature_type())
+            {
+                tally.add(RollMode::Advantage);
+            }
         }
 
         // Target-side modifiers.
@@ -5033,6 +5049,25 @@ impl EncounterInstance {
                     Condition::Grappled,
                     RollMode::Advantage,
                 ));
+            }
+            // SRD 5.2 **Elemental Bane**, second half: *"and they have
+            // Disadvantage on attack rolls against you."* The mirror of
+            // the attacker-side clause at the end of the block above,
+            // and the reason `Item` carries two slices rather than one —
+            // see `Item::taxes_attackers_of_type`.
+            //
+            // Worth noting what the two halves do *together*, because it
+            // is the whole point of the ring: a fire elemental swinging
+            // at the wearer hands out a Disadvantage, and the wearer
+            // swinging back takes an Advantage. Neither cancels the
+            // other — they are on two different rolls — which is what
+            // separates this from the symmetric-looking fog clause at
+            // the top of the sweep, where both sides land on one roll
+            // and cancel to Normal.
+            if let Some(attacker) = self.actors.get(&attacker_id)
+                && target.item_taxes_attackers_of_type(attacker.creature_type())
+            {
+                tally.add(RollMode::Disadvantage);
             }
         }
         tally

@@ -2082,6 +2082,19 @@ const SWIM_SPEED_SOURCES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::ROVING_TAG),
     },
+    // SRD 5.2 **Ring of Elemental Command (water)**: *"you gain a Swim
+    // Speed of 60 feet, and you can breathe underwater."* The first
+    // *item* on this cohort — every row above it is something a creature
+    // is or has learned, and this is something it put on — which is why
+    // it reads `active_items` rather than a passive tag: an unattuned
+    // ring in the pack is a ring that has not been put on.
+    //
+    // The sentence's other half lands on `UNDERWATER_BREATH_SOURCES`
+    // through `grants_unfettered_breathing`, and the split is the whole
+    // reason `Item::grants_swim_speed` is its own flag — see it.
+    ActorFlagRow {
+        flag: |a| a.active_items().any(|i| i.grants_swim_speed),
+    },
     // 5e Storm Herald Barbarian **Storm Soul (Sea)** (subclass lv6,
     // XGtE): "you gain resistance to lightning damage, and you can
     // breathe underwater. You also gain a swimming speed of 30 feet."
@@ -10230,6 +10243,36 @@ impl ActorInstance {
     pub fn item_vulnerability_to(&self, dt: DamageType) -> bool {
         self.active_items()
             .any(|i| i.damage_vulnerabilities.contains(&dt))
+    }
+
+    /// True if something the actor is wearing sharpens their swings
+    /// against creatures of type `ct` — SRD 5.2's Elemental Bane,
+    /// *"you have Advantage on attack rolls against Elementals"*.
+    ///
+    /// Sibling of `item_resistance_to` directly above and read the same
+    /// way: through `active_items`, so an unattuned ring in the pack
+    /// grants nothing. The difference is which stat block the argument
+    /// comes from — a resistance is asked about the damage arriving at
+    /// this creature, and this is asked about the creature it is
+    /// swinging at.
+    pub fn item_attack_advantage_against(&self, ct: crate::engine::types::CreatureType) -> bool {
+        self.active_items()
+            .any(|i| i.attack_advantage_against.contains(&ct))
+    }
+
+    /// True if something the actor is wearing makes them hard for
+    /// creatures of type `ct` to hit — the other half of Elemental Bane,
+    /// *"and they have Disadvantage on attack rolls against you"*.
+    ///
+    /// Asked of the **defender** with the **attacker's** type, which is
+    /// the reverse of the accessor above. Both are needed because the
+    /// attack sweep walks the two sides separately: one of these is read
+    /// off the creature swinging and one off the creature being swung
+    /// at, and a single accessor would have to be called with whichever
+    /// actor was not the one it was named for.
+    pub fn item_taxes_attackers_of_type(&self, ct: crate::engine::types::CreatureType) -> bool {
+        self.active_items()
+            .any(|i| i.taxes_attackers_of_type.contains(&ct))
     }
 
     /// Combines template-level (`is_immune_to_condition`), dynamic

@@ -2661,6 +2661,58 @@ pub struct SingleSaveConditionItem {
     /// from it"* has no pool at all, and on the consume-on-use lane the
     /// first cast would have taken the ring off the wearer's finger.
     pub billing: ItemUseBilling,
+    /// Creature types this row may be pointed at, or empty for "anyone".
+    ///
+    /// Two rings on the table print a bestiary clause in front of an
+    /// otherwise ordinary save-or-suck: the Ring of Elemental Command
+    /// *"can take a Magic action to try to compel an **Elemental** you
+    /// see within 60 feet"*, and the Ring of Animal Influence casts a
+    /// Fear that *"affects **Beasts** only"*. Both are the same
+    /// sentence — a wand-shaped effect with a filter in front of it —
+    /// and neither is expressible as a condition immunity on the far
+    /// side, which is where the engine's other "this cannot land on
+    /// you" answers live. A fire elemental is not immune to Frightened;
+    /// it is simply not what the animal ring is for.
+    ///
+    /// Enforced in `custom_validate_input`, which is the gate the picker
+    /// and the AI both read, so a wrong target is refused before a
+    /// charge is spent. That is deliberately the opposite of the
+    /// condition-immunity check inside `side_effects`, which still
+    /// bills: there the wielder aimed at something the item works on and
+    /// got unlucky about who was standing there, and here they aimed at
+    /// something it does not work on at all.
+    pub target_types: &'static [crate::engine::types::CreatureType],
+}
+
+impl SingleSaveConditionItem {
+    /// Is the declared target one this row is allowed to be pointed at?
+    ///
+    /// Vacuously true for the empty slice, which is every row on the
+    /// table except the two rings — a wand of paralysis does not care
+    /// what it is aimed at, and an item that named no types would
+    /// otherwise refuse everybody.
+    ///
+    /// Also vacuously true when no target has been declared yet, which
+    /// is what the picker asks with while the player is still choosing:
+    /// a row that answered `false` to "can this be used at all?" would
+    /// be greyed out before the wielder ever got to aim it at the
+    /// elemental across the room.
+    fn target_type_permitted(
+        &self,
+        encounter: &EncounterInstance,
+        target_ids: Option<&Vec<usize>>,
+    ) -> bool {
+        if self.target_types.is_empty() {
+            return true;
+        }
+        let Some(target_id) = first_target_id(target_ids) else {
+            return true;
+        };
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| self.target_types.contains(&t.creature_type()))
+    }
 }
 
 impl Action for SingleSaveConditionItem {
@@ -2716,11 +2768,12 @@ impl Action for SingleSaveConditionItem {
         &self,
         encounter: &EncounterInstance,
         caster_id: usize,
-        _target_ids: Option<&Vec<usize>>,
+        target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
         caster_holds(encounter, caster_id, self.item_name)
+            && self.target_type_permitted(encounter, target_ids)
     }
 
     fn side_effects(
@@ -2734,6 +2787,15 @@ impl Action for SingleSaveConditionItem {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
+        // Re-asked here rather than trusted from `custom_validate_input`,
+        // for the reason every chassis in this file re-checks its own
+        // preconditions at the effect site: `side_effects` is reachable
+        // from the AI's direct-execute path as well as from the
+        // validated picker, and a filter that only ran in one of the two
+        // is a filter that holds only when a human is driving.
+        if !self.target_type_permitted(encounter, target_ids) {
+            return Vec::new();
+        }
         if !self.billing.take(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
@@ -2974,6 +3036,7 @@ pub static USE_WAND_OF_PARALYSIS: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Wand of Fear — Action; single-target, WIS save vs DC 15, fail =
@@ -2997,6 +3060,7 @@ pub static USE_WAND_OF_FEAR: SingleSaveConditionItem = SingleSaveConditionItem {
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 const SCROLL_OF_HOLD_PERSON_NAME: &str = "Scroll of Hold Person";
@@ -3031,6 +3095,7 @@ pub static READ_HOLD_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Hold Monster — Action; single-target, WIS save vs DC 15,
@@ -3052,6 +3117,7 @@ pub static READ_HOLD_MONSTER_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Wand of Confusion — Action; 4-tile burst, WIS save vs DC 15, fail =
@@ -3468,6 +3534,7 @@ pub static READ_BLINDNESS_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Bane — Action; 4-tile burst, CHA save vs DC 13, fail =
@@ -3751,6 +3818,7 @@ pub static USE_WAND_OF_SLEEP: SingleSaveConditionItem = SingleSaveConditionItem 
     condition: Condition::Asleep,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Slow — Action; 4-tile burst, WIS save vs DC 13, fail =
@@ -3956,6 +4024,7 @@ pub static USE_WAND_OF_BINDING: SingleSaveConditionItem = SingleSaveConditionIte
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Banishment — Action; single-target CHA save vs DC 15,
@@ -3977,6 +4046,7 @@ pub static READ_BANISHMENT_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::Mazed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Fear — Action; 30-ft cone, WIS save vs DC 15, fail =
@@ -4038,6 +4108,7 @@ pub static READ_CHARM_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Wand of Charm Monster — Action; single-target WIS save vs DC 15, fail =
@@ -4057,6 +4128,7 @@ pub static USE_WAND_OF_CHARM_MONSTER: SingleSaveConditionItem = SingleSaveCondit
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Tasha's Hideous Laughter — Action; single-target WIS save vs
@@ -4077,6 +4149,7 @@ pub static READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL: SingleSaveConditionItem = Single
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Heat Metal — Action; single-target CON save vs DC 13, fail =
@@ -4099,6 +4172,7 @@ pub static READ_HEAT_METAL_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::HeatMetaled,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Ice Storm — Action; 4-tile burst, DEX save vs DC 15, fail =
@@ -4249,6 +4323,7 @@ pub static USE_WAND_OF_SUGGESTION: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Calm Emotions — Action; 4-tile burst, CHA save vs DC 13,
@@ -4290,6 +4365,7 @@ pub static USE_WAND_OF_BLINDNESS: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Ring of Spell Storing — single-use Magic-Missile-style force-dart
@@ -4444,6 +4520,7 @@ pub static READ_FLESH_TO_STONE_SCROLL: SingleSaveConditionItem = SingleSaveCondi
     condition: Condition::Petrified,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Synaptic Static — Action; 4-tile burst, INT save vs DC 15,
@@ -4585,6 +4662,7 @@ pub static USE_WAND_OF_HOLD_MONSTER: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Potion of Foresight — Action; installs `Foreseen` for 10 rounds.
@@ -4731,6 +4809,7 @@ pub static READ_PHANTASMAL_KILLER_SCROLL: SingleSaveConditionItem = SingleSaveCo
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Potion of Mirror Image — Action; installs `MirroredImages` on the
@@ -4821,6 +4900,7 @@ pub static USE_EYES_OF_CHARMING: SingleSaveConditionItem = SingleSaveConditionIt
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Gem of Brightness — Action; 30-ft cone, CON save vs DC 14, fail =
@@ -4879,6 +4959,7 @@ pub static READ_RESILIENT_SPHERE_SCROLL: SingleSaveConditionItem = SingleSaveCon
     condition: Condition::Sphered,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Telekinesis — Action; single-target, STR save vs DC 15,
@@ -4901,6 +4982,7 @@ pub static READ_TELEKINESIS_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Wand of Telekinesis — Action; single-target, STR save vs DC 17, fail
@@ -4920,6 +5002,7 @@ pub static USE_WAND_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Earthen Grasp — Action; single-target, STR save vs DC 13,
@@ -4942,6 +5025,7 @@ pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveCondit
     condition: Condition::EarthenGrasped,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Sleep — Action; 4-tile burst centered on a picked tile.
@@ -5291,6 +5375,7 @@ pub static READ_CONTAGION_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 const SCROLL_OF_SPIDER_CLIMB_NAME: &str = "Scroll of Spider Climb";
@@ -5671,6 +5756,7 @@ pub static USE_WAND_OF_STUNNING: SingleSaveConditionItem = SingleSaveConditionIt
     condition: Condition::Stunned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Iron Bands of Bilarro — Action; throw at a target, STR save vs DC 17,
@@ -5694,6 +5780,7 @@ pub static USE_IRON_BANDS_OF_BILARRO: SingleSaveConditionItem = SingleSaveCondit
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Sanctuary — Bonus Action; install `Sanctuary` for 10 rounds
@@ -6214,6 +6301,7 @@ pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    target_types: &[],
 };
 
 /// Scroll of Longstrider — Action; install `Longstriding` (+10 ft
@@ -8509,6 +8597,7 @@ pub static USE_RING_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Free,
+    target_types: &[],
 };
 
 /// **Rope of Entanglement** (Wondrous item, Rare) — *"While holding one
@@ -8543,6 +8632,7 @@ pub static THROW_ROPE_OF_ENTANGLEMENT: SingleSaveConditionItem = SingleSaveCondi
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Free,
+    target_types: &[],
 };
 
 /// **Helm of Telepathy** (Wondrous item, Uncommon, requires
@@ -8574,6 +8664,7 @@ pub static WEAR_HELM_OF_TELEPATHY: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 /// **Ring of Invisibility** (Ring, Legendary, requires attunement) —
@@ -9477,6 +9568,7 @@ pub static OPEN_IRON_FLASK: SingleSaveConditionItem = SingleSaveConditionItem {
     // full while it is empty and empty while it is full, and nothing
     // about a night's sleep lets go of what is inside it.
     billing: ItemUseBilling::Charges(1),
+    target_types: &[],
 };
 
 /// **Mirror of Life Trapping** — *"Any creature other than you that sees
@@ -9801,6 +9893,7 @@ pub static AIM_DECANTER_GEYSER: SingleSaveConditionItem = SingleSaveConditionIte
     // installs it with, and for the same reason.
     timer: ConditionTimer::Permanent,
     billing: ItemUseBilling::Free,
+    target_types: &[],
 };
 
 /// **Rod of Absorption**, the spending half — *"If you are a spellcaster
