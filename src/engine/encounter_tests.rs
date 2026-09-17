@@ -16262,6 +16262,91 @@ fn a_condition_that_bounces_off_an_immunity_says_so() {
     );
 }
 
+/// A rout is installed by a fear and has no life of its own, so a fear
+/// that ends for any reason ends the running with it — a creature that
+/// is not afraid of anything and still running from it is not a state
+/// RAW has a name for.
+///
+/// Scoped by the back-link: a creature turned by a cleric and
+/// frightened by a dragon stops running when the *turn* ends, not when
+/// it loses sight of the dragon.
+#[test]
+fn a_fear_that_lifts_takes_its_rout_with_it() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let dragon = e
+        .instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(12, 12), 0, 1)
+        .unwrap();
+    let ghast = e
+        .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(8, 5), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    // Turned by the cleric: frightened of them, and running from them.
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Frightened,
+        ghast,
+        cleric,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Routed,
+        ghast,
+        cleric,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    // …and then frightened again by something else, which moves the
+    // fear's link and must not touch the rout's.
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Frightened,
+        ghast,
+        dragon,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&ghast].linked_by(Condition::Routed), Some(cleric));
+
+    // The dragon's fear lifting is not the cleric's turn ending.
+    e.actors
+        .get_mut(&ghast)
+        .unwrap()
+        .remove_condition(Condition::Frightened);
+    assert!(
+        e.actors[&ghast].has_condition(Condition::Routed),
+        "the rout belongs to the turn, not to whatever frightened it last"
+    );
+
+    // …and when the fear it *did* come with lifts, the running stops.
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Frightened,
+        ghast,
+        cleric,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    e.actors
+        .get_mut(&ghast)
+        .unwrap()
+        .remove_condition(Condition::Frightened);
+    assert!(
+        !e.actors[&ghast].has_condition(Condition::Routed),
+        "nothing left to run from"
+    );
+    assert_eq!(e.actors[&ghast].linked_by(Condition::Routed), None);
+}
+
 /// SRD 5.2's Incapacitated condition is three sentences and none of
 /// them is about feet: *"You can't take any action, Bonus Action, or
 /// Reaction. Your Concentration is broken. You can't speak."*

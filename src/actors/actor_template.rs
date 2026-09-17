@@ -10323,6 +10323,10 @@ impl ActorInstance {
         if c == Condition::Exhausted {
             return self.reduce_exhaustion(1);
         }
+        // Read before the teardown below drops it: the rout that
+        // lapses with a fear is the one the *same* creature installed,
+        // and the link is what says so.
+        let link = self.condition_links.get(&c).copied();
         let removed = self.conditions.remove(&c).is_some();
         if removed {
             // Keep tightly-linked auxiliary state in sync with the
@@ -10361,6 +10365,37 @@ impl ActorInstance {
             // ends up `Hidden` without rolling for it.
             if c == Condition::Hidden {
                 self.hidden_check_total = None;
+            }
+            // …and the one *derived condition* on the board: a rout is
+            // installed by a fear and has no life of its own. SRD 5.2's
+            // sources print the two together — Fear's "a Frightened
+            // creature takes the Dash action and moves away from you",
+            // Turn Undead's "it has the Frightened and Incapacitated
+            // conditions … for that duration, it tries to move as far
+            // from you as it can" — so a fear that ends for *any*
+            // reason ends the running with it.
+            //
+            // "Any reason" is the argument for putting it here rather
+            // than in the cleanses. Calm Emotions, Greater Restoration,
+            // Cleansing Touch, a repeat save, a lapsed timer, a dropped
+            // concentration, a dispel and Purified's immunity all reach
+            // this one function, and a creature that is not afraid of
+            // anything and still running from it is not a state RAW has
+            // a name for.
+            //
+            // Scoped to the fear that installed *this* rout, which is
+            // what the two back-links are for: a ghast turned by one
+            // cleric and frightened by a second dragon stops running
+            // when the turn ends, and not when the dragon leaves.
+            if c == Condition::Frightened
+                && self
+                    .condition_links
+                    .get(&Condition::Routed)
+                    .is_some_and(|routed_by| Some(routed_by) == link.as_ref())
+            {
+                self.conditions.remove(&Condition::Routed);
+                self.condition_links.remove(&Condition::Routed);
+                self.fragile_conditions.remove(&Condition::Routed);
             }
         }
         removed
