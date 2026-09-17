@@ -1801,6 +1801,42 @@ impl SimpleWeapon {
         }
     }
 
+    /// Const constructor for the **thrown or hurled attack whose Hit
+    /// line prints a bare pool** — SRD 5.2's *"Hurl Flame. Ranged
+    /// Attack Roll: +5, range 150 ft. Hit: 17 (5d6) Fire damage."*
+    ///
+    /// The ranged twin of [`SimpleWeapon::flat_melee`], and it exists
+    /// for the same reason and one more. A thrown rock and a hurled
+    /// bolt of fire are different things: the rock carries the arm that
+    /// threw it, which is what the modifier is, and the fire does not.
+    /// SRD 5.2 draws that line by printing the modifier on one and not
+    /// the other, and until this constructor existed the file could
+    /// only say the first — so a barbed devil's hurled flame picked up
+    /// its Charisma on the way to the target.
+    #[allow(clippy::too_many_arguments)]
+    pub const fn flat_ranged(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        reach: isize,
+        normal_range: isize,
+    ) -> Self {
+        Self {
+            damage_ability: None,
+            ..Self::ranged(
+                display_name,
+                aliases,
+                attack_ability,
+                damage_dice,
+                damage_type,
+                reach,
+                normal_range,
+            )
+        }
+    }
+
     /// Const builder that gates an already-constructed weapon on a
     /// self-condition — `SimpleWeapon::reach_melee(...).gated_on(
     /// Condition::AstralArms)`.
@@ -3407,6 +3443,25 @@ pub struct WeaponWithCondition {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
     pub attack_ability: AbilityScoreType,
+    /// Which modifier the swing's damage adds, or `None` for a weapon
+    /// whose Hit line prints a bare pool.
+    ///
+    /// The third chassis to grow this field, and it arrives for the
+    /// same reason `WeaponWithRider::damage_ability` did one step
+    /// earlier: SRD 5.2 prints some attacks with a modifier and some
+    /// without, and a chassis that cannot say "without" adds the
+    /// wielder's ability to every one of its entries.
+    ///
+    /// What it cost here was invisible for as long as every entry on
+    /// this chassis was a claw. The djinni's **Storm Bolt** is not —
+    /// *"Ranged Attack Roll: +9, range 120 feet. Hit: 13 (3d8) Thunder
+    /// damage"*, a bolt of weather with nothing of the thrower's arm in
+    /// it — and a djinni's Charisma is 20, so it was landing five points
+    /// the book does not print.
+    ///
+    /// Defaulted to `Some(attack_ability)` by every constructor and set
+    /// to `None` with [`WeaponWithCondition::flat_ranged`].
+    pub damage_ability: Option<AbilityScoreType>,
     pub damage_dice: Dice,
     pub damage_type: DamageType,
     pub reach: isize,
@@ -3573,6 +3628,7 @@ impl WeaponWithCondition {
             display_name,
             aliases,
             attack_ability,
+            damage_ability: Some(attack_ability),
             damage_dice,
             damage_type,
             reach,
@@ -3622,6 +3678,7 @@ impl WeaponWithCondition {
             display_name,
             aliases,
             attack_ability,
+            damage_ability: Some(attack_ability),
             damage_dice,
             damage_type,
             reach,
@@ -3633,6 +3690,47 @@ impl WeaponWithCondition {
             extra_damage: None,
             displacement: None,
             normal_range: Some(normal_range),
+        }
+    }
+
+    /// Const constructor for the **hurled attack whose Hit line prints
+    /// a bare pool** — the ranged, modifier-free shape of `ranged`
+    /// directly above, for the entries SRD 5.2 writes without one.
+    ///
+    /// The djinni's Storm Bolt is the case: *"Ranged Attack Roll: +9,
+    /// range 120 feet. Hit: 13 (3d8) Thunder damage. If the target is a
+    /// Large or smaller creature, it has the Prone condition."* A bolt
+    /// of weather carries nothing of the thrower's arm, and a djinni's
+    /// Charisma is 20 — so on the ordinary constructor it was landing
+    /// five points the book does not print. See
+    /// [`WeaponWithCondition::damage_ability`].
+    #[allow(clippy::too_many_arguments)]
+    pub const fn flat_ranged(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        attack_ability: AbilityScoreType,
+        damage_dice: Dice,
+        damage_type: DamageType,
+        conditions: &'static [Condition],
+        timer: ConditionTimer,
+        rider_name: &'static str,
+        reach: isize,
+        normal_range: isize,
+    ) -> Self {
+        Self {
+            damage_ability: None,
+            ..Self::ranged(
+                display_name,
+                aliases,
+                attack_ability,
+                damage_dice,
+                damage_type,
+                conditions,
+                timer,
+                rider_name,
+                reach,
+                normal_range,
+            )
         }
     }
 
@@ -3770,7 +3868,7 @@ impl Action for WeaponWithCondition {
                 target_id,
                 self.display_name,
                 self.attack_ability,
-                Some(self.attack_ability),
+                self.damage_ability,
                 self.damage_dice,
                 self.damage_type,
                 self.is_melee,
@@ -6189,8 +6287,11 @@ pub static SCOUT_RANGED_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatt
     count: 2,
 });
 
-/// Imp Sting — DEX-based 1d4+DEX piercing melee with a CON DC 11
-/// save-or-2d10-poison rider. Routes through the shared
+/// Imp Sting — DEX-based 1d6 + DEX Piercing with a poison rider.
+/// SRD 5.2: *"Sting. Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 +
+/// 3) Piercing damage plus 7 (2d6) Poison damage."* The swing was
+/// `1d4`, the 2014 line; the venom still rides a CON DC 11 save where
+/// the book prints it flat on the hit. Routes through the shared
 /// `WeaponWithSaveDamage` chassis alongside Quasit Claws / Purple Worm
 /// Tail Stinger — same "weapon hit + save-or-typed-damage" shape, only
 /// the dice / DC / typing differ. The "all damage on fail, zero on
@@ -6199,7 +6300,7 @@ pub static IMP_STING: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
     "sting",
     &["st", "imp-sting"],
     AbilityScoreType::Dexterity,
-    Dice::new(1, 4),
+    Dice::new(1, 6),
     DamageType::Piercing,
     AbilityScoreType::Constitution,
     11,
@@ -7890,8 +7991,12 @@ pub static DOPPELGANGER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatt
     count: 2,
 });
 
-/// Mummy Rotting Fist — STR-based melee, +5 to hit, 2d6+3 bludgeoning
-/// plus 3d6 necrotic on hit. The necrotic packet rides regardless of
+/// Mummy Rotting Fist — STR-based 1d10 + STR Bludgeoning plus 3d6
+/// Necrotic. SRD 5.2: *"Rotting Fist. Melee Attack Roll: +5, reach 5
+/// ft. Hit: 8 (1d10 + 3) Bludgeoning damage plus 10 (3d6) Necrotic
+/// damage."* The swing was `2d6`, the 2014 line.
+///
+/// The necrotic packet rides regardless of
 /// damage-type resistance on the bludgeoning core, so resistant targets
 /// still feel the rot. Doesn't carry the mummy-rot disease (we don't
 /// model long-form curses) — the necrotic packet is the load-bearing
@@ -7900,7 +8005,7 @@ pub static MUMMY_ROTTING_FIST: WeaponWithRider = WeaponWithRider::melee(
     "rotting fist",
     &["rf", "rot"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(1, 10),
     DamageType::Bludgeoning,
     Dice::new(3, 6),
     DamageType::Necrotic,
@@ -10220,9 +10325,12 @@ pub static STONE_GIANT_GREATCLUB: SimpleWeapon = SimpleWeapon::reach_melee(
     3,
 );
 
-/// Stone Giant **Boulder** — 4d10+STR bludgeoning at reach 24, and
-/// RAW's knockdown: *"If the target is a Large or smaller creature, it
-/// has the Prone condition."*
+/// Stone Giant **Boulder** — 2d8 + STR Bludgeoning at reach 24, and
+/// RAW's knockdown. SRD 5.2: *"Boulder. Ranged Attack Roll: +9, range
+/// 60/240 ft. Hit: 15 (2d8 + 6) Bludgeoning damage. If the target is a
+/// Large or smaller creature, it has the Prone condition."* The pool
+/// was `4d10`, the 2014 line — a thrown rock that out-damaged the
+/// giant's own club.
 ///
 /// The first entry on the rider chassis's new ranged constructor, and
 /// the clause is what makes the stone giant's ranged lane a threat
@@ -10233,7 +10341,7 @@ pub static STONE_GIANT_BOULDER: WeaponWithCondition = WeaponWithCondition::range
     "stone boulder",
     &["s-boulder", "sboulder"],
     AbilityScoreType::Strength,
-    Dice::new(4, 10),
+    Dice::new(2, 8),
     DamageType::Bludgeoning,
     &[Condition::Prone],
     ConditionTimer::Permanent,
@@ -10941,15 +11049,20 @@ impl Action for GhostHorrifyingVisage {
 pub static GHOST_HORRIFYING_VISAGE: LazyLock<GhostHorrifyingVisage> =
     LazyLock::new(|| GhostHorrifyingVisage {});
 
-/// Stone Golem Slam — STR-based 3d8+STR bludgeoning melee, reach 1.
-/// The golem's only attack (RAW: 2 slams per multi). No rider effects;
-/// pure crushing damage. Stays a SimpleWeapon so the multiattack
-/// wrapper can re-use it cleanly.
+/// Stone Golem Slam — STR-based 2d8 + STR Bludgeoning. SRD 5.2:
+/// *"Slam. Melee Attack Roll: +10, reach 5 ft. Hit: 15 (2d8 + 6)
+/// Bludgeoning damage plus 9 (2d8) Force damage."* The pool was `3d8`,
+/// the 2014 line; the book's Force half is not modelled, which on this
+/// stat block is the more interesting omission — a golem whose punches
+/// carry force is one that hurts things a stone fist should not.
+///
+/// Two slams per Action. No rider effects on this static; it stays a
+/// `SimpleWeapon` so the multiattack wrapper can re-use it cleanly.
 pub static STONE_GOLEM_SLAM: SimpleWeapon = SimpleWeapon::melee(
     "stone slam",
     &["s-slam", "sslam"],
     AbilityScoreType::Strength,
-    Dice::new(3, 8),
+    Dice::new(2, 8),
     DamageType::Bludgeoning,
 );
 
@@ -11288,15 +11401,24 @@ pub static AIR_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
     count: 2,
 });
 
-/// Earth Elemental Slam — STR-based 4d8 + STR bludgeoning melee, reach 1.
-/// Much heavier per-swing than the air variant — the earth elemental's
-/// signature is its slow-but-brutal slam. Reach is melee per MM RAW.
-pub static EARTH_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon::melee(
+/// Earth Elemental Slam — STR-based 2d8 + STR Bludgeoning. SRD 5.2:
+/// *"Slam. Melee Attack Roll: +8, reach 10 ft. Hit: 14 (2d8 + 5)
+/// Bludgeoning damage."*
+///
+/// The pool was `4d8`, the 2014 line — twice the book's on a creature
+/// that swings twice an Action, which made the earth elemental one of
+/// the hardest-hitting things in its CR band by a distance it had not
+/// earned. The reach was five feet — the 2014 line again, and the note
+/// here said so ("reach is melee per MM RAW"); SRD 5.2 prints ten,
+/// which on a creature that burrows through the floor to reach you is
+/// the difference between a threat and a thing you walk around.
+pub static EARTH_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon::reach_melee(
     "earth slam",
     &["eslam"],
     AbilityScoreType::Strength,
-    Dice::new(4, 8),
+    Dice::new(2, 8),
     DamageType::Bludgeoning,
+    2,
 );
 
 /// Earth Elemental Multiattack — 2 slams per Action. Mirrors the air
@@ -11959,12 +12081,15 @@ pub static BASILISK_BITE: LazyLock<BasiliskBite> = LazyLock::new(|| BasiliskBite
 
 // ─── Chuul ───────────────────────────────────────────────────────────
 
-/// Chuul Pincer — STR-based 2d6+STR bludgeoning melee with an
-/// auto-Grappled install on hit (no save). The CR-4 lobster-aberration's
-/// signature swing: the pincer snaps shut, the target is grappled, and
-/// the chuul's bonus-action Tentacles paralyze rider follows up on the
-/// pinned target. RAW: "Hit: 11 (2d6 + 4) bludgeoning damage, and the
-/// target is grappled (escape DC 14)."
+/// Chuul Pincer — STR-based 1d10 + STR Bludgeoning with an
+/// auto-Grappled install on hit (no save). SRD 5.2: *"Pincer. Melee
+/// Attack Roll: +6, reach 10 ft. Hit: 9 (1d10 + 4) Bludgeoning damage.
+/// If the target is a Large or smaller creature, it has the Grappled
+/// condition (escape DC 14) from one of two pincers."*
+///
+/// The CR-4 lobster-aberration's signature swing: the pincer snaps
+/// shut, the target is grappled, and the chuul's bonus-action Tentacles
+/// follow up on the pinned target. The pool was `2d6`, the 2014 line.
 ///
 /// Routes through the shared `WeaponWithCondition::melee` chassis —
 /// same auto-install-on-hit lane as `GIANT_FROG_BITE` / `MIMIC_BITE`-
@@ -11979,7 +12104,7 @@ pub static CHUUL_PINCER: WeaponWithCondition = WeaponWithCondition::melee(
     "pincer",
     &["claw"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(1, 10),
     DamageType::Bludgeoning,
     &[Condition::Grappled],
     ConditionTimer::Rounds(10),
@@ -12167,12 +12292,15 @@ pub static ANKHEG_ACID_SPRAY: LazyLock<AnkhegAcidSpray> = LazyLock::new(|| Ankhe
 
 // ─── Giant Scorpion ──────────────────────────────────────────────────
 
-/// Giant Scorpion Claw — STR-based 1d8+STR bludgeoning melee with an
-/// auto-Grappled install on hit (no save). The CR-3 desert hunter's
-/// pincer swing: the claw snaps shut, the target is grappled, and the
-/// scorpion's tail-sting follow-up lands on the pinned target. RAW:
-/// "Hit: 6 (1d8 + 2) bludgeoning damage. The target is grappled
-/// (escape DC 12)."
+/// Giant Scorpion Claw — STR-based 1d6 + STR Bludgeoning with an
+/// auto-Grappled install on hit (no save). SRD 5.2: *"Claw. Melee
+/// Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Bludgeoning damage. If
+/// the target is a Large or smaller creature, it has the Grappled
+/// condition (escape DC 13) from one of two claws."*
+///
+/// The CR-3 desert hunter's pincer swing: the claw snaps shut, the
+/// target is grappled, and the scorpion's tail-sting follow-up lands on
+/// the pinned target. The die was `1d8`, the 2014 line.
 ///
 /// Routes through the shared `WeaponWithCondition::melee` chassis —
 /// same auto-install-on-hit lane as `CHUUL_PINCER` / `GIANT_FROG_BITE`.
@@ -12185,7 +12313,7 @@ pub static GIANT_SCORPION_CLAW: WeaponWithCondition = WeaponWithCondition::melee
     "claw",
     &["scorpion-claw"],
     AbilityScoreType::Strength,
-    Dice::new(1, 8),
+    Dice::new(1, 6),
     DamageType::Bludgeoning,
     &[Condition::Grappled],
     ConditionTimer::Rounds(10),
@@ -12656,9 +12784,11 @@ pub static BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Slashing,
 );
 
-/// Giant Toad **Bite** — 1d10+STR piercing, a flat 1d10 poison, and
-/// RAW's hold: *"If the target is a Medium or smaller creature, it has
-/// the Grappled condition (escape DC 12)."*
+/// Giant Toad **Bite** — 1d6 + STR Piercing, a flat poison rider, and
+/// RAW's hold. SRD 5.2: *"Bite. Melee Attack Roll: +4, reach 5 ft. Hit:
+/// 5 (1d6 + 2) Piercing damage plus 5 (2d4) Poison damage. If the
+/// target is a Medium or smaller creature, it has the Grappled
+/// condition (escape DC 12)."* The swing was `1d10`, the 2014 line.
 ///
 /// All three at once, which took a chassis that could say so. This
 /// carried two stacked docstrings for a while, one apologising for the
@@ -12677,7 +12807,7 @@ pub static GIANT_TOAD_BITE: WeaponWithCondition = WeaponWithCondition::melee(
     "bite",
     &["b", "chomp"],
     AbilityScoreType::Strength,
-    Dice::new(1, 10),
+    Dice::new(1, 6),
     DamageType::Piercing,
     &[Condition::Grappled],
     ConditionTimer::Permanent,
@@ -12755,13 +12885,18 @@ impl Action for PseudodragonSting {
 pub static PSEUDODRAGON_STING: LazyLock<PseudodragonSting> =
     LazyLock::new(|| PseudodragonSting {});
 
-/// Pseudodragon bite — DEX-based 1d4+0 piercing. Lightweight follow-up
-/// to the sting; the dragonling's tiny jaws don't add the DEX modifier
-/// to damage (RAW: 1 piercing flat for a CR-1/4 stat block). Routes
-/// through the shared `SimpleWeapon::flat_melee` constructor — the
-/// `damage_ability: None` chokepoint that keeps a damage roll free of
-/// the to-hit ability's modifier.
-pub static PSEUDODRAGON_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+/// Pseudodragon Bite — DEX-based 1d4 + DEX Piercing. SRD 5.2: *"Bite.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Piercing
+/// damage."*
+///
+/// **It used to be `flat_melee`**, under a note reading "the
+/// dragonling's tiny jaws don't add the DEX modifier to damage (RAW: 1
+/// piercing flat)". That was the 2014 entry; SRD 5.2 prints the `+ 2`,
+/// and a bite that dropped it was landing half the book's. The
+/// modifier-free constructor is still the right home for the creatures
+/// whose Hit line genuinely prints a bare number — see `BAT_BITE`,
+/// which prints a literal `1`.
+pub static PSEUDODRAGON_BITE: SimpleWeapon = SimpleWeapon::melee(
     "bite",
     &["b", "nip"],
     AbilityScoreType::Dexterity,
@@ -13033,17 +13168,20 @@ pub static ROC_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack
     parts: vec![(&ROC_BEAK, 1), (&ROC_TALONS, 1)],
 });
 
-/// Pegasus Hooves — STR-based 2d6+STR bludgeoning, reach 1. Large
-/// celestial steed: only one attack lane per turn, so the dice are
-/// tuned a hair above a CR-1 brown bear claw to land on the CR-2 line
-/// alongside Polar Bear. RAW has Hooves as the only Action; the
-/// pegasus's profile leans on movement (90 ft fly) and the Celestial
-/// type rather than rider effects.
+/// Pegasus Hooves — STR-based 1d6 + STR Bludgeoning. SRD 5.2:
+/// *"Hooves. Melee Attack Roll: +6, reach 5 ft. Hit: 7 (1d6 + 4)
+/// Bludgeoning damage plus 5 (2d4) Radiant damage."* The pool was
+/// `2d6`, the 2014 line, and the book's Radiant half is not modelled —
+/// which is the gap worth naming here, because it is the only thing on
+/// the stat block that says *celestial*.
+///
+/// Hooves are the pegasus's only Action; its profile leans on movement
+/// (90 ft fly) and the Celestial type rather than on rider effects.
 pub static PEGASUS_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     "hooves",
     &["hv", "kick"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(1, 6),
     DamageType::Bludgeoning,
 );
 
@@ -13200,15 +13338,18 @@ pub static T_REX_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee(
 )
 .against_at_most(Size::Large);
 
-/// Tyrannosaurus Rex Tail — STR-based 3d8+STR bludgeoning, reach 2.
-/// The second multi-lane attack. Lower dice than the bite (no grapple
-/// risk on the RAW lane), so the tail is the "everything not in front
-/// of me also dies" sweep.
+/// Tyrannosaurus Rex Tail — STR-based 4d8 + STR Bludgeoning, reach 2.
+/// SRD 5.2: *"Tail. Melee Attack Roll: +10, reach 15 ft. Hit: 25 (4d8 +
+/// 7) Bludgeoning damage. If the target is a Huge or smaller creature,
+/// it has the Prone condition."* The pool was `3d8`, the 2014 line.
+///
+/// The second multi-lane attack, and lower dice than the bite — so the
+/// tail is the "everything not in front of me also dies" sweep.
 pub static T_REX_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
     "rex tail",
     &["rt", "trex-tail"],
     AbilityScoreType::Strength,
-    Dice::new(3, 8),
+    Dice::new(4, 8),
     DamageType::Bludgeoning,
     2,
 );
@@ -15152,17 +15293,22 @@ pub static GIBBERING_MOUTHER_BLINDING_SPITTLE: LazyLock<GibberingMoutherBlinding
 
 // ─── Mummy Lord ──────────────────────────────────────────────────────
 
-/// Mummy Lord Rotting Fist — STR-based melee, 3d6+STR bludgeoning core
-/// plus a 6d6 necrotic rider on hit. The lordly variant of `MummyRottingFist`
-/// — twice the bludgeoning dice and twice the necrotic rider, matching
-/// the CR-15 stat block's heavier punch. Necrotic packet is typed
+/// Mummy Lord Rotting Fist — STR-based 2d10 + STR Bludgeoning plus a
+/// 6d6 Necrotic rider. SRD 5.2: *"Rotting Fist. Melee Attack Roll: +9,
+/// reach 5 ft. Hit: 15 (2d10 + 4) Bludgeoning damage plus 10 (3d6)
+/// Necrotic damage."* The swing was `3d6`, the 2014 line.
+///
+/// The lordly variant of `MUMMY_ROTTING_FIST` — twice the bludgeoning
+/// dice and twice the necrotic rider, which is one rung above the
+/// book's own rot (the book gives lord and mummy the same 3d6) and
+/// left alone here: this sweep reads the swing. Necrotic packet is typed
 /// separately so per-type resistance is checked independently and the
 /// rider rides through bludgeoning-resistant targets cleanly.
 pub static MUMMY_LORD_ROTTING_FIST: WeaponWithRider = WeaponWithRider::melee(
     "lord rotting fist",
     &["lrf", "lord-rot"],
     AbilityScoreType::Strength,
-    Dice::new(3, 6),
+    Dice::new(2, 10),
     DamageType::Bludgeoning,
     Dice::new(6, 6),
     DamageType::Necrotic,
@@ -21284,7 +21430,13 @@ pub static STONE_GOLEM_FORCE_BOLT: SimpleWeapon = SimpleWeapon {
 /// because the Prone is not a save — RAW installs it on the hit — and
 /// because the size clause is exactly what `against_at_most` is for. A
 /// storm bolt does not floor a storm giant.
-pub static DJINNI_STORM_BOLT: WeaponWithCondition = WeaponWithCondition::ranged(
+///
+/// **`flat_ranged`**, and it is the entry that grew that constructor.
+/// The book's `13 (3d8)` prints no modifier, a djinni's Charisma is 20,
+/// and this chassis had no way to say "no modifier" at all — so every
+/// bolt landed five points the book does not print. See
+/// `WeaponWithCondition::damage_ability`.
+pub static DJINNI_STORM_BOLT: WeaponWithCondition = WeaponWithCondition::flat_ranged(
     "storm bolt",
     &["sbolt", "dsb"],
     AbilityScoreType::Charisma,
@@ -21410,6 +21562,12 @@ pub static BARBED_DEVIL_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
 /// doubled the bolt, and a hamatula that opens at a hundred and fifty
 /// feet is the whole shape of the fight it wants.
 ///
+/// **`flat_ranged`**, which is the other half of that correction and
+/// arrived later. The book's Hit line is a bare `17 (5d6)` — a hurled
+/// bolt of fire carries nothing of the arm that threw it — and the
+/// ordinary ranged constructor was adding the devil's Charisma to it.
+/// See `SimpleWeapon::flat_ranged`.
+///
 /// Filed as a ranged weapon rather than as a spell, which is a
 /// deliberate divergence from RAW's "Ranged Spell Attack" label. The
 /// engine's spell lane exists to carry slot cost, school, concentration
@@ -21418,7 +21576,7 @@ pub static BARBED_DEVIL_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
 /// gives it instead is the range band, which is the clause that
 /// actually shapes how the hamatula fights: it opens at distance and
 /// closes to claw only when something reaches it.
-pub static BARBED_DEVIL_HURL_FLAME: SimpleWeapon = SimpleWeapon::ranged(
+pub static BARBED_DEVIL_HURL_FLAME: SimpleWeapon = SimpleWeapon::flat_ranged(
     "hurl flame",
     &["bdv-flame", "hurl-flame"],
     AbilityScoreType::Charisma,

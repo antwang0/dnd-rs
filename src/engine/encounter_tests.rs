@@ -119809,6 +119809,72 @@ fn every_natural_weapon_matches_the_books_hit_line() {
     ("WYVERN_BITE", 2, 8, "Piercing", true),
     ("XORN_BITE", 4, 6, "Piercing", true),
     ("XORN_CLAW", 1, 10, "Slashing", true),
+        // A second pass, matched through the creature templates
+        // rather than through the static's own name: for each stat
+        // block, which attack statics does its file name, and which of
+        // the book's Actions does each one's display name resolve to
+        // once the monster's own words are taken out of it. It reaches
+        // the entries the first pass could not — a `CHUUL_PINCER` whose
+        // display name is "chuul pincer" matches either way, but an
+        // `IMP_STING` called "imp sting" against an Action the book
+        // calls simply "Sting" does not.
+        //
+        // Deliberately excludes the shared armoury weapons. A longsword
+        // is a longsword in a knight's hands and in a player's, and the
+        // book's *monster* Hit lines for them are the monster's
+        // proficiency and Strength written out — not a fact about the
+        // object. Those rows would be pinning the wrong thing.
+        ("ABOLETH_TENTACLE", 2, 6, "Bludgeoning", true),
+        ("ANIMATED_ARMOR_SLAM", 1, 6, "Bludgeoning", true),
+        ("BARBED_DEVIL_HURL_FLAME", 5, 6, "Fire", false),
+        ("BEHIR_BITE", 2, 12, "Piercing", true),
+        ("BROWN_BEAR_BITE", 1, 8, "Piercing", true),
+        ("BUGBEAR_STALKER_JAVELIN", 3, 6, "Piercing", true),
+        ("CHUUL_PINCER", 1, 10, "Bludgeoning", true),
+        ("DJINNI_STORM_BOLT", 3, 8, "Thunder", false),
+        ("DRYAD_THORN_BURST", 1, 6, "Piercing", true),
+        ("EARTH_ELEMENTAL_SLAM", 2, 8, "Bludgeoning", true),
+        ("ETTIN_BATTLEAXE", 2, 8, "Slashing", true),
+        ("ETTIN_MORNINGSTAR", 2, 8, "Piercing", true),
+        ("FLYING_SWORD_SLASH", 1, 8, "Slashing", true),
+        ("GELATINOUS_CUBE_PSEUDOPOD", 3, 6, "Acid", true),
+        ("GIANT_APE_FIST", 3, 10, "Bludgeoning", true),
+        ("GIANT_CRAB_CLAW", 1, 6, "Bludgeoning", true),
+        ("GIANT_SCORPION_CLAW", 1, 6, "Bludgeoning", true),
+        ("GIANT_TOAD_BITE", 1, 6, "Piercing", true),
+        ("GRICK_TENTACLES_WEAPON", 1, 10, "Slashing", true),
+        ("GUARD_CAPTAIN_JAVELIN", 3, 6, "Piercing", true),
+        ("GUARD_CAPTAIN_LONGSWORD", 2, 10, "Slashing", true),
+        ("HOBGOBLIN_CAPTAIN_GREATSWORD", 2, 6, "Slashing", true),
+        ("HOBGOBLIN_CAPTAIN_LONGBOW", 1, 8, "Piercing", true),
+        ("IMP_STING", 1, 6, "Piercing", true),
+        ("INCUBUS_RESTLESS_TOUCH", 3, 6, "Psychic", true),
+        ("MAGE_ARCANE_BURST", 3, 8, "Force", true),
+        ("MERROW_HARPOON", 2, 6, "Piercing", true),
+        ("MINOTAUR_SKELETON_GORE", 2, 6, "Piercing", true),
+        ("MINOTAUR_SKELETON_SLAM", 2, 10, "Bludgeoning", true),
+        ("MUMMY_LORD_ROTTING_FIST", 2, 10, "Bludgeoning", true),
+        ("MUMMY_ROTTING_FIST", 1, 10, "Bludgeoning", true),
+        ("OGRE_GREATCLUB", 2, 8, "Bludgeoning", true),
+        ("OGRE_JAVELIN", 2, 6, "Piercing", true),
+        ("PEGASUS_HOOVES", 1, 6, "Bludgeoning", true),
+        ("PIRATE_CAPTAIN_PISTOL", 2, 10, "Piercing", true),
+        ("PLANETAR_SWORD", 2, 6, "Slashing", true),
+        ("PSEUDODRAGON_BITE", 1, 4, "Piercing", true),
+        ("RIDING_HORSE_HOOVES", 1, 8, "Bludgeoning", true),
+        ("RUST_MONSTER_BITE", 1, 8, "Piercing", true),
+        ("SKELETON_SHORTSWORD", 1, 6, "Piercing", true),
+        ("SPHINX_OF_LORE_CLAW", 3, 6, "Slashing", true),
+        ("SPHINX_OF_WONDER_REND", 1, 4, "Slashing", true),
+        ("STONE_GIANT_BOULDER", 2, 8, "Bludgeoning", true),
+        ("STONE_GOLEM_SLAM", 2, 8, "Bludgeoning", true),
+        ("TOUGH_BOSS_WARHAMMER", 2, 8, "Bludgeoning", true),
+        ("TREANT_HAIL_OF_BARK", 4, 10, "Piercing", true),
+        ("TRICERATOPS_GORE", 2, 12, "Piercing", true),
+        ("TROLL_LIMB_REND", 2, 4, "Slashing", true),
+        ("T_REX_BITE", 4, 12, "Piercing", true),
+        ("T_REX_TAIL", 4, 8, "Bludgeoning", true),
+        ("WATER_ELEMENTAL_SLAM", 2, 8, "Bludgeoning", true),
     ];
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
