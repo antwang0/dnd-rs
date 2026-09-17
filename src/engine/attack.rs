@@ -3490,12 +3490,14 @@ pub fn resolve_attack_outcome_with_rider(
     // the trait.
     let mut raw_attack = encounter.roll_d20_lucky(p.caster_id, mode) as i32;
     // 5e Improved Critical: the d20 face that promotes to a crit is
-    // template-driven (Champion fighter: 19+; Superior Critical: 18+)
-    // and can also be target-scoped (Hexblade's Curse: 19+ against the
-    // one cursed creature). The engine-level `crit_threshold_against`
-    // accessor combines both and folds in the default of 20 for missing
-    // actors / builds with neither.
-    let mut nat_crit = raw_attack >= encounter.crit_threshold_against(p.caster_id, p.target_id);
+    // template-driven (Champion fighter: 19+; Superior Critical: 18+),
+    // can be target-scoped (Hexblade's Curse: 19+ against the one
+    // cursed creature), and can belong to the attack itself (Blade of
+    // Disaster: 18+ in anybody's hands). The engine-level
+    // `crit_threshold_for_action` accessor combines all three and folds
+    // in the default of 20 for missing actors / builds with none.
+    let mut nat_crit =
+        raw_attack >= encounter.crit_threshold_for_action(p.caster_id, p.target_id, p.action_name);
     let mut attack_total =
         raw_attack + p.attack_bonus + buff + cond_attack_bonus + bless_die + archery_bonus;
     let mut is_nat_one = raw_attack == 1;
@@ -3510,7 +3512,8 @@ pub fn resolve_attack_outcome_with_rider(
         let new_raw = encounter.reroll_seeking_spell(p.caster_id, raw_attack as u32, mode) as i32;
         if new_raw != raw_attack {
             raw_attack = new_raw;
-            nat_crit = raw_attack >= encounter.crit_threshold_against(p.caster_id, p.target_id);
+            nat_crit = raw_attack
+                >= encounter.crit_threshold_for_action(p.caster_id, p.target_id, p.action_name);
             attack_total = raw_attack
                 + p.attack_bonus
                 + buff
@@ -3798,8 +3801,19 @@ pub fn resolve_attack_outcome_with_rider(
     // A critical hit's doubled dice, on both branches: RAW doubles the
     // dice of *any* attack, and a Fire Bolt's second 1d10 is rolled
     // here rather than at the spell chokepoint above.
+    //
+    // "Doubled" is the default rather than the rule — an attack that
+    // prints its own multiple gets it from
+    // `criticals::crit_extra_rolls`, which answers 1 for everything
+    // without a clause. Extra *rolls of the pool*, not extra dice: the
+    // attacker-scoped extra dice (Brutal Critical, Savage Attacks,
+    // Piercer) are a separate cohort and are added further down.
     let mut crit_faces = if is_crit {
-        encounter.roll_weapon_damage_dice_each(p.damage_dice, apply_gwf)
+        let mut faces = Vec::new();
+        for _ in 0..crate::engine::criticals::crit_extra_rolls(p.action_name) {
+            faces.extend(encounter.roll_weapon_damage_dice_each(p.damage_dice, apply_gwf));
+        }
+        faces
     } else {
         Vec::new()
     };

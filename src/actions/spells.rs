@@ -283,10 +283,13 @@ pub fn spell_attack_roll(
     // 5e Improved Critical: template-driven crit threshold. Spell attacks
     // honor the lower threshold too — a Champion fighter multiclassed
     // into Eldritch Knight crits Fire Bolt on 19s. Read via the
-    // target-aware engine helper so the default (20) folds in for
-    // non-Champion casters, and so a Hexblade's Curse on *this* target
-    // widens the range for the hexblade who cast it.
-    let mut nat_crit = raw >= encounter.crit_threshold_against(caster_id, target_id);
+    // action-aware engine helper so the default (20) folds in for
+    // non-Champion casters, so a Hexblade's Curse on *this* target
+    // widens the range for the hexblade who cast it, and so a spell
+    // that prints a crit range of its own (Blade of Disaster's 18–20)
+    // gets it whoever is holding the slot.
+    let mut nat_crit =
+        raw >= encounter.crit_threshold_for_action(caster_id, target_id, action_name);
     // 5e: "If the d20 roll for an attack is a 1, the attack misses
     // regardless of any modifiers or the target's AC." The rule is
     // written about attack rolls, not about weapons, so a spell attack
@@ -302,7 +305,7 @@ pub fn spell_attack_roll(
         if new_raw != raw {
             raw = new_raw;
             total = raw + attack_bonus + buff + cond_attack_bonus + bless_die;
-            nat_crit = raw >= encounter.crit_threshold_against(caster_id, target_id);
+            nat_crit = raw >= encounter.crit_threshold_for_action(caster_id, target_id, action_name);
             is_nat_one = raw == 1;
             hit = !is_nat_one && (nat_crit || total >= target_ac);
         }
@@ -534,7 +537,20 @@ fn spell_attack_outcome_exploding(
     // chokepoint would be asking for a second payout the latch would
     // refuse anyway — and would consume nothing, since Empowered
     // Spell's prime is already spent on the roll above.
-    let crit_extra = if is_crit { encounter.roll(&damage_dice) as i32 } else { 0 };
+    //
+    // How many extra rolls of the pool a crit buys is the attack's own
+    // business: one for everything RAW leaves on the shared
+    // double-the-dice rule, two for a Blade of Disaster. See
+    // `criticals::ACTION_CRIT_PROFILES`.
+    let crit_extra = if is_crit {
+        let mut extra = 0i32;
+        for _ in 0..crate::engine::criticals::crit_extra_rolls(action_name) {
+            extra += encounter.roll(&damage_dice) as i32;
+        }
+        extra
+    } else {
+        0
+    };
     // Fold in the caster-side flat damage bonuses (item-passive +
     // spell-installed buff) so spell attacks see the same `+N weapon`
     // damage half that weapon swings get via `engine::attack`. Read
@@ -36666,13 +36682,30 @@ pub static FAR_STEP: LazyLock<FarStep> = LazyLock::new(|| FarStep {});
 /// a single blast but a bonus-action attack routine that runs for as
 /// long as the caster holds it.
 ///
-/// RAW's critical clause is not modelled: the blade crits on an 18 or
-/// better and rolls *three* times its damage dice when it does, where
-/// the engine's crit range is a property of the attacker (the
-/// Champion's `crit_threshold`) and its crit multiplier is the shared
-/// double-the-dice rule at the attack site. Both would have to become
-/// per-action to express this, and the honest accounting is that the
-/// spell is strong enough on 8d12 a turn without them.
+/// **RAW's critical clause is the third thing the spell is**, and for
+/// most of this file's history it was the one clause here that could
+/// not be said: *"the blade scores a critical hit on a roll of 18–20,
+/// and it deals an extra 4d12 Force damage on a critical hit"* — an 18
+/// threshold that belongs to the blade rather than to whoever conjured
+/// it, and triple dice rather than the shared double. The engine's crit
+/// range was a property of the attacker (the Champion's
+/// `crit_threshold`, the Hexblade's curse on one victim) and its
+/// multiplier was one rule at the attack site, so neither half had
+/// anywhere to live.
+///
+/// Both are per-action now, as one row on
+/// `engine::criticals::ACTION_CRIT_PROFILES` keyed by this spell's own
+/// `name()`. Nothing else in the file changed: the threshold folds into
+/// `crit_threshold_for_action` beside the two creature-scoped sources
+/// and composes with them by taking the lower face, and the extra pool
+/// is rolled at the same spell-damage site the doubled one always was.
+///
+/// It matters more here than the arithmetic suggests, because the blade
+/// swings **twice per activation and every turn after**: a 15% chance
+/// per cut of 12d12 instead of 4d12 is the difference between a
+/// ninth-level slot that averages 52 a turn and one that averages 60,
+/// and it is the half of the spell that makes holding concentration on
+/// it worth a round of doing nothing else.
 pub struct BladeOfDisaster {}
 
 impl BladeOfDisaster {

@@ -3882,6 +3882,40 @@ impl EncounterInstance {
         }
     }
 
+    /// The crit threshold that applies to **one particular attack** —
+    /// `crit_threshold_against` narrowed by whatever the attack itself
+    /// has to say about the question.
+    ///
+    /// Three sources of a widened crit range, and they arrive from
+    /// three different places: the attacker's stat block (a Champion's
+    /// Improved Critical), the pair (a Hexblade's Curse, which is about
+    /// one victim and one caster), and the *effect* — a Blade of
+    /// Disaster crits on an 18 in anybody's hands and against anybody.
+    /// The third had nowhere to be said until
+    /// `criticals::ACTION_CRIT_PROFILES` existed; see that table.
+    ///
+    /// All three compose by taking the **lowest** face, which is how
+    /// the first two already composed and is the general rule rather
+    /// than a special case: nothing in 5e adds crit ranges together, so
+    /// a Champion casting Blade of Disaster at their cursed quarry
+    /// still crits on 18.
+    ///
+    /// This is what both attack chokepoints ask. `crit_threshold_against`
+    /// remains for the callers that are asking about a creature rather
+    /// than about a swing.
+    pub fn crit_threshold_for_action(
+        &self,
+        attacker_id: usize,
+        target_id: usize,
+        action_name: &str,
+    ) -> i32 {
+        let base = self.crit_threshold_against(attacker_id, target_id);
+        match crate::engine::criticals::action_crit_profile(action_name).threshold {
+            Some(face) => base.min(face as i32),
+            None => base,
+        }
+    }
+
     /// The hexblade whose **Hexblade's Curse** is currently on
     /// `target_id`, if any.
     ///

@@ -71039,6 +71039,132 @@ fn superior_critical_layers_over_default_crit_threshold() {
     );
 }
 
+/// Blade of Disaster's *"scores a critical hit on a roll of 18–20"* is
+/// the engine's first crit range that belongs to the **attack** rather
+/// than to the creature making it — so the wizard who has never had a
+/// widened range in their life gets one for as long as they hold the
+/// concentration, and only for the blade.
+#[test]
+fn the_blade_of_disasters_crit_range_belongs_to_the_spell_not_the_caster() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+        .unwrap();
+    assert_eq!(
+        e.crit_threshold_against(wizard, ogre),
+        20,
+        "a wizard has no crit expansion of their own"
+    );
+    assert_eq!(
+        e.crit_threshold_for_action(wizard, ogre, "fire bolt"),
+        20,
+        "and their other spells do not hand them one"
+    );
+    assert_eq!(
+        e.crit_threshold_for_action(wizard, ogre, "blade of disaster"),
+        18,
+        "the blade crits on 18 in anybody's hands"
+    );
+}
+
+/// …and it composes with the two creature-scoped sources the way every
+/// pair of crit ranges in 5e does: by taking the lower face, never by
+/// summing. A Champion who casts the blade crits on 18, not on 17.
+#[test]
+fn the_blades_crit_range_does_not_stack_with_the_champions() {
+    use crate::actors::creatures::fighters::CHAMPION_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let champion = e
+        .instantiate_creature(&CHAMPION_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+        .unwrap();
+    // Read the chassis rather than hard-coding 19, so a retune of the
+    // Champion template cannot make this test vacuous.
+    let own = e.crit_threshold_against(champion, ogre);
+    assert!(own <= 19, "Champion should already crit early: {}", own);
+    assert_eq!(
+        e.crit_threshold_for_action(champion, ogre, "blade of disaster"),
+        own.min(18),
+        "the spell's range and the fighter's take the lower face, not the sum"
+    );
+}
+
+/// The other half of the blade's clause: *"it deals an extra 4d12
+/// Force damage on a critical hit"* — three rolls of the pool where
+/// RAW's shared rule gives two.
+///
+/// Forced through the Paralyzed auto-crit, the same lever
+/// `brutal_critical_adds_die_on_melee_crit` uses, so the comparison
+/// isolates the damage multiple rather than waiting on natural 18s.
+/// Both runs are the identical swing at identical seeds and differ in
+/// exactly one character of one string, which is the whole point: the
+/// clause travels with the action's name.
+#[test]
+fn a_critical_blade_of_disaster_rolls_its_pool_three_times() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::attack::{AttackParams, resolve_attack_outcome};
+
+    let trials = 200u64;
+    let total = |action_name: &'static str| -> u32 {
+        let mut sum: u32 = 0;
+        for seed in 0..trials {
+            let mut e = ei_with_terrain(15, 15, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let caster = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let target = e
+                .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            if let Some(t) = e.actors.get_mut(&target) {
+                t.add_condition(Condition::Paralyzed, ConditionTimer::Rounds(10));
+            }
+            let (_, dealt) = resolve_attack_outcome(
+                &mut e,
+                AttackParams {
+                    caster_id: caster,
+                    target_id: target,
+                    action_name,
+                    attack_bonus: 20,
+                    damage_dice: Dice::new(4, 12),
+                    damage_type: DamageType::Force,
+                    ..AttackParams::DEFAULTS
+                },
+            );
+            sum = sum.saturating_add(dealt);
+        }
+        sum
+    };
+    let blade = total("blade of disaster");
+    let ordinary = total("scorching ray");
+    assert!(
+        blade > ordinary,
+        "three rolls of 4d12 should beat two (blade {} vs ordinary {})",
+        blade,
+        ordinary
+    );
+    // Three pools against two is a 50% uplift in expectation. Asserted
+    // loosely — the ogre's hit points cap some swings, so the observed
+    // ratio runs under the arithmetic one — but tightly enough that a
+    // regression to two pools (ratio 1.0) cannot pass.
+    assert!(
+        blade * 100 > ordinary * 120,
+        "the extra pool should be worth well over a fifth again (blade {} vs ordinary {})",
+        blade,
+        ordinary
+    );
+}
+
 /// 5e Ranger Roving (2024 PHB level 6 optional class feature) —
 /// passive +5 ft walking speed. The Ranger template ships the
 /// ROVING_TAG feature; the shared `passive_feature_speed_bonus`
