@@ -154,8 +154,11 @@ impl Trap {
             }),
             damage: self.damage,
             condition: self.condition,
-            breaks_concentration: false,
             catches_at_most: self.catches_at_most,
+            // A trap is the dungeon's, not a caster's: it was not
+            // written against a kind of creature and it springs for
+            // whoever stands on it. See `ZoneContact::only_types`.
+            ..ZoneContact::DEFAULTS
         }
     }
 }

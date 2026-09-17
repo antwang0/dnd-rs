@@ -25,7 +25,10 @@ use crate::{
         terrain::TerrainType,
         types::{AbilityScoreType, Coordinate, DamageType, SpellSchool},
         util::tiles_from_feet,
-        zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion},
+        zones::{
+            MAGIC_CIRCLE_CREATURE_TYPES, WARDED_CREATURE_TYPES, Zone, ZoneBarrier, ZoneContact,
+            ZoneEffect, ZoneMotion, ZoneSave,
+        },
     },
 };
 
@@ -6132,21 +6135,56 @@ pub static PROTECTION_FROM_EVIL_AND_GOOD: LazyLock<ProtectionFromEvilAndGood> =
 /// side. A fiend that steps into its own party's circle is protected
 /// from the party's undead ally exactly as the party is.
 ///
-/// **Two clauses are not modeled**, and both are honest gaps rather
-/// than approximations:
+/// **And it is a wall.** RAW's first bullet — *"the creature can't
+/// willingly enter the Cylinder by nonmagical means. If the creature
+/// tries to use teleportation or interplanar travel to do so, it must
+/// first succeed on a Charisma saving throw"* — is the sentence this
+/// spell is named for, and for most of the engine's history it was the
+/// one clause the circle did not have. A magic circle that a devil
+/// could walk into was a Protection from Evil and Good with a worse
+/// range, which is not what a level-3 slot and a hundred gold pieces of
+/// powdered silver are for.
 ///
-///   - *"The creature can't willingly enter the cylinder by nonmagical
-///     means."* The engine's pathfinder has no per-creature-type
-///     forbidden tile, and the barrier-facing-inward option RAW offers
-///     — the half that makes this a summoning trap — needs the same
-///     machinery pointed the other way.
-///   - **The type choice.** RAW picks one or more of five types and the
-///     ward covers exactly those; `Warded` is Protection from Evil and
-///     Good's flag and covers RAW's six, aberrations included. The
-///     circle is therefore slightly *stronger* than a one-type casting
-///     and exactly right for the five-type one, and sharing the flag is
-///     what keeps the two spells' shared sentences from being two
-///     implementations that can disagree.
+/// It lands on the zone layer as a [`ZoneBarrier`] over
+/// `MAGIC_CIRCLE_CREATURE_TYPES` — RAW's five, aberrations excluded,
+/// which is the one list SRD 5.2 prints shorter here than everywhere
+/// else. Both of RAW's sentences are enforced, on foot at the
+/// pathfinder and by magic at `TeleportActor`; see `ZoneBarrier`, where
+/// the whole of it is written down.
+///
+/// What it changes at the table is that the circle is now *ground*. Ten
+/// feet of floor that the summoned devil cannot step onto is a place
+/// the party's casters can stand, and the spell stops being a buff and
+/// starts being a position — which is the only kind of level-3 slot
+/// that competes with Spirit Guardians on a board this size.
+///
+/// **The Charisma save is the caster's spell save DC**, snapshotted at
+/// install time like every other number a zone carries. RAW does not
+/// print a DC for this save at all, which is the book leaving it to the
+/// spell's own; nothing else in the engine would know what to roll
+/// against.
+///
+/// **Three clauses are still not modeled**, and all three are honest
+/// gaps rather than approximations:
+///
+///   - **The reverse direction.** *"You can cause its magic to operate
+///     in the reverse direction, preventing a creature of the specified
+///     type from leaving the Cylinder"* — the half that makes this a
+///     summoning trap. It is a choice made at cast time and the engine
+///     has no picker to ask the question with; the wall that exists is
+///     the one every casting in a fight would pick.
+///   - **The type choice.** RAW picks one or more of five and both the
+///     ward and the wall cover exactly those; this covers all five at
+///     once. The circle is therefore slightly *stronger* than a
+///     one-type casting and exactly right for the five-type one, which
+///     is the same direction `Warded` already errs in and for the same
+///     reason: a per-cast menu is a picker.
+///   - **`Warded` covers six types where the wall covers five.** That
+///     is not a divergence between two implementations of one
+///     sentence — it is RAW's own asymmetry, kept: Protection from Evil
+///     and Good's list includes Aberrations and the circle's does not,
+///     so an aboleth gets no benefit from attacking into the circle and
+///     is perfectly free to swim into it.
 pub struct MagicCircle {}
 
 impl MagicCircle {
@@ -6206,7 +6244,7 @@ impl Action for MagicCircle {
     }
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         caster_id: usize,
         _target_ids: Option<&Vec<usize>>,
         target_locations: Option<&Vec<Coordinate>>,
@@ -6215,6 +6253,10 @@ impl Action for MagicCircle {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let dc = caster.spellcasting_save_dc();
         vec![Box::new(InstallZone {
             zone: Zone {
                 id: 0,
@@ -6225,7 +6267,22 @@ impl Action for MagicCircle {
                 effect: ZoneEffect::hazard(ZoneContact::afflicts(
                     Condition::Warded,
                     ConditionTimer::UntilStartOfNextTurn,
-                )),
+                ))
+                .barring(ZoneBarrier {
+                    types: Some(MAGIC_CIRCLE_CREATURE_TYPES),
+                    // RAW's *"can't willingly enter the Cylinder by
+                    // nonmagical means"* — the clause that makes the
+                    // circle a piece of ground rather than a buff.
+                    bars_footsteps: true,
+                    // RAW's Charisma save, at the circle's own DC —
+                    // the clause that makes this a ward a determined
+                    // devil can push through rather than a wall.
+                    teleport_save: Some(ZoneSave {
+                        ability: AbilityScoreType::Charisma,
+                        dc,
+                        half_on_success: false,
+                    }),
+                }),
                 rounds_remaining: Self::ROUNDS,
                 // RAW: one hour, no concentration. The circle outlives
                 // whatever else the caster is holding up, which is most
@@ -6244,6 +6301,196 @@ impl Action for MagicCircle {
 }
 
 pub static MAGIC_CIRCLE: LazyLock<MagicCircle> = LazyLock::new(|| MagicCircle {});
+
+/// Forbiddance — SRD 5.2 level-6 abjuration (cleric).
+///
+/// > You create a ward against magical travel that protects up to
+/// > 40,000 square feet of floor space to a height of 30 feet above the
+/// > floor. For the duration, creatures can't teleport into the area or
+/// > use portals … to enter the area. …
+/// >
+/// > In addition, the spell damages types of creatures that you choose
+/// > when you cast it. Choose one or more of the following:
+/// > Aberrations, Celestials, Elementals, Fey, Fiends, and Undead. When
+/// > a creature of a chosen type enters the spell's area for the first
+/// > time on a turn or ends its turn there, the creature takes 5d10
+/// > Radiant or Necrotic damage (your choice when you cast this spell).
+///
+/// **The room, consecrated against a kind of thing.** Two clauses, and
+/// they are the two halves of the zone layer's newest axis: a
+/// [`ZoneBarrier`] that names nobody and stops every teleport, and a
+/// [`ZoneContact`] that names six types and bills them 5d10 a turn.
+/// Nothing else in the engine does either, which is why the spell is
+/// worth a level-6 slot on a chassis that already has Heal on it: it
+/// does not out-damage Fire Storm against a warband of orcs and it
+/// ends a fight against a crypt.
+///
+/// **No save, and that is RAW.** The book prints a flat 5d10 — no
+/// Dexterity save, no half on a success, no attack roll. It is the
+/// heaviest unconditional per-turn damage on the layer, and the price
+/// of it is that it is worth exactly nothing against four of the
+/// bestiary's five most common types.
+///
+/// **Radiant, not the caster's choice.** RAW offers Radiant *or*
+/// Necrotic at cast time and a zone carries one damage type, fixed at
+/// install. Radiant is the answer for the same reason the Bag of
+/// Tricks always draws a panther: a menu the engine picks from is not a
+/// decision the player made, and picking the *same* one every time at
+/// least makes the spell legible. It is also the better of the two
+/// against the list the spell is written against — Undead are the
+/// cohort most often resistant or immune to Necrotic and almost never
+/// to Radiant, so a "choice" resolved as Necrotic would have been a
+/// spell that does nothing to half its own targets.
+///
+/// **The area is twelve tiles, not RAW's two hundred feet.** 40,000
+/// square feet is a square 200 feet on a side; the engine's standard
+/// board is 100 by 50, so the printed area is not an area at all here —
+/// it is *the room*, and a ward with no edge is a ward with no
+/// placement decision behind it. Twelve tiles of Chebyshev radius is
+/// the widest area anything in the engine already lays down
+/// (Prismatic Wall's, Wall of Fire's) and covers a good quarter of a
+/// standard board, which keeps "where do I put it" worth asking.
+/// Centred on a point rather than on the caster, because RAW's touch
+/// range is a range to the *floor* and the floor that matters is the
+/// one between the party and the crypt.
+///
+/// **The AI routes around it, whatever the AI is made of.** A zone
+/// whose contact clause can hurt somebody is bad ground to
+/// `Zone::deters_walkers`, and that predicate is asked of a tile rather
+/// than of a creature — so an ogre will walk the long way round a ward
+/// that could not touch it. That is the same imprecision
+/// `ZoneEffect::spares_team` already documents for Prismatic Wall, it
+/// errs in the same direction (a step, not a hit point), and closing it
+/// would mean threading a creature through every hazard predicate on
+/// the layer.
+///
+/// **Three clauses are not modeled**, and none of them is a die:
+///
+///   - **The password.** *"A creature that speaks the password as it
+///     enters the area takes no damage"* — the engine has no channel
+///     for a creature knowing a word, and the party's own casters are
+///     not on the list of types the ward burns anyway.
+///   - **The thirty days.** RAW's *"if you cast Forbiddance every day
+///     for 30 days in the same location, the spell lasts until it is
+///     dispelled"* is a clause about a campaign, not a fight.
+///   - **Planar travel and portals**, as distinct from teleportation.
+///     The engine has one way to cross space sideways —
+///     `TeleportActor` — and the ward closes it. There is no Gate, no
+///     Plane Shift arrival and no Ethereal Plane for the sentence to
+///     reach past that.
+pub struct Forbiddance {}
+
+impl Forbiddance {
+    /// The ward's Chebyshev radius in tiles — see the docstring for why
+    /// it is not RAW's 200-foot square.
+    const RADIUS: isize = 12;
+    /// RAW's day, which outlasts any fight — the same round count Magic
+    /// Circle's hour and Mage Armor's eight of them collapse to.
+    const ROUNDS: u32 = 100;
+    /// RAW's 5d10.
+    const DAMAGE: Dice = Dice::new(5, 10);
+}
+
+impl Action for Forbiddance {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "forbiddance"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["forbid", "ward-area"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW is Touch, and a touch-ranged area centred on a point the
+        // caster is standing on would make the spell impossible to lay
+        // *ahead* of the party — which is the only way anybody would
+        // ever cast it. Read as the ward's own radius: the caster
+        // consecrates ground they could walk to the edge of, which is
+        // the nearest thing to "the floor you are touching" that a
+        // spell with a footprint this size can mean.
+        Some(Self::RADIUS)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        true
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Radiant]
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        vec![Box::new(InstallZone {
+            zone: Zone {
+                id: 0,
+                name: "forbiddance",
+                owner_id: caster_id,
+                origin: point,
+                radius: Self::RADIUS,
+                effect: ZoneEffect::hazard(
+                    ZoneContact::damage(Self::DAMAGE, DamageType::Radiant)
+                        .against_types(WARDED_CREATURE_TYPES),
+                )
+                .barring(ZoneBarrier {
+                    // RAW's travel ward names nobody: *"creatures can't
+                    // teleport into the area"*. The six types on the
+                    // contact clause are the ones it *burns*, which is
+                    // a different sentence.
+                    types: None,
+                    // …and it stops no feet. You can walk into a
+                    // Forbiddance; that is what the 5d10 is for.
+                    bars_footsteps: false,
+                    // No roll. RAW's teleport clause is flat, unlike
+                    // Magic Circle's Charisma save beside it.
+                    teleport_save: None,
+                }),
+                rounds_remaining: Self::ROUNDS,
+                // RAW: a day, no concentration. The ward outlives
+                // whatever else the cleric is holding up, which is most
+                // of what a level-6 slot buys here.
+                concentration: false,
+                motion: ZoneMotion::Fixed,
+                revealed: false,
+            },
+            // RAW's trigger is *"enters … for the first time on a turn
+            // or ends its turn there"*, and neither of those is "was
+            // standing here when it went up". A lich caught inside the
+            // consecration pays on its own turn, not on the cleric's.
+            catch_present: false,
+        })]
+    }
+}
+
+pub static FORBIDDANCE: LazyLock<Forbiddance> = LazyLock::new(|| Forbiddance {});
 
 /// Dispel Evil and Good — SRD 5.2 level-5 abjuration (cleric, paladin),
 /// Range: Self, concentration up to 1 minute.

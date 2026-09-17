@@ -29,7 +29,7 @@
 //!
 //! ## What a zone can do
 //!
-//! Six clauses, each independently optional, which between them cover
+//! Seven clauses, each independently optional, which between them cover
 //! every stationary-area spell the engine has reason to model:
 //!
 //!   - **`obscures`** — heavy obscurement. Blocks sight into, out of,
@@ -49,6 +49,31 @@
 //!   - **`suppresses_magic`** — Antimagic Field's "spells … are
 //!     suppressed in the sphere and can't protrude into it", read at
 //!     the casting gate rather than at a contact trigger.
+//!   - **`barrier`** — Magic Circle's "the creature can't willingly
+//!     enter the Cylinder by nonmagical means", which is the only
+//!     clause on the layer that is about who may *be* here rather than
+//!     about what happens to whoever is. See [`ZoneBarrier`].
+//!
+//! ## Who a clause is for
+//!
+//! Five of the six clauses above are blind to who is standing in them,
+//! and the module says so at length below. The sixth is not, and
+//! neither is the qualifier that arrived with it: SRD 5.2 has a small
+//! family of areas whose text names *creature types* rather than sides
+//! — Magic Circle's five, Forbiddance's six, Hallow's six — and a
+//! clause that fires at "Fiends and Undead" cannot be written as a
+//! clause that fires at everybody.
+//!
+//! That is a different axis from friend-or-foe and does not reopen it.
+//! A type is a fact about the creature, printed on its stat block and
+//! the same for both sides of the board: a Forbiddance laid by the
+//! party burns the party's own summoned devil exactly as it burns the
+//! enemy's. Two fields carry it, and they are deliberately separate
+//! because the two spells that need them need them apart:
+//! [`ZoneContact::only_types`] gates what the area *does* to whoever
+//! touches it (Forbiddance's 5d10), and [`ZoneBarrier::types`] gates
+//! who may cross into it at all (Magic Circle's wall, which does
+//! nothing to anybody).
 //!
 //! ## Where a zone is
 //!
@@ -112,7 +137,7 @@
 
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::Dice;
-use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size};
+use crate::engine::types::{AbilityScoreType, Coordinate, CreatureType, DamageType, Size};
 
 /// The saving throw a zone's contact clause opens with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,9 +195,54 @@ pub struct ZoneContact {
     /// for: *"The target succeeds automatically"* is a made save, and a
     /// made save on this clause takes the damage with it.
     pub catches_at_most: Option<Size>,
+    /// The creature types this clause is written against — SRD 5.2
+    /// Forbiddance's *"the spell damages types of creatures that you
+    /// choose when you cast it … Aberrations, Celestials, Elementals,
+    /// Fey, Fiends, and Undead"*.
+    ///
+    /// `None` for every area but that one, and `None` is the layer's
+    /// default reading rather than an empty list: a web catches
+    /// whatever walks into it, and the overwhelming majority of the
+    /// cohort names no type at all. An empty slice would be the
+    /// opposite — an area that catches nothing — which is a zone better
+    /// expressed by not installing it.
+    ///
+    /// Read at `EncounterInstance::apply_zone_contact`, ahead of the
+    /// size gate and the save, so a creature of the wrong type rolls
+    /// nothing and the log prints nothing. That ordering is the
+    /// difference between a clause that does not apply and a clause
+    /// that was survived, and only the second belongs in a play-by-play.
+    ///
+    /// Not a friend-or-foe clause. See the module docstring: a type is
+    /// printed on the stat block and is the same fact for both sides,
+    /// so a ward laid by the party burns the party's own fiend.
+    pub only_types: Option<&'static [CreatureType]>,
 }
 
 impl ZoneContact {
+    /// The inert clause every constructor below builds out of: no save,
+    /// no damage, no condition, nobody exempt.
+    ///
+    /// A base rather than five spelled-out fields per constructor, and
+    /// the reason is the one `AttackParams::DEFAULTS` gives for the
+    /// same shape: a struct whose every literal names every field is a
+    /// struct where adding a sixth means editing every literal, which
+    /// is what makes the *next* clause expensive rather than this one.
+    /// `only_types` is the sixth field and cost one line here instead
+    /// of seven below.
+    ///
+    /// Deliberately not `Default`: an all-`None` contact is not a
+    /// sensible zone (`is_harmful` reports it harmless, which is
+    /// honest and useless), and a trait impl would advertise it as one.
+    pub const DEFAULTS: Self = Self {
+        save: None,
+        damage: None,
+        condition: None,
+        breaks_concentration: false,
+        catches_at_most: None,
+        only_types: None,
+    };
+
     /// A save-or-suffer clause with no damage: Web's Restrained, Grease's
     /// Prone.
     pub const fn save_or(
@@ -187,10 +257,8 @@ impl ZoneContact {
                 dc,
                 half_on_success: false,
             }),
-            damage: None,
             condition: Some((condition, timer)),
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -205,11 +273,8 @@ impl ZoneContact {
     /// than a condition stamped on at cast time and never removed.
     pub const fn afflicts(condition: Condition, timer: ConditionTimer) -> Self {
         Self {
-            save: None,
-            damage: None,
             condition: Some((condition, timer)),
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -233,6 +298,28 @@ impl ZoneContact {
         self
     }
 
+    /// Chainable: this clause is written against a named list of
+    /// creature types and does nothing to anybody else — see
+    /// [`Self::only_types`].
+    ///
+    /// A builder for the same reason `against_at_most` is one: one
+    /// spell in the engine names types, and threading `None` through
+    /// seven constructors to serve it would make six rows harder to
+    /// read than the rule they encode.
+    pub const fn against_types(mut self, types: &'static [CreatureType]) -> Self {
+        self.only_types = Some(types);
+        self
+    }
+
+    /// True if this clause is written against `ty` — trivially true for
+    /// the areas that name no type at all, which is almost all of them.
+    pub fn catches_type(&self, ty: CreatureType) -> bool {
+        match self.only_types {
+            Some(types) => types.contains(&ty),
+            None => true,
+        }
+    }
+
     /// The "save for half" shape: Moonbeam's searing light, and every
     /// damaging area whose save softens the blow rather than dodging it.
     pub const fn save_for_half(
@@ -248,9 +335,7 @@ impl ZoneContact {
                 half_on_success: true,
             }),
             damage: Some((dice, damage_type)),
-            condition: None,
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -273,8 +358,7 @@ impl ZoneContact {
             }),
             damage: Some((dice, damage_type)),
             condition: Some((condition, timer)),
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -304,8 +388,7 @@ impl ZoneContact {
             }),
             damage: Some((dice, damage_type)),
             condition: Some((condition, timer)),
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -324,9 +407,7 @@ impl ZoneContact {
                 half_on_success: false,
             }),
             damage: Some((dice, damage_type)),
-            condition: None,
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -336,9 +417,7 @@ impl ZoneContact {
         Self {
             save: None,
             damage: Some((dice, damage_type)),
-            condition: None,
-            breaks_concentration: false,
-            catches_at_most: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -407,6 +486,161 @@ impl WardTrigger {
     /// every trap prints its own.
     pub const UNSAVED_FIND_DC: i32 = 15;
 }
+
+/// A ward on the way *in* — the layer's only clause about who may be
+/// somewhere, as opposed to what happens to whoever is.
+///
+/// SRD 5.2 prints two of them and they agree on less than they look:
+///
+/// > **Magic Circle.** Choose one or more of the following types of
+/// > creatures: Celestials, Elementals, Fey, Fiends, or Undead. … The
+/// > creature can't willingly enter the Cylinder by nonmagical means.
+/// > If the creature tries to use teleportation or interplanar travel
+/// > to do so, it must first succeed on a Charisma saving throw.
+///
+/// > **Forbiddance.** For the duration, creatures can't teleport into
+/// > the area or use portals … to enter the area.
+///
+/// Three axes separate them, and the struct is those three axes:
+///
+///   - **Who.** The circle is a wall *to something* — five types, and
+///     a bugbear walks in freely. Forbiddance's travel ward names
+///     nobody and stops everyone. [`Self::types`].
+///   - **Feet.** The circle stops them; Forbiddance does not, and the
+///     difference is the whole character of the second spell — you
+///     *can* walk into a Forbiddance, you just take 5d10 for it.
+///     [`Self::bars_footsteps`].
+///   - **The roll.** The circle is a ward a determined devil can push
+///     through on a Charisma save; the ward against planar travel is
+///     not. [`Self::teleport_save`].
+///
+/// What every barrier has in common — and the reason the third axis is
+/// an optional *save* rather than an optional clause — is that it stops
+/// magical entry. That is what the word means in both spells.
+///
+/// Two enforcement points, one per axis that has one:
+///
+///   - **On foot.** The pathfinder refuses the step. Both of the
+///     engine's route-finders — `dijkstra_path`, which prices a walk,
+///     and `step_toward_actor_inner`, which answers "which way" — go
+///     through `EncounterInstance::barrier_bars_step`, so a barred
+///     creature routes *around* the circle rather than discovering at
+///     the last tile that it cannot finish. Nothing that moves a
+///     creature against its will asks: a shove, a pull, a drag, a
+///     swallow and a banishment lapsing all write the board directly,
+///     and RAW's word is *willingly*.
+///   - **By magic.** `TeleportActor`, which is the single side effect
+///     every teleport in the engine resolves through — so the clause is
+///     true of the teleports nobody has written yet, exactly as the
+///     Forcecage bar beside it already is.
+///
+/// A creature that is *already inside* is not entering, and both
+/// predicates are written as an edge rather than as a tile for that
+/// reason: a fiend standing in the circle when it goes up may walk
+/// about in it and may walk out of it. Magic Circle's
+/// reverse-direction option — *"preventing a creature of the specified
+/// type from leaving"* — is the mirror of this and is not modeled; it
+/// is a choice made at cast time, and the engine has no picker to ask
+/// the question with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ZoneBarrier {
+    /// The creature types the ward is raised against, or `None` for the
+    /// ward that names nobody and stops everything.
+    ///
+    /// `None` rather than "every variant of `CreatureType`" because the
+    /// two are different sentences and only one of them survives a new
+    /// creature type being added to the enum.
+    pub types: Option<&'static [CreatureType]>,
+    /// Magic Circle's *"can't willingly enter … by nonmagical means"* —
+    /// the clause Forbiddance does not print.
+    ///
+    /// The expensive axis: it is asked on every edge of every path a
+    /// barred creature plans, where the teleport clause is asked once
+    /// per teleport. `EncounterInstance::dijkstra_path` hoists the
+    /// "is there any such ward for this creature" half out of its inner
+    /// loop for that reason.
+    pub bars_footsteps: bool,
+    /// The save a barred creature's teleport into the area must beat —
+    /// Magic Circle's *"it must first succeed on a Charisma saving
+    /// throw"* — or `None` to refuse outright, which is Forbiddance's
+    /// flat *"creatures can't teleport into the area"*.
+    ///
+    /// Reuses [`ZoneSave`] rather than a bare `(ability, dc)` pair so
+    /// the DC is snapshotted at install time for the reason the contact
+    /// clause's is. `half_on_success` is meaningless here — a teleport
+    /// either happens or does not — and is ignored.
+    pub teleport_save: Option<ZoneSave>,
+}
+
+/// What a ward has to say about a teleport aimed into it — the answer
+/// `EncounterInstance::barrier_bars_teleport` hands back.
+///
+/// Three things travel together because the one caller needs all three
+/// of exactly *one* ward, and a second lookup could find a different
+/// one on a board carrying two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BarredTeleport {
+    /// The ward's name, for the line the log prints when the step is
+    /// spent for nothing.
+    pub ward: &'static str,
+    /// The saving throw that gets through, or `None` for a ward that
+    /// refuses outright. See [`ZoneBarrier::teleport_save`].
+    pub save: Option<ZoneSave>,
+    /// Who laid the ward — whose spell the save is rolled against, and
+    /// therefore whose Bane or Bless rides on it.
+    pub owner_id: usize,
+}
+
+impl ZoneBarrier {
+    /// True if this ward is raised against `ty` — trivially true for
+    /// the ward that names no type at all.
+    pub fn bars(&self, ty: CreatureType) -> bool {
+        match self.types {
+            Some(types) => types.contains(&ty),
+            None => true,
+        }
+    }
+
+    /// True if this ward stops `ty` from walking in. The hoisted half
+    /// of the pathfinder's question — see [`Self::bars_footsteps`].
+    pub fn bars_walk_by(&self, ty: CreatureType) -> bool {
+        self.bars_footsteps && self.bars(ty)
+    }
+}
+
+/// SRD 5.2's recurring list of *"Aberrations, Celestials, Elementals,
+/// Fey, Fiends, and Undead"* — Protection from Evil and Good's six,
+/// Forbiddance's six, Hallow's six.
+///
+/// The slice form of `CreatureType::affected_by_protection`, which is
+/// the same list as a predicate. Both exist because the two callers ask
+/// opposite questions: a condition asks "does this apply to me" and
+/// takes the predicate, and an area has to *carry* the list in a
+/// `const` field and takes the slice.
+pub const WARDED_CREATURE_TYPES: &[CreatureType] = &[
+    CreatureType::Aberration,
+    CreatureType::Celestial,
+    CreatureType::Elemental,
+    CreatureType::Fey,
+    CreatureType::Fiend,
+    CreatureType::Undead,
+];
+
+/// Magic Circle's five — the same list as [`WARDED_CREATURE_TYPES`]
+/// minus Aberrations, which is the one type SRD 5.2 leaves off this one
+/// spell.
+///
+/// Spelled out rather than derived, because the difference between the
+/// two lists is a printed fact about two spells rather than a rule
+/// anything else can read: RAW's circle keeps out devils and ghosts and
+/// has nothing to say about a mind flayer.
+pub const MAGIC_CIRCLE_CREATURE_TYPES: &[CreatureType] = &[
+    CreatureType::Celestial,
+    CreatureType::Elemental,
+    CreatureType::Fey,
+    CreatureType::Fiend,
+    CreatureType::Undead,
+];
 
 /// The standing clauses a zone lays on the ground under it, plus the
 /// contact clause it fires at creatures in it.
@@ -564,12 +798,30 @@ pub struct ZoneEffect {
     /// approximation to err in, and the alternative is threading a
     /// team through every hazard predicate on the layer for one spell.
     pub spares_team: Option<usize>,
+    /// The kinds of creature this area will not let in — see
+    /// [`ZoneBarrier`], which is where all of it is written down.
+    ///
+    /// `None` for every area but the two that print a wall, and the
+    /// default has to be `None` rather than an empty barrier for the
+    /// reason `ZoneContact::only_types` does: "keeps nobody out" and
+    /// "is not a wall" are the same board state, and only one of them
+    /// costs a predicate on every step of every path.
+    pub barrier: Option<ZoneBarrier>,
 }
 
 impl ZoneEffect {
-    /// A zone whose only clause is the obscurement (Fog Cloud).
-    pub const OBSCURING: Self = Self {
-        obscures: true,
+    /// The empty area: no ground clauses, no contact, no wall.
+    ///
+    /// The base every constructor below builds from, for the reason
+    /// [`ZoneContact::DEFAULTS`] gives one field up — this struct had
+    /// grown to eight fields spelled out across eleven `const`
+    /// constructors, so a ninth axis meant eleven edits before it could
+    /// mean anything. `barrier` is the ninth and cost one line.
+    ///
+    /// Never installed as-is: an area that does nothing is a `Zone`
+    /// better left uncast.
+    pub const DEFAULTS: Self = Self {
+        obscures: false,
         difficult: false,
         contact: None,
         per_step_damage: None,
@@ -577,6 +829,13 @@ impl ZoneEffect {
         darkens: None,
         ward: None,
         spares_team: None,
+        barrier: None,
+    };
+
+    /// A zone whose only clause is the obscurement (Fog Cloud).
+    pub const OBSCURING: Self = Self {
+        obscures: true,
+        ..Self::DEFAULTS
     };
 
     /// The Darkness spell: heavily obscured *and* unlit.
@@ -593,13 +852,8 @@ impl ZoneEffect {
     /// is opaque and perfectly well lit.
     pub const MAGICAL_DARKNESS: Self = Self {
         obscures: true,
-        difficult: false,
-        contact: None,
-        per_step_damage: None,
-        suppresses_magic: false,
         darkens: Some(Self::DARKNESS_SPELL_LEVEL),
-        ward: None,
-        spares_team: None,
+        ..Self::DEFAULTS
     };
 
     /// The level the Darkness spell is cast at, and therefore the level
@@ -611,42 +865,25 @@ impl ZoneEffect {
     /// grab is a one-time save at cast time rather than a standing
     /// property of the square).
     pub const ROUGH: Self = Self {
-        obscures: false,
         difficult: true,
-        contact: None,
-        per_step_damage: None,
-        suppresses_magic: false,
-        darkens: None,
-        ward: None,
-        spares_team: None,
+        ..Self::DEFAULTS
     };
 
     /// A zone whose only clause is that magic does not work inside it
     /// (Antimagic Field). Nothing about the ground changes and nothing
     /// is rolled — see `suppresses_magic`.
     pub const NULLIFYING: Self = Self {
-        obscures: false,
-        difficult: false,
-        contact: None,
-        per_step_damage: None,
         suppresses_magic: true,
-        darkens: None,
-        ward: None,
-        spares_team: None,
+        ..Self::DEFAULTS
     };
 
     /// A zone that is difficult terrain and fires `contact` (Web,
     /// Grease).
     pub const fn clinging(contact: ZoneContact) -> Self {
         Self {
-            obscures: false,
             difficult: true,
             contact: Some(contact),
-            per_step_damage: None,
-            suppresses_magic: false,
-            darkens: None,
-            ward: None,
-            spares_team: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -654,14 +891,9 @@ impl ZoneEffect {
     /// are difficult terrain *and* bill 2d4 for every 5 ft crossed.
     pub const fn thorny(dice: Dice, damage_type: DamageType) -> Self {
         Self {
-            obscures: false,
             difficult: true,
-            contact: None,
             per_step_damage: Some((dice, damage_type)),
-            suppresses_magic: false,
-            darkens: None,
-            ward: None,
-            spares_team: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -671,13 +903,8 @@ impl ZoneEffect {
     pub const fn choking(contact: ZoneContact) -> Self {
         Self {
             obscures: true,
-            difficult: false,
             contact: Some(contact),
-            per_step_damage: None,
-            suppresses_magic: false,
-            darkens: None,
-            ward: None,
-            spares_team: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -685,14 +912,8 @@ impl ZoneEffect {
     /// it is unchanged (Cloud of Daggers).
     pub const fn hazard(contact: ZoneContact) -> Self {
         Self {
-            obscures: false,
-            difficult: false,
             contact: Some(contact),
-            per_step_damage: None,
-            suppresses_magic: false,
-            darkens: None,
-            ward: None,
-            spares_team: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -706,14 +927,9 @@ impl ZoneEffect {
     /// clauses only compose safely with each other.
     pub const fn ward(contact: ZoneContact, setter_team: usize) -> Self {
         Self {
-            obscures: false,
-            difficult: false,
             contact: Some(contact),
-            per_step_damage: None,
-            suppresses_magic: false,
-            darkens: None,
             ward: Some(WardTrigger::EnemiesOf(setter_team)),
-            spares_team: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -721,14 +937,9 @@ impl ZoneEffect {
     /// clauses, with nobody spared. See `WardTrigger::Anyone`.
     pub const fn trap(contact: ZoneContact, find_dc: i32) -> Self {
         Self {
-            obscures: false,
-            difficult: false,
             contact: Some(contact),
-            per_step_damage: None,
-            suppresses_magic: false,
-            darkens: None,
             ward: Some(WardTrigger::Anyone { find_dc }),
-            spares_team: None,
+            ..Self::DEFAULTS
         }
     }
 
@@ -742,6 +953,19 @@ impl ZoneEffect {
     /// different kind of area.
     pub const fn sparing(mut self, team: usize) -> Self {
         self.spares_team = Some(team);
+        self
+    }
+
+    /// Raise this area's wall against a list of creature types — see
+    /// [`ZoneBarrier`].
+    ///
+    /// Chainable rather than a constructor, because a wall is a
+    /// qualifier on an area that already exists in every other respect
+    /// and the two spells that print one disagree about everything
+    /// else: Magic Circle's is a `hazard` that installs a ward, and
+    /// Forbiddance's is a `hazard` that deals 5d10.
+    pub const fn barring(mut self, barrier: ZoneBarrier) -> Self {
+        self.barrier = Some(barrier);
         self
     }
 
@@ -1130,10 +1354,8 @@ mod tests {
                 dc: 15,
                 half_on_success: false,
             }),
-            damage: None,
-            condition: None,
             breaks_concentration: true,
-            catches_at_most: None,
+            ..ZoneContact::DEFAULTS
         };
         assert!(bare.is_harmful());
         // And the chainable form composes onto a real clause without

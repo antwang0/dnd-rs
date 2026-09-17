@@ -79,6 +79,15 @@ pub static CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // level-3 answer to the fights the level-1 ward is not enough for,
     // and the cleric is the class that carries both.
     actions.push(&*crate::actions::spells::MAGIC_CIRCLE);
+    // SRD 5.2 **Forbiddance** — the same idea at three slot levels
+    // higher and pointed the other way: where the circle is ten feet of
+    // ground a devil cannot step onto, this is sixty feet of ground
+    // every Aberration, Celestial, Elemental, Fey, Fiend and Undead
+    // burns 5d10 a turn for standing on, with nothing teleporting into
+    // it at all. A cleric-only spell RAW, and the only spell on the
+    // list that is worth a level-6 slot against a crypt and worth
+    // nothing at all against a warband.
+    actions.push(&*crate::actions::spells::FORBIDDANCE);
     actions.push(&*COMMAND);
     actions.push(&*DIVINE_FAVOR);
     actions.push(&*SPIRIT_GUARDIANS);

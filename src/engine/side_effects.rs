@@ -911,6 +911,39 @@ impl ApplicableSideEffect for TeleportActor {
             }
             return;
         }
+        // SRD 5.2's magic-circle wall, second sentence: *"If the
+        // creature tries to use teleportation or interplanar travel to
+        // do so, it must first succeed on a Charisma saving throw."*
+        // Asked here for the reason the Forcecage bar above it is —
+        // this is the one side effect every teleport in the engine
+        // resolves through — and asked *after* it, because a creature
+        // that cannot step out of the world at all never reaches the
+        // question of where it was going. See
+        // `crate::engine::zones::ZoneBarrier`.
+        let from = match ei.actors.get(&self.actor_id) {
+            Some(a) => a.location(),
+            None => return,
+        };
+        if let Some(bar) = ei.barrier_bars_teleport(self.actor_id, from, self.dest) {
+            let pushed_through = match bar.save {
+                Some(save) => ei
+                    .roll_save_against_caster(self.actor_id, save.ability, save.dc, bar.owner_id)
+                    .passed(),
+                // A ward with no save on it refuses outright —
+                // Forbiddance's *"creatures can't teleport into the
+                // area"*.
+                None => false,
+            };
+            if !pushed_through {
+                if !name.is_empty() {
+                    ei.log(format!(
+                        "  the {} turns {} back; the step is spent.",
+                        bar.ward, name
+                    ));
+                }
+                return;
+            }
+        }
         match ei.place_actor_at(self.actor_id, self.dest) {
             Ok(()) => {
                 if !name.is_empty() {

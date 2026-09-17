@@ -15749,6 +15749,323 @@ fn the_wards_of_a_magic_circle_lapse_for_whoever_walks_out() {
     );
 }
 
+/// SRD 5.2 Magic Circle's first bullet — *"the creature can't willingly
+/// enter the Cylinder by nonmagical means"* — which for most of this
+/// engine's history was a documented absence on the spell's own
+/// docstring.
+///
+/// The refusal is the pathfinder's, so it is an answer about *routes*
+/// rather than a rejection at the last tile: a barred creature has no
+/// path to any square inside the ward, and every square outside it is
+/// still its to walk to. And it is per creature type — the fighter
+/// standing beside the zombie walks in without noticing.
+#[test]
+fn a_magic_circle_is_ground_the_barred_types_cannot_walk_onto() {
+    use crate::actions::spells::MAGIC_CIRCLE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(20, 10), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(20, 14), 1, 1)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    let cast = ActionExecutionInfo::new(
+        &*MAGIC_CIRCLE,
+        cleric,
+        None,
+        Some(vec![Coordinate::new(10, 10)]),
+        None,
+    );
+    e.push_action(cast);
+    e.process_stack();
+
+    for id in [zombie, fighter] {
+        e.actors.get_mut(&id).unwrap().reset_for_new_round();
+    }
+    // The ward covers a footprint out to a Chebyshev gap of its radius,
+    // which for a Medium body centred on (10, 10) is everything within
+    // five tiles. (16, 10) is a step outside it and (15, 10) a step in.
+    assert!(
+        e.path_to(zombie, Coordinate::new(16, 10)).is_some(),
+        "the ground short of the circle is still the zombie's to walk"
+    );
+    assert!(
+        e.path_to(zombie, Coordinate::new(15, 10)).is_none(),
+        "and the ground inside it is not, at any range"
+    );
+    assert!(
+        e.path_to(fighter, Coordinate::new(15, 14)).is_some(),
+        "a magic circle is not a wall — it is a wall to five kinds of thing, \
+         and a fighter is none of them"
+    );
+    assert!(
+        e.barrier_bars_step(zombie, Coordinate::new(16, 10), Coordinate::new(15, 10)),
+        "the edge itself is what is refused"
+    );
+    assert!(
+        !e.barrier_bars_step(fighter, Coordinate::new(16, 14), Coordinate::new(15, 14)),
+        "and only for the types RAW names"
+    );
+}
+
+/// The wall is on the way *in*. RAW's verb is "enter", so a creature
+/// already standing in the circle when it goes up may walk about in it
+/// and may walk out — which is also the only reading that does not turn
+/// Magic Circle into a cage nobody chose to build.
+#[test]
+fn a_magic_circle_holds_nobody_who_was_already_inside_it() {
+    use crate::actions::spells::MAGIC_CIRCLE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    let cast = ActionExecutionInfo::new(
+        &*MAGIC_CIRCLE,
+        cleric,
+        None,
+        Some(vec![Coordinate::new(10, 10)]),
+        None,
+    );
+    e.push_action(cast);
+    e.process_stack();
+    e.actors.get_mut(&zombie).unwrap().reset_for_new_round();
+
+    assert!(
+        e.path_to(zombie, Coordinate::new(12, 12)).is_some(),
+        "a zombie caught inside the circle may still move about in it"
+    );
+    assert!(
+        e.path_to(zombie, Coordinate::new(16, 10)).is_some(),
+        "…and may walk out of it"
+    );
+}
+
+/// RAW's second sentence: *"If the creature tries to use teleportation
+/// or interplanar travel to do so, it must first succeed on a Charisma
+/// saving throw."*
+///
+/// Enforced at `TeleportActor`, which is the one side effect every
+/// teleport in the engine resolves through — so this is true of the
+/// teleports nobody has written yet, and of being teleported by
+/// somebody else.
+///
+/// Swept over seeds rather than asserted once, because unlike the
+/// footsteps clause this one is a die: a zombie's Charisma is −3 against
+/// a cleric's save DC and it gets through occasionally, which is the
+/// spell working as printed.
+#[test]
+fn a_magic_circle_makes_a_teleport_into_it_roll_for_the_privilege() {
+    use crate::actions::spells::MAGIC_CIRCLE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::side_effects::TeleportActor;
+
+    let mut turned_back = 0;
+    for seed in 0u64..16 {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(26, 26), 1, 1)
+            .unwrap();
+        e.pop_prompt();
+        e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+        let cast = ActionExecutionInfo::new(
+            &*MAGIC_CIRCLE,
+            cleric,
+            None,
+            Some(vec![Coordinate::new(10, 10)]),
+            None,
+        );
+        e.push_action(cast);
+        e.process_stack();
+
+        TeleportActor {
+            actor_id: zombie,
+            dest: Coordinate::new(11, 11),
+        }
+        .apply(&mut e);
+        if e.actors[&zombie].location() == Coordinate::new(25, 25) {
+            turned_back += 1;
+        }
+
+        TeleportActor {
+            actor_id: fighter,
+            dest: Coordinate::new(9, 9),
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&fighter].location(),
+            Coordinate::new(9, 9),
+            "seed {seed}: the circle names five types and a fighter is none of them, \
+             so no save is owed and none is rolled"
+        );
+    }
+    assert!(
+        turned_back > 0,
+        "a Charisma −3 undead against a cleric's spell save DC should be \
+         turned back on most of sixteen seeds"
+    );
+}
+
+/// SRD 5.2 **Forbiddance** — *"the spell damages types of creatures
+/// that you choose when you cast it"*, and the first clause on the zone
+/// layer that is written against a creature type rather than against
+/// whoever is standing there.
+///
+/// The damage is flat: RAW prints no save, no half on a success and no
+/// attack roll, which makes 5d10 a turn the heaviest unconditional
+/// contact clause on the layer — and worth exactly nothing against the
+/// four commonest types in the bestiary.
+#[test]
+fn forbiddance_burns_the_six_types_it_names_and_nobody_else() {
+    use crate::actions::spells::FORBIDDANCE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(17, 15), 1, 0)
+        .unwrap();
+    let bystander = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(18, 15), 1, 1)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    let cast = ActionExecutionInfo::new(
+        &*FORBIDDANCE,
+        cleric,
+        None,
+        Some(vec![Coordinate::new(15, 15)]),
+        None,
+    );
+    assert!(cast.validate(&e), "the ward goes down on the floor underfoot");
+    e.push_action(cast);
+    e.process_stack();
+
+    let zombie_hp = e.actors[&zombie].hitpoints();
+    let bystander_hp = e.actors[&bystander].hitpoints();
+    assert_eq!(
+        (zombie_hp, bystander_hp),
+        (
+            e.actors[&zombie].hitpoints(),
+            e.actors[&bystander].hitpoints()
+        ),
+        "RAW's trigger is entering or ending a turn there, not standing \
+         where the cleric drew it"
+    );
+
+    for id in [zombie, bystander] {
+        e.touch_zones(id);
+    }
+    assert!(
+        e.actors[&zombie].hitpoints() < zombie_hp,
+        "an undead that ends its turn in a consecration takes 5d10"
+    );
+    assert_eq!(
+        e.actors[&bystander].hitpoints(),
+        bystander_hp,
+        "and a humanoid standing beside it takes nothing at all — the clause \
+         was not written against him"
+    );
+    assert!(
+        !e.actors[&cleric].is_concentrating(),
+        "RAW's day costs no concentration"
+    );
+}
+
+/// Forbiddance's *other* clause, and the one that names nobody:
+/// *"creatures can't teleport into the area."* Flat, with no save
+/// behind it — unlike Magic Circle's Charisma roll — and true of every
+/// creature on the board rather than only of the six the damage is
+/// written against.
+///
+/// And it stops no feet. You *can* walk into a Forbiddance; the 5d10 is
+/// what it costs.
+#[test]
+fn forbiddance_refuses_every_teleport_in_and_no_footsteps_at_all() {
+    use crate::actions::spells::FORBIDDANCE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::side_effects::TeleportActor;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(32, 15), 1, 0)
+        .unwrap();
+    let raider = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(33, 15), 1, 1)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    let cast = ActionExecutionInfo::new(
+        &*FORBIDDANCE,
+        cleric,
+        None,
+        Some(vec![Coordinate::new(15, 15)]),
+        None,
+    );
+    e.push_action(cast);
+    e.process_stack();
+
+    for (id, was) in [(zombie, Coordinate::new(32, 15)), (raider, Coordinate::new(33, 15))] {
+        TeleportActor {
+            actor_id: id,
+            dest: Coordinate::new(16, 16),
+        }
+        .apply(&mut e);
+        assert_eq!(
+            e.actors[&id].location(),
+            was,
+            "the ward against magical travel names no creature type, so it \
+             turns back the living and the dead alike"
+        );
+    }
+
+    // …and the same ward is no obstacle to a pair of legs.
+    e.actors.get_mut(&zombie).unwrap().reset_for_new_round();
+    assert!(
+        !e.barrier_bars_step(zombie, Coordinate::new(29, 15), Coordinate::new(28, 15)),
+        "Forbiddance does not print Magic Circle's footsteps clause, and a \
+         creature that cannot walk into it would never pay the 5d10"
+    );
+    assert!(
+        e.path_to(zombie, Coordinate::new(28, 15)).is_some(),
+        "the pathfinder agrees"
+    );
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

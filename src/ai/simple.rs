@@ -1109,6 +1109,20 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3i''. Forbiddance — the same ward three slot levels up and
+        //      pointed the other way. Above Magic Circle because when
+        //      both would fire the board has a *crowd* of the types
+        //      they are written against on it, and at that point the
+        //      answer is the one that deals 5d10 a turn rather than the
+        //      one that keeps five feet of floor clear. Its own gate —
+        //      two warded-type enemies, and none of the caster's own
+        //      side burnable by it — is what keeps a level-6 slot off
+        //      the fights a level-3 slot settles. See
+        //      `try_forbiddance`.
+        if let Some(aei) = try_forbiddance(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3j'. Magic Circle — the ward on the floor. Directly below the
         //      cohort it shares a condition with and above the rest of
         //      the ladder, because it costs no concentration: a cleric
@@ -6782,6 +6796,95 @@ fn try_magic_circle(
         Some(vec![actor.location()]),
         None,
     );
+    aei.validate(encounter).then_some(aei)
+}
+
+/// Forbiddance — the level-6 consecration, laid on the ground the
+/// caster is standing on.
+///
+/// A rung of its own beside `try_magic_circle` directly above, for one
+/// of that rung's two reasons and not the other: it is a `Burst` that
+/// `try_self_action` could never aim, and it holds no concentration. It
+/// differs from the circle on everything else, and the gate is where
+/// that shows.
+///
+/// **Aimed at the caster's own tile**, for the reason the circle is and
+/// for one more. A thirty-foot radius centred on a cleric is the ground
+/// between the party and whatever is walking at it, so every approach
+/// crosses the ward — and unlike a Fireball there is nothing to aim
+/// *at*, because the spell does not go off, it sits there. The
+/// placement problem a damaging burst has (`best_burst_placement`) is
+/// the wrong tool here twice over: it would refuse every spot that
+/// catches an ally, and a Forbiddance catches no ally it was not
+/// written against.
+///
+/// **Two enemies, not one**, which is the whole difference from the
+/// circle's gate. Both spells are pointed at the same cohort and the
+/// cheaper one is on the same sheet; a level-6 slot is worth spending
+/// when the ward will collect from a crowd for the rest of the fight,
+/// and a single wight is a creature to hit rather than a reason to
+/// consecrate the room.
+///
+/// **And nobody on the caster's own side may be burnable by it.** This
+/// is the one place the AI puts back the friend-or-foe blindness the
+/// zone layer refuses to have: Forbiddance is written against six
+/// creature types and does not care whose team they are on, so a cleric
+/// fighting beside a summoned celestial would be spending a level-6
+/// slot on 5d10 a turn to its own ally. The engine's summon lane makes
+/// that a real board state rather than a hypothetical one.
+///
+/// The `zone_sustained_by` gate stops a cleric laying a second
+/// consecration over the first. Nothing else would: the spell installs
+/// no condition on its caster, costs no concentration, and would
+/// otherwise be re-cast every turn until the slots ran out.
+fn try_forbiddance(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    use crate::engine::types::CreatureType;
+    /// How far out a warded-type enemy still argues for the ward. The
+    /// spell's own radius: a creature further off than the edge of the
+    /// consecration has not yet decided to walk into it.
+    const WATCH_GAP: isize = 12;
+    /// RAW's clause pays out per creature per turn, so the slot is
+    /// worth spending on a crowd and not on one wight.
+    const WORTH_A_SIXTH: usize = 2;
+    let actor = encounter.actors.get(&actor_id)?;
+    if encounter.zone_sustained_by(actor_id, "forbiddance").is_some() {
+        return None;
+    }
+    let my_team = actor.team();
+    let my_loc = actor.location();
+    let my_size = get_tiles_from_size(actor.size());
+    let gap_to = |a: &crate::actors::actor_template::ActorInstance| {
+        footprint_chebyshev(
+            my_loc,
+            my_size,
+            a.location(),
+            get_tiles_from_size(a.size()),
+        )
+    };
+    let mut burnable_enemies = 0usize;
+    for (id, a) in encounter.actors.iter() {
+        if *id == actor_id || !a.is_combat_active() {
+            continue;
+        }
+        if !CreatureType::affected_by_protection(a.creature_type()) {
+            continue;
+        }
+        if a.team() == my_team {
+            // An ally the ward would burn. One is enough to call it off.
+            return None;
+        }
+        if gap_to(a) <= WATCH_GAP {
+            burnable_enemies += 1;
+        }
+    }
+    if burnable_enemies < WORTH_A_SIXTH {
+        return None;
+    }
+    let action = actor.find_action("forbiddance")?;
+    let aei = ActionExecutionInfo::new(action, actor_id, None, Some(vec![my_loc]), None);
     aei.validate(encounter).then_some(aei)
 }
 
@@ -13082,6 +13185,89 @@ mod tests {
         assert!(
             try_magic_circle(&e, cleric).is_none(),
             "already warded is already done"
+        );
+    }
+
+    /// Forbiddance is the same question as Magic Circle asked of a
+    /// level-6 slot, so its rung asks the same thing about the room and
+    /// two things more: is the crowd big enough to be worth the slot,
+    /// and is any of it standing on the caster's own side?
+    ///
+    /// The last gate is the one place in the engine where the AI puts
+    /// back the friend-or-foe blindness the zone layer refuses to have.
+    /// A consecration is written against six creature types and does
+    /// not care whose team they are on; a cleric fighting beside a
+    /// summoned celestial would be paying a level-6 slot to burn it.
+    #[test]
+    fn a_cleric_consecrates_the_floor_for_a_crowd_of_undead_and_not_for_one() {
+        use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+        use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+        use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+
+        let arena = |enemies: usize, ally_undead: bool| {
+            let mut e = empty_arena();
+            let cleric = e
+                .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+                .unwrap();
+            for i in 0..enemies {
+                e.instantiate_creature(
+                    &WIGHT_TEMPLATE,
+                    Coordinate::new(12, 4 + i as isize),
+                    1,
+                    i,
+                )
+                .unwrap();
+            }
+            if ally_undead {
+                e.instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(5, 7), 0, 9)
+                    .unwrap();
+            }
+            (e, cleric)
+        };
+
+        let (e, cleric) = arena(2, false);
+        assert!(
+            try_forbiddance(&e, cleric).is_some(),
+            "two wights closing is what a level-6 consecration is for"
+        );
+
+        let (e, cleric) = arena(1, false);
+        assert!(
+            try_forbiddance(&e, cleric).is_none(),
+            "and one of them is a creature to hit, not a reason to consecrate \
+             the room"
+        );
+
+        let (e, cleric) = arena(2, true);
+        assert!(
+            try_forbiddance(&e, cleric).is_none(),
+            "the ward burns whatever it was written against, ally or not"
+        );
+
+        // Ogres are not on RAW's list of six at all, so the whole spell
+        // would be inert — the same gate Magic Circle's rung carries.
+        let mut e = empty_arena();
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        for i in 0..3 {
+            e.instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(12, 4 + i), 1, i as usize)
+                .unwrap();
+        }
+        assert!(
+            try_forbiddance(&e, cleric).is_none(),
+            "a warband of ogres walks through a consecration untouched"
+        );
+
+        // And a cleric already standing in one does not lay a second.
+        let (mut e, cleric) = arena(2, false);
+        let aei = try_forbiddance(&e, cleric).expect("the first one goes down");
+        e.push_action(aei);
+        e.process_stack();
+        assert!(
+            try_forbiddance(&e, cleric).is_none(),
+            "the spell installs no condition and costs no concentration, so \
+             the zone itself is the only thing that can say it is already done"
         );
     }
 

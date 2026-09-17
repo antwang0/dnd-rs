@@ -312,7 +312,7 @@ use crate::engine::conjured_terrain::ConjuredTerrain;
 use crate::engine::hovering_blade::{BladeProfile, HoveringBlade};
 use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
 use crate::engine::weather::Weather;
-use crate::engine::zones::Zone;
+use crate::engine::zones::{BarredTeleport, Zone};
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
 use crate::engine::jumping;
@@ -10147,6 +10147,96 @@ impl EncounterInstance {
         ) <= zone.radius
     }
 
+    /// `actor_in_zone`, asked of a tile the creature is not standing on
+    /// yet — "would this body, anchored here, be inside that area?"
+    ///
+    /// The same measure as `actor_in_zone` and deliberately so: a
+    /// predicate that answered "is inside" one way and "would be
+    /// inside" another is a wall a creature can be pushed through by
+    /// arithmetic. Burrowing is the one thing it cannot carry over —
+    /// `actor_in_zone` reports a tunnelling creature as outside every
+    /// area, and that is a fact about where it *is* rather than about
+    /// the tile, so it is asked once here too.
+    fn footprint_in_zone_at(&self, actor_id: usize, anchor: Coordinate, zone: &Zone) -> bool {
+        let Some(a) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        if a.is_burrowed() {
+            return false;
+        }
+        footprint_chebyshev(anchor, get_tiles_from_size(a.size()), zone.origin, 1) <= zone.radius
+    }
+
+    /// The first warded area `actor_id` would be *entering* by crossing
+    /// from `from` to `to`, if any.
+    ///
+    /// Written as an *edge* rather than as a tile because RAW's verb is
+    /// "enter": a fiend already standing inside a magic circle when it
+    /// goes up may walk about in it and may walk out. Asked per zone
+    /// rather than of the union of them, because "inside a circle" and
+    /// "inside a different circle" are not the same place — a devil
+    /// stepping from one ward straight into another has entered the
+    /// second.
+    ///
+    /// `want_walk` picks which of `ZoneBarrier`'s two clauses the caller
+    /// means. A Forbiddance stops no feet and a Magic Circle stops
+    /// both, so the question cannot be asked once for both lanes.
+    ///
+    /// Cheap on the overwhelmingly common board with no ward on it: the
+    /// `zones` walk short-circuits on the `barrier` field before it
+    /// touches the actor table or any geometry.
+    fn barring_zone(
+        &self,
+        actor_id: usize,
+        from: Coordinate,
+        to: Coordinate,
+        want_walk: bool,
+    ) -> Option<&Zone> {
+        if self.zones.iter().all(|z| z.effect.barrier.is_none()) {
+            return None;
+        }
+        let ty = self.actors.get(&actor_id)?.creature_type();
+        self.zones.iter().find(|zone| {
+            let Some(barrier) = zone.effect.barrier else {
+                return false;
+            };
+            let applies = if want_walk {
+                barrier.bars_walk_by(ty)
+            } else {
+                barrier.bars(ty)
+            };
+            applies
+                && self.footprint_in_zone_at(actor_id, to, zone)
+                && !self.footprint_in_zone_at(actor_id, from, zone)
+        })
+    }
+
+    /// **May this creature walk from `from` into `to`?** — the
+    /// pathfinder's half of [`crate::engine::zones::ZoneBarrier`], and
+    /// the one asked on every edge of every search.
+    pub fn barrier_bars_step(&self, actor_id: usize, from: Coordinate, to: Coordinate) -> bool {
+        self.barring_zone(actor_id, from, to, true).is_some()
+    }
+
+    /// **May this creature step sideways out of the world and land in
+    /// `to`?** — the teleport half of the same ward.
+    ///
+    /// `None` when the step is the creature's to take; otherwise the
+    /// ward that stopped it — see [`crate::engine::zones::BarredTeleport`].
+    pub(crate) fn barrier_bars_teleport(
+        &self,
+        actor_id: usize,
+        from: Coordinate,
+        to: Coordinate,
+    ) -> Option<BarredTeleport> {
+        let zone = self.barring_zone(actor_id, from, to, false)?;
+        Some(BarredTeleport {
+            ward: zone.name,
+            save: zone.effect.barrier.and_then(|b| b.teleport_save),
+            owner_id: zone.owner_id,
+        })
+    }
+
     /// Ids of every zone whose area `actor_id` is standing in.
     pub fn zones_covering_actor(&self, actor_id: usize) -> Vec<usize> {
         self.zones
@@ -10606,6 +10696,17 @@ impl EncounterInstance {
         };
         let (name, owner_id) = (zone.name, zone.owner_id);
         let actor_name = self.actor_name(actor_id);
+        // SRD 5.2 Forbiddance's *"the spell damages types of creatures
+        // that you choose when you cast it"*. Asked ahead of the size
+        // gate and the save, and silently: a creature the clause was
+        // never written against has not survived anything, so a
+        // play-by-play line would be reporting a roll nobody made. See
+        // `ZoneContact::only_types`.
+        if let Some(ty) = self.actors.get(&actor_id).map(|a| a.creature_type())
+            && !contact.catches_type(ty)
+        {
+            return;
+        }
         // RAW's *"the target succeeds automatically if it's Huge or
         // larger"*. A made save, not an exemption from the clause —
         // which for a contact that halves on a success would still be a
@@ -14338,6 +14439,17 @@ impl EncounterInstance {
                 if avoid_hazards && self.tile_is_bad_ground(next, aversions) {
                     continue;
                 }
+                // SRD 5.2's magic-circle wall — *"can't willingly enter
+                // … by nonmagical means"*. Refused here and in
+                // `dijkstra_path` rather than only at the Move action's
+                // validator, so a barred creature routes around the
+                // circle instead of walking up to it and stopping; see
+                // `barrier_bars_step`. Unconditional on
+                // `avoid_hazards`, unlike the line above it: bad ground
+                // is a preference and a wall is a rule.
+                if self.barrier_bars_step(actor_id, coord, next) {
+                    continue;
+                }
                 parent.insert(next, coord);
                 queue.push_back(next);
             }
@@ -14465,6 +14577,18 @@ impl EncounterInstance {
         // `tile_admits`. See `crate::engine::incorporeal`.
         let phasing = body.phases_through_objects();
         let body_size = body.size();
+        // Is there a wall on this board raised against this creature at
+        // all? Resolved once per path for the reason every waiver above
+        // is: a `ZoneBarrier` is a rarity, the inner loop runs eight
+        // times per expanded tile, and a board with no ward on it
+        // should not pay a zone walk for each of them. See
+        // `barrier_bars_step`, which re-asks the cheap half itself so
+        // the two callers that do not hoist it are still cheap.
+        let barred_by_wall = self.zones.iter().any(|z| {
+            z.effect
+                .barrier
+                .is_some_and(|b| b.bars_walk_by(body.creature_type()))
+        });
         // SRD 5.2 **Long Jump**, resolved once per path for the reason
         // every other waiver above is: neither number can change while a
         // single search is running, and the jump lane below is inside
@@ -14639,6 +14763,19 @@ impl EncounterInstance {
                     if water_bound && !self.footprint_is_water(next, body_size) {
                         continue;
                     }
+                    // SRD 5.2's magic-circle wall. Priced as
+                    // impassability rather than as a surcharge, because
+                    // RAW's clause is a refusal and not a cost — and
+                    // asked per *edge*, which is why it sits inside the
+                    // neighbour loop rather than beside `can_move_to`'s
+                    // per-tile question: a creature that starts inside
+                    // the ward is free to move about in it and to leave.
+                    // See `barrier_bars_step`.
+                    if barred_by_wall
+                        && self.barrier_bars_step(body_id, Coordinate::new(cx, cy), next)
+                    {
+                        continue;
+                    }
                     let waived = if tile.is_some_and(|t| t.is_water()) {
                         swims
                     } else {
@@ -14798,6 +14935,17 @@ impl EncounterInstance {
                         // exactly the case of a rift two tiles wide.
                         let land = Coordinate::new(cx + dx * d as isize, cy + dy * d as isize);
                         if !self.can_move_to(body_id, land) {
+                            continue;
+                        }
+                        // A leap over the rift is still a willing entry
+                        // — RAW's magic-circle wall names the will, not
+                        // the gait — so the hop is refused for the same
+                        // reason the step beside it is. Measured from
+                        // the take-off tile, which is where the walk
+                        // lane measures its own edge from.
+                        if barred_by_wall
+                            && self.barrier_bars_step(body_id, Coordinate::new(cx, cy), land)
+                        {
                             continue;
                         }
                         let Ok(land_idx) = self.idx(land) else {
