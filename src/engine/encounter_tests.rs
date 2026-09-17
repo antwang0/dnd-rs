@@ -102727,6 +102727,237 @@ fn coating_the_dagger_of_venom_arms_it_darkly_and_spends_it_on_a_hit() {
     );
 }
 
+/// A dose of injury poison is a Bonus Action, a coated edge, and a
+/// vial that is gone — and the coating comes off on the swing that
+/// delivers it.
+///
+/// The Dagger of Venom's whole lifecycle, run on a vial instead of on
+/// an item: the same `consume_on_trigger` row, the same
+/// nothing-on-the-hit reading (RAW puts the poison behind the save),
+/// and one difference that is the point of the feature — the dagger
+/// can be re-coated forever and the vial cannot be re-opened at all.
+#[test]
+fn a_dose_of_poison_is_spent_twice_over() {
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::engine::poisons::WYVERN_POISON;
+    use crate::items::item_template::VIAL_OF_WYVERN_POISON;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&rogue)
+        .unwrap()
+        .pickup_item(&VIAL_OF_WYVERN_POISON);
+    let apply = *e.actors[&rogue]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "apply wyvern poison")
+        .expect("carrying the vial offers the dose");
+    assert!(apply.validate_input(&e, rogue, None, None, None));
+    for ef in apply.execute(&mut e, rogue, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&rogue].has_condition(WYVERN_POISON.marker),
+        "the edge is coated"
+    );
+    assert!(
+        !e.actors[&rogue].has_item_named(VIAL_OF_WYVERN_POISON.name),
+        "and the vial is empty — a dose, unlike a dagger, is used up"
+    );
+
+    let mut effects = Vec::new();
+    let on_the_hit = push_on_hit_riders(
+        &mut e,
+        &mut effects,
+        rogue,
+        ogre,
+        RiderSwing {
+            is_melee: true,
+            is_spell: false,
+            is_crit: false,
+            natural_twenty: false,
+            damage_so_far: 0,
+            damage_type: DamageType::Piercing,
+        },
+    );
+    assert_eq!(
+        on_the_hit, 0,
+        "RAW puts the poison behind the save, so the hit itself adds nothing"
+    );
+    assert!(
+        !e.actors[&rogue].has_condition(WYVERN_POISON.marker),
+        "'remains potent until delivered through a wound' — this was the wound"
+    );
+}
+
+/// Two refusals that between them are what separates a vial from a
+/// potion: you cannot smear poison on a club, and you cannot smear a
+/// second dose over the first.
+///
+/// Both are validator refusals rather than wasted doses, which is the
+/// direction that matters. The AI picks its items by asking `validate`,
+/// so a vial that always said yes would be a 2,000 GP dose opened on
+/// the first turn by the cleric holding a mace.
+#[test]
+fn a_vial_refuses_a_club_and_refuses_a_second_coat() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::items::item_template::{VIAL_OF_SERPENT_VENOM, VIAL_OF_WYVERN_POISON};
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&rogue].has_a_bladed_attack(),
+        "a rogue has something to put it on"
+    );
+
+    // Both vials, so the second refusal is about the coating rather
+    // than about the bottle.
+    for item in [&VIAL_OF_SERPENT_VENOM, &VIAL_OF_WYVERN_POISON] {
+        e.actors.get_mut(&rogue).unwrap().pickup_item(item);
+    }
+    let serpent = *e.actors[&rogue]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "apply serpent venom")
+        .expect("carrying the vial offers the dose");
+    let wyvern = *e.actors[&rogue]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "apply wyvern poison")
+        .expect("carrying the vial offers the dose");
+    for ef in serpent.execute(&mut e, rogue, None, None, None) {
+        ef.apply(&mut e);
+    }
+    // A fresh turn, so the refusal below is about the edge and not
+    // about a bonus action that has already been spent.
+    e.actors.get_mut(&rogue).unwrap().reset_for_new_round();
+    assert!(
+        !wyvern.validate_input(&e, rogue, None, None, None),
+        "an edge already carrying a dose has nowhere to put a second one"
+    );
+
+    // And the cleric, whose mace is not a thing poison does anything on.
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&cleric)
+        .unwrap()
+        .pickup_item(&VIAL_OF_WYVERN_POISON);
+    let for_the_cleric = *e.actors[&cleric]
+        .available_actions()
+        .iter()
+        .find(|a| a.name() == "apply wyvern poison")
+        .expect("carrying the vial offers the dose to anybody");
+    assert!(
+        !e.actors[&cleric].has_a_bladed_attack(),
+        "the fixture's cleric swings a mace — the Thorn Whip and the Blade \
+         Barrier on its list are spells, and a spell is not a thing you can \
+         put a dose on"
+    );
+    assert!(
+        !for_the_cleric.validate_input(&e, cleric, None, None, None),
+        "RAW's delivery clause is Piercing or Slashing, and a mace is neither"
+    );
+}
+
+/// A made save against a poison that prints *"or half as much damage on
+/// a successful one"* still costs the victim half, and one that does
+/// not print it costs nothing.
+///
+/// The clause `SmiteFollowUp` could not phrase until
+/// `FollowUpEffect::Damage` learned a `SaveDamagePolicy`. It is checked
+/// through the two rows that sit on opposite sides of it — Wyvern
+/// Poison halves, Spider's Sting has nothing to halve — because the
+/// failure mode is a row picking the wrong one, not the halving
+/// arithmetic, which `engine::saves` already pins.
+///
+/// Swept across seeds rather than asserted once: what lands is behind a
+/// d20, and the assertion is about which branch of it leaves damage
+/// standing.
+#[test]
+fn half_as_much_on_a_successful_save_is_a_thing_a_rider_can_say() {
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::engine::dice::FastRandRoller;
+    use crate::engine::poisons::{SPIDERS_STING, WYVERN_POISON};
+
+    // A commoner's +0 Constitution against DC 14 fails most of the
+    // time and makes it sometimes, which is the spread this needs.
+    let mut wyvern_hurt_a_saver = false;
+    let mut sting_ever_hurt_anybody = false;
+    for seed in 0..40 {
+        for poison in [WYVERN_POISON, SPIDERS_STING] {
+            let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
+            e.roller = FastRandRoller::with_seed(seed);
+            let rogue = e
+                .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+                .unwrap();
+            e.actors.get_mut(&rogue).unwrap().add_condition(
+                poison.marker,
+                crate::conditions::ConditionTimer::Permanent,
+            );
+            let before = e.messages().len();
+            let mut effects = Vec::new();
+            push_on_hit_riders(
+                &mut e,
+                &mut effects,
+                rogue,
+                victim,
+                RiderSwing {
+                    is_melee: true,
+                    is_spell: false,
+                    is_crit: false,
+                    natural_twenty: false,
+                    damage_so_far: 0,
+                    damage_type: DamageType::Piercing,
+                },
+            );
+            let log = e.messages()[before..].join("\n");
+            let saved = log.contains("target saves");
+            let dealt = log.contains(&format!("  {}: +", poison.name));
+            if poison == WYVERN_POISON && saved && dealt {
+                wyvern_hurt_a_saver = true;
+            }
+            if poison == SPIDERS_STING && saved {
+                assert!(
+                    !dealt,
+                    "seed {seed}: spider's sting rolls no damage, so a made save \
+                     has nothing to leave standing"
+                );
+            }
+            if poison == SPIDERS_STING && !saved {
+                sting_ever_hurt_anybody = true;
+            }
+        }
+    }
+    assert!(
+        wyvern_hurt_a_saver,
+        "a commoner who makes its save against wyvern poison should still \
+         have taken half somewhere in forty seeds"
+    );
+    assert!(
+        sting_ever_hurt_anybody,
+        "and the sting should have landed at least once, or the sweep is \
+         asserting about a rider that never fired"
+    );
+}
+
 /// A cure refuses to be drunk by somebody with nothing to cure.
 ///
 /// The whole reason `SelfCureItem` has a validator of its own. The AI
@@ -113763,6 +113994,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/magic.rs", include_str!("magic.rs")),
         ("engine/mastery.rs", include_str!("mastery.rs")),
         ("engine/mounts.rs", include_str!("mounts.rs")),
+        ("engine/poisons.rs", include_str!("poisons.rs")),
         ("engine/prompt.rs", include_str!("prompt.rs")),
         ("engine/repeat_saves.rs", include_str!("repeat_saves.rs")),
         ("engine/rout.rs", include_str!("rout.rs")),

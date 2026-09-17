@@ -142,6 +142,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 2e'. Open a vial. The same Bonus Action as the rung above it
+        //      with a consumable behind it instead of a command word,
+        //      and therefore one rung below: a Flame Tongue can be lit
+        //      every fight forever and a dose of Wyvern Poison exists
+        //      once. See `try_apply_poison`.
+        if let Some(aei) = try_apply_poison(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 2f. Name a quarry. The rung directly above arms a weapon that
         //     pays out against a kind of creature; this one arms a
         //     weapon that pays out against one creature, and the
@@ -2169,6 +2178,56 @@ fn try_kindle_weapon(
     }
     unlit
         .into_iter()
+        .find_map(|name| try_self_action(encounter, actor_id, name))
+}
+
+/// The injury poisons the AI will spend, cheapest dose first.
+///
+/// Order is the whole of the policy and it is the only decision this
+/// rung makes. `try_apply_poison` takes the first row whose action
+/// validates, so a carrier holding three vials opens the 200 GP one and
+/// keeps the 2,000 GP one for something that is still standing later.
+/// The alternative — pick the deadliest — reads better for one turn and
+/// is wrong across a dungeon: a dose is spent by the swing that lands
+/// it, and a Purple Worm Poison spent on the first goblin through the
+/// door is gone.
+///
+/// Read off `engine::poisons::ALL_POISONS` at the point of use rather
+/// than duplicated here, so a fifth poison is a row in that module and
+/// nothing at all in this one; the names are the actions'.
+const POISON_DOSES_CHEAPEST_FIRST: &[&str] = &[
+    "apply serpent venom",
+    "apply spider's sting",
+    "apply wyvern poison",
+    "apply purple worm poison",
+];
+
+/// Coat the blade, when there is something close enough to put it in.
+///
+/// The sibling of `try_kindle_weapon` directly above, and it differs in
+/// exactly one clause, which is the clause that matters: a lit blade is
+/// free and a dose is not. The Flame Tongue's rung fires the moment
+/// anything is within sixteen tiles, because lighting it early costs
+/// nothing but the giveaway. A vial opened sixteen tiles early is a
+/// vial opened for a creature that may never be reached, so this one
+/// waits for `MELEE_BAND_REACH` — the band an attack can actually come
+/// out of on the turn after this one.
+///
+/// Everything else is the action's own business. `ApplyPoison`'s
+/// validator already refuses without a vial, without a point or an edge
+/// to put it on, and while any coating is still standing, so this rung
+/// carries no ledger and re-arms itself for free: the dose comes off on
+/// the swing that delivers it, and the next turn finds the wielder
+/// uncoated and reaching for the next bottle.
+fn try_apply_poison(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !any_enemy_within(encounter, actor_id, MELEE_BAND_REACH) {
+        return None;
+    }
+    POISON_DOSES_CHEAPEST_FIRST
+        .iter()
         .find_map(|name| try_self_action(encounter, actor_id, name))
 }
 
@@ -21548,6 +21607,7 @@ mod tests {
             .chain(WALL_SPELLS.iter().copied())
             .chain(MELEE_ADJACENT_PRIMES.iter().copied())
             .chain(KINDLED_WEAPONS.iter().map(|(name, _)| *name))
+            .chain(POISON_DOSES_CHEAPEST_FIRST.iter().copied())
             .chain(SLOT_RESTORING_ITEMS.iter().copied())
             .chain(ITEM_PRIMES.iter().copied())
             .chain(HIDDEN_ENEMY_FINDERS.iter().copied())

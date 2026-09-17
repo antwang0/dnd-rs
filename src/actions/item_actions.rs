@@ -7897,6 +7897,165 @@ pub static DRAW_SUN_BLADE: KindleWeapon = KindleWeapon {
 /// does not for a blade that stays lit: the validator refuses only
 /// while the coating is still on, so a wielder who has spent it can
 /// immediately re-coat.
+/// **Apply an injury poison** — SRD 5.2's *"Injury poison can be
+/// applied as a Bonus Action to a weapon, a piece of ammunition, or
+/// similar object."*
+///
+/// The Dagger of Venom's Bonus Action, unwelded from the dagger. The
+/// two are deliberately the same three sentences — coat it, swing it
+/// once, and the coating is gone — and they are separate chassis
+/// because of what each one is gated on. `KindleWeapon` asks whether
+/// you are holding one named magic weapon and never takes it away;
+/// this asks whether you are holding a *dose*, and spends it.
+///
+/// Three refusals, and each one is a vial the player does not waste:
+///
+///   - **No vial.** The ordinary inventory gate every consumable has.
+///   - **Nothing to put it on.** See
+///     `ActorInstance::has_a_bladed_attack` — RAW's delivery clause is
+///     about Piercing or Slashing damage, so a creature whose every
+///     attack is a club or a cantrip has nowhere to apply the dose.
+///   - **A blade that is already coated**, with this poison or with
+///     any other. RAW is silent on layering two doses and the silence
+///     reads only one way: a coating "remains potent until delivered
+///     through a wound", so the second dose has nowhere to go until
+///     the first one has gone somewhere.
+///
+/// The marker is `Permanent`, like the two blades above and for the
+/// same reason: RAW's clause has no clock on it. What ends it is the
+/// wound — `consume_on_trigger` on the rider row — or washing it off,
+/// which a six-second round has no verb for.
+pub struct ApplyPoison {
+    /// The poison this dose is of. Everything else on the action —
+    /// its name, its aliases, the vial it spends, the marker it
+    /// installs — is read off the row, so a new poison is a row in
+    /// `engine::poisons` and one static here.
+    pub poison: &'static crate::engine::poisons::Poison,
+    /// Player-facing action name, e.g. "apply wyvern poison".
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+}
+
+impl Action for ApplyPoison {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        // Nobody is on the receiving end of opening a bottle. What the
+        // poison does to somebody happens on the swing that carries it.
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(self.poison.marker)
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // RAW's own price, for everybody, rather than through
+        // `item_use_cost`: the book puts "as a Bonus Action" in the
+        // rule itself rather than leaving it to the general
+        // reach-into-your-pack clause the potions are charged under.
+        bonus_action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.poison.vial_name) {
+            return false;
+        }
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        actor.has_a_bladed_attack()
+            && !crate::engine::poisons::ALL_POISONS
+                .iter()
+                .any(|p| actor.has_condition(p.marker))
+            // The Dagger of Venom's coating counts too. It is the same
+            // clause on the same edge, and a blade carrying both would
+            // resolve two saves off one swing.
+            && !actor.has_condition(Condition::Envenomed)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !consume_caster_item(encounter, caster_id, self.poison.vial_name) {
+            return Vec::new();
+        }
+        let name = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "{} works a dose of {} along the edge.",
+            name, self.poison.name
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: caster_id,
+            condition: self.poison.marker,
+            timer: ConditionTimer::Permanent,
+        })]
+    }
+}
+
+/// The bottom rung: 3d6 behind a DC 11 that most things beat.
+pub static APPLY_SERPENT_VENOM: ApplyPoison = ApplyPoison {
+    poison: &crate::engine::poisons::SERPENT_VENOM,
+    action_name: "apply serpent venom",
+    action_aliases: &["serpent venom", "serpent"],
+};
+
+/// The one that sells an hour rather than a number.
+pub static APPLY_SPIDERS_STING: ApplyPoison = ApplyPoison {
+    poison: &crate::engine::poisons::SPIDERS_STING,
+    action_name: "apply spider's sting",
+    action_aliases: &["spider's sting", "spiders sting", "sting"],
+};
+
+/// The middle of the ladder, and the commonest thing an assassin
+/// actually carries.
+pub static APPLY_WYVERN_POISON: ApplyPoison = ApplyPoison {
+    poison: &crate::engine::poisons::WYVERN_POISON,
+    action_name: "apply wyvern poison",
+    action_aliases: &["wyvern poison", "wyvern"],
+};
+
+/// Two thousand gold and a DC almost nothing makes.
+pub static APPLY_PURPLE_WORM_POISON: ApplyPoison = ApplyPoison {
+    poison: &crate::engine::poisons::PURPLE_WORM_POISON,
+    action_name: "apply purple worm poison",
+    action_aliases: &["purple worm poison", "purple worm", "worm poison"],
+};
+
 pub static COAT_DAGGER_OF_VENOM: KindleWeapon = KindleWeapon {
     action_name: "coat dagger of venom",
     action_aliases: &["coat dagger", "venom", "poison blade", "envenom"],

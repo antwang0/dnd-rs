@@ -3597,6 +3597,41 @@ pub enum Condition {
     /// the poison rides the follow-up's own dice rather than the
     /// rider's. See the row on `ON_HIT_RIDERS`.
     Envenomed,
+    /// A blade carrying a dose of SRD 5.2 **Serpent Venom**, and the
+    /// first of four markers that are `Envenomed` unwelded from its
+    /// dagger.
+    ///
+    /// > *"Injury poison can be applied as a Bonus Action to a weapon,
+    /// > a piece of ammunition, or similar object. The poison remains
+    /// > potent until delivered through a wound or washed off."*
+    ///
+    /// One marker per poison rather than one shared "coated" flag with
+    /// a payload, because `ON_HIT_RIDERS` is keyed by condition: a
+    /// shared marker would find whichever row it walked into first, and
+    /// a 200 GP vial would deal a 2,000 GP vial's dice. That is the
+    /// same argument the armoury's own markers are built on —
+    /// `FlameTongued`, `FrostBranded` and `SunBladed` are three flags
+    /// for three swords rather than one flag and an item lookup.
+    ///
+    /// All four are installed by a Bonus Action that spends the vial
+    /// (`item_actions::ApplyPoison`), sit `Permanent` because RAW's
+    /// clause has no clock, and come off on the swing that delivers
+    /// them because their rider rows are `consume_on_trigger`. The
+    /// numbers behind each one live on its row in
+    /// [`crate::engine::poisons`], which is the only place they are
+    /// written.
+    CoatedSerpentVenom,
+    /// A blade carrying a dose of SRD 5.2 **Spider's Sting** — the one
+    /// of the four whose failed save rolls no damage at all and hands
+    /// out an hour of `Poisoned` instead. See `CoatedSerpentVenom`.
+    CoatedSpidersSting,
+    /// A blade carrying a dose of SRD 5.2 **Wyvern Poison**. See
+    /// `CoatedSerpentVenom`.
+    CoatedWyvernPoison,
+    /// A blade carrying a dose of SRD 5.2 **Purple Worm Poison**, the
+    /// dearest dose in the book and the only DC on the table that an
+    /// adventuring party mostly fails. See `CoatedSerpentVenom`.
+    CoatedPurpleWormPoison,
     /// Holding a SRD 5.2 **Vorpal Sword** — *"When you roll a 20 on the
     /// d20 for an attack roll with this weapon, you cut off one of the
     /// target's heads. The creature dies if it can't survive without
@@ -4264,6 +4299,12 @@ impl Condition {
             Condition::DwarvenThrowing => "wielding a dwarven thrower",
             Condition::HolyAvenging => "wielding a holy avenger",
             Condition::Envenomed => "wielding a coated dagger of venom",
+            Condition::CoatedSerpentVenom => "wielding a blade coated in serpent venom",
+            Condition::CoatedSpidersSting => "wielding a blade coated in spider's sting",
+            Condition::CoatedWyvernPoison => "wielding a blade coated in wyvern poison",
+            Condition::CoatedPurpleWormPoison => {
+                "wielding a blade coated in purple worm poison"
+            }
             Condition::Vorpal => "wielding a vorpal sword",
             Condition::MaceSmiting => "wielding a mace of smiting",
             Condition::Thundering => "wielding a thunderous greatclub",

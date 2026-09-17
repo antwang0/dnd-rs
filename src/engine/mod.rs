@@ -24,6 +24,7 @@ pub mod lighting;
 pub mod magic;
 pub mod mastery;
 pub mod mounts;
+pub mod poisons;
 pub mod prompt;
 pub mod repeat_saves;
 pub mod rout;

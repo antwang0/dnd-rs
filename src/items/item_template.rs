@@ -6517,6 +6517,54 @@ pub static DAGGER_OF_VENOM: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Vial of Serpent Venom** (200 GP) — one dose of SRD 5.2's cheapest
+/// injury poison.
+///
+/// The first of four, and between them they are the Dagger of Venom's
+/// clause sold by the bottle. A vial is not a magic item and carries
+/// none of one's furniture: no attunement, no bonus, no passive
+/// condition, nothing that happens by holding it. What it has is an
+/// `on_use` — a Bonus Action that spends the dose and coats whatever
+/// the holder swings — and the numbers behind that live on the row in
+/// [`crate::engine::poisons`].
+///
+/// Deliberately a `'` rather than the `!` the potions carry: a dose of
+/// poison is the one consumable on the loot table that is not something
+/// you drink, and a player who confuses the two has a very bad turn.
+pub static VIAL_OF_SERPENT_VENOM: Item = Item {
+    name: "Vial of Serpent Venom",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::APPLY_SERPENT_VENOM],
+    ..Item::DEFAULTS
+};
+
+/// **Vial of Spider's Sting** (200 GP) — the dose that buys an hour of
+/// `Poisoned` instead of a number. See [`VIAL_OF_SERPENT_VENOM`].
+pub static VIAL_OF_SPIDERS_STING: Item = Item {
+    name: "Vial of Spider's Sting",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::APPLY_SPIDERS_STING],
+    ..Item::DEFAULTS
+};
+
+/// **Vial of Wyvern Poison** (1,200 GP) — 7d6 behind a DC 14. See
+/// [`VIAL_OF_SERPENT_VENOM`].
+pub static VIAL_OF_WYVERN_POISON: Item = Item {
+    name: "Vial of Wyvern Poison",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::APPLY_WYVERN_POISON],
+    ..Item::DEFAULTS
+};
+
+/// **Vial of Purple Worm Poison** (2,000 GP) — 10d6 behind a DC 21.
+/// See [`VIAL_OF_SERPENT_VENOM`].
+pub static VIAL_OF_PURPLE_WORM_POISON: Item = Item {
+    name: "Vial of Purple Worm Poison",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::APPLY_PURPLE_WORM_POISON],
+    ..Item::DEFAULTS
+};
+
 /// **Adamantine Armor** (Armor, any medium or heavy except hide;
 /// Uncommon) — "While you're wearing it, any Critical Hit against you
 /// becomes a normal hit."
@@ -8700,6 +8748,21 @@ pub static LOOT_POOL: &[&Item] = &[
     // Healing variant. Touch-range, so it benefits front-line allies
     // (the rogue / fighter / paladin) without needing a caster.
     &SCROLL_OF_CURE_WOUNDS,
+    // SRD's injury poisons, one entry each and therefore at the pool's
+    // rare weight. The two cheap doses are here for the same reason the
+    // scrolls are — a consumable the party actually spends — and the
+    // two dear ones are here at the same odds because the pool has no
+    // rarity axis to put them on. Priced at the table in gold rather
+    // than in drop rate: see `engine::poisons`, where the ladder is.
+    //
+    // Unusable by most of the roster and deliberately so. A dose needs
+    // a point or an edge to go on (`ActorInstance::has_a_bladed_attack`),
+    // so a vial found by a cleric with a mace is a vial the party hands
+    // to the rogue.
+    &VIAL_OF_SERPENT_VENOM,
+    &VIAL_OF_SPIDERS_STING,
+    &VIAL_OF_WYVERN_POISON,
+    &VIAL_OF_PURPLE_WORM_POISON,
     &PERIAPT_OF_WOUND_CLOSURE,
     &GAUNTLETS_OF_OGRE_POWER,
     // Premium passive trinkets — same low odds as Cloak of Protection

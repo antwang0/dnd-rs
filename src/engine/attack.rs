@@ -3,6 +3,7 @@ use crate::actors::actor_template::ActorInstance;
 use crate::conditions::{Condition, ConditionTimer};
 use crate::engine::dice::{Dice, RollMode};
 use crate::engine::encounter::EncounterInstance;
+use crate::engine::saves::SaveDamagePolicy;
 use crate::engine::side_effects::{
     ApplicableSideEffect, ApplyCondition, ChargeFollowUpAttack, DealDamage, PushActor, Resource,
 };
@@ -6676,8 +6677,7 @@ pub enum FollowUpEffect {
     /// sentence of the three — *"must succeed on a DC 15 Constitution
     /// saving throw or take 2d10 Poison damage"*. A rider whose dice
     /// land on the hit is `OnHitRider::dice`; this is for the ones RAW
-    /// puts behind the save, where a target that makes it takes nothing
-    /// at all.
+    /// puts behind the save.
     ///
     /// Rolled here rather than folded into the rider's own die pool
     /// because the two are charged differently: the rider's dice double
@@ -6696,7 +6696,50 @@ pub enum FollowUpEffect {
         /// `None` for a clause whose failure is damage and nothing
         /// else.
         condition: Option<(Condition, ConditionTimer)>,
+        /// What a **made** save leaves standing — RAW's *"or half as
+        /// much damage on a successful one"*, written in the vocabulary
+        /// the rest of the engine already spells that sentence in.
+        ///
+        /// `NoneOnSave` is the Dagger of Venom and every save-or-suffer
+        /// row like it: a creature that makes the save takes nothing at
+        /// all, which is what this variant meant for its whole life.
+        ///
+        /// `HalfOnSave` is the clause the table could not phrase, and
+        /// the Ammunition of Slaying is what was missing it. RAW is
+        /// *"Force damage on a failed save or half as much damage on a
+        /// successful one"*, and the nearest a row could get was a
+        /// second `on_success` effect rolling half as many dice — the
+        /// same mean over a narrower spread, shipped under a comment
+        /// apologising for it. One roll, halved, is the printed clause,
+        /// and `on_success` goes back to being for the rows whose two
+        /// branches really are two different effects, like the Mace of
+        /// Disruption's destroy-or-frighten.
+        ///
+        /// The halving is `SaveDamagePolicy::apply`, the same one the
+        /// burst helpers and the scroll lane use, so a follow-up's
+        /// "half" rounds the way every other half in the engine rounds.
+        policy: SaveDamagePolicy,
     },
+}
+
+impl FollowUpEffect {
+    /// True when a *made* save against this clause still leaves damage
+    /// standing — RAW's *"or half as much damage on a successful one"*.
+    ///
+    /// The one question `resolve_smite_follow_up` asks on the success
+    /// branch before reaching for `on_success`'s absence, and it is
+    /// asked here rather than inlined there so the answer stays beside
+    /// the field it reads. Every variant but `Damage` answers false:
+    /// a condition, a push, a splash and a slaying have no half.
+    fn halves_on_a_made_save(self) -> bool {
+        matches!(
+            self,
+            FollowUpEffect::Damage {
+                policy: SaveDamagePolicy::HalfOnSave,
+                ..
+            }
+        )
+    }
 }
 
 /// A per-rest source that can rescue a swing which just missed, by
@@ -8902,13 +8945,14 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
         // "becomes nonmagical" — the arrow is still in the quiver and it
         // is an arrow now.
         //
-        // Both branches of the save carry damage, which is what
-        // `on_success` is for and what "or half as much" means. Rolled as
-        // 3d10 rather than as half of the 6d10 the failure rolled: this
-        // table's two branches are two effects and neither can see the
-        // other's dice, and 3d10 has the same mean with a narrower
-        // spread — the honest rounding of a clause the row cannot phrase
-        // exactly.
+        // Both branches of the save carry damage, and the row says so
+        // with one word rather than with a second effect: `policy:
+        // HalfOnSave` is RAW's "or half as much extra damage on a
+        // successful one", rolled once and halved. It used to be an
+        // `on_success` rolling 3d10 against the failure branch's 6d10 —
+        // the same mean over a narrower spread, under a comment
+        // apologising for a clause the row could not phrase. It can
+        // phrase it now. See `FollowUpEffect::Damage::policy`.
         //
         // See `Condition::SlayingAmmunition` for why the creature type is
         // fixed at Aberration rather than rolled on RAW's d100.
@@ -8928,15 +8972,12 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                     dice: Dice::new(6, 10),
                     damage_type: DamageType::Force,
                     condition: None,
+                    policy: SaveDamagePolicy::HalfOnSave,
                 },
                 label: "ammunition of slaying",
                 hp_threshold: None,
                 size_cap: None,
-                on_success: Some(FollowUpEffect::Damage {
-                    dice: Dice::new(3, 10),
-                    damage_type: DamageType::Force,
-                    condition: None,
-                }),
+                on_success: None,
             }),
             once_per_turn_tag: None,
             requires_natural_twenty: false,
@@ -9319,6 +9360,11 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                     dice: Dice::new(2, 10),
                     damage_type: DamageType::Poison,
                     condition: Some((Condition::Poisoned, ConditionTimer::Rounds(10))),
+                    // "…must succeed on a DC 15 Constitution saving
+                    // throw **or** take 2d10 Poison damage": one branch,
+                    // and a wielder who watched the target make the save
+                    // has spent their Bonus Action on nothing.
+                    policy: SaveDamagePolicy::NoneOnSave,
                 },
                 label: "dagger of venom poison",
                 hp_threshold: None,
@@ -9332,6 +9378,20 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             attacker_link: None,
             spends_item_charge: None,
         },
+        // ---------------------------------------------------------------
+        // SRD 5.2's **injury poisons** — the dagger's clause without
+        // the dagger. Four rows, generated from the four entries in
+        // `crate::engine::poisons`, which is where the numbers are and
+        // where the reading of each clause is written down. A vial is a
+        // Bonus Action, one swing, and a Constitution save against a DC
+        // the *poison* names rather than its user's spellcasting: a
+        // dose of Purple Worm Poison is exactly as deadly in a
+        // commoner's hand as in an assassin's.
+        // ---------------------------------------------------------------
+        crate::engine::poisons::SERPENT_VENOM.rider(),
+        crate::engine::poisons::SPIDERS_STING.rider(),
+        crate::engine::poisons::WYVERN_POISON.rider(),
+        crate::engine::poisons::PURPLE_WORM_POISON.rider(),
         // ---------------------------------------------------------------
         // The crit-gated blades. Three weapons whose RAW trigger is not
         // "when you hit" but *"when you roll a 20 on the d20 for an
@@ -10008,6 +10068,7 @@ fn apply_smite_follow_up(
             follow.label,
             dc,
             rider_damage,
+            FollowUpBranch::AsWritten,
         );
         return true;
     };
@@ -10030,6 +10091,22 @@ fn apply_smite_follow_up(
                 follow.label,
                 dc,
                 rider_damage,
+                FollowUpBranch::AsWritten,
+            );
+        } else if follow.effect.halves_on_a_made_save() {
+            // …and RAW's commonest branch, which no row has to write
+            // out, because it is the same clause with the number
+            // halved. See `FollowUpEffect::Damage::policy`.
+            push_follow_up_effect(
+                encounter,
+                effects,
+                caster_id,
+                target_id,
+                follow.effect,
+                follow.label,
+                dc,
+                rider_damage,
+                FollowUpBranch::Halved,
             );
         }
         return false;
@@ -10044,8 +10121,28 @@ fn apply_smite_follow_up(
         follow.label,
         dc,
         rider_damage,
+        FollowUpBranch::AsWritten,
     );
     true
+}
+
+/// Which side of a follow-up's saving throw is being materialized.
+///
+/// A two-valued flag rather than a bare `bool` because the interesting
+/// half is what `AsWritten` covers: three different paths reach
+/// `push_follow_up_effect` with a clause that is already the right
+/// clause — a failed save, a rider with no save at all, and an
+/// `on_success` effect, which is the success branch spelled out in full
+/// — and a `saved: bool` would have made the third of those read
+/// backwards at the call site.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FollowUpBranch {
+    /// The clause exactly as the row writes it.
+    AsWritten,
+    /// A made save against a clause that prints *"or half as much
+    /// damage on a successful one"*. Read by the `Damage` arm and by
+    /// nothing else, because nothing else on the enum has a half.
+    Halved,
 }
 
 /// Materialize a `FollowUpEffect` into the side-effect queue. Splits the
@@ -10064,6 +10161,10 @@ fn apply_smite_follow_up(
 ///
 /// `rider_damage` is what the rider's own dice dealt, read by
 /// `TempHpToAttacker` and ignored by everything else.
+///
+/// `branch` is which side of the saving throw this call is
+/// materializing — see [`FollowUpBranch`]. Only the `Damage` arm reads
+/// it, because only a damage clause has a half.
 #[allow(clippy::too_many_arguments)]
 fn push_follow_up_effect(
     encounter: &mut EncounterInstance,
@@ -10074,6 +10175,7 @@ fn push_follow_up_effect(
     label: &'static str,
     dc: i32,
     rider_damage: u32,
+    branch: FollowUpBranch,
 ) {
     match effect {
         FollowUpEffect::Condition { condition, timer } => {
@@ -10236,14 +10338,37 @@ fn push_follow_up_effect(
             dice,
             damage_type,
             condition,
+            policy,
         } => {
+            // One roll, then the policy, which is how RAW writes "or
+            // half as much": the dice are rolled once and the successful
+            // save halves *that number* rather than rolling a smaller
+            // pool of its own.
+            //
+            // A `NoneOnSave` row never arrives here on the `Halved`
+            // branch — the caller does not enter it for one, because a
+            // clause whose successful save leaves nothing standing has
+            // nothing to roll for, and rolling anyway would move every
+            // seeded fight's dice one notch on the first save anybody
+            // made.
             let rolled = encounter.roll(&dice);
-            encounter.log(format!("  {}: +{} {:?}", label, rolled, damage_type));
+            let landed = policy.apply(rolled, branch == FollowUpBranch::Halved);
+            if landed == 0 {
+                return;
+            }
+            encounter.log(format!("  {}: +{} {:?}", label, landed, damage_type));
             effects.push(Box::new(DealDamage {
                 actor_id: target_id,
-                amount: rolled,
+                amount: landed,
                 damage_type,
             }));
+            // The condition rides the failed save only. RAW's "or half
+            // as much damage" is about the dice and never about the
+            // clause beside them — a creature that makes its save
+            // against the Dagger of Venom is not half-Poisoned.
+            if branch == FollowUpBranch::Halved {
+                return;
+            }
             if let Some((condition, timer)) = condition {
                 effects.push(Box::new(ApplyCondition {
                     actor_id: target_id,

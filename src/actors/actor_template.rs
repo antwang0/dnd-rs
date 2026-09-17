@@ -7953,6 +7953,46 @@ impl ActorInstance {
             .copied()
     }
 
+    /// True when this creature has something to smear an injury poison
+    /// onto — an attack that deals Piercing or Slashing damage.
+    ///
+    /// SRD 5.2's delivery clause, asked at the end that can refuse:
+    /// *"A creature that takes Piercing or Slashing damage from an
+    /// object coated with the poison is exposed to its effects."* A
+    /// mace is not a thing a dose of Wyvern Poison does anything on,
+    /// and neither is a Fire Bolt, so the vial is worth refusing to
+    /// open rather than worth letting somebody waste.
+    ///
+    /// Asked of the whole action list rather than of one weapon,
+    /// because a creature's "weapon" is not a thing this engine has —
+    /// what it has is a list of swings, and the question is whether any
+    /// of them is a point or an edge. A rogue carrying a shortsword and
+    /// a crossbow passes on either.
+    ///
+    /// Deliberately not gated on `is_weapon_attack`, whose own
+    /// docstring calls it a conservative default that every bespoke
+    /// natural weapon leaves `false`: the clause RAW writes is about
+    /// the *damage*, and a giant spider's bite is as much a puncture as
+    /// a dagger is.
+    ///
+    /// Gated on `school().is_none()` instead, which is the clause that
+    /// actually matters here. RAW's sentence is *"applied … to a
+    /// weapon, a piece of ammunition, or similar object"*, and a spell
+    /// is none of those however sharp its damage type — a cleric's
+    /// action list carries Thorn Whip, Insect Plague and Blade Barrier,
+    /// all of which deal Piercing or Slashing and none of which is a
+    /// thing you can smear a dose onto. Without the gate the mace-only
+    /// cleric passed on a spell and opened the vial anyway.
+    pub fn has_a_bladed_attack(&self) -> bool {
+        self.actions.iter().any(|a| {
+            a.school().is_none()
+                && a.deals_damage()
+                && a.damage_types()
+                    .iter()
+                    .any(|t| matches!(t, DamageType::Piercing | DamageType::Slashing))
+        })
+    }
+
     /// First melee weapon action on this actor's action list — the
     /// shared predicate used by both the opportunity-attack dispatcher
     /// (`EncounterInstance::dispatch_opportunity_attacks`) and the
