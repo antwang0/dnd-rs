@@ -65315,6 +65315,16 @@ fn a_weapon_deals_the_damage_its_name_implies() {
             "AIR_ELEMENTAL_SLAM",
             "RAW: the air elemental's slam is Thunderous, and thunder",
         ),
+        // "Bites. Melee Attack Roll: +3, reach 5 ft. Hit: 6 (2d4 + 1)
+        // Poison damage." SRD 5.2 types the insect swarm's bite by what
+        // is in the mandibles rather than by the mandibles — the one
+        // swarm on the ladder that is a cloud of stings rather than a
+        // cloud of teeth. The 2014 printing said piercing, which is
+        // where this entry's old damage type came from.
+        (
+            "SWARM_OF_INSECTS_BITES",
+            "SRD 5.2: the insect swarm's bite is Poison, not the teeth",
+        ),
     ];
 
     // Matches a `SimpleWeapon` static declared through one of the
@@ -119541,5 +119551,114 @@ fn one_heave_breaks_the_cheap_hold_more_often_than_the_dear_one() {
         glue_only > both,
         "the cheap hold should come off on its own far more often than both do \
          (glue only {glue_only}, both {both})"
+    );
+}
+
+/// The seven swarms' Bites lines, against the book.
+///
+/// The family drifted as a family: five of the seven carried the 2014
+/// printing's dice while the rest of the bestiary had moved to SRD 5.2,
+/// and the drift was invisible because a swarm's damage looks
+/// plausible at any size. What it cost was not the averages — it was
+/// the insect swarm's damage *type*, which SRD 5.2 prints as Poison and
+/// the 2014 line as Piercing, and which decides whether the creature
+/// does anything at all to the undead, the constructs and the devils it
+/// shares a dungeon with.
+///
+/// Written as a table of the book's own Hit lines rather than as
+/// prose, so the next printing is a column and not an argument.
+#[test]
+fn every_swarms_bite_is_the_one_srd_five_two_prints() {
+    use crate::actions::monster_attacks::{
+        SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_PIRANHAS_BITES,
+        SWARM_OF_RATS_BITES, SWARM_OF_RAVENS_BEAKS,
+    };
+    use crate::engine::types::DamageType;
+
+    // (static, dice, damage type, does the Hit line add a modifier?)
+    // The bats and the rats print a bare pool — `5 (2d4)` — and the
+    // other three print one — `6 (2d4 + 1)`. That distinction is the
+    // `damage_ability` field, and it is the half of the fix nothing
+    // else in the engine would have caught: a `2d4` that quietly adds
+    // Dexterity is 40% over the book on the lightest bite in the game.
+    let simple: &[(&str, &crate::actions::monster_attacks::SimpleWeapon, (u32, u32), DamageType, bool)] = &[
+        ("bats", &SWARM_OF_BATS_BITES, (2, 4), DamageType::Piercing, false),
+        ("rats", &SWARM_OF_RATS_BITES, (2, 4), DamageType::Piercing, false),
+        ("insects", &SWARM_OF_INSECTS_BITES, (2, 4), DamageType::Poison, true),
+        ("piranhas", &SWARM_OF_PIRANHAS_BITES, (2, 4), DamageType::Piercing, true),
+        ("ravens", &SWARM_OF_RAVENS_BEAKS, (1, 6), DamageType::Piercing, true),
+    ];
+    for (who, weapon, (count, faces), dtype, adds_modifier) in simple {
+        assert_eq!(
+            (weapon.damage_dice.count, weapon.damage_dice.faces),
+            (*count, *faces),
+            "the {who} swarm bites for the wrong pool"
+        );
+        assert_eq!(weapon.damage_type, *dtype, "the {who} swarm bites for the wrong type");
+        assert_eq!(
+            weapon.damage_ability.is_some(),
+            *adds_modifier,
+            "the {who} swarm's Hit line and its modifier disagree"
+        );
+        // Every swarm rolls its bite off Dexterity in SRD 5.2,
+        // including the rat swarm, whose Strength is 9 and whose
+        // printed `+2` is Dexterity 11 plus proficiency.
+        assert_eq!(
+            weapon.attack_ability,
+            crate::engine::types::AbilityScoreType::Dexterity,
+            "the {who} swarm should bite with its Dexterity"
+        );
+    }
+
+    // The venomous snakes are the one entry on another chassis, and the
+    // reason is the clause SRD 5.2 changed: the venom used to sit
+    // behind a DC 10 Constitution save and now rides the hit.
+    let snakes = &crate::actions::monster_attacks::SWARM_OF_VENOMOUS_SNAKES_BITES;
+    assert_eq!((snakes.damage_dice.count, snakes.damage_dice.faces), (1, 8));
+    assert_eq!(snakes.damage_type, DamageType::Piercing);
+    assert_eq!((snakes.rider_dice.count, snakes.rider_dice.faces), (3, 6));
+    assert_eq!(snakes.rider_type, DamageType::Poison);
+
+    // …and the crawling claws, the eighth body on a seventh chassis:
+    // 4d8 + 2 Necrotic with a free knockdown, which SRD 5.2 and the
+    // engine already agreed on.
+    let claws = &crate::actions::monster_attacks::SWARM_OF_CRAWLING_CLAWS_HANDS;
+    assert_eq!((claws.damage_dice.count, claws.damage_dice.faces), (4, 8));
+    assert_eq!(claws.damage_type, DamageType::Necrotic);
+}
+
+/// The insect swarm's Poison is a type the bestiary answers, and that
+/// is the point of the change: a skeleton is immune to what SRD 5.2's
+/// insect swarm does and was not immune to what the 2014 line did.
+#[test]
+fn the_insect_swarms_poison_finds_nothing_to_hurt_in_a_skeleton() {
+    use crate::actions::monster_attacks::SWARM_OF_INSECTS_BITES;
+    use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
+    use crate::actors::creatures::swarms::SWARM_OF_INSECTS_TEMPLATE;
+
+    let mut e = ei_with_terrain(15, 15, &[]);
+    let swarm = e
+        .instantiate_creature(&SWARM_OF_INSECTS_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+        .unwrap();
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(5, 4), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&skeleton].is_immune_to(SWARM_OF_INSECTS_BITES.damage_type),
+        "SRD 5.2's undead envelope is poison immunity, and the swarm now bites poison"
+    );
+    // Swing it a hundred times and the bones should not notice.
+    let full = e.actors[&skeleton].hitpoints();
+    let action: &dyn Action = &SWARM_OF_INSECTS_BITES;
+    let targets = vec![skeleton];
+    for _ in 0..100 {
+        for ef in action.side_effects(&mut e, swarm, Some(&targets), None, None) {
+            ef.apply(&mut e);
+        }
+    }
+    assert_eq!(
+        e.actors[&skeleton].hitpoints(),
+        full,
+        "a cloud of stinging insects has nothing to sting a skeleton with"
     );
 }

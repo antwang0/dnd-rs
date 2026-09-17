@@ -20575,15 +20575,22 @@ pub static FORCE_BALLISTA_BOLT: SimpleWeapon = SimpleWeapon::ranged(
 // beside you instead and bites at ordinary melee reach — the closest
 // the board can get to being inside your armour.
 
-/// Swarm of Bats Bites — DEX-based 2d4 piercing melee. RAW: "+4 to
-/// hit, reach 0 ft., one creature in the swarm's space. Hit: 5 (2d4)
-/// piercing damage, or 2 (1d4) piercing damage if the swarm has half
-/// of its hit points or fewer."
+/// Swarm of Bats Bites — 2d4 Piercing off Dexterity, and **no
+/// modifier on the damage**. SRD 5.2: *"Bites. Melee Attack Roll: +4,
+/// reach 5 ft. Hit: 5 (2d4) Piercing damage, or 2 (1d4) Piercing damage
+/// if the swarm is Bloodied."*
 ///
 /// The lightest swarm bite on the bench and the only airborne one —
 /// the cloud's threat is that it arrives from anywhere on a fly-30
 /// speed with blindsight 60, not that any single bat's teeth matter.
-pub static SWARM_OF_BATS_BITES: SimpleWeapon = SimpleWeapon::melee(
+///
+/// `flat_melee` rather than `melee`, which is the whole of the fix
+/// this line needed: RAW's Hit line prints a bare `5 (2d4)`, and the
+/// modifier-adding constructor was quietly paying the swarm its
+/// Dexterity on top — seven average where the book says five, on a
+/// stat block whose entire identity is that its teeth do not matter.
+/// The `+4` to hit is where the Dexterity goes, and it still does.
+pub static SWARM_OF_BATS_BITES: SimpleWeapon = SimpleWeapon::flat_melee(
     "swarm of bats bites",
     &["sbb", "bat-swarm", "bats"],
     AbilityScoreType::Dexterity,
@@ -20591,81 +20598,123 @@ pub static SWARM_OF_BATS_BITES: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Swarm of Rats Bites — STR-based 2d6 piercing melee. RAW: "+2 to
-/// hit, reach 0 ft., one target in the swarm's space. Hit: 7 (2d6)
-/// piercing damage, or 3 (1d6) piercing damage if the swarm has half
-/// of its hit points or fewer."
+/// Swarm of Rats Bites — 2d4 Piercing off Dexterity, flat. SRD 5.2:
+/// *"Bites. Melee Attack Roll: +2, reach 5 ft. Hit: 5 (2d4) Piercing
+/// damage, or 2 (1d4) Piercing damage if the swarm is Bloodied."*
 ///
-/// The ground-bound cousin of the bat swarm: fatter dice, no flight,
-/// no resistances (RAW gives the rat swarm none — a sword swing does
-/// cut through rats), which makes it the swarm that actually dies to
-/// being hit.
-pub static SWARM_OF_RATS_BITES: SimpleWeapon = SimpleWeapon::melee(
+/// The swarm you can fight with a sword. RAW withholds the physical
+/// resistances every other swarm gets — rats are big enough that a
+/// blade swung through them connects — which makes this the whole
+/// family's tutorial: it teaches the shape (one HP pool, thins at half,
+/// can't be healed, can't be knocked down) without the lesson that
+/// weapons don't work, and then the insect swarm two rungs up teaches
+/// that.
+///
+/// What it pays for the missing resistance is the family's worst AC
+/// (10), and **not** a bigger die: this was `2d6` off Strength, which
+/// is the 2014 printing, and it was wrong twice over on a stat block
+/// whose Strength is 9. The rat swarm bit for `2d6 − 1` and swung at
+/// `+1` where SRD 5.2 prints `2d4` flat at `+2`.
+pub static SWARM_OF_RATS_BITES: SimpleWeapon = SimpleWeapon::flat_melee(
     "swarm of rats bites",
     &["srb", "rat-swarm", "rats"],
-    AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    AbilityScoreType::Dexterity,
+    Dice::new(2, 4),
     DamageType::Piercing,
 );
 
-/// Swarm of Insects Bites — DEX-based 4d4 piercing melee. RAW: "+3 to
-/// hit, reach 0 ft., one target in the swarm's space. Hit: 10 (4d4)
-/// piercing damage, or 5 (2d4) piercing damage if the swarm has half
-/// of its hit points or fewer."
+/// Swarm of Insects Bites — 2d4 + DEX **Poison**. SRD 5.2: *"Bites.
+/// Melee Attack Roll: +3, reach 5 ft. Hit: 6 (2d4 + 1) Poison damage,
+/// or 3 (1d4 + 1) Poison damage if the swarm is Bloodied."*
 ///
-/// Four dice on a CR-½ frame — the highest damage-per-CR bite in the
-/// swarm family, and the reason a spellcaster who lets one reach them
-/// is in real trouble. Four small dice rather than two large ones is
-/// also the flattest damage curve on the bench: the insect swarm
-/// almost never rolls low.
+/// The damage type is the stat block. This line was `4d4` **Piercing**
+/// — the 2014 printing — and against a bestiary where poison is the
+/// most widely resisted type in the game and piercing the most widely
+/// carried weapon, that is not a rounding error: every undead, every
+/// construct, every devil and every ooze on the roster is immune to
+/// what SRD 5.2's insect swarm actually does, and none of them was
+/// immune to what this one did.
+///
+/// It reads the other way too. The party's own answer to a cloud of
+/// insects is fire and area damage, which is unchanged; what changes
+/// is that the swarm is now a poor choice of hazard to put in a crypt,
+/// which is exactly the encounter-building signal the type is there to
+/// send.
+///
+/// Its blindsight is 10 ft rather than the bat swarm's 60 — it finds
+/// you by touch, not by echo, so unlike the bats it can be hidden
+/// from, just not once it has arrived.
 pub static SWARM_OF_INSECTS_BITES: SimpleWeapon = SimpleWeapon::melee(
     "swarm of insects bites",
     &["sib", "insect-swarm", "insects"],
     AbilityScoreType::Dexterity,
-    Dice::new(4, 4),
-    DamageType::Piercing,
+    Dice::new(2, 4),
+    DamageType::Poison,
 );
 
-/// Swarm of Piranhas Bites — DEX-based 4d6 piercing melee. RAW: "+5
-/// to hit, reach 0 ft., one creature in the swarm's space. Hit: 14
-/// (4d6) piercing damage, or 7 (2d6) piercing damage if the swarm has
-/// half of its hit points or fewer."
+/// Swarm of Piranhas Bites — 2d4 + DEX Piercing. SRD 5.2: *"Bites.
+/// Melee Attack Roll: +5 (with Advantage if the target doesn't have
+/// all its Hit Points), reach 5 ft. Hit: 8 (2d4 + 3) Piercing damage,
+/// or 5 (1d4 + 3) Piercing damage if the swarm is Bloodied."*
 ///
-/// The heaviest swarm bite, and the one that compounds: the swarm's
-/// Blood Frenzy hands it advantage against anything already wounded,
-/// so the first bite that lands makes the second likelier.
+/// The advantage clause is RAW's **Blood Frenzy** folded into the Hit
+/// line rather than printed as a trait, and it rides
+/// `BLOOD_FRENZY_TAG` on the template — the same gate the Hunter Shark
+/// and the sahuagin already read at `compute_attack_mode`.
+///
+/// The interaction with the swarm's own thinning is the thing to watch:
+/// its dice halve as it dies while its accuracy *improves* as its
+/// target bleeds. A piranha swarm at 5 HP against a wounded fighter is
+/// still landing every bite, for a fraction of what it used to.
+///
+/// Was `4d6` — the 2014 line, and nearly twice the book's eight
+/// average on a CR-1 frame.
 pub static SWARM_OF_PIRANHAS_BITES: SimpleWeapon = SimpleWeapon::melee(
     "swarm of piranhas bites",
     &["sqb", "quipper-swarm", "quippers"],
     AbilityScoreType::Dexterity,
-    Dice::new(4, 6),
+    Dice::new(2, 4),
     DamageType::Piercing,
 );
 
-/// Swarm of Venomous Snakes Bites — DEX-based 2d6 piercing melee
-/// with a DC 10 CON save-or-4d6-poison rider. RAW: "+6 to hit, reach 0
-/// ft., one creature in the swarm's space. Hit: 7 (2d6) piercing
-/// damage, or 3 (1d6) piercing damage if the swarm has half of its hit
-/// points or fewer. The target must make a DC 10 Constitution saving
-/// throw, taking 14 (4d6) poison damage on a failed save, or half as
-/// much damage on a successful one."
+/// Swarm of Venomous Snakes Bites — 1d8 + DEX Piercing **plus 3d6
+/// Poison, with no save**. SRD 5.2: *"Bites. Melee Attack Roll: +6,
+/// reach 5 ft. Hit: 8 (1d8 + 4) Piercing damage—or 6 (1d4 + 4)
+/// Piercing damage if the swarm is Bloodied—plus 10 (3d6) Poison
+/// damage."*
 ///
 /// The only swarm whose bite carries a second damage type, and the
-/// reason it sits three CR rungs above the bat swarm on nearly the
-/// same piercing die. Both halves thin together — RAW attaches the
-/// half-strength clause to the piercing line only, but the venom comes
-/// out of the same dwindling supply of snakes, and the engine's
-/// attacker-scoped lane halves the whole swing rather than picking one
-/// damage line out of it.
-pub static SWARM_OF_VENOMOUS_SNAKES_BITES: WeaponWithSaveDamage = WeaponWithSaveDamage::melee(
+/// reason it sits three CR rungs above the bat swarm on a smaller
+/// piercing die than the bats ever had. All four of those rungs are
+/// venom.
+///
+/// **The save is gone, and that is the change.** This was a `2d6`
+/// swing plus a DC 10 Constitution save for `4d6` — the 2014 printing,
+/// where the poison was a gamble. SRD 5.2 deletes the save and prints
+/// the venom as part of the Hit line: landing the bite *is* the whole
+/// resolution. A DC 10 save is one almost nothing on the roster fails,
+/// so what the old line actually modeled was a swarm whose signature
+/// damage type usually did nothing; the new one is a swarm that puts
+/// ten points of poison into whatever it reaches, every time, and is
+/// answered by resistance rather than by a good Constitution.
+///
+/// Moved from `WeaponWithSaveDamage` to `WeaponWithRider` for exactly
+/// that reason — the two chassis are the same swing and differ only in
+/// whether a save stands between the rider and the target, which is the
+/// one thing the printing changed.
+///
+/// Both halves thin together. RAW attaches the Bloodied clause to the
+/// Piercing line only, and the engine's attacker-scoped lane halves the
+/// whole swing rather than picking one damage line out of it — the
+/// venom comes out of the same dwindling supply of snakes, which is the
+/// reading that needs no second mechanism.
+pub static SWARM_OF_VENOMOUS_SNAKES_BITES: WeaponWithRider = WeaponWithRider::melee(
     "swarm of venomous snakes bites",
     &["spsb", "snake-swarm", "snakes"],
     AbilityScoreType::Dexterity,
-    Dice::new(2, 6),
+    Dice::new(1, 8),
     DamageType::Piercing,
-    AbilityScoreType::Constitution,
-    10,
-    Dice::new(4, 6),
+    Dice::new(3, 6),
     DamageType::Poison,
     "a knot of venom",
 );

@@ -1864,13 +1864,22 @@ fn fire_clamp(
 /// everywhere else in the engine.
 ///
 ///   - A **thinned swarm**'s bite. Every swarm statblock writes the
-///     rule into its own attack line ("…or 10 (3d4+3) piercing damage
-///     if the swarm has half of its hit points or fewer") because
-///     there are fewer mouths left to bite with. Purely a property of
-///     the swinger, so it belongs here rather than duplicated across
-///     five statblocks' damage expressions. Not gated on `is_weapon`:
-///     a swarm has one attack and it is the swarm, so every point it
-///     deals thins with it.
+///     rule into its own attack line (SRD 5.2: *"…or 2 (1d4) Piercing
+///     damage if the swarm is Bloodied"*) because there are fewer
+///     mouths left to bite with. Purely a property of the swinger, so
+///     it belongs here rather than duplicated across seven statblocks'
+///     damage expressions. Not gated on `is_weapon`: a swarm has one
+///     attack and it is the swarm, so every point it deals thins with
+///     it.
+///
+///     RAW's own form is a **die swap** — the pool shrinks and the
+///     ability modifier stays — where this halves the finished swing.
+///     The two land within a point of each other on every swarm in the
+///     book, and the halving is the one that needs no second field on
+///     seven attack lines. It is the wider reading in one place: the
+///     venomous snake swarm's Poison rider is outside RAW's clause and
+///     inside this one, on the reasoning that the venom comes out of
+///     the same dwindling supply of snakes.
 ///   - The Ancestral Guardian's half of **Ancestral Protectors**. RAW
 ///     words it as the *victim* gaining resistance, but the gate is
 ///     entirely on the attacker (are they haunted, and is their target

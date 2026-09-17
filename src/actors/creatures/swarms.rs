@@ -4,11 +4,13 @@
 //! A swarm is not a big monster. It is a Medium-sized cloud of Tiny
 //! ones, and everything odd about its statblock follows from that:
 //!
-//!   - **It thins as it dies.** Every one of them writes "…or half
-//!     as much damage if the swarm has half of its hit points or fewer"
-//!     into its Bites line, because half the mouths are gone. The rule
-//!     lives once, on `ActorInstance::is_thinned_swarm`, read at
-//!     `attack::attacker_scoped_damage_reduction`.
+//!   - **It thins as it dies.** Every one of them writes a smaller die
+//!     pool into its Bites line — SRD 5.2's *"…or 2 (1d4) Piercing
+//!     damage if the swarm is Bloodied"* — because half the mouths are
+//!     gone. The rule lives once, on `ActorInstance::is_thinned_swarm`,
+//!     read at `attack::attacker_scoped_damage_reduction`, which halves
+//!     the finished swing rather than swapping the pool; see there for
+//!     the one place the two readings part.
 //!   - **It cannot be healed.** "The swarm can't regain hit points or
 //!     gain temporary hit points" — the dead bats are dead. Enforced at
 //!     `heal` / `gain_temp_hp`, the two chokepoints every source of
@@ -164,9 +166,9 @@ fn swarm_template(
     }
 }
 
-/// Swarm of Bats — CR ¼ **Large** swarm of Tiny beasts. RAW: AC 12, 11
-/// HP (2d10), speed 5 ft / fly 30 ft, blindsight 60 ft, resistant to
-/// bludgeoning / piercing / slashing, Bites 5 (2d4) piercing.
+/// Swarm of Bats — CR ¼ **Large** swarm of Tiny beasts. SRD 5.2: AC 12,
+/// 11 HP (2d10), speed 5 ft / fly 30 ft, blindsight 60 ft, resistant to
+/// bludgeoning / piercing / slashing, Bites +4 for 5 (2d4) Piercing.
 ///
 /// The blind swarm. Fly 30 and blindsight 60 make it the one that
 /// picks its target — it crosses the board, ignores the fog the party
@@ -224,9 +226,9 @@ pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     }
 });
 
-/// Swarm of Rats — CR ¼ Medium swarm of Tiny beasts. RAW: AC 10, 14 HP
-/// (4d8-4), speed 30 ft, darkvision 30 ft, **no damage resistances**,
-/// Bites 7 (2d6) piercing.
+/// Swarm of Rats — CR ¼ Medium swarm of Tiny beasts. SRD 5.2: AC 10,
+/// 14 HP (4d8−4), speed 30 ft, darkvision 30 ft, **no damage
+/// resistances**, Bites +2 for 5 (2d4) Piercing.
 ///
 /// The swarm you can fight with a sword. RAW withholds the physical
 /// resistances every other swarm gets — rats are big enough that a
@@ -237,7 +239,9 @@ pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// that.
 ///
 /// It pays for the missing resistance with the family's worst AC (10)
-/// and the fattest dice at its CR (2d6 to the bat swarm's 2d4).
+/// and the family's worst to-hit (+2). Its dice are the bat swarm's —
+/// SRD 5.2 prints both CR-¼ swarms at a flat 2d4, and the rat swarm's
+/// `2d6` here was the 2014 line; see `SWARM_OF_RATS_BITES`.
 pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     swarm_template(
         "Swarm of Rats",
@@ -254,15 +258,20 @@ pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
     )
 });
 
-/// Swarm of Insects — CR ½ Medium swarm of Tiny beasts. RAW: AC 11, 19
-/// HP (3d8+6), speed 20 ft / climb 20 ft, blindsight 10 ft, resistant
-/// to bludgeoning / piercing / slashing, Bites 10 (4d4) piercing.
+/// Swarm of Insects — CR ½ Medium swarm of Tiny beasts. SRD 5.2: AC 11,
+/// 19 HP (3d8+6), speed 20 ft / climb 20 ft, blindsight 10 ft,
+/// resistant to bludgeoning / piercing / slashing, Bites +3 for 6
+/// (2d4 + 1) **Poison**.
 ///
-/// The damage swarm, and the family's clearest statement of the
-/// tactical problem: 4d4 a round on a 19-HP frame you can only really
-/// hurt with fire. Its blindsight is 10 ft rather than the bat swarm's
-/// 60 — it finds you by touch, not by echo, so unlike the bats it can
-/// be hidden from, just not once it has arrived.
+/// The **poison** swarm, which is a different creature from the one
+/// this entry used to describe: its bite was 4d4 piercing, the 2014
+/// line, and the type is the whole stat block. See
+/// `SWARM_OF_INSECTS_BITES` for what that changes and who it stops
+/// working on.
+///
+/// Its blindsight is 10 ft rather than the bat swarm's 60 — it finds
+/// you by touch, not by echo, so unlike the bats it can be hidden
+/// from, just not once it has arrived.
 ///
 /// Slowest of the seven at speed 20. That is the counterplay: a party
 /// that keeps moving outruns it, and one that stands and swings at it
@@ -283,10 +292,10 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
     )
 });
 
-/// Swarm of Piranhas — CR 1 Medium swarm of Tiny beasts. RAW: AC 13, 28
-/// HP (8d8-8), speed 0 ft / swim 40 ft, darkvision 60 ft, resistant to
-/// bludgeoning / piercing / slashing, **Blood Frenzy**, Bites 14 (4d6)
-/// piercing.
+/// Swarm of Piranhas — CR 1 Medium swarm of Tiny beasts. SRD 5.2:
+/// AC 13, 28 HP (8d8−8), speed 0 ft / swim 40 ft, darkvision 60 ft,
+/// resistant to bludgeoning / piercing / slashing, **Blood Frenzy**,
+/// Bites +5 for 8 (2d4 + 3) Piercing.
 ///
 /// The piranha swarm, and the only one with a trait beyond the shared
 /// four. **Blood Frenzy** — "the swarm has advantage on melee attack
@@ -296,9 +305,9 @@ pub static SWARM_OF_INSECTS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 /// inherit the whole gate for one tag.
 ///
 /// The interaction with the swarm's own thinning is the thing to watch:
-/// its 4d6 halves as it dies while its accuracy *improves* as its
+/// its dice halve as it dies while its accuracy *improves* as its
 /// target bleeds. A piranha swarm at 5 HP against a wounded fighter is
-/// still landing every bite, for a third of what it used to.
+/// still landing every bite, for a fraction of what it used to.
 ///
 /// Speed 40 for RAW's "0 ft, swim 40 ft" — the engine models one speed
 /// magnitude, so the swim number is the one that matters; a swarm of
@@ -373,17 +382,19 @@ pub static SWARM_OF_PIRANHAS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     )
 });
 
-/// Swarm of Venomous Snakes — CR 2 Medium swarm of Tiny beasts. RAW:
-/// AC 14, 36 HP (8d8), speed 30 ft / swim 30 ft, blindsight 10 ft,
-/// resistant to bludgeoning / piercing / slashing, Bites 7 (2d6)
-/// piercing plus DC 10 CON save or 14 (4d6) poison, half on a success.
+/// Swarm of Venomous Snakes — CR 2 Medium swarm of Tiny beasts.
+/// SRD 5.2: AC 14, 36 HP (8d8), speed 30 ft / swim 30 ft, blindsight
+/// 10 ft, resistant to bludgeoning / piercing / slashing, Bites +6 for
+/// 8 (1d8 + 4) Piercing **plus 10 (3d6) Poison** — no save.
 ///
 /// The top of the ladder, and the only swarm whose bite carries a
-/// second damage type. On paper its piercing die is the rat swarm's;
-/// the four CR rungs between them are all venom. A failed save roughly
-/// triples the swing, and there is no attack roll standing between the
-/// party and it — the poison rides a landed bite, so the only defence
-/// is the CON save.
+/// second damage type. On paper its piercing die is smaller than the
+/// bat swarm's pool; the four CR rungs between them are all venom, and
+/// under SRD 5.2 that venom is unconditional. The old line put a DC 10
+/// Constitution save in front of it, which is a save almost nothing on
+/// the roster fails — so the swarm's signature damage usually did
+/// nothing at all. Now the only defence is resistance. See
+/// `SWARM_OF_VENOMOUS_SNAKES_BITES`.
 ///
 /// Also the toughest frame on the ladder (AC 14, 36 HP), which matters
 /// more than it looks: the halving threshold is 18 HP, so a party
