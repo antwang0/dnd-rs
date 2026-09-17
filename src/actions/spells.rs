@@ -6381,8 +6381,11 @@ pub static MAGIC_CIRCLE: LazyLock<MagicCircle> = LazyLock::new(|| MagicCircle {}
 pub struct Forbiddance {}
 
 impl Forbiddance {
-    /// The ward's Chebyshev radius in tiles — see the docstring for why
-    /// it is not RAW's 200-foot square.
+    /// The ward's Chebyshev radius in tiles. RAW's 40,000 square feet
+    /// is a square 200 ft on a side — a half-width of 100 ft, which is
+    /// 40 tiles on the 2.5-ft grid and wider than any board the engine
+    /// generates — so this is held at 12. See the type docstring for
+    /// why a ward with no edge is a ward with no placement decision.
     const RADIUS: isize = 12;
     /// RAW's day, which outlasts any fight — the same round count Magic
     /// Circle's hour and Mage Armor's eight of them collapse to.
@@ -8670,10 +8673,12 @@ pub static MASS_CURE_WOUNDS: LazyLock<MassCureWounds> = LazyLock::new(|| MassCur
 pub struct StinkingCloud {}
 
 impl StinkingCloud {
-    /// 20-ft radius. Held at 2 rather than the 4 the other 20-ft
-    /// spheres use, because this one takes a creature's whole turn and
-    /// blinds the ground it stands on: doubling the radius would make
-    /// one third-level slot the end of most encounters.
+    /// RAW's 20-ft radius is 8 tiles on the 2.5-ft grid, and this is
+    /// held at 2 — the widest deliberate narrowing in the file, and the
+    /// one with the clearest reason: the cloud takes a creature's whole
+    /// turn *and* blinds the ground it stands on, so at RAW's footprint
+    /// one third-level slot would end most encounters on this engine's
+    /// boards.
     const RADIUS: isize = 2;
 }
 
@@ -11330,10 +11335,11 @@ impl Action for PrayerOfHealing {
         };
         let caster_loc = caster.location();
         let wis_mod = caster.ability_modifier(AbilityScoreType::Wisdom);
-        // 30-ft range centered on the caster — reuse the burst helper
-        // with the caster's own footprint as the anchor so distance math
-        // matches every other ally-burst spell.
-        const RADIUS: isize = 6;
+        // RAW's 30-ft radius centred on the caster, which is 12 tiles
+        // on the 2.5-ft grid — reuse the burst helper with the caster's
+        // own footprint as the anchor so distance math matches every
+        // other ally-burst spell.
+        const RADIUS: isize = 12;
         const MAX_TARGETS: usize = 6;
         // Targets first, then the dice: Circle of Mortality's gate is
         // "is any of them at 0 HP", so the roll cannot happen until the
@@ -11922,8 +11928,8 @@ pub static WALL_OF_FIRE: LazyLock<WallOfFire> = LazyLock::new(|| WallOfFire {});
 pub struct Cloudkill {}
 
 impl Cloudkill {
-    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
-    const RADIUS: isize = 4;
+    /// RAW's 20-ft radius, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
     /// "…moves 10 feet away from you" = 4 tiles per turn.
     const DRIFT: isize = 4;
 }
@@ -12044,8 +12050,8 @@ pub static CLOUDKILL: LazyLock<Cloudkill> = LazyLock::new(|| Cloudkill {});
 pub struct InsectPlague {}
 
 impl InsectPlague {
-    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
-    const RADIUS: isize = 4;
+    /// RAW's 20-ft radius, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
 }
 
 impl Action for InsectPlague {
@@ -13125,8 +13131,12 @@ pub static WALL_OF_FORCE: LazyLock<WallOfForce> = LazyLock::new(|| WallOfForce {
 pub struct SpikeGrowth {}
 
 impl SpikeGrowth {
-    /// 20-ft radius, held at 3 tiles — the radius the spell shipped
-    /// with, and one the AI's placement picker can reasonably clear.
+    /// RAW's 20-ft radius is 8 tiles on the 2.5-ft grid, and this is
+    /// held at 3 — the radius the spell shipped with, and one the AI's
+    /// placement picker can reasonably clear. The narrowing matters
+    /// more here than the number suggests: this is the one area on the
+    /// layer billed per *tile crossed*, so its width is a multiplier on
+    /// its own damage rather than a count of who is caught.
     const RADIUS: isize = 3;
 }
 
@@ -15282,9 +15292,8 @@ pub static GOODBERRY: LazyLock<Goodberry> = LazyLock::new(|| Goodberry {});
 pub struct Moonbeam {}
 
 impl Moonbeam {
-    /// 5-ft radius ≈ 1 tile either side of the anchor on the 2.5-ft
-    /// grid.
-    const RADIUS: isize = 1;
+    /// RAW's 5-ft radius, which is 2 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 2;
     /// The name the zone carries, and so the handle a recast finds its
     /// own beam by. Shared between the install and the reposition
     /// branch so the two can't drift apart.
@@ -15525,8 +15534,8 @@ pub static CALL_LIGHTNING: LazyLock<CallLightning> = LazyLock::new(|| CallLightn
 pub struct SleetStorm {}
 
 impl SleetStorm {
-    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
-    const RADIUS: isize = 4;
+    /// RAW's 20-ft radius, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
 }
 
 impl Action for SleetStorm {
@@ -15673,9 +15682,10 @@ pub static SLEET_STORM: LazyLock<SleetStorm> = LazyLock::new(|| SleetStorm {});
 pub struct GlyphOfWarding {}
 
 impl GlyphOfWarding {
-    /// 20-ft radius RAW; held at 4 tiles (10 ft), the same footprint
-    /// every other burst on this layer uses, so a glyph laid in a
-    /// corridor catches the corridor rather than the room behind it.
+    /// RAW's 20-ft radius is 8 tiles on the 2.5-ft grid, and this is
+    /// held at 4 (10 ft) — a footprint that catches a corridor rather
+    /// than the room behind it, which is where a glyph is laid and what
+    /// makes finding one worth a Search action.
     const RADIUS: isize = 4;
     /// Longer than any encounter lasts. A glyph ends by going off or by
     /// being dispelled, and a number small enough to expire would be a
@@ -15789,8 +15799,9 @@ pub static GLYPH_OF_WARDING: LazyLock<GlyphOfWarding> = LazyLock::new(|| GlyphOf
 pub struct Symbol {}
 
 impl Symbol {
-    /// 60-ft radius RAW; held at 8 tiles (20 ft), which is the widest
-    /// burst on the layer and still fits a generated room.
+    /// RAW's 60-ft radius is 24 tiles on the 2.5-ft grid, which is
+    /// most of a generated room; held at 8 (20 ft), the widest burst on
+    /// the layer that still leaves somewhere to stand.
     const RADIUS: isize = 8;
 }
 
@@ -19954,7 +19965,11 @@ pub static ARMOR_OF_AGATHYS: LazyLock<ArmorOfAgathys> = LazyLock::new(|| ArmorOf
 pub struct SickeningRadiance {}
 
 impl SickeningRadiance {
-    /// 30-ft radius, held at the 6-tile burst the spell shipped with.
+    /// RAW's 30-ft radius is 12 tiles on the 2.5-ft grid, and this is
+    /// held at the 6-tile burst the spell shipped with: the area deals
+    /// damage *and* stacks a permanent exhaustion rung on everybody in
+    /// it every round, which at twice the width is a level-4 slot that
+    /// ends a fight by attrition nobody can walk out of.
     const RADIUS: isize = 6;
 }
 
@@ -20660,8 +20675,8 @@ pub static TIDAL_WAVE: LazyLock<TidalWave> = LazyLock::new(|| TidalWave {});
 pub struct Dawn {}
 
 impl Dawn {
-    /// 30-ft radius ≈ a 6-tile Chebyshev burst.
-    const RADIUS: isize = 6;
+    /// RAW's 30-ft radius, which is 12 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 12;
     /// The zone's name, and so the handle a recast finds it by.
     const ZONE: &'static str = "dawn";
     /// "…up to 60 feet" = 24 tiles.
@@ -21109,7 +21124,10 @@ pub static GREASE: LazyLock<Grease> = LazyLock::new(|| Grease {});
 pub struct FlamingSphere {}
 
 impl FlamingSphere {
-    /// 5-ft radius ≈ a 1-tile Chebyshev burst.
+    /// RAW's *"5-foot-diameter Sphere"* — a diameter, not a radius,
+    /// which is the one place in this file where the small number is
+    /// the right one. Two and a half feet of radius is 1 tile on the
+    /// 2.5-ft grid.
     const RADIUS: isize = 1;
     /// The zone's name, and so the handle a recast finds it by.
     const ZONE: &'static str = "flaming sphere";
@@ -21560,8 +21578,9 @@ pub static WIND_WALL: LazyLock<WindWall> = LazyLock::new(|| WindWall {});
 pub struct EvardsBlackTentacles {}
 
 impl EvardsBlackTentacles {
-    /// 20-ft square ≈ a 2-tile Chebyshev burst.
-    const RADIUS: isize = 2;
+    /// RAW's 20-ft square, whose half-width is 10 ft — 4 tiles on the
+    /// 2.5-ft grid, and the number a Chebyshev radius wants.
+    const RADIUS: isize = 4;
 }
 
 impl Action for EvardsBlackTentacles {
@@ -24112,8 +24131,8 @@ pub static EARTH_TREMOR: LazyLock<EarthTremor> = LazyLock::new(|| EarthTremor {}
 pub struct FogCloud {}
 
 impl FogCloud {
-    /// 20-ft sphere = 4-tile radius on the 2.5-ft grid.
-    const RADIUS: isize = 4;
+    /// RAW's 20-ft-radius Sphere, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
 }
 
 impl Action for FogCloud {
@@ -26411,8 +26430,8 @@ pub static DELAYED_BLAST_FIREBALL: LazyLock<DelayedBlastFireball> =
 pub struct IncendiaryCloud {}
 
 impl IncendiaryCloud {
-    /// 20-ft radius = 4 tiles.
-    const RADIUS: isize = 4;
+    /// RAW's 20-ft radius, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
     /// "…moves 10 feet directly away from you" = 4 tiles per turn.
     const DRIFT: isize = 4;
 }
@@ -28514,8 +28533,8 @@ pub static WITHER_AND_BLOOM: LazyLock<WitherAndBloom> = LazyLock::new(|| WitherA
 pub struct HungerOfHadar {}
 
 impl HungerOfHadar {
-    /// 20-ft radius = 4 tiles on the 2.5-ft grid.
-    const RADIUS: isize = 4;
+    /// RAW's 20-ft radius, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
 }
 
 impl Action for HungerOfHadar {
@@ -31288,9 +31307,12 @@ impl Action for PsychicScream {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::actor_template::ConcentrationData;
-        // 90 ft radius RAW = 8 tiles on this 2.5ft grid (rounded down
-        // from 9; the encounter map's diagonal is ~30 tiles so 8 still
-        // sweeps most of a clustered enemy back rank).
+        // RAW's is not a radius at all — *"up to 10 creatures you can
+        // see within range"*, at 90 feet of range — so there is no
+        // conversion to get right, only an approximation to choose. A
+        // 90-ft radius would be 36 tiles on the 2.5-ft grid, which is
+        // wider than the board; 8 sweeps most of a clustered enemy back
+        // rank, which is what the spell is for.
         const RADIUS: isize = 8;
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
@@ -35615,8 +35637,8 @@ pub static RIMES_BINDING_ICE: LazyLock<RimesBindingIce> = LazyLock::new(|| Rimes
 pub struct GravitySinkhole {}
 
 impl GravitySinkhole {
-    /// 20 ft of radius.
-    const RADIUS: isize = 4;
+    /// RAW's 20 ft of radius, which is 8 tiles on the 2.5-ft grid.
+    const RADIUS: isize = 8;
     /// How far a caught creature is dragged. The sphere's own radius:
     /// anything inside it is by definition no further from the center
     /// than this, so the budget always suffices to reach the middle and
@@ -36128,8 +36150,9 @@ pub static ENEMIES_ABOUND: LazyLock<EnemiesAbound> = LazyLock::new(|| EnemiesAbo
 pub struct MinuteMeteors {}
 
 impl MinuteMeteors {
-    /// 5 ft of burst around the impact tile.
-    const RADIUS: isize = 1;
+    /// RAW's 5-ft radius around the impact tile, which is 2 tiles on
+    /// the 2.5-ft grid.
+    const RADIUS: isize = 2;
     /// 120 ft = 48 tiles.
     const RANGE: isize = 48;
     /// Meteors per throw.
@@ -37094,8 +37117,9 @@ pub struct ControlWater {}
 
 impl ControlWater {
     /// Half-width of the trench, in tiles. RAW's area is a cube up to
-    /// 100 ft on a side, which is twice the width of this engine's
-    /// largest generated map; a 9x9 block is a little over 20 ft of
+    /// 100 ft on a side — a half-width of 50 ft, which is 20 tiles on
+    /// the 2.5-ft grid and twice the width of this engine's largest
+    /// generated map. Held at 4: a 9x9 block is a little over 20 ft of
     /// board and about as much of a pool as the generator ever lays in
     /// one place.
     const RADIUS: isize = 4;

@@ -41912,24 +41912,27 @@ fn fog_cloud_lays_an_obscuring_zone_under_concentration() {
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     use crate::engine::side_effects::Resource;
 
-    let mut e = ei_with_terrain(30, 30, &[]);
-    // Well back from where the cloud is going. A 4-radius area centred
-    // on (10, 5) reaches a Medium body anchored as far out as (5, 5),
-    // which is where this fixture used to stand the wizard — inside its
-    // own fog, seeing out of it, because `Zone::covers` was drawing a
-    // smaller area than `actor_in_zone` was biting.
+    // A board big enough to stand outside RAW's fog. The cloud is a
+    // 20-foot-radius Sphere, which on the 2.5-ft grid is eight tiles
+    // and reaches nine — so a Medium wizard has to be fifteen tiles off
+    // to be looking *at* its own cloud rather than out of it. This
+    // fixture has been moved twice for that reason and both times the
+    // fog was the thing that was wrong: first `Zone::covers` drew a
+    // smaller area than the layer bit, and then the radius itself was
+    // half what RAW prints.
+    let mut e = ei_with_terrain(40, 40, &[]);
     let wiz = e
-        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 20), 0, 0)
         .unwrap();
     // Standing inside the cloud.
     let inside = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(21, 20), 1, 0)
         .unwrap();
     // Well clear of it, on the far side.
     let far = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(35, 20), 1, 0)
         .unwrap();
-    let center = Coordinate::new(10, 5);
+    let center = Coordinate::new(20, 20);
     let costs = FOG_CLOUD.cost(&e, wiz, None, Some(&vec![center]), None);
     assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
     assert!(e.viewer_can_see(wiz, inside));
@@ -41950,7 +41953,7 @@ fn fog_cloud_lays_an_obscuring_zone_under_concentration() {
     assert!(!e.viewer_can_see(wiz, far));
     // …while a line that never touches it is unaffected.
     let clear = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 20), 1, 0)
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 35), 1, 0)
         .unwrap();
     assert!(e.viewer_can_see(wiz, clear));
     assert!(e.actors[&wiz].is_concentrating());
@@ -113216,6 +113219,140 @@ fn a_dropped_mantle_takes_the_free_commands_with_it() {
 /// `has_elegant_courtier` field"), and for types, so a sweep over all of
 /// them is mostly noise. `Type::member` is an unambiguous claim about
 /// what the code contains, and a name nobody can find is a claim that
+/// **Every area radius is the feet its own comment claims**, converted
+/// once and checked here.
+///
+/// The engine's grid is 2.5 feet to the tile — a Medium creature
+/// occupies a 2×2 block — so RAW's "20-foot-radius Sphere" is eight
+/// tiles and not four. About a dozen area spells had been converted as
+/// though the grid were five feet to the tile, and every one of them
+/// said so in its own comment: "20-ft radius = 4 tiles on the 2.5-ft
+/// grid" is a sentence that contains its own refutation, and it
+/// appeared six times. The spells beside them — Spirit Guardians at
+/// 15 ft, Holy Aura and Sunburst at 30 — had the conversion right, so
+/// half the area layer was at RAW scale and half at half scale, with
+/// nothing anywhere saying which was meant.
+///
+/// A source sweep rather than a type, because the numbers are `const`
+/// literals inside forty separate `impl` blocks and the only thing
+/// they have in common is the sentence above them. That is the same
+/// shape — and the same justification — as
+/// `every_qualified_name_a_doc_comment_cites_still_exists` below.
+///
+/// **A deliberately narrower area declares itself by writing down the
+/// number it is narrower than.** Four areas in the file are held below
+/// RAW on purpose and each has a reason worth reading; the rule that
+/// lets them through is that the comment must contain the RAW tile
+/// count in words ("RAW's 20-ft radius is 8 tiles … and this is held at
+/// 2"). That is a sentence a reader wants anyway, and it is the
+/// difference between a divergence and a mistake.
+///
+/// Radii only. A comment naming a wall's *length* or a spell's *range*
+/// is not making a claim about a Chebyshev radius, and a sweep that
+/// compared the two would be inventing a rule rather than checking one.
+#[test]
+fn every_area_radius_converts_the_feet_its_own_comment_claims() {
+    use crate::engine::util::tiles_from_feet;
+
+    const SPELLS: &str = include_str!("../actions/spells.rs");
+    /// Words that mean the number beside them is not a radius. A
+    /// 60-foot *wall* laid down as a squat Chebyshev block is an
+    /// approximation of a shape, not a conversion of a distance.
+    const NOT_A_RADIUS: &[&str] = &["wall", "line", "cone", "long", "range", "tall"];
+    /// …and the words that halve it: a cube or a square N feet on a
+    /// side has a half-width of N/2, and so does a sphere the book
+    /// prints as a *diameter* — Flaming Sphere's is the only one — and
+    /// N/2 is what a Chebyshev radius measures.
+    const HALF_WIDTH: &[&str] = &["cube", "square", "diameter"];
+
+    let lines: Vec<&str> = SPELLS.lines().collect();
+    let mut wrong: Vec<String> = Vec::new();
+    for (n, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed
+            .strip_prefix("const ")
+            .or_else(|| trimmed.strip_prefix("pub const "))
+        else {
+            continue;
+        };
+        let Some((name, value)) = rest.split_once(": isize = ") else {
+            continue;
+        };
+        if !name.contains("RADIUS") {
+            continue;
+        }
+        let Ok(tiles) = value.trim_end_matches(';').trim().parse::<i64>() else {
+            continue;
+        };
+        // The comment block immediately above, however it is spelled.
+        let mut doc = String::new();
+        let mut j = n;
+        while j > 0 {
+            let above = lines[j - 1].trim();
+            if !(above.starts_with("///") || above.starts_with("//")) {
+                break;
+            }
+            doc.insert_str(0, &format!("{} ", above.trim_start_matches('/').trim()));
+            j -= 1;
+        }
+        let doc = doc.to_lowercase();
+        if NOT_A_RADIUS.iter().any(|w| doc.contains(w)) {
+            continue;
+        }
+        // The first distance in feet the comment names.
+        let Some(feet) = first_feet(&doc) else {
+            continue;
+        };
+        let half = HALF_WIDTH.iter().any(|w| doc.contains(w));
+        let expected = tiles_from_feet(if half { feet / 2 } else { feet }) as i64;
+        if tiles == expected {
+            continue;
+        }
+        // A deliberate narrowing names the number it is narrower than.
+        if doc.contains(&format!("{} tiles", expected)) {
+            continue;
+        }
+        wrong.push(format!(
+            "spells.rs:{}: {} = {}, but the comment says {} ft{} — which is {} tiles",
+            n + 1,
+            name,
+            tiles,
+            feet,
+            if half { " on a side" } else { "" },
+            expected
+        ));
+    }
+    assert!(
+        wrong.is_empty(),
+        "the grid is 2.5 ft to the tile, so a radius in feet is \
+         `tiles_from_feet(feet)`. An area that is deliberately narrower \
+         than RAW says so by naming the RAW tile count in its comment:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// The first `N ft` / `N foot` / `N feet` in a doc block, as a number.
+fn first_feet(doc: &str) -> Option<u32> {
+    let bytes = doc.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let number = &doc[start..i];
+        let tail = doc[i..].trim_start_matches(['-', ' ', '\u{2011}']);
+        if tail.starts_with("ft") || tail.starts_with("foot") || tail.starts_with("feet") {
+            return number.parse().ok();
+        }
+    }
+    None
+}
+
 /// has stopped being true.
 #[test]
 fn every_qualified_name_a_doc_comment_cites_still_exists() {
