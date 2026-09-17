@@ -17189,6 +17189,127 @@ impl EncounterInstance {
         // asked at the same moment rather than at a site of its own that
         // could drift out of step with this one.
         self.touch_ground(actor_id);
+        // SRD 5.2's compulsion to run — Fear's "moves away from you by
+        // the safest route on each of its turns", Turn Undead's "it
+        // tries to move as far from you as it can". Last of the
+        // start-of-turn run, and last for three reasons that are all
+        // the same reason: it is the only entry that *spends* the
+        // turn's resources rather than reading them, so everything that
+        // could change the budget (the Conquest aura's root, the
+        // mount's legs), the body (the four reconciles) or whether
+        // there is still a body at all (the drains, the emanations,
+        // the ground) has already had its say. See
+        // `crate::engine::rout`.
+        self.run_rout(actor_id);
+    }
+
+    /// Spend a routed creature's movement getting it away from whatever
+    /// it is running from — the enforcement half of
+    /// [`Condition::Routed`], and the whole of
+    /// [`crate::engine::rout`]'s rule.
+    ///
+    /// Silent and free on the overwhelmingly common turn: the condition
+    /// check is a hash lookup and nothing else runs without it.
+    ///
+    /// A rout with no recorded source does nothing, which is the safe
+    /// direction — see the condition, where the alternative (run from
+    /// the nearest enemy) is argued down.
+    fn run_rout(&mut self, actor_id: usize) {
+        use crate::engine::rout::{FLIGHT_STEPS, MAX_FLIGHT_STEPS};
+        use crate::engine::side_effects::{MoveActor, Resource};
+
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return;
+        };
+        if !actor.has_condition(Condition::Routed) {
+            return;
+        }
+        let Some(source_id) = actor.linked_by(Condition::Routed) else {
+            return;
+        };
+        // The body that does the travelling, which for a rider is the
+        // horse — the same redirect the pathfinder and the Frightened
+        // movement gate already make, and needed here for exactly the
+        // geometry those two need it for: where the creature is
+        // standing and how wide it is.
+        //
+        // Everything *else* stays the rider's, which is the split
+        // `Move` already makes. `path_cost_to` reads the route off the
+        // body and the budget off the rider (a mounted rider spends the
+        // horse's speed, granted to the rider by
+        // `grant_mounted_movement`), the resource is spent on the
+        // rider, and `MoveActor` takes the rider's id and redirects the
+        // step itself. Handing any of those three the horse would spend
+        // a budget nobody filled.
+        let body_id = self.movement_body(actor_id);
+        let name = self.actor_name(actor_id);
+        let source_name = self.actor_name(source_id);
+        let mut walked = 0usize;
+        for _ in 0..MAX_FLIGHT_STEPS {
+            if !self
+                .actors
+                .get(&actor_id)
+                .is_some_and(|a| a.is_combat_active())
+            {
+                break;
+            }
+            let Some(body) = self.actors.get(&body_id) else {
+                break;
+            };
+            let Some(source) = self.actors.get(&source_id) else {
+                break;
+            };
+            let from = body.location();
+            let my_size = get_tiles_from_size(body.size());
+            let (source_loc, source_size) =
+                (source.location(), get_tiles_from_size(source.size()));
+            let here = footprint_chebyshev(from, my_size, source_loc, source_size);
+            // The best step is the one that opens the widest gap, and
+            // only a step that opens a *wider* one than standing still
+            // counts — which is both RAW's "as far as it can" and what
+            // makes the walk terminate.
+            let mut best: Option<(isize, Coordinate, f32)> = None;
+            for (dx, dy) in FLIGHT_STEPS {
+                let to = Coordinate::new(from.x + dx, from.y + dy);
+                let gap = footprint_chebyshev(to, my_size, source_loc, source_size);
+                if gap <= here {
+                    continue;
+                }
+                // Strictly greater, so equally-good steps fall through
+                // to `FLIGHT_STEPS`' declaration order and a seeded
+                // replay flees the same way twice.
+                if best.is_some_and(|(g, _, _)| gap <= g) {
+                    continue;
+                }
+                // A step is only a step if the board will take it and
+                // the creature can pay for it. `path_cost_to` answers
+                // both at once, over one tile, and carries every
+                // surcharge the turn has earned — the crawl, the drag,
+                // the web, the rubble.
+                if let Some(cost) = self.path_cost_to(actor_id, to) {
+                    best = Some((gap, to, cost));
+                }
+            }
+            let Some((_, to, cost)) = best else {
+                break;
+            };
+            if !self
+                .actors
+                .get_mut(&actor_id)
+                .is_some_and(|a| a.consume_resource(Resource::Movement(cost)))
+            {
+                break;
+            }
+            MoveActor {
+                actor_id,
+                path: vec![to],
+            }
+            .apply(self);
+            walked += 1;
+        }
+        if walked > 0 {
+            self.log(format!("{} flees from {}.", name, source_name));
+        }
     }
 
     /// 5e Conquest Paladin **Aura of Conquest** (subclass level 7), both

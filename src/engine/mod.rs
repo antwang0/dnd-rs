@@ -26,6 +26,7 @@ pub mod mastery;
 pub mod mounts;
 pub mod prompt;
 pub mod repeat_saves;
+pub mod rout;
 pub mod saves;
 pub mod side_effects;
 pub mod staged_saves;

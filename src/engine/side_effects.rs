@@ -2881,6 +2881,13 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // burst, the item save chassis and the smite follow-up — which is
     // what made one row here enough.
     crate::conditions::Condition::Frightened,
+    // SRD 5.2's compulsion to run, which is a separate sentence from
+    // the condition above it every time the book prints one: Fear's
+    // "moves away from *you*", Turn Undead's "as far from *you* as it
+    // can". The link is that creature and the condition is inert
+    // without it — there is no such thing as fleeing in general. See
+    // `crate::engine::rout`.
+    crate::conditions::Condition::Routed,
     // SRD 5.2 **Berserker Axe**: "While berserk, you regard the creature
     // nearest to you that you can see or hear as your enemy." The link
     // is that creature, and without it the condition would be a flat

@@ -16066,6 +16066,224 @@ fn forbiddance_refuses_every_teleport_in_and_no_footsteps_at_all() {
     );
 }
 
+/// SRD 5.2 Turn Undead's second sentence — *"for that duration, it
+/// tries to move as far from you as it can on its turns"* — which the
+/// feature shipped without, so a cleric's Channel Divinity moved
+/// nothing at all: the zombie stood where it was and kept swinging at
+/// Disadvantage.
+#[test]
+fn a_turned_undead_runs_instead_of_standing_its_ground() {
+    use crate::actions::class_features::{TURN_UNDEAD, TURN_UNDEAD_TAG};
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    // A ghast rather than a zombie: Destroy Undead's CR-1 ceiling
+    // would kill the zombie outright and there would be nobody left to
+    // run. A wight is no good either — this engine's wight is immune to
+    // Frightened, and half of what is being asserted here is a fear.
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+    use crate::engine::util::footprint_chebyshev;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let ghast = e
+        .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(13, 10), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    assert!(e.actors[&cleric].feature_available(TURN_UNDEAD_TAG));
+    // A save the zombie cannot make, so the assertion is about the
+    // clause rather than about a die.
+    e.actors
+        .get_mut(&ghast)
+        .unwrap()
+        .add_save_bonus_buff(-30);
+
+    let cast = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
+    assert!(cast.validate(&e));
+    e.push_action(cast);
+    e.process_stack();
+    assert!(e.actors[&ghast].has_condition(Condition::Frightened));
+    assert!(
+        e.actors[&ghast].has_condition(Condition::Routed),
+        "a turned undead is not merely frightened — it runs"
+    );
+    assert_eq!(
+        e.actors[&ghast].linked_by(Condition::Routed),
+        Some(cleric),
+        "and it runs from the cleric, which is the only thing the \
+         condition can mean"
+    );
+
+    let before = footprint_chebyshev(
+        e.actors[&ghast].location(),
+        2,
+        e.actors[&cleric].location(),
+        2,
+    );
+    e.start_turn_for(ghast);
+    let after = footprint_chebyshev(
+        e.actors[&ghast].location(),
+        2,
+        e.actors[&cleric].location(),
+        2,
+    );
+    assert!(
+        after > before,
+        "the rout spends the turn's movement putting ground between them \
+         (was {before}, now {after})"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("flees from")),
+        "and the play-by-play says so"
+    );
+}
+
+/// RAW's *"this effect ends early on the creature if it takes any
+/// damage"*, read narrowly onto the running rather than onto the whole
+/// turn — see `TurnBurst::routs`. The first hit puts the undead back on
+/// its feet, still frightened.
+#[test]
+fn a_hit_stops_the_running_and_leaves_the_fear() {
+    use crate::actions::class_features::TURN_UNDEAD;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    // A ghast, for the reason the sibling test above uses one: a
+    // zombie is inside Destroy Undead's CR ceiling and never lives to
+    // be hit.
+    use crate::actors::creatures::ghasts::GHAST_TEMPLATE;
+    use crate::engine::types::DamageType;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let ghast = e
+        .instantiate_creature(&GHAST_TEMPLATE, Coordinate::new(13, 10), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    e.actors.get_mut(&ghast).unwrap().add_save_bonus_buff(-30);
+    let cast = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
+    e.push_action(cast);
+    e.process_stack();
+    assert!(e.actors[&ghast].has_condition(Condition::Routed));
+
+    crate::engine::side_effects::DealDamage {
+        actor_id: ghast,
+        amount: 1,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors[&ghast].has_condition(Condition::Routed),
+        "one hit and it stops running"
+    );
+    assert!(
+        e.actors[&ghast].has_condition(Condition::Frightened),
+        "…and is still afraid of the cleric, which is the rest of the timer"
+    );
+}
+
+/// The rout is a *second* sentence and deliberately not part of the
+/// condition it arrives beside. Thirty sites in the engine install
+/// Frightened through five shared chassis — every dragon's roar, every
+/// harpy's song — and none of them empties the board.
+#[test]
+fn an_ordinary_fright_is_not_a_rout() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::engine::util::footprint_chebyshev;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let scary = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(13, 10), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Frightened,
+        fighter,
+        scary,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    let was = e.actors[&fighter].location();
+    e.start_turn_for(fighter);
+    assert_eq!(
+        e.actors[&fighter].location(),
+        was,
+        "a frightened creature may hold its ground — RAW forbids stepping \
+         closer and requires nothing else"
+    );
+    // …and the gap is what it was, which is the same statement made
+    // about the rule rather than about the tile.
+    assert_eq!(
+        footprint_chebyshev(was, 2, e.actors[&scary].location(), 2),
+        footprint_chebyshev(
+            e.actors[&fighter].location(),
+            2,
+            e.actors[&scary].location(),
+            2
+        )
+    );
+}
+
+/// RAW's *"unless there is nowhere to move"*, and the rout's own
+/// termination argument: the walk stops when no neighbouring step opens
+/// a wider gap, which in a corner is immediately.
+///
+/// Also the inert case — a rout with no recorded source has nothing to
+/// run from and does nothing, which is what `Condition::Routed` argues
+/// for over the alternative of fleeing the nearest enemy.
+#[test]
+fn a_rout_with_nowhere_to_go_and_a_rout_with_nobody_to_flee_both_stand_still() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    // Backed into the corner, with the thing it fears standing on the
+    // only diagonal out.
+    let cornered = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(0, 0), 1, 0)
+        .unwrap();
+    let scary = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    for ef in crate::engine::side_effects::install_condition_with_link(
+        Condition::Routed,
+        cornered,
+        scary,
+        ConditionTimer::Rounds(10),
+    ) {
+        ef.apply(&mut e);
+    }
+    e.start_turn_for(cornered);
+    assert_eq!(
+        e.actors[&cornered].location(),
+        Coordinate::new(0, 0),
+        "nowhere to move is nowhere to move"
+    );
+
+    // And the same condition with no link behind it.
+    let unlinked = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10, 10), 1, 1)
+        .unwrap();
+    e.actors
+        .get_mut(&unlinked)
+        .unwrap()
+        .add_condition(Condition::Routed, ConditionTimer::Rounds(10));
+    e.start_turn_for(unlinked);
+    assert_eq!(
+        e.actors[&unlinked].location(),
+        Coordinate::new(10, 10),
+        "there is no such thing as fleeing in general"
+    );
+}
+
 /// An area written against named creature types is bad ground only to
 /// those types. The hazard predicate the pathfinder asks takes the
 /// walker's own type (`WalkerAversions::kind`), so a consecration is a
@@ -113027,6 +113245,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/mounts.rs", include_str!("mounts.rs")),
         ("engine/prompt.rs", include_str!("prompt.rs")),
         ("engine/repeat_saves.rs", include_str!("repeat_saves.rs")),
+        ("engine/rout.rs", include_str!("rout.rs")),
         ("engine/saves.rs", include_str!("saves.rs")),
         ("engine/side_effects.rs", include_str!("side_effects.rs")),
         ("engine/staged_saves.rs", include_str!("staged_saves.rs")),

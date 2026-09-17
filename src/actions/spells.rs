@@ -14227,11 +14227,41 @@ impl Action for CrownOfStarsSpell {
 
 pub static CROWN_OF_STARS: LazyLock<CrownOfStarsSpell> = LazyLock::new(|| CrownOfStarsSpell {});
 
-/// Fear — level-3 illusion, concentration. RAW's 30-foot Cone of dread.
-/// Each enemy in it makes a WIS save vs the caster's DC: fail =
-/// Frightened for the spell's duration; pass = no effect. Routed through
-/// the shared enemy-area partition so allies in the cone are spared. Concentration so a re-cast / damage drop cleans up the entire
-/// Frightened pool in one shot.
+/// Fear — SRD 5.2 level-3 illusion (bard, sorcerer, warlock, wizard),
+/// concentration. RAW's 30-foot Cone of dread.
+///
+/// > Each creature in a 30-foot Cone must succeed on a Wisdom saving
+/// > throw or drop whatever it is holding and have the Frightened
+/// > condition for the duration. A Frightened creature takes the Dash
+/// > action and moves away from you by the safest route on each of its
+/// > turns unless there is nowhere to move.
+///
+/// Each enemy in the cone makes a WIS save vs the caster's DC: fail =
+/// Frightened *and* [`Condition::Routed`] for the spell's duration;
+/// pass = no effect. Routed through the shared enemy-area partition so
+/// allies in the cone are spared, and held by concentration so a
+/// re-cast or a dropped spell cleans up the whole pool in one shot.
+///
+/// **The second sentence is the spell**, and until the rout lane
+/// existed this spell did not have it: the cone installed Frightened,
+/// Frightened is Disadvantage and a refusal to *step closer*, and a
+/// whole enemy line could stand its ground under the spell and keep
+/// swinging at a penalty. What a level-3 slot buys here is a line that
+/// breaks and runs, which is a different thing to have cast. See
+/// [`crate::engine::rout`], where the shared clause lives and where its
+/// one divergence — the rout spends the turn's movement rather than
+/// RAW's Dash — is argued.
+///
+/// **Two RAW clauses are absent.** *"Drop whatever it is holding"*
+/// would need the engine to model a creature's hands, which nothing
+/// does — every weapon on a sheet is an action rather than an object
+/// being gripped. And *"if the creature ends its turn in a space where
+/// it doesn't have line of sight to you, the creature makes a Wisdom
+/// saving throw"* is an escape clause whose absence makes the spell
+/// slightly stronger than printed; the engine's repeat-save lane
+/// (`crate::engine::repeat_saves`) is keyed to the end of a turn rather
+/// than to a line of sight, and the version that fits it would be a
+/// free save every round rather than a save for having got away.
 pub struct Fear {}
 
 impl Action for Fear {
@@ -14305,13 +14335,21 @@ impl Action for Fear {
             if save.passed() {
                 continue;
             }
-            effects.extend(crate::engine::side_effects::install_condition_with_link(
-                Condition::Frightened,
-                tid,
-                caster_id,
-                ConditionTimer::Rounds(10),
-            ));
-            applied.push((tid, Condition::Frightened));
+            // Both sentences, and both linked to the caster: the
+            // Frightened clauses are about *"the source of your fear"*
+            // and the rout is about running from *"you"*. Two
+            // conditions rather than one because SRD 5.2 prints two,
+            // and because thirty other sites install the first without
+            // the second — see `Condition::Routed`.
+            for condition in [Condition::Frightened, Condition::Routed] {
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    condition,
+                    tid,
+                    caster_id,
+                    ConditionTimer::Rounds(10),
+                ));
+                applied.push((tid, condition));
+            }
         }
         if !applied.is_empty() {
             effects.push(Box::new(StartConcentration {

@@ -58,6 +58,52 @@ pub enum Condition {
     /// opposite default would switch fear off wherever a source had
     /// been forgotten.
     Frightened,
+    /// **Routed** — the compulsion to run, which SRD 5.2 prints as a
+    /// separate sentence from Frightened every single time and which
+    /// the engine had no way to say.
+    ///
+    /// > **Fear.** *"A Frightened creature takes the Dash action and
+    /// > moves away from you by the safest route on each of its turns
+    /// > unless there is nowhere to move."*
+    /// >
+    /// > **Turn Undead.** *"For that duration, it tries to move as far
+    /// > from you as it can on its turns."*
+    ///
+    /// Frightened is not that clause and never was. RAW's condition
+    /// says only that you roll badly while you can see the thing and
+    /// may not walk toward it — a frightened creature is free to stand
+    /// exactly where it is and keep swinging, which is what every
+    /// frightened creature in this engine did. The spells and features
+    /// that are *about* running away all add a second sentence, and
+    /// this is that sentence: at the top of its turn the holder spends
+    /// its movement putting distance between itself and the source.
+    ///
+    /// Linked, and useless without it — see `LINKED_CONDITIONS`. "As
+    /// far from you as it can" names one creature; a rout with no
+    /// recorded source has nothing to run from and does nothing at all,
+    /// which is the safe direction (the alternative would be a
+    /// creature fleeing the nearest enemy, which is a different rule
+    /// and a worse one on a board with two factions on it).
+    ///
+    /// Deliberately **not** folded into Frightened, even though every
+    /// installer of this also installs that. Three reasons, and the
+    /// third is the load-bearing one:
+    ///
+    ///   - The two clauses have different *sources* in the book. Turn
+    ///     Undead frightens *and* incapacitates *and* routs; a
+    ///     dragon's Frightful Presence only frightens.
+    ///   - They end at different times. RAW's Fear lets a creature that
+    ///     ends its turn out of line of sight save to end the whole
+    ///     spell; Turn Undead's rout ends on any damage while an
+    ///     ordinary fear does not.
+    ///   - Folding them would rout the thirty-odd sites that install
+    ///     Frightened through the engine's five shared chassis — every
+    ///     dragon's roar, every harpy's song — and turn the bestiary's
+    ///     most common condition into a rule that empties the board.
+    ///
+    /// Enforced by `EncounterInstance::run_rout`, at the top of the
+    /// holder's turn and nowhere else. See [`crate::engine::rout`].
+    Routed,
     /// Speed = 0; disadvantage on attacks; attacks against you have
     /// advantage; disadvantage on DEX saves.
     Restrained,
@@ -3913,6 +3959,7 @@ impl Condition {
             Condition::Stunned => "stunned",
             Condition::Poisoned => "poisoned",
             Condition::Frightened => "frightened",
+            Condition::Routed => "routed",
             Condition::Restrained => "restrained",
             Condition::Blinded => "blinded",
             Condition::Incapacitated => "incapacitated",
