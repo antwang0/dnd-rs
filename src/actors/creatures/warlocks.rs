@@ -80,7 +80,12 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // to *not* attack from, and cashed out whenever one doubly
     // advantaged swing is worth ending it for. See `spells::MISLEAD`.
     actions.push(&*crate::actions::spells::MISLEAD);
-    actions.push(&*BLINDNESS);
+    actions.push(&BLINDNESS);
+    // …and RAW's other half. One printing, two actions — see
+    // `spells::BlindnessDeafness`. Deafness is the narrower of the two
+    // by a long way, and it is on the list so that the choice the book
+    // offers is a choice somebody can make.
+    actions.push(&crate::actions::spells::DEAFNESS);
     actions.push(&*SUGGESTION);
     // Level 3 — Fear (cone Frightened), Counterspell (anti-caster),
     // Hypnotic Pattern (AoE charm), Vampiric Touch (sustained life

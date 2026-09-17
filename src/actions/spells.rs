@@ -3357,14 +3357,69 @@ impl Action for FalseLife {
 
 pub static FALSE_LIFE: LazyLock<FalseLife> = LazyLock::new(|| FalseLife {});
 
-/// Blindness/Deafness — level-2 necromancy. CON save vs spell DC; on
-/// fail target is Blinded for 10 rounds (1 minute). Doesn't require
-/// concentration in 5e — the duration runs without sustain.
-pub struct Blindness {}
+/// **Blindness/Deafness** — SRD 5.2 level-2 transmutation.
+///
+/// > *"One creature that you can see within range must succeed on a
+/// > Constitution saving throw, or it has the Blinded or Deafened
+/// > condition (your choice) for the duration. At the end of each of
+/// > its turns, the target repeats the save, ending the spell on itself
+/// > on a success."*
+///
+/// One printing, two spells here — the same split the engine makes for
+/// Enlarge/Reduce, and for the same reason: *"your choice"* is a
+/// decision made at the moment of casting, and the engine's unit of
+/// decision is which action a caster picks. `BLINDNESS` and `DEAFNESS`
+/// are one struct with the condition on it.
+///
+/// **The repeat save is RAW's and it had been missing entirely.** The
+/// spell is not concentration, so `ROUND_END_SAVES` — which finds its
+/// DC by asking who is concentrating — never looked at it, and a failed
+/// save bought a flat, unbreakable minute of Blinded. That is a much
+/// stronger spell than the one in the book, and on the strongest lane
+/// there is: a blinded creature attacks at Disadvantage and is attacked
+/// at Advantage for ten rounds with nothing to roll. It rides
+/// [`crate::engine::repeat_saves`] now, which is the ledger built for
+/// exactly this shape — a repeat with no caster to ask.
+///
+/// The ten rounds stay, as RAW's cap: the ledger is the escape hatch
+/// and the timer is the clock, and a victim who never rolls well enough
+/// is freed at the end of the minute exactly as the book says.
+pub struct BlindnessDeafness {
+    /// Which half of *"the Blinded or Deafened condition (your
+    /// choice)"* this printing is.
+    condition: Condition,
+    /// The action's name, and the escape clause's.
+    name: &'static str,
+    aliases: &'static [&'static str],
+    /// The row the end-of-turn repeat is registered against. One per
+    /// arm, because `repeat_saves` is keyed by condition and a shared
+    /// row would let a deafened creature roll its way out of somebody
+    /// else's blindness.
+    escape: &'static crate::engine::repeat_saves::RepeatSave,
+}
 
-impl Action for Blindness {
+/// The Blinded arm's end-of-turn repeat — *"at the end of each of its
+/// turns, the target repeats the save"*.
+pub static BLINDNESS_ESCAPE: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "blindness",
+        condition: Condition::Blinded,
+        ability: AbilityScoreType::Constitution,
+        escaped_flavor: "blinks, and can see again",
+    };
+
+/// The Deafened arm's, which is the same clause one sense over.
+pub static DEAFNESS_ESCAPE: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "deafness",
+        condition: Condition::Deafened,
+        ability: AbilityScoreType::Constitution,
+        escaped_flavor: "shakes their head, and the silence lifts",
+    };
+
+impl Action for BlindnessDeafness {
     fn name(&self) -> &str {
-        "blindness"
+        self.name
     }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Transmutation)
@@ -3377,7 +3432,10 @@ impl Action for Blindness {
         false
     }
     fn aliases(&self) -> Vec<&str> {
-        vec!["blind"]
+        self.aliases.to_vec()
+    }
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(self.condition)
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
@@ -3421,15 +3479,47 @@ impl Action for Blindness {
         if save.passed() {
             return Vec::new();
         }
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Blinded,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        // Installed here rather than queued, for the reason the sphinx's
+        // roar gives at its own call site: `begin_repeat_save` puts the
+        // condition and the escape on together, and an escape queued
+        // behind a condition that has not landed yet would be an escape
+        // from nothing. Nothing else in the cast is ordered against it.
+        encounter.begin_repeat_save(
+            target_id,
+            caster_id,
+            dc,
+            self.escape,
+            // RAW's one minute, which is the cap the repeats race
+            // rather than the duration the victim actually serves.
+            ConditionTimer::Rounds(10),
+        );
+        Vec::new()
     }
 }
 
-pub static BLINDNESS: LazyLock<Blindness> = LazyLock::new(|| Blindness {});
+pub static BLINDNESS: BlindnessDeafness = BlindnessDeafness {
+    condition: Condition::Blinded,
+    name: "blindness",
+    aliases: &["blind"],
+    escape: &BLINDNESS_ESCAPE,
+};
+
+/// The other half of *"(your choice)"*, and a narrower spell than its
+/// twin by a long way — which is the point of offering both rather than
+/// only the good one.
+///
+/// What being deafened costs a creature here is every clause in the
+/// bestiary that travels as sound: a harpy's Luring Song, a banshee's
+/// Wail, the Sleep pool sweep, and a bard's Inspiration. Against
+/// anything that simply bites, it costs nothing at all. That makes it
+/// the level-2 slot a party spends when it can see what is coming —
+/// and the slot Blindness is always worth spending when it cannot.
+pub static DEAFNESS: BlindnessDeafness = BlindnessDeafness {
+    condition: Condition::Deafened,
+    name: "deafness",
+    aliases: &["deafen", "deaf"],
+    escape: &DEAFNESS_ESCAPE,
+};
 
 /// Shield — level-1 abjuration reaction (we model as a normal Action
 /// for pipeline simplicity since Reaction-cost actions are also slotted

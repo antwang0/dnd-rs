@@ -59,7 +59,12 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*BURNING_HANDS);
     actions.push(&*CAUSE_FEAR);
     actions.push(&*WEB);
-    actions.push(&*BLINDNESS);
+    actions.push(&BLINDNESS);
+    // …and RAW's other half. One printing, two actions — see
+    // `spells::BlindnessDeafness`. Deafness is the narrower of the two
+    // by a long way, and it is on the list so that the choice the book
+    // offers is a choice somebody can make.
+    actions.push(&crate::actions::spells::DEAFNESS);
     actions.push(&*MISTY_STEP);
     actions.push(&*SHIELD);
     actions.push(&*ACID_SPLASH);

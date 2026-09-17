@@ -103983,6 +103983,104 @@ fn a_search_does_not_read_the_floor_on_the_far_side_of_the_room() {
     }
 }
 
+/// Blindness and Deafness are one printing's two halves, and both hand
+/// their victim the save the book prints.
+///
+/// The repeat is the half that had been missing entirely, and its
+/// absence was invisible for the usual reason: the spell is not
+/// concentration, so `ROUND_END_SAVES` — which finds its DC by asking
+/// who is concentrating — never looked at it, and there is no failure
+/// mode louder than a creature that stays blind. A flat, unbreakable
+/// minute of Disadvantage on everything it swings and Advantage for
+/// everything swinging back is a much stronger level-2 slot than the
+/// one in the book.
+///
+/// Rolled at two DCs rather than asserted once, the way the sphinx's
+/// roar is: the point is that the repeat is a real roll and not a
+/// formality.
+#[test]
+fn blindness_and_deafness_both_offer_the_repeat_the_book_prints() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::{BLINDNESS, DEAFNESS};
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for (spell, installed, other) in [
+        (
+            &BLINDNESS as &(dyn Action + Send + Sync),
+            Condition::Blinded,
+            Condition::Deafened,
+        ),
+        (&DEAFNESS, Condition::Deafened, Condition::Blinded),
+    ] {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], 3);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // A commoner's +0 Constitution against a wizard's DC fails
+        // reliably, which is what makes the install deterministic.
+        let victim = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+            .unwrap();
+        e.pop_prompt();
+        for eff in spell.side_effects(&mut e, wizard, Some(&vec![victim]), None, None) {
+            eff.apply(&mut e);
+        }
+        assert!(
+            e.actors[&victim].has_condition(installed),
+            "{} should install {:?}",
+            spell.name(),
+            installed
+        );
+        assert!(
+            !e.actors[&victim].has_condition(other),
+            "{} is one half of \"your choice\", not both",
+            spell.name()
+        );
+        assert!(
+            e.repeat_save_pending(victim, installed),
+            "{}: RAW's \"at the end of each of its turns, the target repeats \
+             the save\" is the half this spell never had",
+            spell.name()
+        );
+    }
+}
+
+/// …and the repeat is a roll a victim can actually make.
+///
+/// The sphinx's roar's own test makes this point with two DCs; this one
+/// borrows it, because the spell's DC comes off the caster and there is
+/// no way to dial a wizard's Intelligence from here.
+#[test]
+fn the_blindness_repeat_is_a_real_roll() {
+    use crate::actions::spells::{BLINDNESS_ESCAPE, DEAFNESS_ESCAPE};
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for clause in [&BLINDNESS_ESCAPE, &DEAFNESS_ESCAPE] {
+        for (dc, escapes) in [(1, true), (99, false)] {
+            let mut e = ei_with_terrain_seeded(20, 20, &[], 5);
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+                .unwrap();
+            e.pop_prompt();
+            e.begin_repeat_save(victim, wizard, dc, clause, ConditionTimer::Rounds(10));
+            assert!(e.actors[&victim].has_condition(clause.condition));
+
+            e.tick_repeat_saves(victim);
+            assert_eq!(
+                !e.actors[&victim].has_condition(clause.condition),
+                escapes,
+                "{} at DC {dc}: the repeat is a real roll, not a formality",
+                clause.name
+            );
+        }
+    }
+}
+
 /// The Wand of Secrets points at the nearest hidden thing, one pulse
 /// at a time, and it does not care whether the thing is magic.
 ///
