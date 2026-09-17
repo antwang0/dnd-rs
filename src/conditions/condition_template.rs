@@ -2437,6 +2437,47 @@ pub enum Condition {
     /// timer plus the standard `is_dispellable_buff` hook so Dispel
     /// Magic can strip it, matching `TrueSighted` exactly on both.
     SeeingInvisible,
+    /// **Detecting magic** — SRD 5.2 *Detect Magic*, level-1 divination,
+    /// Concentration.
+    ///
+    /// > *"For the duration, you sense the presence of magical effects
+    /// > within 30 feet of yourself."*
+    ///
+    /// The third rung of the engine's concealment-piercing ladder and
+    /// the only one that is not about creatures. `SeeingInvisible` and
+    /// `TrueSighted` above answer *"who is standing there"*;
+    /// this answers *"what is written on the floor"*, which until now
+    /// nothing did. The zone layer has carried concealed areas since
+    /// Glyph of Warding — a ward is invisible to the pathfinder and
+    /// invisible on the map — and the only way to find one was the
+    /// Search action: an Action, a Perception roll against the ward's
+    /// own save DC, and a ten-foot reach. A lich's glyph in a corridor
+    /// was therefore found by walking onto it.
+    ///
+    /// What the holder senses, and what it deliberately does not:
+    ///
+    ///   - **Every concealed area some caster put there** within
+    ///     `DETECT_MAGIC_TILES`, with no roll. RAW's sentence has no
+    ///     check in it, which is the whole difference between this and
+    ///     Search: the wizard does not look harder than the rogue, they
+    ///     look at something else.
+    ///   - **No trap.** SRD's example traps are a tripwire, a net, and
+    ///     two holes in the floor; a spell that senses magic senses
+    ///     none of them. The dungeon's own hazards stay the Search
+    ///     action's to find, which leaves both actions with a job. See
+    ///     `EncounterInstance::concealed_magical_zones_near` for where
+    ///     the line is drawn and how.
+    ///
+    /// Swept at the top of the holder's turn rather than only at the
+    /// moment of casting, because RAW's *"for the duration"* is the
+    /// point of the spell: a caster walks down the corridor with it up
+    /// and the glyph lights before the party reaches it. See
+    /// `EncounterInstance::sense_magical_auras`.
+    ///
+    /// Concentration-bound, so it competes with every other
+    /// concentration spell the caster might rather be holding — and on
+    /// `is_dispellable_buff`, like the two senses above it.
+    DetectingMagic,
     /// Immolated (5e Immolation, level-5 transmutation, concentration).
     /// The target is engulfed in magical flames: they take 4d6 fire damage
     /// at the end of each of their turns (via the standard
@@ -4188,6 +4229,7 @@ impl Condition {
             Condition::Gaseous => "gaseous",
             Condition::TrueSighted => "true-sighted",
             Condition::SeeingInvisible => "seeing-invisible",
+            Condition::DetectingMagic => "sensing magic",
             Condition::Immolated => "immolated",
             Condition::GuidedStriking => "primed with a guided strike",
             Condition::ChillTouched => "chilled by the grave's touch",
@@ -4476,6 +4518,10 @@ impl Condition {
                 | Condition::WeaponEnchanted
                 | Condition::TrueSighted
                 | Condition::SeeingInvisible
+                // The third magical sense, beside the two it is the
+                // sibling of: a timed benefit on a willing holder,
+                // which is the whole membership test.
+                | Condition::DetectingMagic
                 | Condition::GuidedStriking
                 // The two chosen-damage-type wards. Both are
                 // duration-bearing magical buffs on a willing holder,

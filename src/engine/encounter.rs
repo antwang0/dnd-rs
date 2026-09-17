@@ -6583,6 +6583,18 @@ impl EncounterInstance {
     /// and one that only needs the wizard to be looking up.
     pub const FEATHER_FALL_RADIUS: isize = 24;
 
+    /// RAW's 30 ft on Detect Magic, in tiles on the 2.5 ft grid — the
+    /// same twelve as Flash of Genius above, and the same sentence
+    /// ("within 30 feet of yourself") behind it.
+    ///
+    /// Three times the reach of the Search action's trap sweep, which
+    /// is deliberate and is the shape of the trade: Search is an Action
+    /// and a roll and finds anything within ten feet of the floor a
+    /// creature is crouching over; this is a spell slot and a
+    /// concentration and finds only magic, from across the room, for as
+    /// long as it is held.
+    pub const DETECT_MAGIC_TILES: isize = 12;
+
     /// 5e Artificer **Flash of Genius** (lv7): "whenever you or another
     /// creature you can see within 30 feet of you makes an ability
     /// check or a saving throw, you can use your reaction to add your
@@ -9145,14 +9157,7 @@ impl EncounterInstance {
         searcher_id: usize,
         radius: isize,
     ) -> Vec<(usize, i32)> {
-        let Some(searcher) = self.actors.get(&searcher_id) else {
-            return Vec::new();
-        };
-        let (loc, size) = (searcher.location(), get_tiles_from_size(searcher.size()));
-        self.zones
-            .iter()
-            .filter(|z| z.is_concealed())
-            .filter(|z| footprint_chebyshev(loc, size, z.origin, 1) <= radius + z.radius)
+        self.concealed_zones_within(searcher_id, radius)
             .map(|z| {
                 let own_save = z.effect.contact.and_then(|c| c.save.map(|s| s.dc));
                 let dc = z
@@ -9163,6 +9168,61 @@ impl EncounterInstance {
                 (z.id, dc)
             })
             .collect()
+    }
+
+    /// Every concealed area within `radius` of `searcher_id`'s
+    /// footprint that **some caster put there** — Detect Magic's
+    /// candidate list, and the half of `concealed_zones_near` that a
+    /// spell can sense.
+    ///
+    /// The line between the two is `owner_id`. Every area on the layer
+    /// is either somebody's spell or the dungeon's own hardware, and
+    /// [`crate::engine::traps::NOBODY`] is the id the second kind
+    /// carries — it exists precisely because a pressure plate was cast
+    /// by no one. So "was there a caster" is the same question as "is
+    /// this magic", asked in the vocabulary the layer already has.
+    ///
+    /// That is worth stating plainly because it is an invariant rather
+    /// than a tautology: SRD prints a Fire-Casting Statue, which is a
+    /// trap *and* magic, and the engine does not ship it (see
+    /// [`crate::engine::traps`] for why). The day it does, this
+    /// predicate is the one that has to learn the difference — a flag
+    /// on `Trap` rather than an inference from who owns the zone.
+    ///
+    /// No DCs, unlike its neighbour, because RAW's sentence has no
+    /// check in it: *"you sense the presence of magical effects within
+    /// 30 feet"* is not a roll, and that is the whole difference
+    /// between this and the Search action.
+    pub fn concealed_magical_zones_near(&self, searcher_id: usize, radius: isize) -> Vec<usize> {
+        self.concealed_zones_within(searcher_id, radius)
+            .filter(|z| z.owner_id != crate::engine::traps::NOBODY)
+            .map(|z| z.id)
+            .collect()
+    }
+
+    /// The geometry both concealed-area queries above are written on:
+    /// every area nobody has found yet whose own radius reaches within
+    /// `radius` tiles of `searcher_id`'s body.
+    ///
+    /// One iterator rather than the same three filters twice, because
+    /// the two callers differ only in what they do with the rows and a
+    /// second copy of *"gap to the area's edge"* is a second place for
+    /// the off-by-one `Zone::covers` documents to come back.
+    fn concealed_zones_within(
+        &self,
+        searcher_id: usize,
+        radius: isize,
+    ) -> impl Iterator<Item = &crate::engine::zones::Zone> {
+        let anchor = self
+            .actors
+            .get(&searcher_id)
+            .map(|a| (a.location(), get_tiles_from_size(a.size())));
+        self.zones.iter().filter(move |z| {
+            let Some((loc, size)) = anchor else {
+                return false;
+            };
+            z.is_concealed() && footprint_chebyshev(loc, size, z.origin, 1) <= radius + z.radius
+        })
     }
 
     /// Arm `count` traps on random free floor, drawn from
@@ -17079,6 +17139,13 @@ impl EncounterInstance {
         // noticing something without consciously looking for it. See
         // `notice_hidden_enemies`.
         self.notice_hidden_enemies(actor_id);
+        // SRD 5.2 **Detect Magic**'s *"for the duration"*, which is the
+        // same moment and the same sentence one axis over: what the
+        // creature whose turn is opening becomes aware of without
+        // spending anything on looking. Passive Perception finds the
+        // rogue behind the crate; this finds the glyph under the rug.
+        // See `sense_magical_auras`.
+        self.sense_magical_auras(actor_id);
         // 5e's attach clause: "the target takes 5 (2d4) Necrotic damage
         // at the start of each of the stirge's turns", and the same
         // tick refreshes whatever the latch imposes on its host.
@@ -22978,6 +23045,44 @@ impl EncounterInstance {
                 .is_some_and(|a| a.remove_condition(Condition::Hidden))
             {
                 self.log(format!("{} spots {}.", watcher_name, name));
+            }
+        }
+    }
+
+    /// What a creature holding **Detect Magic** becomes aware of at the
+    /// top of its turn: every set ward within
+    /// [`Self::DETECT_MAGIC_TILES`] of it.
+    ///
+    /// > *"For the duration, you sense the presence of magical effects
+    /// > within 30 feet of yourself."*
+    ///
+    /// The sibling of `notice_hidden_enemies` in every respect that
+    /// matters, which is why it runs beside it: both are the top of the
+    /// turn, both cost nothing, and both are about a thing the creature
+    /// was not consciously looking for. The differences are the two RAW
+    /// draws — this one finds *areas* rather than creatures, and it
+    /// rolls nothing at all, because the spell's sentence has no check
+    /// in it.
+    ///
+    /// Run per-actor rather than board-wide for the same reason its
+    /// neighbour is: the sweep is what "at the top of your turn" means,
+    /// and a board-wide pass would announce the same glyph once per
+    /// creature. A revealed area is revealed for everybody — see
+    /// `Zone::revealed`, where the engine's one-flag simplification is
+    /// written down — so the wizard's spell finds it for the party, and
+    /// for the goblins too.
+    fn sense_magical_auras(&mut self, sensor_id: usize) {
+        if self
+            .actors
+            .get(&sensor_id)
+            .is_none_or(|a| !a.has_condition(Condition::DetectingMagic) || !a.is_combat_active())
+        {
+            return;
+        }
+        for zone_id in self.concealed_magical_zones_near(sensor_id, Self::DETECT_MAGIC_TILES) {
+            if self.reveal_zone(zone_id) {
+                let name = self.actor_name(sensor_id);
+                self.log(format!("  {} senses the magic on it.", name));
             }
         }
     }

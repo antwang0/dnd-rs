@@ -34466,6 +34466,135 @@ impl Action for SeeInvisibility {
 
 pub static SEE_INVISIBILITY: LazyLock<SeeInvisibility> = LazyLock::new(|| SeeInvisibility {});
 
+/// Detect Magic — SRD 5.2 level-1 divination (Ritual), Concentration.
+///
+/// > *"For the duration, you sense the presence of magical effects
+/// > within 30 feet of yourself."*
+///
+/// The third magical sense on this page and the first that is not about
+/// creatures. `SEE_INVISIBILITY` and `TRUE_SEEING` above answer *"who
+/// is standing there"*; this answers *"what is written on the floor"*,
+/// and the floor is where the engine has been keeping its most
+/// dangerous secrets since Glyph of Warding arrived. A set ward is
+/// invisible to the pathfinder, invisible on the map, and invisible in
+/// the initiative panel; before this the only way to learn of one was
+/// to spend an Action on Search, roll Wisdom (Perception) against the
+/// glyph's own save DC, and be standing within ten feet of it. Against
+/// a lich's glyph that is a coin-flip for the privilege of being close
+/// enough to set it off.
+///
+/// What it costs and what it buys, which is the whole design:
+///
+///   - **No roll.** RAW's sentence has no check in it. That is the
+///     difference between this and Search — the wizard is not looking
+///     harder than the rogue, they are looking at something else.
+///   - **Thirty feet, for the duration.** The sweep runs again at the
+///     top of every one of the caster's turns, so walking down the
+///     corridor with it up lights the glyph before the party reaches
+///     it. See `EncounterInstance::sense_magical_auras`.
+///   - **Magic only.** SRD's example traps are a tripwire, a net and
+///     two holes in the floor, and a spell that senses magic senses
+///     none of them. The dungeon's own hardware stays Search's to
+///     find, which is what keeps both actions worth an Action. See
+///     `EncounterInstance::concealed_magical_zones_near`.
+///   - **Concentration.** The real price. It competes with every lock
+///     and every buff the same caster would rather be holding, so it is
+///     a thing you put up while walking and drop the moment the fight
+///     starts — which is exactly the spell's shape at a table.
+///
+/// RAW's second sentence — *"you can take the Magic action to see a
+/// faint aura … and learn the spell's school"* — is not modeled. The
+/// engine has the school on every `Action` and nowhere to display an
+/// aura, and a second Action that told the caster something they could
+/// already read off the log would be ceremony.
+pub struct DetectMagic {}
+
+impl Action for DetectMagic {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
+    fn name(&self) -> &str {
+        "detect magic"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dm", "detect", "detectmagic"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // Nothing to gain from a second copy of a sense that is already
+        // up, and the slot would be thrown away — the same guard See
+        // Invisibility carries directly above.
+        actor_lacks_condition(encounter, caster_id, Condition::DetectingMagic)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // The first sweep happens on the cast rather than on the next
+        // turn, because a caster who spends a slot on a sense expects to
+        // sense something with it now. Resolved inline for the reason
+        // the Search action resolves its own reveal inline: revealing an
+        // area is a change to the board rather than to an actor, and the
+        // queue carries actor effects.
+        let found = encounter
+            .concealed_magical_zones_near(caster_id, EncounterInstance::DETECT_MAGIC_TILES)
+            .into_iter()
+            .filter(|&zone_id| encounter.reveal_zone(zone_id))
+            .count();
+        if found == 0 {
+            encounter.log("  detect magic: nothing magical nearby.".to_string());
+        }
+        self_concentration_buff_effects(
+            caster_id,
+            "Detect Magic",
+            Condition::DetectingMagic,
+            // RAW's ten minutes. Longer than any fight, which is the
+            // point of the cap rather than an accident of it: the spell
+            // ends when concentration does, and concentration is what
+            // the caster is actually paying.
+            ConditionTimer::Rounds(100),
+        )
+    }
+}
+
+pub static DETECT_MAGIC: LazyLock<DetectMagic> = LazyLock::new(|| DetectMagic {});
+
 /// Immolation — level-5 transmutation (sorcerer / wizard spell list),
 /// concentration. 90-ft single-target. The target makes a DEX save vs
 /// the caster's spell save DC; on a fail they take 8d6 fire damage AND

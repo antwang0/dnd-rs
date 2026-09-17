@@ -103717,6 +103717,161 @@ fn a_search_does_not_read_the_floor_on_the_far_side_of_the_room() {
     }
 }
 
+/// Detect Magic finds the glyph and walks straight past the
+/// pressure plate — SRD's sentence is about magic, and half the
+/// concealed areas on this layer are carpentry.
+///
+/// The pairing is the point of the spell rather than a detail of it.
+/// Search and Detect Magic both reveal concealed areas and neither
+/// one supersedes the other: the Action with the Perception roll
+/// finds what the dungeon built, and the slot with no roll at all
+/// finds what a caster wrote. A Detect Magic that found the tripwire
+/// too would leave the Search action nothing to do.
+#[test]
+fn detect_magic_reads_the_glyph_and_not_the_tripwire() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::{DETECT_MAGIC, GLYPH_OF_WARDING};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::traps::COLLAPSING_ROOF;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    // Both well inside the spell's thirty feet, and both well outside
+    // the ten the Search action reads the floor from.
+    let trap = e.install_zone(COLLAPSING_ROOF.zone_at(Coordinate::new(18, 10)));
+    for effect in GLYPH_OF_WARDING.side_effects(
+        &mut e,
+        wizard,
+        None,
+        Some(&vec![Coordinate::new(16, 10)]),
+        None,
+    ) {
+        effect.apply(&mut e);
+    }
+    let glyph = e
+        .zones()
+        .iter()
+        .find(|z| z.name == "glyph of warding")
+        .expect("the glyph should be on the board")
+        .id;
+    assert!(
+        e.zones().iter().all(|z| !z.revealed),
+        "the fixture should start with both areas concealed"
+    );
+
+    for effect in DETECT_MAGIC.side_effects(&mut e, wizard, None, None, None) {
+        effect.apply(&mut e);
+    }
+    assert!(
+        e.zones().iter().any(|z| z.id == glyph && z.revealed),
+        "a glyph is a magical effect within thirty feet"
+    );
+    assert!(
+        e.zones().iter().any(|z| z.id == trap && !z.revealed),
+        "and a collapsing roof is a pile of masonry"
+    );
+    assert!(
+        e.actors[&wizard].has_condition(Condition::DetectingMagic),
+        "the sense stays up for the duration"
+    );
+}
+
+/// …and it keeps sensing for the duration, which is the half of the
+/// spell that a one-shot reveal on the cast would miss.
+///
+/// The glyph starts out of range. Nothing is found on the cast; the
+/// wizard walks toward it, and the top of the next turn is when the
+/// floor lights up. That is `sense_magical_auras` doing the job the
+/// spell's *"for the duration"* is written for — a caster walking a
+/// corridor learns about the ward before reaching it.
+#[test]
+fn detect_magic_keeps_sensing_after_the_cast() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::{DETECT_MAGIC, GLYPH_OF_WARDING};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(60, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    // Forty tiles away — a hundred feet, well past the spell's thirty.
+    for effect in GLYPH_OF_WARDING.side_effects(
+        &mut e,
+        wizard,
+        None,
+        Some(&vec![Coordinate::new(42, 10)]),
+        None,
+    ) {
+        effect.apply(&mut e);
+    }
+    let glyph = e
+        .zones()
+        .iter()
+        .find(|z| z.name == "glyph of warding")
+        .expect("the glyph should be on the board")
+        .id;
+
+    for effect in DETECT_MAGIC.side_effects(&mut e, wizard, None, None, None) {
+        effect.apply(&mut e);
+    }
+    assert!(
+        e.zones().iter().any(|z| z.id == glyph && !z.revealed),
+        "a hundred feet is out of range and the cast finds nothing"
+    );
+
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .set_location(Coordinate::new(35, 10));
+    e.start_turn_for(wizard);
+    assert!(
+        e.zones().iter().any(|z| z.id == glyph && z.revealed),
+        "and the sweep at the top of the turn finds it once the wizard is close"
+    );
+}
+
+/// The sense is the spell, and the spell is the concentration. A
+/// caster who has dropped it senses nothing at the top of the next
+/// turn, however close they are standing.
+#[test]
+fn a_dropped_concentration_stops_the_sensing() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::{DETECT_MAGIC, GLYPH_OF_WARDING};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    for effect in DETECT_MAGIC.side_effects(&mut e, wizard, None, None, None) {
+        effect.apply(&mut e);
+    }
+    assert!(e.actors[&wizard].has_condition(Condition::DetectingMagic));
+    e.drop_concentration(wizard);
+    assert!(
+        !e.actors[&wizard].has_condition(Condition::DetectingMagic),
+        "dropping the concentration takes the sense with it"
+    );
+
+    // Now put a glyph right under the wizard's nose.
+    for effect in GLYPH_OF_WARDING.side_effects(
+        &mut e,
+        wizard,
+        None,
+        Some(&vec![Coordinate::new(5, 10)]),
+        None,
+    ) {
+        effect.apply(&mut e);
+    }
+    e.start_turn_for(wizard);
+    assert!(
+        e.zones().iter().all(|z| !z.revealed),
+        "a wizard who is no longer concentrating is a wizard looking at a rug"
+    );
+}
+
 /// A net is a net-sized thing: RAW's "the target succeeds
 /// automatically if it's Huge or larger", which arrives on the zone
 /// layer as `ZoneContact::catches_at_most`.

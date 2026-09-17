@@ -740,6 +740,14 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // against a plain Invisible opponent the lv2 self-buff is the right
     // spend, and the lv6 slot stays free for Globe / Mass Suggestion.
     actions.push(&*crate::actions::spells::SEE_INVISIBILITY);
+    // Detect Magic — the lv1 third of the same family, and the one
+    // that looks at the floor rather than at the room. A wizard walking
+    // a corridor with this up finds the lich's Glyph of Warding from
+    // thirty feet with no roll, where the Search action costs an Action
+    // and a Perception check against the glyph's own save DC from ten.
+    // Concentration, so it is what the wizard holds between fights and
+    // drops the moment one starts. See `spells::DETECT_MAGIC`.
+    actions.push(&*crate::actions::spells::DETECT_MAGIC);
     // Darkvision — the other half of "I cannot see". See Invisibility
     // above answers a hidden enemy; this answers an unlit room, which
     // is the far commoner problem and the one the wizard is least
