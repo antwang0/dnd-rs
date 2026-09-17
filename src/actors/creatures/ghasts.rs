@@ -82,8 +82,19 @@ pub static GHAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        // Standard undead damage envelope: poison immunity.
-        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // SRD 5.2 "Resistances Necrotic" and "Immunities Poison".
+        //
+        // The necrotic half was missing under a comment calling poison
+        // immunity "the standard undead damage envelope", which it is —
+        // and the ghast prints a line the standard envelope does not.
+        // It is the half that matters against the party most likely to
+        // meet one: a warlock's Eldritch Blast and a Death Cleric's
+        // whole kit are necrotic, and a CR-2 undead the book halves
+        // them against was taking all of it.
+        damage_modifiers: HashMap::from([
+            (DamageType::Necrotic, DamageModifier::Resistance),
+            (DamageType::Poison, DamageModifier::Immunity),
+        ]),
         // RAW **Stench** — see the template docstring above and
         // `emanations::GHAST_STENCH`.
         emanations: std::slice::from_ref(&GHAST_STENCH),
