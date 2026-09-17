@@ -169,29 +169,6 @@ pub fn footprint_chebyshev(
     gap_x.max(gap_y)
 }
 
-/// Chebyshev distance from the **nearest tile of a footprint** to a
-/// single tile — "how far is this body from that spot", where a body
-/// standing on the spot is zero away from it.
-///
-/// The sibling of [`footprint_chebyshev`] and *not* the same measure:
-/// that one reports the **gap** between two footprints (the number of
-/// empty tiles in between), which is the right unit for a reach, and
-/// this one reports a **distance**, which is the right unit for a
-/// radius. The two differ by one everywhere they are both defined, and
-/// the difference is why both exist rather than one of them being
-/// spelled with a `± 1` at each call site.
-///
-/// A radius is what `Zone::covers` already measures for a *tile*
-/// (`origin.chebyshev_to(coord) <= radius`), so this is the same
-/// question asked of a body: the area a zone catches and the area it
-/// draws are one area.
-pub fn footprint_reach_to(anchor: Coordinate, size: usize, point: Coordinate) -> isize {
-    let size = size as isize;
-    let dx = (point.x - (anchor.x + size - 1)).max(anchor.x - point.x).max(0);
-    let dy = (point.y - (anchor.y + size - 1)).max(anchor.y - point.y).max(0);
-    dx.max(dy)
-}
-
 static RE_ABS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+),(\d+)$").unwrap());
 
 /// Parse a coordinate from `input`, interpreted relative to `base_coord`
@@ -478,42 +455,4 @@ mod tests {
         assert_eq!(proficiency_bonus_for_level(17), 6);
         assert_eq!(proficiency_bonus_for_level(50), 6);
     }
-
-    /// The two footprint measures are one apart, everywhere, and that
-    /// is the whole reason both exist. A gap is what a reach is written
-    /// in — SRD 5.2's "within 5 feet" is one empty tile on the 2.5-ft
-    /// grid — and a distance is what a radius is written in.
-    ///
-    /// Reading one as the other is what made every zone in the engine
-    /// catch a ring of creatures it never drew; see
-    /// `EncounterInstance::actor_in_zone`.
-    #[test]
-    fn a_footprints_reach_and_its_gap_differ_by_exactly_one() {
-        let origin = Coordinate::new(10, 10);
-        // A Medium body (2×2) whose near edge is `d` tiles from the
-        // origin, approached from the east.
-        for d in 1..=6isize {
-            let anchor = Coordinate::new(10 + d, 10);
-            assert_eq!(
-                footprint_reach_to(anchor, 2, origin),
-                d,
-                "the near edge is {d} tiles out"
-            );
-            assert_eq!(
-                footprint_chebyshev(anchor, 2, origin, 1),
-                d - 1,
-                "…with {} empty tiles in between",
-                d - 1
-            );
-        }
-        // A body standing on the point is no distance from it, and a
-        // radius-0 area is the one tile it was drawn on.
-        assert_eq!(footprint_reach_to(origin, 2, origin), 0);
-        // A footprint grows away from its anchor, so a Large body (4×4)
-        // anchored west of the point reaches it and the same body
-        // anchored the same distance east does not.
-        assert_eq!(footprint_reach_to(Coordinate::new(7, 7), 4, origin), 0);
-        assert_eq!(footprint_reach_to(Coordinate::new(13, 13), 4, origin), 3);
-    }
 }
-
