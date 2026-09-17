@@ -16066,6 +16066,63 @@ fn forbiddance_refuses_every_teleport_in_and_no_footsteps_at_all() {
     );
 }
 
+/// An area written against named creature types is bad ground only to
+/// those types. The hazard predicate the pathfinder asks takes the
+/// walker's own type (`WalkerAversions::kind`), so a consecration is a
+/// detour for the wight and open floor for the ogre standing next to
+/// it.
+///
+/// Before that, `deters_walkers` answered the ownerless question — *can
+/// this hurt anybody* — and a type-gated ward was a wall to the whole
+/// board, which is a different spell from the one SRD 5.2 prints.
+///
+/// The map's glyph still asks the ownerless question, and has to: it is
+/// drawn for a board rather than for a creature.
+#[test]
+fn a_ward_written_against_six_types_is_open_floor_to_everybody_else() {
+    use crate::actions::spells::FORBIDDANCE;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+        .unwrap();
+    let wight = e
+        .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(30, 15), 1, 0)
+        .unwrap();
+    let ogre = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(30, 20), 1, 1)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&cleric).unwrap().reset_for_new_round();
+    let cast = ActionExecutionInfo::new(
+        &*FORBIDDANCE,
+        cleric,
+        None,
+        Some(vec![Coordinate::new(15, 15)]),
+        None,
+    );
+    e.push_action(cast);
+    e.process_stack();
+
+    assert!(
+        e.has_bad_ground_for_testing(wight),
+        "a wight has somewhere on this board it would rather not stand"
+    );
+    assert!(
+        !e.has_bad_ground_for_testing(ogre),
+        "and an ogre has nowhere — the ward was not written against it"
+    );
+    // The ownerless question is still yes: the board does carry an area
+    // that can hurt somebody, and that is what the map draws.
+    assert!(
+        e.tile_is_hazardous(Coordinate::new(16, 16)),
+        "the consecrated ground is still drawn as dangerous ground"
+    );
+}
+
 /// Protection from Evil and Good taxes exactly RAW's six creature
 /// types — aberration, celestial, elemental, fey, fiend, undead — read
 /// through `CreatureType::affected_by_protection`. An undead attacker

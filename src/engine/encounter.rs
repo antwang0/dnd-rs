@@ -314,7 +314,9 @@ use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource
 use crate::engine::weather::Weather;
 use crate::engine::zones::{BarredTeleport, Zone};
 use crate::engine::triggers::TriggerEvent;
-use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
+use crate::engine::types::{
+    AbilityScoreType, Coordinate, CreatureType, DamageType, Size, SpellSchool,
+};
 use crate::engine::jumping;
 use crate::engine::util::{TILE_FEET, footprint_chebyshev, footprint_tiles, get_tiles_from_size};
 use fastrand::Rng;
@@ -2186,6 +2188,19 @@ struct WalkerAversions {
     /// A frozen pond is open floor to all three and a coin flip to
     /// everybody else.
     slips: bool,
+    /// What this walker *is* — the fourth sense of bad ground, and the
+    /// only one that is about the creature's stat block rather than
+    /// about its state.
+    ///
+    /// SRD 5.2 has a small family of areas written against named
+    /// creature types (Forbiddance's six), and to everybody else they
+    /// are open floor. Without this the pathfinder asks the ownerless
+    /// question — *"can this hurt anybody"* — and routes an ogre the
+    /// long way round a consecration that could not touch it.
+    ///
+    /// `None` is that ownerless question, and is what the walker who
+    /// minds nothing carries. See `Zone::deters_walkers`.
+    kind: Option<CreatureType>,
 }
 
 impl WalkerAversions {
@@ -2196,6 +2211,7 @@ impl WalkerAversions {
         casts: false,
         drowns: false,
         slips: false,
+        kind: None,
     };
 }
 
@@ -10347,9 +10363,16 @@ impl EncounterInstance {
     /// True if a creature that can be hurt by standing here would be —
     /// the AI's "is this tile worth walking through" question.
     pub fn tile_is_hazardous(&self, coord: Coordinate) -> bool {
+        self.tile_is_hazardous_for(coord, None)
+    }
+
+    /// `tile_is_hazardous`, asked on behalf of a particular kind of
+    /// creature — see `Zone::deters_walkers`, where `None` is the
+    /// ownerless question this one's caller does not have to ask.
+    fn tile_is_hazardous_for(&self, coord: Coordinate, ty: Option<CreatureType>) -> bool {
         self.zones
             .iter()
-            .any(|z| z.deters_walkers() && z.covers(coord))
+            .any(|z| z.deters_walkers(ty) && z.covers(coord))
     }
 
     /// True if heavy obscurement stands between (or on top of) the two
@@ -14242,7 +14265,10 @@ impl EncounterInstance {
         let aversions = self.aversions_of(actor_id);
         self.zones
             .iter()
-            .any(|z| z.deters_walkers() || (z.effect.suppresses_magic && aversions.casts))
+            .any(|z| {
+                z.deters_walkers(aversions.kind)
+                    || (z.effect.suppresses_magic && aversions.casts)
+            })
             || (aversions.drowns && self.has_water())
             || (aversions.slips && self.has_slippery_ground())
     }
@@ -14278,6 +14304,10 @@ impl EncounterInstance {
             // is standing now rather than about the walker, and is the
             // per-tile half the caller asks below.
             slips: self.footing_at_risk_ignoring_ground(actor_id),
+            // A field read, unlike the three above it, and carried for
+            // the same reason they are: `tile_is_bad_ground` runs once
+            // per candidate tile of every hazard-aware search.
+            kind: self.actors.get(&actor_id).map(|a| a.creature_type()),
         }
     }
 
@@ -14288,7 +14318,11 @@ impl EncounterInstance {
     /// walker's nature is a parameter rather than something the tile
     /// knows:
     ///
-    ///   - it can hurt anybody who stands there (`tile_is_hazardous`);
+    ///   - it can hurt this walker who stands there
+    ///     (`tile_is_hazardous_for`). Almost always the same as "can
+    ///     hurt anybody", and not for the areas SRD 5.2 writes against
+    ///     named creature types: a Forbiddance is open floor to an
+    ///     ogre.;
     ///   - it is an Antimagic Field and the walker casts. Nothing lands
     ///     on a caster standing in dead magic — it simply loses its
     ///     turn, which for a wizard is worse than a web. For everybody
@@ -14306,7 +14340,7 @@ impl EncounterInstance {
     /// run out of air has no business picking its way along the
     /// shallows counting which corner is dry.
     fn tile_is_bad_ground(&self, coord: Coordinate, aversions: WalkerAversions) -> bool {
-        self.tile_is_hazardous(coord)
+        self.tile_is_hazardous_for(coord, aversions.kind)
             || (aversions.casts && self.tile_suppresses_magic(coord))
             || (aversions.drowns
                 && self

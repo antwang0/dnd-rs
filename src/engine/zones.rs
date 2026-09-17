@@ -981,8 +981,22 @@ impl ZoneEffect {
     /// invisible until it goes off and a trap only until somebody finds
     /// it. `Zone::deters_walkers` is the question the pathfinder and
     /// the map actually ask; this is what it is built out of.
-    pub fn is_bad_ground(&self) -> bool {
-        self.contact.is_some_and(|c| c.is_harmful()) || self.per_step_damage.is_some()
+    ///
+    /// `ty` is who wants to know, and `None` is the ownerless question
+    /// — *"can this hurt anybody"* — which is what the map's
+    /// dangerous-ground glyph and the spawn picker ask, neither of
+    /// which has a creature in hand. A named type reads the contact
+    /// clause's own [`ZoneContact::only_types`], so a Forbiddance is
+    /// open floor to the ogre it was not written against and the
+    /// pathfinder stops spending a step on it.
+    ///
+    /// The per-step clause takes no type because nothing in SRD 5.2
+    /// prints one: Spike Growth's thorns are indifferent.
+    pub fn is_bad_ground(&self, ty: Option<CreatureType>) -> bool {
+        let contact_bites = self.contact.is_some_and(|c| {
+            c.is_harmful() && ty.is_none_or(|ty| c.catches_type(ty))
+        });
+        contact_bites || self.per_step_damage.is_some()
     }
 }
 
@@ -1153,8 +1167,10 @@ impl Zone {
     /// about its kind, which is what traps needed: a pressure plate
     /// nobody has found is walked over exactly like a glyph, and one a
     /// rogue has just spotted is walked around exactly like a web.
-    pub fn deters_walkers(&self) -> bool {
-        self.effect.is_bad_ground() && (self.effect.ward.is_none() || self.revealed)
+    /// `ty` is who is asking, and `None` is the ownerless question the
+    /// map and the spawn picker put — see [`ZoneEffect::is_bad_ground`].
+    pub fn deters_walkers(&self, ty: Option<CreatureType>) -> bool {
+        self.effect.is_bad_ground(ty) && (self.effect.ward.is_none() || self.revealed)
     }
 
     /// True if the player's-eye view should keep this area to itself
@@ -1298,7 +1314,7 @@ mod tests {
 
     #[test]
     fn obscurement_alone_is_not_harmful() {
-        assert!(!ZoneEffect::OBSCURING.is_bad_ground());
+        assert!(!ZoneEffect::OBSCURING.is_bad_ground(None));
     }
 
     /// A still area is still: nothing about the default motion asks the
@@ -1364,7 +1380,7 @@ mod tests {
             Condition::Restrained,
             ConditionTimer::Rounds(10),
         ));
-        assert!(effect.is_bad_ground());
+        assert!(effect.is_bad_ground(None));
         assert!(effect.difficult);
     }
 
@@ -1443,10 +1459,10 @@ mod tests {
         let effect = ZoneEffect::thorny(Dice::new(2, 4), DamageType::Piercing);
         assert!(effect.contact.is_none());
         assert!(effect.difficult);
-        assert!(effect.is_bad_ground());
+        assert!(effect.is_bad_ground(None));
         // Bad ground with nothing else on it does not.
         let rough = ZoneEffect::ROUGH;
-        assert!(!rough.is_bad_ground());
+        assert!(!rough.is_bad_ground(None));
         assert!(rough.difficult);
     }
 
@@ -1473,15 +1489,15 @@ mod tests {
             effect.contact.is_some_and(|c| c.is_harmful()),
             "the clause itself can very much hurt you"
         );
-        assert!(effect.is_bad_ground(), "the ground is bad ground");
+        assert!(effect.is_bad_ground(None), "the ground is bad ground");
         assert_eq!(effect.ward, Some(WardTrigger::EnemiesOf(0)));
 
         let mut z = zone_at(Coordinate::new(5, 5), 1);
         z.effect = effect;
-        assert!(!z.deters_walkers(), "and nothing routes around it");
+        assert!(!z.deters_walkers(None), "and nothing routes around it");
         assert!(z.is_concealed());
         z.revealed = true;
-        assert!(z.deters_walkers(), "a glyph that has gone off is no secret");
+        assert!(z.deters_walkers(None), "a glyph that has gone off is no secret");
         assert!(!z.is_concealed());
     }
 
@@ -1505,7 +1521,7 @@ mod tests {
             11,
         );
         assert_eq!(trap.ward, Some(WardTrigger::Anyone { find_dc: 11 }));
-        assert!(trap.is_bad_ground());
+        assert!(trap.is_bad_ground(None));
     }
 
     #[test]
@@ -1514,7 +1530,7 @@ mod tests {
             Dice::new(4, 4),
             DamageType::Slashing,
         ));
-        assert!(effect.is_bad_ground());
+        assert!(effect.is_bad_ground(None));
         assert!(!effect.difficult);
         assert!(!effect.obscures);
     }

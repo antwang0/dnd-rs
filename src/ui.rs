@@ -502,7 +502,7 @@ fn zone_glyph(encounter: &EncounterInstance, coord: Coordinate) -> Option<char> 
             '☠'
         } else if zone.effect.suppresses_magic {
             '⊘'
-        } else if zone.deters_walkers() || zone.effect.difficult {
+        } else if zone.deters_walkers(None) || zone.effect.difficult {
             '≈'
         } else if zone.effect.obscures {
             '▚'

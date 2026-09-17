@@ -6354,15 +6354,15 @@ pub static MAGIC_CIRCLE: LazyLock<MagicCircle> = LazyLock::new(|| MagicCircle {}
 /// range is a range to the *floor* and the floor that matters is the
 /// one between the party and the crypt.
 ///
-/// **The AI routes around it, whatever the AI is made of.** A zone
-/// whose contact clause can hurt somebody is bad ground to
-/// `Zone::deters_walkers`, and that predicate is asked of a tile rather
-/// than of a creature — so an ogre will walk the long way round a ward
-/// that could not touch it. That is the same imprecision
-/// `ZoneEffect::spares_team` already documents for Prismatic Wall, it
-/// errs in the same direction (a step, not a hit point), and closing it
-/// would mean threading a creature through every hazard predicate on
-/// the layer.
+/// **What walks round it is what it burns.** `Zone::deters_walkers`
+/// takes the creature type asking, and the pathfinder passes it
+/// (`WalkerAversions::kind`), so an ogre crosses a consecration at
+/// walking pace and a wight goes the long way. That is not a courtesy
+/// to the AI — it is the difference between a spell that shapes the
+/// board against six creature types and one that is a wall to
+/// everybody, which is what a type-blind hazard predicate would have
+/// made of it. The map's own dangerous-ground glyph still asks the
+/// ownerless question, because a glyph has no creature in hand.
 ///
 /// **Three clauses are not modeled**, and none of them is a die:
 ///
