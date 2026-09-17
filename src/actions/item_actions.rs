@@ -10093,6 +10093,162 @@ pub static POUR_OIL_OF_SLIPPERINESS: crate::actions::staves::StaffSpell =
         only_targets: None,
     };
 
+/// **Wand of Magic Detection** (Wand, Uncommon) — *"This wand has 3
+/// charges. While holding it, you can expend 1 charge to cast Detect
+/// Magic from it. The wand regains 1d3 expended charges daily at
+/// dawn."*
+///
+/// A `StaffSpell` row on something that is not a staff, which is what
+/// the chassis is for: the wand casts the *spell*, not a copy of it, so
+/// the thirty feet, the concentration and the line it draws between a
+/// caster's glyph and the dungeon's tripwire are `spells::DETECT_MAGIC`'s
+/// and stay in one place.
+///
+/// What the wand sells is the caster. Detect Magic is on eight class
+/// lists and on none of a fighter's, a rogue's or a barbarian's, so
+/// before this the only party that could look at the floor for magic
+/// was one with a spellcaster willing to spend a slot and hold a
+/// concentration on it. Three charges of the same sense, in a hand that
+/// has none, is an Uncommon worth carrying.
+pub const WAND_OF_MAGIC_DETECTION_NAME: &str = "Wand of Magic Detection";
+
+pub static WAVE_WAND_OF_MAGIC_DETECTION: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "wand of magic detection: detect magic",
+        action_aliases: &["wand-detect-magic", "wave detection wand"],
+        item_name: WAND_OF_MAGIC_DETECTION_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 1,
+        spell: || &*crate::actions::spells::DETECT_MAGIC,
+        only_targets: None,
+    };
+
+/// **Wand of Secrets** (Wand, Uncommon) — *"This wand has 3 charges and
+/// regains 1d3 expended charges daily at dawn. While holding it, you
+/// can take a Magic action to expend 1 charge, and if a secret door or
+/// trap is within 60 feet of you, the wand pulses and points at the one
+/// nearest to you."*
+///
+/// The third way of finding what is on the floor, and it is the one
+/// that answers the question the other two cannot. Put the three side
+/// by side and each is doing something the others are not:
+///
+/// | | costs | reach | finds | roll |
+/// |-|-------|-------|-------|------|
+/// | Search | an Action | ten feet | anything concealed | Perception vs its DC |
+/// | Detect Magic | a slot and a concentration | thirty feet | magic only, all of it | none |
+/// | this | an Action and a charge | **sixty feet** | anything concealed, **one** | none |
+///
+/// Sixty feet is RAW's and it is twice Detect Magic's — the wand is the
+/// longest-reaching answer on the board, and what it charges for that
+/// is the *one*: a corridor with two pressure plates in it takes two
+/// charges and the wand only has three. The other two find everything
+/// in range at once and pay for it in reach and in rolls.
+///
+/// RAW's secret doors are not modeled — the board has no doors that
+/// are not doorways — so what the pulse can point at is the zone
+/// layer's concealed areas, which is traps and set wards alike. That is
+/// the closer reading of the two anyway: RAW's wand is not a divination
+/// about magic, it is a wand that finds *hidden things*, and a glyph is
+/// as hidden as a plate.
+pub const WAND_OF_SECRETS_NAME: &str = "Wand of Secrets";
+
+/// RAW's sixty feet, in tiles on the 2.5-ft grid.
+const WAND_OF_SECRETS_TILES: isize = 24;
+
+pub struct WandOfSecrets {}
+
+impl Action for WandOfSecrets {
+    fn name(&self) -> &str {
+        "wave wand of secrets"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["wand of secrets", "secrets", "find traps"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut out = vec![Resource::Action];
+        out.extend(ItemUseBilling::Charges(1).costs(WAND_OF_SECRETS_NAME));
+        out
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, WAND_OF_SECRETS_NAME)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // "…and points at the one **nearest** to you". One pulse, one
+        // area, and the choice of which is the whole of what separates
+        // this from the two sweeps beside it. Resolved inline for the
+        // reason the Search action resolves its own reveal inline:
+        // revealing an area is a change to the board rather than to an
+        // actor, and the queue carries actor effects.
+        let nearest = encounter
+            .concealed_zones_near(caster_id, WAND_OF_SECRETS_TILES)
+            .into_iter()
+            .filter_map(|(zone_id, _)| {
+                let origin = encounter.zones().iter().find(|z| z.id == zone_id)?.origin;
+                let gap = encounter.footprint_distance_to_point(caster_id, origin)?;
+                Some((gap, zone_id))
+            })
+            // Ties break on the lower id, which is the tiebreak every
+            // other board scan in the engine uses: the alternative is
+            // zone order, and a pulse that depends on install order is
+            // not reproducible from the seed.
+            .min();
+        let name = encounter.actor_name(caster_id);
+        match nearest {
+            Some((_, zone_id)) if encounter.reveal_zone(zone_id) => {
+                encounter.log(format!("{} feels the wand pulse, and points.", name));
+            }
+            // Either nothing in range, or the only thing in range is
+            // something the party has already found. RAW's wand has
+            // nothing to say in either case and the charge is spent
+            // saying it — which is the cost of asking.
+            _ => {
+                encounter.log(format!("{} waves the wand; it stays still.", name));
+            }
+        }
+        Vec::new()
+    }
+}
+
+pub static WAVE_WAND_OF_SECRETS: WandOfSecrets = WandOfSecrets {};
+
 /// **Decanter of Endless Water**, Geyser — *"30 gallons of water that
 /// gushes forth in a Line 30 feet long and 1 foot wide… One creature of
 /// your choice in the Line must succeed on a DC 13 Strength saving

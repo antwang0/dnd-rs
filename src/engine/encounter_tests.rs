@@ -103983,6 +103983,62 @@ fn a_search_does_not_read_the_floor_on_the_far_side_of_the_room() {
     }
 }
 
+/// The Wand of Secrets points at the nearest hidden thing, one pulse
+/// at a time, and it does not care whether the thing is magic.
+///
+/// The clause that separates it from the two sweeps beside it. Search
+/// and Detect Magic both find *everything* in range — the first for a
+/// roll, the second for magic only — and RAW's wand *"points at the one
+/// nearest to you"*, which makes a corridor with two plates in it cost
+/// two of its three charges. Sixty feet is the trade it buys that with:
+/// twice Detect Magic's reach and six times the Search action's.
+#[test]
+fn the_wand_of_secrets_points_at_the_nearest_thing_and_only_that_one() {
+    use crate::actions::action_template::Action;
+    use crate::actions::item_actions::WAVE_WAND_OF_SECRETS;
+    use crate::actors::creatures::rogues::ROGUE_TEMPLATE;
+    use crate::engine::traps::{HIDDEN_PIT, SPIKED_PIT};
+    use crate::items::item_template::WAND_OF_SECRETS;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let rogue = e
+        .instantiate_creature(&ROGUE_TEMPLATE, Coordinate::new(2, 10), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&rogue)
+        .unwrap()
+        .pickup_item(&WAND_OF_SECRETS);
+
+    // Two plates in range, one nearer, and a third past the wand's
+    // sixty feet.
+    let near = e.install_zone(HIDDEN_PIT.zone_at(Coordinate::new(10, 10)));
+    let far = e.install_zone(SPIKED_PIT.zone_at(Coordinate::new(20, 10)));
+    let out_of_reach = e.install_zone(HIDDEN_PIT.zone_at(Coordinate::new(38, 10)));
+
+    for eff in WAVE_WAND_OF_SECRETS.side_effects(&mut e, rogue, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(
+        e.zones().iter().any(|z| z.id == near && z.revealed),
+        "the pulse points at the nearest"
+    );
+    assert!(
+        e.zones().iter().any(|z| z.id == far && !z.revealed),
+        "and at nothing else — one charge, one thing"
+    );
+
+    // A second pulse walks on to the next one, and still never reaches
+    // the one past sixty feet.
+    for eff in WAVE_WAND_OF_SECRETS.side_effects(&mut e, rogue, None, None, None) {
+        eff.apply(&mut e);
+    }
+    assert!(e.zones().iter().any(|z| z.id == far && z.revealed));
+    assert!(
+        e.zones().iter().any(|z| z.id == out_of_reach && !z.revealed),
+        "ninety feet is out of the wand's sixty"
+    );
+}
+
 /// A trap whose Duration line says it resets goes off, stays on the
 /// board, and is inert until the next turn opens.
 ///

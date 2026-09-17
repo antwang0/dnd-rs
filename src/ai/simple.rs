@@ -21538,6 +21538,28 @@ mod tests {
             // The light lane is its own rung (`try_make_light`) and is
             // gated on the board being dark rather than on the item.
             ("light torch", "the light rung's own gate"),
+            // The two wands that find what is hidden, and the reason
+            // they are here is the sharpest on this list: a rung would
+            // have to be gated on *there being something to find*,
+            // which is the answer the wand is spent to buy. An AI that
+            // waved the wand only when a glyph was in range would be
+            // one that already knew where the glyph was, and the whole
+            // concealed-area layer exists so that nothing knows. The
+            // alternative — wave it every turn on the chance — spends
+            // an Action and a charge on an empty corridor twice out of
+            // three, which is worse than not carrying the wand.
+            //
+            // Both stay entirely real for a human player, who can look
+            // at a corridor and decide it feels wrong; that judgement
+            // is the item.
+            (
+                "wave wand of secrets",
+                "a rung would have to know the answer the wand buys",
+            ),
+            (
+                "wand of magic detection: detect magic",
+                "a rung would have to know the answer the wand buys",
+            ),
             // Globe of Invulnerability's whole content is "spells of
             // level 5 or lower fail against anything inside", which is
             // worth a sixth-level slot and a fight's worth of

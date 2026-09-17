@@ -6517,6 +6517,45 @@ pub static DAGGER_OF_VENOM: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Wand of Magic Detection** (Wand, Uncommon) — three charges of
+/// Detect Magic, in a hand that has no spell slots.
+///
+/// See `item_actions::WAVE_WAND_OF_MAGIC_DETECTION`, which is a
+/// `StaffSpell` row wrapping the real spell rather than a copy of it.
+pub static WAND_OF_MAGIC_DETECTION: Item = Item {
+    name: crate::actions::item_actions::WAND_OF_MAGIC_DETECTION_NAME,
+    glyph: '/',
+    on_use: &[&crate::actions::item_actions::WAVE_WAND_OF_MAGIC_DETECTION],
+    charges: 3,
+    // RAW's "regains 1d3 expended charges daily at dawn", which is a
+    // long rest here — see `Item::recharge`.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
+/// **Wand of Secrets** (Wand, Uncommon) — three pulses, sixty feet, and
+/// one hidden thing per pulse.
+///
+/// The longest-reaching answer to "what is on the floor" on the board,
+/// and the only one that finds a pressure plate and a glyph alike
+/// without rolling for either. See
+/// `item_actions::WAVE_WAND_OF_SECRETS` for the three-way split between
+/// this, the Search action and the Detect Magic spell.
+pub static WAND_OF_SECRETS: Item = Item {
+    name: crate::actions::item_actions::WAND_OF_SECRETS_NAME,
+    glyph: '/',
+    on_use: &[&crate::actions::item_actions::WAVE_WAND_OF_SECRETS],
+    charges: 3,
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 3)),
+        constant: 0,
+    }),
+    ..Item::DEFAULTS
+};
+
 /// **Vial of Serpent Venom** (200 GP) — one dose of SRD 5.2's cheapest
 /// injury poison.
 ///
@@ -8759,6 +8798,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // a point or an edge to go on (`ActorInstance::has_a_bladed_attack`),
     // so a vial found by a cleric with a mace is a vial the party hands
     // to the rogue.
+    // The two wands that find things rather than break them, at the
+    // pool's rare weight because what they buy is a corridor the party
+    // was going to walk into anyway. Both are Uncommon and neither
+    // wants an attunement slot, so a first-room party can be holding
+    // one.
+    &WAND_OF_MAGIC_DETECTION,
+    &WAND_OF_SECRETS,
     &VIAL_OF_SERPENT_VENOM,
     &VIAL_OF_SPIDERS_STING,
     &VIAL_OF_WYVERN_POISON,
