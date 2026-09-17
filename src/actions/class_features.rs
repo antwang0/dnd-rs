@@ -15039,8 +15039,9 @@ fn unicorn_spirit_spill(
 ///
 /// Read at every leveled cleric-heal chokepoint (`HealSpell` for Cure
 /// Wounds / Healing Word, plus the ad-hoc `MassHealingWord` /
-/// `MassCureWounds` sites) via `should_use_max_heal_dice(caster,
-/// target)`. The helper folds the "caster must hold the tag AND target
+/// `MassCureWounds` sites) through `roll_heal_dice`, which asks
+/// `should_use_max_heal_dice`. The predicate folds the "caster must
+/// hold the tag AND target
 /// must be at 0 HP" compound gate — a Grave Cleric casting on a healthy
 /// ally returns false and the stock roll fires unchanged. The
 /// fixed-70-HP `HealSpellHigh` (Heal spell) never rolls dice, so the tag
@@ -15072,7 +15073,14 @@ pub const CIRCLE_OF_MORTALITY_TAG: &str = "cleric.circle_of_mortality";
 /// Single chokepoint so future changes (e.g. RAW-tightening to
 /// spells the cleric prepared as a Grave Domain spell, or extending the
 /// gate to short-of-max-HP allies for a hypothetical variant) land in
-/// one place instead of across the ~4-5 heal-spell impls that call it.
+/// one place instead of across the heal-spell impls.
+///
+/// Reached through [`roll_heal_dice`] rather than directly, which is
+/// the difference between this helper being the rule and being a
+/// second copy of it. The heal sites used to call this one by hand and
+/// three of them forgot; `roll_heal_dice` arrived to fix that and wrote
+/// the compound gate out a second time on its way past. It asks here
+/// now.
 pub fn should_use_max_heal_dice(
     caster: &crate::actors::actor_template::ActorInstance,
     target: &crate::actors::actor_template::ActorInstance,
@@ -15109,13 +15117,18 @@ pub fn roll_heal_dice(
     targets: &[usize],
     dice: &Dice,
 ) -> (u32, bool) {
-    let maxed = encounter
-        .actors
-        .get(&caster_id)
-        .is_some_and(|c| c.has_passive_feature(CIRCLE_OF_MORTALITY_TAG))
-        && targets
-            .iter()
-            .any(|id| encounter.actors.get(id).is_some_and(|a| a.hitpoints() == 0));
+    // Asked through `should_use_max_heal_dice`, which is the predicate
+    // and was for a while a second copy of it: this function grew out of
+    // three hand-written substitutions and wrote the compound gate out
+    // again rather than calling the helper that exists to hold it. One
+    // rule, one site — which is what that helper's own docstring asks
+    // for.
+    let maxed = targets.iter().any(|id| {
+        match (encounter.actors.get(&caster_id), encounter.actors.get(id)) {
+            (Some(caster), Some(target)) => should_use_max_heal_dice(caster, target),
+            _ => false,
+        }
+    });
     if maxed {
         (dice.max_roll(), true)
     } else {

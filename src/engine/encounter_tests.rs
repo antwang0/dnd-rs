@@ -114002,6 +114002,131 @@ fn a_dropped_mantle_takes_the_free_commands_with_it() {
 /// 2"). That is a sentence a reader wants anyway, and it is the
 /// difference between a divergence and a mistake.
 ///
+/// **Every public helper the crate writes is one something calls.**
+///
+/// `pub` is what makes this class of rot invisible. A private `fn`
+/// nobody calls is a `dead_code` warning; a `pub fn` nobody calls is a
+/// perfectly ordinary item, because the compiler assumes somebody
+/// outside the crate might want it — and nobody is outside this crate.
+/// Eleven had accumulated, and the three shapes they took are the three
+/// worth watching for:
+///
+///   - **A convenience accessor for a caller that never arrived.**
+///     `is_baned`, `is_heroic`, `is_petrified` and `has_death_ward`
+///     each wrapped one `has_condition` call under a docstring
+///     explaining which of the AI and the UI wanted it. Neither did.
+///   - **A `#[cfg(test)]` setter no test reaches.** Three racial and
+///     aura flags had one apiece.
+///   - **The dangerous one: a rule that moved and left a copy
+///     behind.** `should_use_max_heal_dice` is the Grave Cleric's
+///     compound gate, and four docstrings said the heal sites called
+///     it. They called `roll_heal_dice`, which had written the same
+///     predicate out again on its way past — so the "single chokepoint
+///     so future changes land in one place" was two places, and the
+///     sweep is what noticed. It asks the helper now.
+///     `restore_sorcery_points` was the same shape and the same fix.
+///
+/// A source sweep rather than a lint, for the reason its neighbours
+/// are: the compiler cannot see the thing, and a registry of "helpers
+/// we are allowed to have" is the list that rots next.
+///
+/// **Counted rather than resolved.** A name that appears once in the
+/// crate is a name that appears only where it is declared. That is
+/// blunt — it cannot tell a call from a mention — and blunt in the safe
+/// direction: a helper cited by a docstring reads as used, so the sweep
+/// under-reports and never cries wolf. The test file is excluded from
+/// the *declaration* side and included in the counting side, because a
+/// helper only the tests call is a helper with a caller.
+#[test]
+fn every_public_helper_is_one_something_calls() {
+    use std::collections::HashMap;
+    use std::path::Path;
+
+    /// Helpers that are deliberately uncalled, with the reason. Empty,
+    /// and the emptiness is the claim: every `pub fn` in the crate is
+    /// reachable from something that runs.
+    const EXEMPT: &[(&str, &str)] = &[];
+
+    fn strip_comments(text: &str) -> String {
+        text.lines()
+            .map(|line| match line.find("//") {
+                Some(i) => &line[..i],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![root.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("a readable source directory") {
+            let path = entry.expect("a readable dir entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let rel = path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_string();
+                let text = std::fs::read_to_string(&path).expect("a source file");
+                sources.push((rel, strip_comments(&text)));
+            }
+        }
+    }
+    assert!(sources.len() > 300, "only {} sources found", sources.len());
+
+    // Every identifier in the crate, counted once per appearance.
+    let mut mentions: HashMap<&str, usize> = HashMap::new();
+    for (_, text) in &sources {
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if !(bytes[i].is_ascii_alphabetic() || bytes[i] == b'_') {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            *mentions.entry(&text[start..i]).or_default() += 1;
+        }
+    }
+
+    let mut orphans: Vec<String> = Vec::new();
+    for (rel, text) in &sources {
+        // The test file declares helpers for its own use; they are
+        // swept by being counted, not by being listed.
+        if rel.ends_with("encounter_tests.rs") {
+            continue;
+        }
+        for line in text.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("pub fn ") else {
+                continue;
+            };
+            let name = name_prefix(rest);
+            if name.is_empty() || EXEMPT.iter().any(|(n, _)| *n == name) {
+                continue;
+            }
+            if mentions.get(name).copied().unwrap_or(0) <= 1 {
+                orphans.push(format!("{}: {}", rel, name));
+            }
+        }
+    }
+    orphans.sort();
+    orphans.dedup();
+    assert!(
+        orphans.is_empty(),
+        "these public helpers are written and nothing in the crate calls them; \
+         `pub` is why the compiler cannot say so. Delete each, or wire it to the \
+         caller its docstring claims, or put it on `EXEMPT` with the reason:\n  {}",
+        orphans.join("\n  ")
+    );
+}
+
 /// **Every weapon deals the damage its own docstring quotes**, and
 /// reaches as far.
 ///

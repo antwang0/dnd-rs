@@ -222,17 +222,6 @@ pub struct HoveringBlade {
     pub damage_type: DamageType,
 }
 
-impl HoveringBlade {
-    /// True if this blade could reach `tile` on its next swing.
-    ///
-    /// Measured from where the blade *is*, which is the clause RAW
-    /// writes: a sword walked halfway across the room may travel its
-    /// thirty feet from there and not from the wizard.
-    pub fn can_reach(&self, tile: Coordinate) -> bool {
-        self.origin.chebyshev_to(tile) <= self.step
-    }
-}
-
 /// The cost half of the blade idiom: `repeat` while this owner's own
 /// blade is in the air, `first_cast` otherwise.
 ///

@@ -648,7 +648,8 @@ pub static LIFE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 /// creature at 0 hit points substitute the max face-value of every
 /// die (dropping variance from every downed-ally clutch heal). Read
 /// at the shared `HealSpell` chokepoint (Cure Wounds / Healing Word)
-/// via `should_use_max_heal_dice(caster, target)`; the gate folds
+/// through `roll_heal_dice`, which asks
+/// `should_use_max_heal_dice`; the gate folds
 /// "caster has the tag AND target is at 0 HP" so a Grave Cleric
 /// healing a healthy ally rolls normally. Sibling to Life Cleric's
 /// `DISCIPLE_OF_LIFE_TAG` on the "cleric domain heal-amplifier" lane
@@ -690,8 +691,9 @@ pub static GRAVE_CLERIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     // `SHORT_REST_FEATURES` alongside the War / Light / Tempest CDs.
     features.insert(PATH_TO_THE_GRAVE_TAG);
     // Circle of Mortality — always-on passive read at the shared
-    // `HealSpell` chokepoint via `should_use_max_heal_dice(caster,
-    // target)`. Not in `SHORT_REST_FEATURES` / long-rest tables —
+    // `HealSpell` chokepoint via `roll_heal_dice`, which asks
+    // `should_use_max_heal_dice`. Not in `SHORT_REST_FEATURES` /
+    // long-rest tables —
     // nothing consumes it, so the tag stays on the template's
     // features set permanently. Sibling to `DISCIPLE_OF_LIFE_TAG`
     // on the "cleric domain heal-amplifier" passive lane.

@@ -7095,7 +7095,7 @@ impl ActorInstance {
     /// Test-only setter for the Dueling Fighting Style flag. Lets tests
     /// dial the flag on or off on any chassis so the +2 damage rider
     /// can be exercised in isolation. Mirrors `set_savage_attacks` /
-    /// `set_dwarven_resilience` etc. on the racial-flag lane.
+    /// `set_aura_of_hate` etc. on the racial-flag lane.
     #[cfg(test)]
     pub fn set_dueling_style(&mut self, value: bool) {
         self.has_dueling_style = value;
@@ -7283,14 +7283,6 @@ impl ActorInstance {
         self.has_aura_of_warding
     }
 
-    /// Test-only setter for the Aura of Warding flag. Mirrors
-    /// `set_aura_of_hate` — lets tests dial the aura onto any chassis
-    /// so the spell-damage halving envelope can be exercised in
-    /// isolation.
-    #[cfg(test)]
-    pub fn set_aura_of_warding(&mut self, value: bool) {
-        self.has_aura_of_warding = value;
-    }
 
     /// 5e Barbarian **Persistent Rage** (level 15): passive that
     /// keeps the Rage installed longer. Read by `RAGE`'s
@@ -7475,17 +7467,6 @@ impl ActorInstance {
         self.base_ac = value;
     }
 
-    /// Test-only setter for the Dwarven Resilience flag.
-    #[cfg(test)]
-    pub fn set_dwarven_resilience(&mut self, value: bool) {
-        self.has_dwarven_resilience = value;
-    }
-
-    /// Test-only setter for the Gnome Cunning flag.
-    #[cfg(test)]
-    pub fn set_gnome_cunning(&mut self, value: bool) {
-        self.has_gnome_cunning = value;
-    }
 
     /// 5e Sorcery Points remaining (Sorcerer Metamagic pool). 0 for
     /// non-sorcerers. Read by metamagic action validators to gate
@@ -9048,7 +9029,10 @@ impl ActorInstance {
             entry.2 = true;
         }
         self.legendary_action_slots = self.legendary_actions_per_round;
-        self.sorcery_points = self.sorcery_points_max;
+        // One line, in the one place that knows the rule — see
+        // `restore_sorcery_points`, whose docstring has claimed to be
+        // called from here since it was written and was not.
+        self.restore_sorcery_points();
         // RAW's own attunement window — *"attuning to an item requires
         // a creature to spend a short rest focused on only that item"*
         // — and the only one this engine has. A ring that went into the
@@ -14048,27 +14032,6 @@ impl ActorInstance {
         self.has_condition(Condition::Blessed)
     }
 
-    pub fn is_baned(&self) -> bool {
-        self.has_condition(Condition::Baned)
-    }
-
-    pub fn is_heroic(&self) -> bool {
-        self.has_condition(Condition::Heroic)
-    }
-
-    /// True iff the actor is currently `Petrified` — turned to stone.
-    /// Convenience accessor used by the AI / UI to surface the state
-    /// without each call site re-importing `Condition`.
-    pub fn is_petrified(&self) -> bool {
-        self.has_condition(Condition::Petrified)
-    }
-
-    /// True iff the actor holds a Death Ward — the next killing blow
-    /// will be absorbed by `take_damage`. Surfaced for AI heuristics
-    /// (skip dispelling targets without the buff) and UI tagging.
-    pub fn has_death_ward(&self) -> bool {
-        self.has_condition(Condition::DeathWarded)
-    }
 
     /// Record that `helper_id` Helped this actor against `target_id`.
     /// The helped actor's next attack against `target_id` benefits from
