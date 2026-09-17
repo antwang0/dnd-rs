@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::RIDING_HORSE_HOOVES;
+use crate::actions::monster_attacks::DRAFT_HORSE_HOOVES;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size};
 use std::sync::LazyLock;
@@ -14,13 +14,14 @@ use std::sync::LazyLock;
 /// lands a meaningfully harder kick if forced into combat.
 ///
 /// Action lane:
-/// - **horse hooves** — STR-based 2d4+STR bludgeoning melee via the
-///   shared `RIDING_HORSE_HOOVES` static. Same chassis as the
-///   Riding Horse; the +1 STR mod difference (+4 here vs +3 on
-///   the riding horse) is the per-template scaling at the damage
-///   chokepoint. 2d4 averages to 5 + 4 = 9 per swing — the chunky
-///   mod nudges the draft horse's defensive bite into "actually
-///   dangerous" territory if cornered.
+/// - **draft horse hooves** — STR-based 1d4 + STR bludgeoning melee.
+///   SRD 5.2: *"Melee Attack Roll: +6, reach 5 ft. Hit: 6 (1d4 + 4)
+///   Bludgeoning damage."* One small die and a big modifier, which is
+///   the reverse of the riding horse's `1d8 + 3` and the same six
+///   points on average — a heavier animal delivering the same kick
+///   with less variance. The two used to share one static on the
+///   strength of both being `2d4 + STR`; SRD 5.2 prints neither of
+///   them that way.
 ///
 /// Defensive identity: AC 10 (no armor, no shield, no natural
 /// hide), 15 HP (2d10+4). Vanilla beast envelope — no resistances
@@ -35,7 +36,7 @@ use std::sync::LazyLock;
 /// riding horse). Size Large. CR ¼. XP: 50 per RAW.
 pub static DRAFT_HORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&RIDING_HORSE_HOOVES);
+    actions.push(&DRAFT_HORSE_HOOVES);
     CreatureTemplate {
         name: "Draft Horse",
         // 'H' (uppercase) — shared with Riding Horse / Warhorse /
@@ -90,7 +91,7 @@ mod tests {
         assert_eq!(a.cr(), 0.25);
         assert_eq!(a.size(), Size::Large);
         assert_eq!(a.creature_type(), CreatureType::Beast);
-        assert!(a.find_action("horse hooves").is_some());
+        assert!(a.find_action("draft horse hooves").is_some());
     }
 
     #[test]

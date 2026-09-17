@@ -114439,14 +114439,12 @@ fn every_weapon_deals_the_damage_its_own_docstring_quotes() {
     /// which would pass for any docstring that happened to contain the
     /// word "rather".
     const DELIBERATE: &[(&str, &str)] = &[
-        (
-            "OCHRE_JELLY_PSEUDOPOD",
-            "RAW splits the hit into a bludgeoning body and an acid rider; \
-             the jelly IS the acid, and typing the whole hit acid is what \
-             makes a creature immune to acid take nothing from an ooze \
-             made of it. The black pudding beside it is typed the same \
-             way.",
-        ),
+        // The ochre jelly used to be here, with the reason "RAW splits
+        // the hit into a bludgeoning body and an acid rider; the jelly
+        // IS the acid". That divergence has become the printing: SRD
+        // 5.2's Pseudopod is `12 (3d6 + 2) Acid damage` and nothing
+        // else, so the entry earns no exemption and is swept like
+        // everything else.
         (
             "TRICERATOPS_GORE",
             "RAW's five feet, measured from a Huge footprint's edge, is a \
@@ -119660,5 +119658,229 @@ fn the_insect_swarms_poison_finds_nothing_to_hurt_in_a_skeleton() {
         e.actors[&skeleton].hitpoints(),
         full,
         "a cloud of stinging insects has nothing to sting a skeleton with"
+    );
+}
+
+/// **The book's Hit lines, written down.**
+///
+/// The sweep that found the drift this table now guards against. Every
+/// natural weapon below was matched one-to-one against SRD 5.2's own
+/// stat block — the static's display name is the monster's name plus
+/// the attack's, which is the engine's own naming convention and what
+/// makes a mechanical match possible — and the row records what the
+/// book prints: the damage pool, the damage type, and whether the Hit
+/// line adds an ability modifier at all.
+///
+/// **Why a table and not a docstring check.** The engine already has
+/// `every_weapon_deals_the_damage_its_own_docstring_quotes`, which
+/// catches a declaration that has drifted away from the RAW its own
+/// comment quotes. What it cannot catch is a docstring quoting the
+/// *wrong printing*, and that is exactly what had happened: some three
+/// dozen natural weapons carried the 2014 SRD's dice under comments
+/// faithfully quoting the 2014 SRD's wording ("Melee Weapon Attack: +6
+/// to hit, reach 5 ft., one target"), so both halves agreed and both
+/// were a decade stale. Only a third source can see that, and this is
+/// the third source.
+///
+/// **The modifier column is the one nothing else would have caught.**
+/// SRD 5.2 prints some natural weapons with a modifier — `6 (2d4 + 1)`
+/// — and some without — `5 (2d4)` — and the difference is a real
+/// design decision about small creatures, not a rounding of the
+/// average. The engine spells it as `SimpleWeapon::damage_ability`,
+/// which `flat_melee` leaves `None`; a weapon declared with the
+/// ordinary constructor quietly pays its wielder's ability on top. The
+/// bat swarm was forty percent over the book that way, on the lightest
+/// bite in the game.
+///
+/// Out of scope, deliberately, and worth naming so the next sweep does
+/// not re-find them as bugs: **riders**. SRD 5.2 folded most of 2014's
+/// save-gated extra damage into flat "plus N (XdY) Type damage" on the
+/// Hit line, and several weapons here still price theirs behind a save
+/// — the spider venoms, the purple worm's, the pit fiend's Poisoned
+/// clause. Each says so in its own docstring. This table reads the
+/// swing only.
+#[test]
+fn every_natural_weapon_matches_the_books_hit_line() {
+    use std::path::Path;
+
+    /// `(static, dice count, dice faces, damage type, does the Hit line
+    /// print an ability modifier?)` — SRD 5.2, one row per attack the
+    /// engine names after its own monster.
+    const SRD_HIT_LINES: &[(&str, u32, u32, &str, bool)] = &[
+    ("ALLOSAURUS_BITE", 2, 10, "Piercing", true),
+    ("ALLOSAURUS_CLAWS", 1, 8, "Slashing", true),
+    ("ANKYLOSAURUS_TAIL", 1, 10, "Bludgeoning", true),
+    ("APE_FIST", 1, 4, "Bludgeoning", true),
+    ("ARCHELON_BITE", 3, 6, "Piercing", true),
+    ("ASSASSIN_LIGHT_CROSSBOW", 1, 8, "Piercing", true),
+    ("ASSASSIN_SHORTSWORD", 1, 6, "Piercing", true),
+    ("AWAKENED_TREE_SLAM", 3, 6, "Bludgeoning", true),
+    ("AXE_BEAK_BEAK", 1, 8, "Slashing", true),
+    ("BABOON_BITE", 1, 4, "Piercing", true),
+    ("BARBED_DEVIL_TAIL", 2, 10, "Slashing", true),
+    ("BEARDED_DEVIL_BEARD", 1, 8, "Piercing", true),
+    ("BERSERKER_GREATAXE", 1, 12, "Slashing", true),
+    ("BLACK_BEAR_REND", 1, 6, "Slashing", true),
+    ("BLINK_DOG_BITE", 1, 4, "Piercing", true),
+    ("BLOOD_HAWK_BEAK", 1, 4, "Piercing", true),
+    ("BULETTE_BITE", 2, 12, "Piercing", true),
+    ("CAMEL_BITE", 1, 4, "Bludgeoning", true),
+    ("CHAIN_DEVIL_CHAIN", 2, 6, "Slashing", true),
+    ("CLOAKER_ATTACH", 3, 6, "Piercing", true),
+    ("CLOAKER_TAIL", 1, 10, "Slashing", true),
+    ("CONSTRICTOR_SNAKE_BITE", 1, 8, "Piercing", true),
+    ("DARKMANTLE_CRUSH", 1, 6, "Bludgeoning", true),
+    ("DEER_RAM", 1, 4, "Bludgeoning", false),
+    ("DIRE_WOLF_BITE", 1, 10, "Piercing", true),
+    ("DRAFT_HORSE_HOOVES", 1, 4, "Bludgeoning", true),
+    ("DRAGON_TURTLE_BITE", 3, 10, "Piercing", true),
+    ("EAGLE_TALONS", 1, 4, "Slashing", true),
+    ("ELEPHANT_GORE", 2, 8, "Piercing", true),
+    ("ETTERCAP_BITE", 1, 6, "Piercing", true),
+    ("FLESH_GOLEM_SLAM", 2, 8, "Bludgeoning", true),
+    ("GHAST_BITE", 1, 8, "Piercing", true),
+    ("GHOUL_BITE", 1, 6, "Piercing", true),
+    ("GIANT_BADGER_BITE", 2, 4, "Piercing", true),
+    ("GIANT_BAT_BITE", 1, 6, "Piercing", true),
+    ("GIANT_CENTIPEDE_BITE", 1, 4, "Piercing", true),
+    ("GIANT_CROCODILE_TAIL", 3, 8, "Bludgeoning", true),
+    ("GIANT_ELK_RAM", 2, 6, "Bludgeoning", true),
+    ("GIANT_FROG_BITE", 1, 6, "Piercing", true),
+    ("GIANT_GOAT_RAM", 1, 6, "Bludgeoning", true),
+    ("GIANT_HYENA_BITE", 2, 6, "Piercing", true),
+    ("GIANT_LIZARD_BITE", 1, 8, "Piercing", true),
+    ("GIANT_OCTOPUS_TENTACLES", 2, 6, "Bludgeoning", true),
+    ("GIANT_OWL_TALONS", 1, 10, "Slashing", true),
+    ("GIANT_RAT_BITE", 1, 4, "Piercing", true),
+    ("GIANT_SEAHORSE_RAM", 2, 6, "Bludgeoning", true),
+    ("GIANT_SPIDER_BITE", 1, 8, "Piercing", true),
+    ("GIANT_VENOMOUS_SNAKE_BITE", 1, 4, "Piercing", true),
+    ("GIANT_WASP_STING", 1, 6, "Piercing", true),
+    ("GIANT_WEASEL_BITE", 1, 4, "Piercing", true),
+    ("GLABREZU_PINCER", 2, 10, "Slashing", true),
+    ("GLADIATOR_SPEAR", 2, 6, "Piercing", true),
+    ("GORGON_GORE", 2, 12, "Piercing", true),
+    ("GRAY_OOZE_PSEUDOPOD", 2, 8, "Acid", true),
+    ("GUARDIAN_NAGA_BITE", 2, 12, "Piercing", true),
+    ("HIPPOPOTAMUS_BITE", 2, 10, "Piercing", true),
+    ("HYDRA_BITE", 1, 10, "Piercing", true),
+    ("HYENA_BITE", 1, 6, "Piercing", false),
+    ("ICE_DEVIL_TAIL", 3, 6, "Bludgeoning", true),
+    ("KILLER_WHALE_BITE", 5, 6, "Piercing", true),
+    ("KRAKEN_TENTACLE", 4, 6, "Bludgeoning", true),
+    ("MAMMOTH_GORE", 2, 10, "Piercing", true),
+    ("MASTIFF_BITE", 1, 6, "Piercing", true),
+    ("MERROW_BITE", 1, 4, "Piercing", true),
+    ("NOBLE_RAPIER", 1, 8, "Piercing", true),
+    ("OCHRE_JELLY_PSEUDOPOD", 3, 6, "Acid", true),
+    ("OGRE_ZOMBIE_SLAM", 2, 8, "Bludgeoning", true),
+    ("ONI_CLAW", 1, 12, "Slashing", true),
+    ("OTYUGH_BITE", 2, 8, "Piercing", true),
+    ("PHASE_SPIDER_BITE", 1, 10, "Piercing", true),
+    ("PIT_FIEND_BITE", 3, 6, "Piercing", true),
+    ("PLESIOSAURUS_BITE", 2, 6, "Piercing", true),
+    ("PONY_HOOVES", 1, 4, "Bludgeoning", true),
+    ("PRIEST_MACE", 1, 6, "Bludgeoning", true),
+    ("PTERANODON_BITE", 1, 8, "Piercing", true),
+    ("PURPLE_WORM_BITE", 3, 8, "Piercing", true),
+    ("PURPLE_WORM_TAIL_STINGER", 2, 6, "Piercing", true),
+    ("REEF_SHARK_BITE", 2, 4, "Piercing", true),
+    ("REMORHAZ_BITE", 2, 10, "Piercing", true),
+    ("RHINOCEROS_GORE", 2, 8, "Piercing", true),
+    ("ROC_BEAK", 3, 12, "Piercing", true),
+    ("ROC_TALONS", 4, 6, "Slashing", true),
+    ("ROPER_BITE", 3, 8, "Piercing", true),
+    ("SHIELD_GUARDIAN_FIST", 2, 6, "Bludgeoning", true),
+    ("SPY_HAND_CROSSBOW", 1, 6, "Piercing", true),
+    ("SPY_SHORTSWORD", 1, 6, "Piercing", true),
+    ("SWARM_OF_BATS_BITES", 2, 4, "Piercing", false),
+    ("SWARM_OF_INSECTS_BITES", 2, 4, "Poison", true),
+    ("SWARM_OF_RATS_BITES", 2, 4, "Piercing", false),
+    ("SWARM_OF_VENOMOUS_SNAKES_BITES", 1, 8, "Piercing", true),
+    ("TARRASQUE_BITE", 4, 12, "Piercing", true),
+    ("TARRASQUE_CLAW", 4, 8, "Slashing", true),
+    ("TREANT_SLAM", 3, 6, "Bludgeoning", true),
+    ("UNICORN_HOOVES", 2, 6, "Bludgeoning", true),
+    ("VENOMOUS_SNAKE_BITE", 1, 4, "Piercing", true),
+    ("VULTURE_BEAK", 1, 4, "Piercing", false),
+    ("WARHORSE_HOOVES", 2, 4, "Bludgeoning", true),
+    ("WARHORSE_SKELETON_HOOVES", 1, 6, "Bludgeoning", true),
+    ("WOLF_BITE", 1, 6, "Piercing", true),
+    ("WYVERN_BITE", 2, 8, "Piercing", true),
+    ("XORN_BITE", 4, 6, "Piercing", true),
+    ("XORN_CLAW", 1, 10, "Slashing", true),
+    ];
+
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let source = std::fs::read_to_string(root.join("actions/monster_attacks.rs"))
+        .expect("the armoury should be readable");
+
+    // Matches any of the const constructors' shared argument prefix:
+    // display name, aliases, ability, dice, damage type. The
+    // constructor's own name is captured because it is what says
+    // whether the swing adds a modifier — `flat_*` does not.
+    let decl = regex::Regex::new(
+        r#"pub static ([A-Z0-9_]+):\s*\w+\s*=\s*\w+::(\w+)\(\s*"[^"]*",\s*&\[[^\]]*\],\s*AbilityScoreType::\w+,\s*Dice::new\((\d+), ?(\d+)\),\s*DamageType::(\w+)"#,
+    )
+    .unwrap();
+
+    let mut found: std::collections::BTreeMap<String, (String, u32, u32, String)> =
+        std::collections::BTreeMap::new();
+    for caps in decl.captures_iter(&source) {
+        found.insert(
+            caps[1].to_string(),
+            (
+                caps[2].to_string(),
+                caps[3].parse().unwrap(),
+                caps[4].parse().unwrap(),
+                caps[5].to_string(),
+            ),
+        );
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut missing: Vec<&str> = Vec::new();
+    for (ident, count, faces, dtype, adds_modifier) in SRD_HIT_LINES {
+        let Some((ctor, n, f, dealt)) = found.get(*ident) else {
+            missing.push(ident);
+            continue;
+        };
+        if (n, f) != (count, faces) {
+            wrong.push(format!(
+                "{ident}: the book prints {count}d{faces} and it rolls {n}d{f}"
+            ));
+        }
+        if !dealt.eq_ignore_ascii_case(dtype) {
+            wrong.push(format!(
+                "{ident}: the book prints {dtype} and it deals {dealt}"
+            ));
+        }
+        let flat = ctor.starts_with("flat");
+        if flat == *adds_modifier {
+            wrong.push(format!(
+                "{ident}: the book's Hit line {} a modifier and the declaration {}",
+                if *adds_modifier { "prints" } else { "does not print" },
+                if flat { "adds none" } else { "adds one" },
+            ));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these statics are in the table and not in the armoury — a rename \
+         silently takes a row out of this sweep:\n  {}",
+        missing.join("\n  ")
+    );
+    assert!(
+        wrong.is_empty(),
+        "these natural weapons disagree with SRD 5.2's own Hit line:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count: the table grows as more of the bestiary is
+    // matched. What it guards is the regex — a pattern that stopped
+    // matching the declarations would pass every row vacuously.
+    assert!(
+        found.len() > 250,
+        "only {} weapon declarations parsed — the source scan has stopped working",
+        found.len()
     );
 }

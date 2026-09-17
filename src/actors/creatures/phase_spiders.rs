@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GIANT_SPIDER_BITE;
+use crate::actions::monster_attacks::PHASE_SPIDER_BITE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
 use std::collections::{HashMap, HashSet};
@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 pub static PHASE_SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    actions.push(&GIANT_SPIDER_BITE);
+    actions.push(&PHASE_SPIDER_BITE);
     CreatureTemplate {
         name: "Phase Spider",
         glyph: 'p',

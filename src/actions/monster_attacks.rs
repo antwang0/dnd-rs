@@ -5147,27 +5147,66 @@ impl Action for AcidSpit {
 
 pub static ACID_SPIT: LazyLock<AcidSpit> = LazyLock::new(|| AcidSpit {});
 
-/// Giant-spider melee bite with a poison rider. Hit deals 1d10 piercing
-/// (the biting jaws); on hit, the target also makes a CON save vs DC 11
-/// — fail = 2d4 poison damage and Poisoned for 2 rounds.
-/// Giant Spider Bite — STR-based 1d10+STR piercing melee with a CON DC 11
-/// save-or-2d4-poison-AND-Poisoned-2-rounds rider. The "extra damage AND
-/// condition both ride on the same failed save" shape — `also_install`
-/// is `Some((Poisoned, Rounds(2)))` so the chassis adds the condition
-/// install only when the save fails. Routes through the shared
-/// `WeaponWithSaveDamage` chassis alongside Ettercap Bite / Drow
-/// Poisoned Crossbow.
+/// Giant Spider Bite — 1d8 + DEX Piercing with a poison rider.
+/// SRD 5.2: *"Bite. Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3)
+/// Piercing damage plus 7 (2d6) Poison damage."*
+///
+/// **Dexterity, not Strength**, which is what makes the book's `+5`
+/// come out: a giant spider is STR 14 (+2) and DEX 16 (+3), and the
+/// printed bonus is the larger of the two plus proficiency. Same slip
+/// and the same fix as the bat's bite two sections down — see
+/// `BAT_BITE` for the fuller note on why the to-hit line is the thing
+/// that settles the ability.
+///
+/// The venom rides a CON DC 11 save here where SRD 5.2 prints it as
+/// flat extra damage on the hit. That is the engine's standing
+/// treatment of spider venom rather than a reading of this printing,
+/// and it is shared with the ettercap's bite and the drow's crossbow;
+/// the save is the whole difference and would be one field to remove.
+/// Routes through the `WeaponWithSaveDamage` chassis, whose
+/// `also_install` carries the Poisoned condition on the same failed
+/// save.
 pub static GIANT_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
     "giant spider bite",
     &["sbite", "spider-bite"],
-    AbilityScoreType::Strength,
-    Dice::new(1, 10),
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
     DamageType::Piercing,
     AbilityScoreType::Constitution,
     11,
     Dice::new(2, 4),
     DamageType::Poison,
     "spider venom",
+    Condition::Poisoned,
+    ConditionTimer::Rounds(2),
+);
+
+/// Phase Spider Bite — 1d10 + DEX Piercing with a heavier poison rider.
+/// SRD 5.2: *"Bite. Melee Attack Roll: +5, reach 5 ft. Hit: 8 (1d10 +
+/// 3) Piercing damage plus 9 (2d8) Poison damage."*
+///
+/// **Its own static, and it had to become one.** The phase spider rode
+/// `GIANT_SPIDER_BITE` while that line was `1d10` — which was the
+/// phase spider's die, not the giant spider's — so the sharing worked
+/// by accident and broke the moment the giant spider's bite was
+/// corrected to the `1d8` SRD 5.2 prints for it. Two CR ratings apart
+/// (1 and 3) with two different dice and two different venoms is two
+/// stat blocks, and the shared static was hiding that.
+///
+/// The venom keeps the same save-gated shape as its smaller cousin's,
+/// at the phase spider's own DC — see `GIANT_SPIDER_BITE` for why the
+/// save is there at all and what SRD 5.2 does instead.
+pub static PHASE_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
+    "phase spider bite",
+    &["psbite", "phase-bite"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 10),
+    DamageType::Piercing,
+    AbilityScoreType::Constitution,
+    13,
+    Dice::new(2, 8),
+    DamageType::Poison,
+    "phase spider venom",
     Condition::Poisoned,
     ConditionTimer::Rounds(2),
 );
@@ -5217,19 +5256,21 @@ pub static HEAVY_CROSSBOW: SimpleWeapon = SimpleWeapon::ranged(
 .two_handed()
 .heavy();
 
-/// Wolf-specific bite: 1d4 STR-based piercing with a built-in trip rider.
-/// On every hit forces a STR save (DC = 8 + prof + STR mod); fail = Prone.
-/// For a plain bite without the trip use BITE instead.
-/// Wolf bite — 1d4+STR piercing with a Trip rider (DC 11 STR save or
-/// knocked Prone on a hit). Routes through the shared
-/// `WeaponWithSaveCondition` chassis so the swing + save-and-condition
-/// install share one chokepoint with Dire Wolf Bite and future
-/// trip-style natural weapons.
+/// Wolf Bite — STR-based 1d6 + STR Piercing with a Trip rider (DC 11
+/// Strength save or knocked Prone on a hit). SRD 5.2: *"Bite. Melee
+/// Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2) Piercing damage. If
+/// the target is a Medium or smaller creature, it has the Prone
+/// condition."* The die was `1d4`, the 2014 line.
+///
+/// RAW's knockdown is automatic and the engine prices it as a save at a
+/// fixed DC — the convention the whole `WeaponWithSaveCondition`
+/// chassis follows. One chokepoint shared with the dire wolf's bite and
+/// with future trip-style natural weapons.
 pub static WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
     "wolf bite",
     &["wb"],
     AbilityScoreType::Strength,
-    Dice::new(1, 4),
+    Dice::new(1, 6),
     DamageType::Piercing,
     AbilityScoreType::Strength,
     11,
@@ -6686,15 +6727,20 @@ pub static GELATINOUS_CUBE_PSEUDOPOD: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Acid,
 );
 
-/// Ghast Bite — STR-based 2d8+STR piercing melee. The CR-2 ghast's
-/// heavier-die secondary swing of the bite + claws compound. Pure
-/// damage — the paralysis rider lives on the claws. RAW MM ghast bite:
-/// 2d8+3 = ~12 piercing.
+/// Ghast Bite — STR-based 1d8 + STR Piercing. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 + 3) Piercing damage plus 9
+/// (2d8) Necrotic damage."*
+///
+/// The lighter half of the bite + claws compound; the paralysis rider
+/// lives on the claws. The swing was `2d8`, the 2014 line. RAW's 2d8
+/// Necrotic half is not modelled — the honest gap here, and the same
+/// one the dragon turtle's fire has: it would want the
+/// `WeaponWithRider` chassis rather than this one.
 pub static GHAST_BITE: SimpleWeapon = SimpleWeapon::melee(
     "ghast bite",
     &["g-bite", "ghast-chomp"],
     AbilityScoreType::Strength,
-    Dice::new(2, 8),
+    Dice::new(1, 8),
     DamageType::Piercing,
 );
 
@@ -6817,21 +6863,23 @@ impl Action for BugbearMorningstar {
 pub static BUGBEAR_MORNINGSTAR: LazyLock<BugbearMorningstar> =
     LazyLock::new(|| BugbearMorningstar {});
 
-/// Dire Wolf bite — 2d6+3 piercing with the same trip rider as
-/// `WolfBite` but a higher save DC and bigger dice. Demonstrates how
-/// data-flavored copies of an existing pattern can share most of the
-/// structure; we don't extract a shared "bite with trip" helper yet
-/// because the rider's DC and dice differ per template.
-/// Dire Wolf bite — 2d6+STR piercing with a Trip rider (DC 13 STR save
-/// or knocked Prone on a hit). Same shape as the wolf's bite with a
-/// heavier damage die and a stiffer save DC — both ride the shared
-/// `WeaponWithSaveCondition` chassis so the trip-rider chokepoint
-/// stays uniform across the bestiary.
+/// Dire Wolf Bite — STR-based 1d10 + STR Piercing with a Trip rider
+/// (DC 13 Strength save or knocked Prone on a hit). SRD 5.2: *"Bite.
+/// Melee Attack Roll: +5, reach 5 ft. Hit: 8 (1d10 + 3) Piercing
+/// damage. If the target is a Large or smaller creature, it has the
+/// Prone condition."* The pool was `2d6`, the 2014 line.
+///
+/// RAW's knockdown is automatic and the engine prices it as a save at a
+/// fixed DC, which is the convention every knockdown on the
+/// `WeaponWithSaveCondition` chassis follows — see
+/// `ANKYLOSAURUS_TAIL`. Same shape as the wolf's bite with a heavier
+/// die and a stiffer DC, and both ride that one chassis so the
+/// trip-rider chokepoint stays uniform across the bestiary.
 pub static DIRE_WOLF_BITE: WeaponWithSaveCondition = WeaponWithSaveCondition::melee(
     "dire wolf bite",
     &["dwb"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(1, 10),
     DamageType::Piercing,
     AbilityScoreType::Strength,
     13,
@@ -9234,17 +9282,28 @@ impl Action for CouatlSleepGaze {
 
 pub static COUATL_SLEEP_GAZE: LazyLock<CouatlSleepGaze> = LazyLock::new(|| CouatlSleepGaze {});
 
-/// Pit Fiend's Bite — colossal 4d6+8 piercing plus a 3d6 poison rider
-/// on hit. The poison damage applies regardless of save (the MM pit
-/// fiend's bite is "magical, plus 21 (6d6) poison"). Reach 1 tile
-/// (5ft); the pit fiend has reach 2 for its other natural attacks RAW
-/// but its bite is the standard 5ft.
-pub static PIT_FIEND_BITE: SimpleWeapon = SimpleWeapon::melee(
+/// Pit Fiend Bite — STR-based 3d6 + STR Piercing with a poison rider.
+/// SRD 5.2: *"Bite. Melee Attack Roll: +14, reach 10 ft. Hit: 18 (3d6 +
+/// 8) Piercing damage."* plus a DC 21 Constitution save against the
+/// Poisoned condition, which in the book is a repeating 6d6-a-turn
+/// affliction rather than a one-off rider.
+///
+/// The swing was `4d6`, the 2014 line. The 3d6 poison that rides it
+/// here stands in for RAW's whole Poisoned clause — flat, once, and on
+/// the hit — which is the engine's usual collapse of a repeating
+/// condition into the damage it is worth.
+///
+/// Reach 2 (10 ft), which is the other correction. The note here used
+/// to read "the pit fiend has reach 2 for its other natural attacks
+/// RAW but its bite is the standard 5ft" — the 2014 entry. SRD 5.2
+/// prints all three of its melee attacks at ten feet.
+pub static PIT_FIEND_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
     "pit fiend bite",
     &["pf-bite"],
     AbilityScoreType::Strength,
-    Dice::new(4, 6),
+    Dice::new(3, 6),
     DamageType::Piercing,
+    2,
 );
 
 /// Pit Fiend's Devil Claw — STR-based 2d8+8 slashing. The companion
@@ -9412,16 +9471,19 @@ pub static TARRASQUE_BITE: WeaponWithCondition = WeaponWithCondition::reach_mele
     4,
 );
 
-/// Tarrasque Claw — STR-based 3d8 slashing. Companion melee that fills
-/// out the multiattack with two swings per Action. Reach matches the
-/// tarrasque's body footprint (10ft for the claws — slightly shorter
-/// than the bite's 15ft).
-// 10ft reach for the claw lanes.
+/// Tarrasque Claw — STR-based 4d8 + STR Slashing. SRD 5.2: *"Claw.
+/// Melee Attack Roll: +19, reach 15 ft. Hit: 28 (4d8 + 10) Slashing
+/// damage."*
+///
+/// Companion melee that fills out the multiattack with three swings per
+/// Action beside the bite. The pool was `3d8`, the 2014 line.
+// 15 ft reach — RAW's, and the same as the bite's, so in SRD 5.2 the
+// two differ only in what they do on a hit.
 pub static TARRASQUE_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
     "tarrasque claw",
     &["t-claw", "tclaw"],
     AbilityScoreType::Strength,
-    Dice::new(3, 8),
+    Dice::new(4, 8),
     DamageType::Slashing,
     3,
 );
@@ -9992,15 +10054,18 @@ impl Action for HellHoundFireBreath {
 pub static HELL_HOUND_FIRE_BREATH: LazyLock<HellHoundFireBreath> =
     LazyLock::new(|| HellHoundFireBreath {});
 
-/// Wyvern Bite — 2d6+STR piercing melee (a chomp; no rider). The
-/// stinger is a separate action with its own poison save rider.
-pub static WYVERN_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
+/// Wyvern Bite — STR-based 2d8 + STR Piercing (a chomp; no rider).
+/// SRD 5.2: *"Bite. Melee Attack Roll: +7, reach 5 ft. Hit: 13 (2d8 +
+/// 4) Piercing damage."* The pool was `2d6`, the 2014 line, and the
+/// reach was 10 ft where the book prints five — the wyvern's ten feet
+/// belong to the **sting**, which is a separate action with its own
+/// poison rider, and the bite had been given the tail's reach.
+pub static WYVERN_BITE: SimpleWeapon = SimpleWeapon::melee(
     "wyvern bite",
     &["wbite"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(2, 8),
     DamageType::Piercing,
-    2,
 );
 
 /// Wyvern Stinger — 2d6+STR piercing melee with a brutal poison rider:
@@ -10975,15 +11040,19 @@ impl Action for StoneGolemSlow {
 
 pub static STONE_GOLEM_SLOW: LazyLock<StoneGolemSlow> = LazyLock::new(|| StoneGolemSlow {});
 
-/// Bulette Bite — STR-based 4d12+STR piercing melee, reach 1. The
-/// bulette's signature crunch — averages ~26 piercing per hit. No
-/// rider effects; pure damage. Stays a `SimpleWeapon` so the bulette's
+/// Bulette Bite — STR-based 2d12 + STR Piercing. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +7, reach 5 ft. Hit: 17 (2d12 + 4) Piercing damage."*
+///
+/// Two of these an Action, which is where the bulette's damage lives.
+/// The pool was `4d12` — the 2014 line, and nearly thirty average on a
+/// CR-5 stat block that also gets to make the attack twice. No rider
+/// effects; pure damage. Stays a `SimpleWeapon` so the bulette's
 /// loadout can mix this with the Deadly Leap follow-up cleanly.
 pub static BULETTE_BITE: SimpleWeapon = SimpleWeapon::melee(
     "bulette bite",
     &["bbite", "bulette-bite"],
     AbilityScoreType::Strength,
-    Dice::new(4, 12),
+    Dice::new(2, 12),
     DamageType::Piercing,
 );
 
@@ -11428,18 +11497,31 @@ impl Action for BalorFireAura {
 
 pub static BALOR_FIRE_AURA: LazyLock<BalorFireAura> = LazyLock::new(|| BalorFireAura {});
 
-/// Glabrezu Pincer — STR-based 2d10 + STR bludgeoning melee, reach 1.
-/// The Glabrezu has two of these as part of its multiattack. RAW: the
-/// pincer crushes for big damage on the front-line tank; we collapse
-/// the "grapple on hit" rider — it's a flavor mechanic that doesn't
-/// land any new conditions our pool cares about beyond Grappled, and
-/// the rider would obscure the more meaningful 4-attack multi.
-pub static GLABREZU_PINCER: SimpleWeapon = SimpleWeapon::melee(
+/// Glabrezu Pincer — STR-based 2d10 + STR **Slashing**. SRD 5.2:
+/// *"Pincer. Melee Attack Roll: +9, reach 10 ft. Hit: 16 (2d10 + 5)
+/// Slashing damage. If the target is a Medium or smaller creature, it
+/// has the Grappled condition (escape DC 15) from one of two pincers."*
+///
+/// The type was **Bludgeoning**, and unlike the rest of this sweep that
+/// was not a 2014 leftover — the 2014 printing says Slashing too. It
+/// was simply wrong, and wrong in the direction that matters least
+/// often and most badly: a pincer is a shear, and the creatures that
+/// resist bludgeoning and the creatures that resist slashing are
+/// different creatures.
+///
+/// The reach was five feet and the book prints ten, which on a Large
+/// demon with two of these is most of what the pincers are for.
+///
+/// The "grapple on hit" rider is collapsed — it lands nothing this
+/// engine's pool does not already have, and the rider would obscure
+/// the more meaningful multiattack.
+pub static GLABREZU_PINCER: SimpleWeapon = SimpleWeapon::reach_melee(
     "glabrezu pincer",
     &["gpincer"],
     AbilityScoreType::Strength,
     Dice::new(2, 10),
-    DamageType::Bludgeoning,
+    DamageType::Slashing,
+    2,
 );
 
 /// Glabrezu Fist — STR-based 2d4 + STR bludgeoning melee, reach 1. The
@@ -11793,13 +11875,15 @@ pub static UMBER_HULK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     parts: vec![(&UMBER_MANDIBLES, 1), (&UMBER_CLAW, 2)],
 });
 
-/// Cloaker tail — STR-based 1d8 slashing melee attack with 10ft reach
-/// (2 tiles). The cloaker whips its barbed tail at nearby prey.
+/// Cloaker Tail — STR-based 1d10 + STR Slashing at 10 ft reach.
+/// SRD 5.2: *"Tail. Melee Attack Roll: +6, reach 10 ft. Hit: 8 (1d10 +
+/// 3) Slashing damage."* The cloaker whips its barbed tail at nearby
+/// prey; it was on the 2014 printing's `1d8`.
 pub static CLOAKER_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
     "cloaker tail",
     &["ctail"],
     AbilityScoreType::Strength,
-    Dice::new(1, 8),
+    Dice::new(1, 10),
     DamageType::Slashing,
     2,
 );
@@ -12898,16 +12982,23 @@ pub static CYCLOPS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     count: 2,
 });
 
-/// Roc Beak — STR-based 4d8+STR piercing, reach 2 (10ft). The first
-/// half of the gargantuan eagle's multi. RAW has the Roc as Gargantuan
-/// (4x4 footprint) but Huge (3x3) is the largest size the engine
-/// supports cleanly — we use Huge here so the spawn placement code
-/// doesn't choke on the 4x4 footprint.
+/// Roc Beak — STR-based 3d12 + STR Piercing, reach 2 (10 ft). SRD 5.2:
+/// *"Beak. Melee Attack Roll: +13, reach 10 ft. Hit: 28 (3d12 + 9)
+/// Piercing damage."*
+///
+/// The first half of the gargantuan eagle's multi, and one of the few
+/// places this sweep made a creature *stronger*: the pool was `4d8`,
+/// the 2014 line, and the book's `3d12` is eight more average on a
+/// stat block that swings it twice.
+///
+/// RAW has the roc as Gargantuan (4×4 footprint) but Huge (3×3) is the
+/// largest size the engine supports cleanly — the template uses Huge so
+/// the spawn placement code doesn't choke on the 4×4.
 pub static ROC_BEAK: SimpleWeapon = SimpleWeapon::reach_melee(
     "roc beak",
     &["rbeak"],
     AbilityScoreType::Strength,
-    Dice::new(4, 8),
+    Dice::new(3, 12),
     DamageType::Piercing,
     2,
 );
@@ -13435,12 +13526,18 @@ pub static SABER_TIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compou
     parts: vec![(&SABER_TIGER_BITE, 1), (&SABER_TIGER_CLAWS, 1)],
 });
 
-/// Hyena Bite — STR-based 1d6 + STR piercing melee. The CR-0 pack
-/// hunter's only swing. Its `has_pack_tactics: true` template flag
+/// Hyena Bite — a flat 1d6 Piercing. SRD 5.2: *"Bite. Melee Attack
+/// Roll: +2, reach 5 ft. Hit: 3 (1d6) Piercing damage."*
+///
+/// `flat_melee` for the reason `DEER_RAM` gives: Strength 11 makes the
+/// modifier zero, so the declaration is the same number either way and
+/// only one of the two spellings is checkable.
+///
+/// The CR-0 pack hunter's only swing. Its `has_pack_tactics: true` flag
 /// converts adjacent allies into advantage; the bite itself stays
 /// vanilla so the dice tier matches the CR-0 chassis (kobolds /
 /// stirges / sprite-tier monsters).
-pub static HYENA_BITE: SimpleWeapon = SimpleWeapon::melee(
+pub static HYENA_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
     "hyena bite",
     &["hb", "yip"],
     AbilityScoreType::Strength,
@@ -14667,28 +14764,34 @@ pub static INTELLECT_DEVOURER_DEVOUR: LazyLock<IntellectDevour> =
 
 // ─── Xorn ────────────────────────────────────────────────────────────
 
-/// Xorn Claw — STR-based 1d6+STR slashing melee. The three-pawed earth
-/// elemental's secondary swing; combines with the bite via `XORN_MULTI`
-/// for the canonical "3 claws + 1 bite" Multiattack. Same dice tier as a
-/// shortsword swing but typed as natural claws.
+/// Xorn Claw — STR-based 1d10 + STR Slashing. SRD 5.2: *"Claw. Melee
+/// Attack Roll: +6, reach 5 ft. Hit: 8 (1d10 + 3) Slashing damage."*
+/// The die was `1d6`, the 2014 line — and three of them an Action, so
+/// this correction is worth six average damage a turn on its own.
+/// Combines with the bite via `XORN_MULTI` for the "3 claws + 1 bite"
+/// Multiattack.
 pub static XORN_CLAW: SimpleWeapon = SimpleWeapon::melee(
     "xorn claw",
     &["xcl", "xorn-claw"],
     AbilityScoreType::Strength,
-    Dice::new(1, 6),
+    Dice::new(1, 10),
     DamageType::Slashing,
 );
 
-/// Xorn Bite — STR-based 3d6+STR piercing melee. The signature heavy hit
-/// in the xorn's kit; pairs with the three claws in `XORN_MULTI` so the
-/// per-Action damage budget reads as "1 big chomp + 3 small swipes" — a
-/// distinctive earth-elemental damage profile vs the chain-of-claws
-/// envelope a bulette or owlbear uses.
+/// Xorn Bite — STR-based 4d6 + STR Piercing. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +6, reach 5 ft. Hit: 17 (4d6 + 3) Piercing damage."*
+/// The pool was `3d6`, the 2014 line.
+///
+/// The signature heavy hit in the xorn's kit; pairs with the three
+/// claws in `XORN_MULTI` so the per-Action damage budget reads as "1
+/// big chomp + 3 small swipes" — a distinctive earth-elemental damage
+/// profile against the chain-of-claws envelope a bulette or owlbear
+/// uses.
 pub static XORN_BITE: SimpleWeapon = SimpleWeapon::melee(
     "xorn bite",
     &["xb", "xorn-bite"],
     AbilityScoreType::Strength,
-    Dice::new(3, 6),
+    Dice::new(4, 6),
     DamageType::Piercing,
 );
 
@@ -14720,17 +14823,24 @@ pub static ONI_GLAIVE: SimpleWeapon = SimpleWeapon::reach_melee(
 )
 .polearm();
 
-/// Oni Claw — STR-based 1d8 slashing melee. The secondary swing in the
-/// oni's kit; combines with the glaive via `ONI_MULTI` for the canonical
-/// "polearm + claws" Multiattack. Smaller die than the glaive so the
-/// compound budget feels like "heavy + light" rather than two equally
-/// crushing strikes.
-pub static ONI_CLAW: SimpleWeapon = SimpleWeapon::melee(
+/// Oni Claw — STR-based 1d12 + STR Slashing. SRD 5.2: *"Claw. Melee
+/// Attack Roll: +7, reach 10 ft. Hit: 10 (1d12 + 4) Slashing damage
+/// plus 9 (2d8) Necrotic damage."*
+///
+/// The die was `1d8`, the 2014 line. RAW's Necrotic half is not
+/// modelled, which is the gap that matters on this one: an oni's claw
+/// is half again as much damage in the book as it is here, and the
+/// missing half is the type least often resisted of the two. The reach
+/// was five feet and the book prints ten.
+///
+/// Combines with the glaive via `ONI_MULTI`.
+pub static ONI_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
     "oni claw",
     &["ocl", "oni-claw"],
     AbilityScoreType::Strength,
-    Dice::new(1, 8),
+    Dice::new(1, 12),
     DamageType::Slashing,
+    2,
 );
 
 /// Oni Multiattack — 2 glaive swings per Action. RAW: an oni makes two
@@ -14748,14 +14858,23 @@ pub static ONI_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 
 // ─── Merrow ──────────────────────────────────────────────────────────
 
-/// Merrow Bite — STR-based 1d8 piercing melee. The aquatic ogre's natural
-/// chomp; pairs with the harpoon and claws via `MERROW_MULTI` for the
-/// "harpoon + claws/bite" Multiattack RAW prescribes.
+/// Merrow Bite — STR-based 1d4 + STR Piercing. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +6, reach 5 ft. Hit: 6 (1d4 + 4) Piercing damage, and
+/// the target has the Poisoned condition until the end of the merrow's
+/// next turn."*
+///
+/// The aquatic ogre's natural chomp, and the lightest of its three
+/// swings: the claws and the harpoon are what it wants to be using. The
+/// die was `1d8`, the 2014 line. RAW's Poisoned rider is not modelled —
+/// the honest gap, and the reason this is the merrow's least
+/// interesting attack here where in the book it is its most.
+///
+/// Pairs with the harpoon and claws via `MERROW_MULTI`.
 pub static MERROW_BITE: SimpleWeapon = SimpleWeapon::melee(
     "merrow bite",
     &["mbite", "merrow-bite"],
     AbilityScoreType::Strength,
-    Dice::new(1, 8),
+    Dice::new(1, 4),
     DamageType::Piercing,
 );
 
@@ -15573,18 +15692,23 @@ pub static HOOK_HORROR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 
 // ─── Dragon Turtle ───────────────────────────────────────────────────
 
-/// Dragon Turtle Bite — STR-based 3d12+STR piercing melee, reach 3 (15 ft
-/// RAW). The dragon turtle's massive snapping jaw; heaviest die-count of any
-/// melee bite in the engine after the Tarrasque's 4d12. Reach-3 lets the
-/// turtle threaten well past its 4×4 Gargantuan footprint so retreating
-/// melee PCs eat opportunity attacks. Vanilla `SimpleWeapon` — the load-
-/// bearing threat is the raw damage, not a rider.
+/// Dragon Turtle Bite — STR-based 3d10 + STR Piercing, reach 3 (15 ft).
+/// SRD 5.2: *"Bite. Melee Attack Roll: +13, reach 15 ft. Hit: 23 (3d10 +
+/// 7) Piercing damage plus 7 (2d6) Fire damage."*
+///
+/// The turtle's massive snapping jaw. The pool was `3d12`, the 2014
+/// line. RAW's Fire half is not modelled here and is the honest gap:
+/// this is a plain `SimpleWeapon`, and the two-typed bite would want
+/// the `WeaponWithRider` chassis the remorhaz's uses.
+///
+/// Reach-3 lets the turtle threaten well past its 4×4 Gargantuan
+/// footprint, so retreating melee PCs eat opportunity attacks.
 // 15 ft RAW = reach 3 on this 2.5 ft grid.
 pub static DRAGON_TURTLE_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
     "dragon turtle bite",
     &["dt-bite", "turtle-bite"],
     AbilityScoreType::Strength,
-    Dice::new(3, 12),
+    Dice::new(3, 10),
     DamageType::Piercing,
     3,
 );
@@ -15645,21 +15769,21 @@ pub static DRAGON_TURTLE_STEAM_BREATH: BreathWeapon = BreathWeapon {
 
 // ─── Kraken ──────────────────────────────────────────────────────────
 
-/// Kraken Tentacle — STR-based 3d6+STR bludgeoning melee, reach 6 (30 ft
-/// RAW). The kraken's signature reach: tentacle whips out across half the
-/// arena from its Gargantuan body. Paired through `KRAKEN_MULTI` for the
-/// canonical 3-tentacle Multiattack RAW prescribes. Vanilla `SimpleWeapon`
-/// — RAW pairs the tentacle hit with a Grappled rider on a STR-vs-Athletics
-/// contest, but the engine doesn't yet surface contested grapple rolls
-/// (only the spell-cast `Grappled` install lane); the load-bearing per-
-/// round threat is the burst from triple 30 ft reach swings, which by
-/// itself ranks among the heaviest melee profiles in the engine.
+/// Kraken Tentacle — STR-based 4d6 + STR Bludgeoning, reach 6 (30 ft).
+/// SRD 5.2: *"Tentacle. Melee Attack Roll: +17, reach 30 ft. Hit: 24
+/// (4d6 + 10) Bludgeoning damage. The target has the Grappled condition
+/// (escape DC 20) from one of ten tentacles, and it has the Restrained
+/// condition until the grapple ends."*
+///
+/// The kraken's signature reach: a tentacle whips out across half the
+/// arena from its Gargantuan body. The pool was `3d6`, the 2014 line.
+/// Paired through `KRAKEN_MULTI` for the Multiattack RAW prescribes.
 // 30 ft RAW = reach 6 on this 2.5 ft grid.
 pub static KRAKEN_TENTACLE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "kraken tentacle",
     &["kt", "tentacle-k"],
     AbilityScoreType::Strength,
-    Dice::new(3, 6),
+    Dice::new(4, 6),
     DamageType::Bludgeoning,
     &[Condition::Grappled, Condition::Restrained],
     ConditionTimer::Permanent,
@@ -17388,17 +17512,25 @@ pub static WERETIGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compound
 
 // ─── Ettercap ────────────────────────────────────────────────────────
 
-/// Ettercap Bite — STR-based 1d8+STR piercing melee with a CON save
-/// (DC 11) for an extra 2d4 poison damage AND a Poisoned condition (2
-/// rounds, tighter proxy for RAW's 1-minute / ~10 round duration) on
-/// fail. Same "extra damage + condition both ride one save" shape as
-/// Spider Bite — routes through the shared `WeaponWithSaveDamage`
-/// chassis with `also_install = Some((Poisoned, Rounds(2)))`.
+/// Ettercap Bite — STR-based 1d6 + STR Piercing with a venom rider.
+/// SRD 5.2: *"Bite. Melee Attack Roll: +4, reach 5 ft. Hit: 5 (1d6 + 2)
+/// Piercing damage plus 2 (1d4) Poison damage, and the target has the
+/// Poisoned condition until the start of the ettercap's next turn."*
+///
+/// The swing was `1d8`, the 2014 line. The venom still rides a CON DC
+/// 11 save where SRD 5.2 prints it as flat damage on the hit — the
+/// engine's standing treatment of spider venom, shared with
+/// `GIANT_SPIDER_BITE` and the drow's crossbow, and the one thing about
+/// this rider that is a reading rather than the printing.
+///
+/// Routes through the shared `WeaponWithSaveDamage` chassis with
+/// `also_install = Some((Poisoned, Rounds(2)))`, so the damage and the
+/// condition ride one save.
 pub static ETTERCAP_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_with_condition(
     "ettercap bite",
     &["ebite", "ettercap-bite"],
     AbilityScoreType::Strength,
-    Dice::new(1, 8),
+    Dice::new(1, 6),
     DamageType::Piercing,
     AbilityScoreType::Constitution,
     11,
@@ -17774,15 +17906,25 @@ pub static BEARDED_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Comp
 
 // ─── Blink Dog ───────────────────────────────────────────────────────
 
-/// Blink Dog Bite — STR-based 1d6+STR piercing melee. RAW: "Melee
-/// Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d6 + 1)
-/// piercing damage." Vanilla `SimpleWeapon::melee` — no rider; the
-/// blink dog's signature is the Teleport bonus action, not the bite.
+/// Blink Dog Bite — **DEX**-based 1d4 + DEX Piercing. SRD 5.2: *"Bite.
+/// Melee Attack Roll: +5, reach 5 ft. Hit: 5 (1d4 + 3) Piercing
+/// damage."*
+///
+/// Dexterity is what makes the book's `+5` come out: the blink dog is
+/// STR 12 (+1) and DEX 17 (+3), so a Strength swing resolved as `+3`
+/// and paid one point of damage where the book pays three. The die is
+/// smaller than it was and the bite is *better* — which is the shape of
+/// most of this sweep, and the reason the to-hit line is the thing that
+/// settles the ability. See `BAT_BITE` for the same slip written out at
+/// length.
+///
+/// No rider; the blink dog's signature is the Teleport bonus action,
+/// not the bite.
 pub static BLINK_DOG_BITE: SimpleWeapon = SimpleWeapon::melee(
     "blink dog bite",
     &["bd-bite", "blink-bite"],
-    AbilityScoreType::Strength,
-    Dice::new(1, 6),
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 4),
     DamageType::Piercing,
 );
 
@@ -18593,14 +18735,16 @@ pub static EFREETI_HURL_FLAME: LazyLock<EfreetiHurlFlame> =
 
 // ─── Constrictor Snake ───────────────────────────────────────────────
 
-/// Constrictor Snake Bite — STR-based 1d6+STR piercing melee. Vanilla
-/// SimpleWeapon — the snake's bite is pure damage; the grapple lane lives
-/// on the separate `CONSTRICTOR_SNAKE_CONSTRICT` action.
+/// Constrictor Snake Bite — STR-based 1d8 + STR Piercing. SRD 5.2:
+/// *"Bite. Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Piercing
+/// damage."* The die was `1d6`, the 2014 line. Vanilla `SimpleWeapon` —
+/// the snake's bite is pure damage, and the grapple lane lives on the
+/// separate `CONSTRICTOR_SNAKE_CONSTRICT` action.
 pub static CONSTRICTOR_SNAKE_BITE: SimpleWeapon = SimpleWeapon::melee(
     "constrictor snake bite",
     &["snake-bite", "constrictor-bite"],
     AbilityScoreType::Strength,
-    Dice::new(1, 6),
+    Dice::new(1, 8),
     DamageType::Piercing,
 );
 
@@ -18939,20 +19083,20 @@ impl Action for GiantCrocodileBite {
 pub static GIANT_CROCODILE_BITE: LazyLock<GiantCrocodileBite> =
     LazyLock::new(|| GiantCrocodileBite {});
 
-/// Giant Crocodile Tail — STR-based 2d8+STR bludgeoning melee at reach 2
-/// tiles. The huge croc's tail sweep — vanilla SimpleWeapon, no rider;
-/// pairs with the bite in the multi for a heavier per-Action damage
-/// budget. RAW: "Tail. Melee Weapon Attack: +8 to hit, reach 10 ft.,
-/// one target not grappled by the crocodile. Hit: 14 (2d8 + 5)
-/// bludgeoning damage. If the target is a creature, it must succeed on
-/// a DC 16 Strength saving throw or be knocked prone." We collapse to
-/// vanilla 2d8+STR — the load-bearing combat clause is the per-Action
-/// damage budget, not the conditional prone rider.
+/// Giant Crocodile Tail — STR-based 3d8 + STR Bludgeoning at reach 2
+/// tiles. SRD 5.2: *"Tail. Melee Attack Roll: +8, reach 10 ft. Hit: 18
+/// (3d8 + 5) Bludgeoning damage. If the target is a Large or smaller
+/// creature, it has the Prone condition."*
+///
+/// The pool was `2d8`, the 2014 line. The knockdown is still collapsed
+/// away — the load-bearing clause here is the per-Action damage budget
+/// beside the bite, and the crocodile already has a grapple on that
+/// half.
 pub static GIANT_CROCODILE_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
     "giant crocodile tail",
     &["giant-croc-tail", "gc-tail"],
     AbilityScoreType::Strength,
-    Dice::new(2, 8),
+    Dice::new(3, 8),
     DamageType::Bludgeoning,
     2,
 );
@@ -19148,18 +19292,22 @@ pub static INVISIBLE_STALKER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Mul
 
 // ─── Mammoth ─────────────────────────────────────────────────────────
 
-/// Mammoth Gore — STR-based 4d8+STR piercing melee, reach 1 (5 ft).
-/// The headline weapon — RAW 4d8+7 averages to ~25 per swing on the
-/// CR-6 Huge frame, second only to the Earth Elemental's 4d8 slam
-/// among the engine's CR-5 to CR-7 melee strikers. Vanilla
-/// `SimpleWeapon` shape; the load-bearing combat clause lives on the
-/// `MAMMOTH_MULTI` wrapper that pairs the gore with the stomp.
-pub static MAMMOTH_GORE: SimpleWeapon = SimpleWeapon::melee(
+/// Mammoth Gore — STR-based 2d10 + STR Piercing. SRD 5.2: *"Gore. Melee
+/// Attack Roll: +10, reach 10 ft. Hit: 18 (2d10 + 7) Piercing damage.
+/// If the target is a Huge or smaller creature and the mammoth moved
+/// 20+ feet straight toward it immediately before the hit, the target
+/// has the Prone condition."*
+///
+/// The pool was `4d8` at five feet, the 2014 line; tusks that long
+/// reach ten. The load-bearing combat clause lives on the
+/// `MAMMOTH_MULTI` wrapper that pairs two gores.
+pub static MAMMOTH_GORE: SimpleWeapon = SimpleWeapon::reach_melee(
     "mammoth gore",
     &["mgore", "tusks-m"],
     AbilityScoreType::Strength,
-    Dice::new(4, 8),
+    Dice::new(2, 10),
     DamageType::Piercing,
+    2,
 );
 
 /// Mammoth Stomp — STR-based 4d10+STR bludgeoning melee, reach 1, but
@@ -19276,9 +19424,12 @@ pub static PURPLE_WORM_BITE: WeaponWithCondition = WeaponWithCondition::reach_me
 )
 .against_at_most(Size::Large);
 
-/// Purple Worm Tail Stinger — STR-based 3d6+STR piercing melee at
-/// reach 2 (10 ft), with a CON DC 19 save-or-extra-poison rider. RAW
-/// the venom hits for 7d6 poison on a failed save (half on success);
+/// Purple Worm Tail Stinger — STR-based 2d6 + STR Piercing at reach 2
+/// (10 ft), with a CON DC 19 save-or-extra-poison rider. SRD 5.2:
+/// *"Tail Stinger. Melee Attack Roll: +14, reach 10 ft. Hit: 16 (2d6 +
+/// 9) Piercing damage plus 35 (10d6) Poison damage."* — the swing was
+/// `3d6`, the 2014 line, and the book's venom is flat rather than
+/// save-gated. RAW here
 /// we collapse "half on save" to "full on fail, 0 on save" via the
 /// shared `save_or_damage_rider` chassis so the typed-resistance lane
 /// still applies per-target. The save DC and rider dice are CR-15
@@ -19296,7 +19447,7 @@ pub static PURPLE_WORM_TAIL_STINGER: WeaponWithSaveDamage = WeaponWithSaveDamage
     "purple worm tail stinger",
     &["pw-stinger", "worm-stinger", "tail-stinger"],
     AbilityScoreType::Strength,
-    Dice::new(3, 6),
+    Dice::new(2, 6),
     DamageType::Piercing,
     AbilityScoreType::Constitution,
     19,
@@ -19543,9 +19694,11 @@ pub static GIANT_OCTOPUS_TENTACLES: WeaponWithSaveCondition =
 
 // ─── Plesiosaurus ────────────────────────────────────────────────────
 
-/// Plesiosaurus Bite — STR-based 3d6+STR piercing melee at reach 2
-/// tiles (10 ft — the long-necked aquatic reptile lashes out from
-/// outside normal melee range). Vanilla `SimpleWeapon::reach_melee` —
+/// Plesiosaurus Bite — STR-based 2d6 + STR Piercing at reach 2 tiles.
+/// SRD 5.2: *"Bite. Melee Attack Roll: +6, reach 10 ft. Hit: 11 (2d6 +
+/// 4) Piercing damage."* The pool was `3d6`, the 2014 line. The
+/// long-necked aquatic reptile lashes out from outside normal melee
+/// range. Vanilla `SimpleWeapon::reach_melee` —
 /// the bite is pure damage; the plesiosaurus has no rider clause and
 /// relies on its long-necked reach + huge HP bar (CR 2 ~68 HP, the
 /// fattest in its CR bracket alongside the Giant Constrictor Snake).
@@ -19553,23 +19706,30 @@ pub static PLESIOSAURUS_BITE: SimpleWeapon = SimpleWeapon::reach_melee(
     "plesiosaurus bite",
     &["plesio-bite"],
     AbilityScoreType::Strength,
-    Dice::new(3, 6),
+    Dice::new(2, 6),
     DamageType::Piercing,
     2,
 );
 
 // ─── Pteranodon ──────────────────────────────────────────────────────
 
-/// Pteranodon Bite — STR-based 2d4+STR piercing melee. Vanilla
-/// `SimpleWeapon::melee` — the flying reptile's snapping beak is pure
-/// damage; the pteranodon's threat profile sits on its fly speed
-/// (which we collapse to a high ground speed since the engine isn't
-/// 3D) rather than a per-swing rider.
+/// Pteranodon Bite — **DEX**-based 1d8 + DEX Piercing. SRD 5.2: *"Bite.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 6 (1d8 + 2) Piercing
+/// damage."*
+///
+/// `2d4` off Strength was the 2014 line and the wrong ability with it:
+/// a pteranodon is STR 12 (+1) to DEX 15 (+2), and the printed `+4` is
+/// the Dexterity one. See `BAT_BITE` for the same pair of slips written
+/// out at length.
+///
+/// The flying reptile's snapping beak is pure damage; its threat
+/// profile sits on the fly speed and the Flyby trait rather than on a
+/// per-swing rider.
 pub static PTERANODON_BITE: SimpleWeapon = SimpleWeapon::melee(
     "pteranodon bite",
     &["ptero-bite"],
-    AbilityScoreType::Strength,
-    Dice::new(2, 4),
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
     DamageType::Piercing,
 );
 
@@ -19727,8 +19887,11 @@ pub static GIANT_WOLF_SPIDER_BITE: WeaponWithSaveDamage = WeaponWithSaveDamage {
 
 // ─── Reef Shark ─────────────────────────────────────────────────────
 
-/// Reef Shark Bite — STR-based 1d8+STR piercing melee. RAW: "Hit: 6
-/// (1d8 + 2) piercing damage." Vanilla `SimpleWeapon` — the
+/// Reef Shark Bite — STR-based 2d4 + STR Piercing. SRD 5.2: *"Bite.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 7 (2d4 + 2) Piercing
+/// damage."* The pool was `1d8`, the 2014 line — the same average
+/// spread over a flatter curve, which is what two small dice always
+/// buy. Vanilla `SimpleWeapon` — the
 /// pack-tactics swarmer's only swing. The threat multiplier rides on
 /// the template-level `has_pack_tactics: true` flag (advantage when
 /// an ally shark is adjacent to the target), not the bite itself,
@@ -19739,7 +19902,7 @@ pub static REEF_SHARK_BITE: SimpleWeapon = SimpleWeapon::melee(
     "reef shark bite",
     &["rsb", "reef-bite"],
     AbilityScoreType::Strength,
-    Dice::new(1, 8),
+    Dice::new(2, 4),
     DamageType::Piercing,
 );
 
@@ -19780,9 +19943,12 @@ pub static GIANT_SHARK_BITE: SimpleWeapon = SimpleWeapon::melee(
 
 // ─── Warhorse ───────────────────────────────────────────────────────
 
-/// Warhorse Hooves — STR-based 2d6+STR bludgeoning melee. RAW: "Hit:
-/// 11 (2d6 + 4) bludgeoning damage." Vanilla `SimpleWeapon` — the
-/// chunky 2d6 dice carry the warhorse's damage profile alone. No
+/// Warhorse Hooves — STR-based 2d4 + STR Bludgeoning. SRD 5.2:
+/// *"Hooves. Melee Attack Roll: +6, reach 5 ft. Hit: 9 (2d4 + 4)
+/// Bludgeoning damage. If the target is a Large or smaller creature, it
+/// has the Prone condition."* The pool was `2d6`, the 2014 line.
+/// Vanilla `SimpleWeapon` — the dice and the big Strength modifier
+/// carry the warhorse's damage profile alone. No
 /// rider on the standalone hooves swing (the RAW Trampling Charge
 /// recharge is intentionally omitted as a scope cut at CR ½; the
 /// Mammoth at CR 6 already carries the trample-then-stomp two-attack
@@ -19791,7 +19957,7 @@ pub static WARHORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     "warhorse hooves",
     &["wh", "hooves", "stomp"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(2, 4),
     DamageType::Bludgeoning,
 );
 
@@ -19970,8 +20136,9 @@ pub static GIANT_BOAR_TUSKS: SimpleWeapon = SimpleWeapon::melee(
 
 // ─── Giant Goat ─────────────────────────────────────────────────────
 
-/// Giant Goat Ram — STR-based 2d4+STR bludgeoning melee. RAW: "+5 to
-/// hit, reach 5 ft, one target. Hit: 8 (2d4+3) bludgeoning damage."
+/// Giant Goat Ram — STR-based 1d6 + STR Bludgeoning. SRD 5.2: *"Ram.
+/// Melee Attack Roll: +5, reach 5 ft. Hit: 6 (1d6 + 3) Bludgeoning
+/// damage."* The pool was `2d4`, the 2014 line.
 /// The CR-½ mountain goat's headbutt. RAW's Charge rider (extra 2d4 +
 /// DC-13 STR save vs Prone after a 20 ft straight-line dash) is *not*
 /// omitted and has not been for some time: it ships as
@@ -19985,16 +20152,23 @@ pub static GIANT_GOAT_RAM: SimpleWeapon = SimpleWeapon::melee(
     "giant goat ram",
     &["ggr", "ram", "headbutt"],
     AbilityScoreType::Strength,
-    Dice::new(2, 4),
+    Dice::new(1, 6),
     DamageType::Bludgeoning,
 );
 
 // ─── Giant Owl ──────────────────────────────────────────────────────
 
-/// Giant Owl Talons — STR-based 2d6+STR slashing melee. RAW: "+3 to
-/// hit, reach 5 ft, one creature. Hit: 8 (2d6+1) slashing damage." The
-/// CR-¼ aerial scout's only swing — chunky dice on a fragile 19-HP
-/// large frame. RAW's Flyby trait (don't provoke OAs when leaving an
+/// Giant Owl Talons — **DEX**-based 1d10 + DEX Slashing. SRD 5.2:
+/// *"Talons. Melee Attack Roll: +4, reach 5 ft. Hit: 7 (1d10 + 2)
+/// Slashing damage."*
+///
+/// Two corrections and they are the same one twice: the pool was `2d6`
+/// (the 2014 line) off **Strength**, and a giant owl is STR 13 (+1) to
+/// DEX 15 (+2) — so the swing resolved at `+3` where the book prints
+/// `+4` and paid one less on the damage too. Dexterity is what makes
+/// the printed bonus come out; see `BAT_BITE`.
+///
+/// The CR-¼ aerial scout's only swing, on a fragile 19-HP Large frame. RAW's Flyby trait (don't provoke OAs when leaving an
 /// enemy's reach) rides `FLYBY_TAG` on the stat block rather than
 /// anything here — it is a property of the owl's movement, not of its
 /// swing. Keen Hearing and Sight (advantage on hearing / sight
@@ -20005,8 +20179,8 @@ pub static GIANT_GOAT_RAM: SimpleWeapon = SimpleWeapon::melee(
 pub static GIANT_OWL_TALONS: SimpleWeapon = SimpleWeapon::melee(
     "giant owl talons",
     &["got", "owl-talons"],
-    AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 10),
     DamageType::Slashing,
 );
 
@@ -20076,19 +20250,51 @@ pub static CRAWLING_CLAW_SLAM: SimpleWeapon = SimpleWeapon::melee(
 
 // ─── Riding Horse / Draft Horse ─────────────────────────────────────
 
-/// Riding Horse Hooves — STR-based 2d4+STR bludgeoning melee. RAW: "+4
-/// to hit, reach 5 ft, one target. Hit: 8 (2d4+3) bludgeoning damage."
-/// The CR-¼ civilian riding-horse's one swing — lighter than the
-/// `WARHORSE_HOOVES` 2d6 since the riding horse is bred for transport,
-/// not battle. Shared with the Draft Horse template since both ride
-/// the same 2d4+STR dice (the draft horse's higher STR mod is the
-/// per-template difference). Sister to `WARHORSE_HOOVES` (2d6, CR ½)
-/// on the equine ladder.
+/// Riding Horse Hooves — STR-based 1d8 + STR bludgeoning melee.
+/// SRD 5.2: *"Hooves. Melee Attack Roll: +5, reach 5 ft. Hit: 7 (1d8 +
+/// 3) Bludgeoning damage."*
+///
+/// The CR-¼ civilian riding horse's one swing. Sister to
+/// `WARHORSE_HOOVES` on the equine ladder — and, counter-intuitively,
+/// the *larger* die of the two: SRD 5.2 gives the riding horse a 1d8
+/// and the warhorse `2d4 + 4`, so the warhorse hits harder on the
+/// modifier and more reliably on the curve while the riding horse's
+/// single die swings wider.
+///
+/// **No longer shared with the draft horse.** The two rode one static
+/// on the reasoning that both were `2d4 + STR` and only the modifier
+/// differed; SRD 5.2 prints them at `1d8 + 3` and `1d4 + 4`, which is
+/// the same average and two different dice, so the sharing had nothing
+/// left to stand on. See `DRAFT_HORSE_HOOVES`.
+///
+/// The phantom steed keeps these hooves, and that is not an oversight:
+/// it is a conjured riding horse, and SRD prints no stat block of its
+/// own for it to diverge towards.
 pub static RIDING_HORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     "horse hooves",
     &["hh", "hooves", "kick"],
     AbilityScoreType::Strength,
-    Dice::new(2, 4),
+    Dice::new(1, 8),
+    DamageType::Bludgeoning,
+);
+
+/// Draft Horse Hooves — STR-based 1d4 + STR bludgeoning melee.
+/// SRD 5.2: *"Hooves. Melee Attack Roll: +6, reach 5 ft. Hit: 6 (1d4 +
+/// 4) Bludgeoning damage."*
+///
+/// The cart horse's kick, and the shape of the animal: one small die
+/// and a large modifier, where the riding horse is the reverse. It is
+/// the same average damage delivered with less variance, which is what
+/// a heavier, slower animal doing the same job should look like.
+///
+/// Its own static rather than the riding horse's, for the reason that
+/// one's docstring gives: the two shared a line while both were
+/// `2d4 + STR`, and SRD 5.2 no longer prints them that way.
+pub static DRAFT_HORSE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
+    "draft horse hooves",
+    &["dhh", "cart-hooves"],
+    AbilityScoreType::Strength,
+    Dice::new(1, 4),
     DamageType::Bludgeoning,
 );
 
@@ -20252,16 +20458,16 @@ pub static GIANT_WASP_STING: WeaponWithSaveDamage = WeaponWithSaveDamage::melee_
 
 // ─── Giant Badger ───────────────────────────────────────────────────
 
-/// Giant Badger Bite — STR-based 1d6+STR piercing melee. RAW: "+3 to
-/// hit, reach 5 ft, one target. Hit: 4 (1d6 + 1) piercing damage." The
-/// single-die half of the badger's bite + 2-claws compound. Vanilla
-/// `SimpleWeapon`. Sister to `GIANT_BADGER_CLAWS` (2d4+STR slashing,
-/// the heavier rake half) on the same Action.
+/// Giant Badger Bite — STR-based 2d4 + STR Piercing. SRD 5.2: *"Bite.
+/// Melee Attack Roll: +3, reach 5 ft. Hit: 6 (2d4 + 1) Piercing
+/// damage."* The pool was `1d6`, the 2014 line. Vanilla `SimpleWeapon`,
+/// and now the same dice as `GIANT_BADGER_CLAWS` beside it on the same
+/// Action — which is what the book prints for both halves.
 pub static GIANT_BADGER_BITE: SimpleWeapon = SimpleWeapon::melee(
     "giant badger bite",
     &["gbb-bite", "badger-bite"],
     AbilityScoreType::Strength,
-    Dice::new(1, 6),
+    Dice::new(2, 4),
     DamageType::Piercing,
 );
 
@@ -20296,16 +20502,23 @@ pub static GIANT_BADGER_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compo
 
 // ─── Camel ──────────────────────────────────────────────────────────
 
-/// Camel Bite — STR-based 1d4 bludgeoning melee, no STR mod to damage.
-/// RAW: "+5 to hit, reach 5 ft, one creature. Hit: 2 (1d4) bludgeoning
-/// damage" — the SRD entry lists 1d4 flat even though the camel sports
-/// STR 16 (+3). Routes through the shared `SimpleWeapon::flat_melee`
-/// chokepoint (no damage modifier) — same chassis as Dretch / Lemure /
-/// Pseudodragon natural attacks where the RAW damage line is flat dice.
-/// Slots beside the Mule / Riding Horse on the docile-pack-animal bench
-/// at CR ⅛ — the camel exists as a desert-transport beast, not a
-/// combat threat.
-pub static CAMEL_BITE: SimpleWeapon = SimpleWeapon::flat_melee(
+/// Camel Bite — STR-based 1d4 + STR Bludgeoning. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Bludgeoning damage."*
+///
+/// **The modifier is the fix.** This sat on `flat_melee` under a note
+/// saying "the SRD entry lists 1d4 flat even though the camel sports
+/// STR 16 (+3)" — which was true of the 2014 printing and is not true
+/// of 5.2, where the Hit line prints the `+ 2` and the camel's Strength
+/// is 15. A flat `1d4` was half the book's bite.
+///
+/// Bludgeoning rather than Piercing is *not* a slip and is on the
+/// naming sweep's exemption list: a camel does not so much bite as
+/// headbutt with its mouth open, and both printings say so.
+///
+/// Slots beside the Mule and the Riding Horse on the docile
+/// pack-animal bench at CR ⅛ — the camel exists as a desert-transport
+/// beast, not a combat threat.
+pub static CAMEL_BITE: SimpleWeapon = SimpleWeapon::melee(
     "camel bite",
     &["cb", "camel"],
     AbilityScoreType::Strength,
@@ -20365,18 +20578,19 @@ pub static MULE_HOOVES: SimpleWeapon = SimpleWeapon::melee(
 
 // ─── Pony ───────────────────────────────────────────────────────────
 
-/// Pony Hooves — STR-based 2d4+STR bludgeoning melee. RAW: "+2 to hit,
-/// reach 5 ft, one target. Hit: 7 (2d4 + 2) bludgeoning damage." The
-/// CR-⅛ small mount's only swing. Same 2d4 dice as the Riding Horse
-/// chassis, just on a smaller STR mod (+2 vs +3) and a smaller frame.
-/// Vanilla `SimpleWeapon`. Sister to `RIDING_HORSE_HOOVES` (2d4, CR ¼)
-/// on the equine ladder — the pony is the halfling / gnome-sized
-/// civilian mount tier beneath the medium-rider's horse.
+/// Pony Hooves — STR-based 1d4 + STR Bludgeoning. SRD 5.2: *"Hooves.
+/// Melee Attack Roll: +4, reach 5 ft. Hit: 4 (1d4 + 2) Bludgeoning
+/// damage."* The pool was `2d4`, the 2014 line.
+///
+/// The CR-⅛ small mount's only swing, and the bottom rung of an equine
+/// ladder SRD 5.2 spells out in three different dice: the pony's `1d4 +
+/// 2`, the riding horse's `1d8 + 3`, the draft horse's `1d4 + 4` and
+/// the warhorse's `2d4 + 4`. All four used to be `2d4`.
 pub static PONY_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     "pony hooves",
     &["ph", "pony", "pony-kick"],
     AbilityScoreType::Strength,
-    Dice::new(2, 4),
+    Dice::new(1, 4),
     DamageType::Bludgeoning,
 );
 
@@ -21168,15 +21382,22 @@ pub static BARBED_DEVIL_CLAW: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Barbed Devil Tail — STR-based 2d6+STR piercing melee. RAW: "Tail.
-/// Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 10
-/// (2d6 + 3) piercing damage." The heavy half of the multiattack.
-pub static BARBED_DEVIL_TAIL: SimpleWeapon = SimpleWeapon::melee(
+/// Barbed Devil Tail — STR-based 2d10 + STR **Slashing** at reach 10 ft.
+/// SRD 5.2: *"Tail. Melee Attack Roll: +6, reach 10 ft. Hit: 14 (2d10 +
+/// 3) Slashing damage."*
+///
+/// The heavy half of the multiattack, and it had the 2014 line: `2d6`
+/// Piercing at five feet. All three of those mattered. The tail is the
+/// devil's *reach* as much as its damage — ten feet is what lets a
+/// hamatula tail something it is not standing next to — and Piercing is
+/// a type half the bestiary shrugs at where Slashing is not.
+pub static BARBED_DEVIL_TAIL: SimpleWeapon = SimpleWeapon::reach_melee(
     "barbed devil tail",
     &["bdv-tail", "hamatula-tail"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
-    DamageType::Piercing,
+    Dice::new(2, 10),
+    DamageType::Slashing,
+    2,
 );
 
 /// Barbed Devil Hurl Flame — CHA-based 5d6 fire at range. SRD 5.2:
@@ -21334,9 +21555,14 @@ pub static DUERGAR_JAVELIN: SimpleWeapon = SimpleWeapon::ranged(
 
 // ─── Ochre Jelly ────────────────────────────────────────────────────
 
-/// Ochre Jelly Pseudopod — STR-based 2d6+STR acid melee. RAW:
-/// "Pseudopod. Melee Weapon Attack: +4 to hit, reach 5 ft., one target.
-/// Hit: 9 (2d6 + 2) bludgeoning damage plus 3 (1d6) acid damage."
+/// Ochre Jelly Pseudopod — STR-based 3d6 + STR Acid. SRD 5.2:
+/// *"Pseudopod. Melee Attack Roll: +4, reach 5 ft. Hit: 12 (3d6 + 2)
+/// Acid damage."*
+///
+/// SRD 5.2 types the whole hit Acid, which is what this entry had
+/// already decided to do for itself on the 2014 split line — so the
+/// paragraph below is now the printing rather than a divergence from
+/// it. Only the pool changed, from the 2014 `2d6`.
 ///
 /// Typed acid outright rather than split into a bludgeoning body and an
 /// acid rider, which is the one place this stat block deliberately
@@ -21350,7 +21576,7 @@ pub static OCHRE_JELLY_PSEUDOPOD: SimpleWeapon = SimpleWeapon::melee(
     "ochre jelly pseudopod",
     &["oj-pod", "jelly-pseudopod"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(3, 6),
     DamageType::Acid,
 );
 
@@ -21464,14 +21690,20 @@ pub static VIOLET_FUNGUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
 
 // ─── Warhorse Skeleton ──────────────────────────────────────────────
 
-/// Warhorse Skeleton Hooves — STR-based 2d6+STR bludgeoning melee. RAW:
-/// "Hooves. Melee Weapon Attack: +6 to hit, reach 5 ft., one target.
-/// Hit: 11 (2d6 + 4) bludgeoning damage."
+/// Warhorse Skeleton Hooves — STR-based 1d6 + STR Bludgeoning.
+/// SRD 5.2: *"Hooves. Melee Attack Roll: +6, reach 5 ft. Hit: 7 (1d6 +
+/// 4) Bludgeoning damage. If the target is a Large or smaller creature
+/// and the skeleton moved 20+ feet straight toward it immediately
+/// before the hit, the target has the Prone condition."*
+///
+/// The pool was `2d6`, the 2014 line. RAW's charge clause is not on
+/// this static — the engine's charge lane is `ChargeRider`, and the
+/// warhorse skeleton has not been given one.
 pub static WARHORSE_SKELETON_HOOVES: SimpleWeapon = SimpleWeapon::melee(
     "warhorse skeleton hooves",
     &["whs-hooves", "skeletal-hooves"],
     AbilityScoreType::Strength,
-    Dice::new(2, 6),
+    Dice::new(1, 6),
     DamageType::Bludgeoning,
 );
 
@@ -21570,27 +21802,35 @@ pub const PANTHER_POUNCE: ChargeRider = ChargeRider {
 
 // ─── Remorhaz ───────────────────────────────────────────────────────
 
-/// Remorhaz Bite — STR-based 6d10+STR piercing melee with a flat 3d6
-/// fire rider. RAW: "Bite. Melee Weapon Attack: +11 to hit, reach 10
-/// ft., one target. Hit: 40 (6d10 + 7) piercing damage plus 10 (3d6)
-/// fire damage. If the target is a Large or smaller creature, it is
-/// grappled (escape DC 17). Until this grapple ends, the target is
-/// restrained, and the remorhaz can't bite another target."
+/// Remorhaz Bite — STR-based 2d10 + STR Piercing with a flat 3d6 fire
+/// rider. SRD 5.2: *"Bite. Melee Attack Roll: +11, reach 10 ft. Hit: 18
+/// (2d10 + 7) Piercing damage plus 14 (4d6) Fire damage. If the target
+/// is a Large or smaller creature, it has the Grappled condition
+/// (escape DC 17), and it has the Restrained condition until the
+/// grapple ends."*
 ///
-/// The heaviest single die pool in the bestiary short of the tarrasque,
-/// and the fire is not a garnish: the remorhaz's body runs hot enough
-/// that swallowing something cooks it. The grapple / swallow half is
-/// dropped — the engine has no swallow lane, and a Restrained install
-/// on top of forty average damage would make the bite a save-or-lose at
-/// a CR that already has enough. `WeaponWithRider` rather than a
-/// bespoke action, so the two damage types meet the target's resistance
-/// table separately, which is the whole reason a fire-immune creature
-/// takes forty from this and not fifty.
+/// **The largest single correction in this file.** The pool was `6d10`
+/// — the 2014 line, forty average before the fire — which made a CR-11
+/// worm the heaviest melee hitter in the bestiary short of the
+/// tarrasque. SRD 5.2 prints eighteen. The paragraph that used to
+/// stand here justified dropping the grapple on the grounds that "a
+/// Restrained install on top of forty average damage would make the
+/// bite a save-or-lose"; at eighteen that argument is gone, and the
+/// grapple is carried — which is what `WeaponWithCondition` and the
+/// `against_at_most(Large)` gate below are doing.
+///
+/// The fire is not a garnish: the remorhaz's body runs hot enough that
+/// swallowing something cooks it. It rides `plus_damage` rather than
+/// being folded into the swing, so the two damage types meet the
+/// target's resistance table separately — which is the whole reason a
+/// fire-immune creature takes eighteen from this and not twenty-eight.
+/// Its `3d6` is a rung under the book's `4d6` and is left alone here:
+/// this sweep is about the swing, not the riders.
 pub static REMORHAZ_BITE: WeaponWithCondition = WeaponWithCondition::reach_melee(
     "remorhaz bite",
     &["rz-bite", "remorhaz-bite"],
     AbilityScoreType::Strength,
-    Dice::new(6, 10),
+    Dice::new(2, 10),
     DamageType::Piercing,
     &[Condition::Grappled, Condition::Restrained],
     ConditionTimer::Permanent,
@@ -21920,16 +22160,17 @@ pub static UMBER_HULK_CONFUSING_GAZE: LazyLock<UmberHulkConfusingGaze> =
 
 // ─── Roper ──────────────────────────────────────────────────────────
 
-/// Roper Bite — STR-based 4d6+STR piercing melee. RAW: "Bite. Melee
-/// Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 22 (4d6 + 4)
-/// piercing damage." The payoff at the end of the roper's whole
+/// Roper Bite — STR-based 3d8 + STR Piercing. SRD 5.2: *"Bite. Melee
+/// Attack Roll: +7, reach 5 ft. Hit: 17 (3d8 + 4) Piercing damage."*
+/// The pool was `4d6`, the 2014 line. The payoff at the end of the
+/// roper's whole
 /// sequence: the tendrils catch, the reel drags the catch into reach,
 /// and this is what waits there.
 pub static ROPER_BITE: SimpleWeapon = SimpleWeapon::melee(
     "roper bite",
     &["rp-bite", "roper-bite"],
     AbilityScoreType::Strength,
-    Dice::new(4, 6),
+    Dice::new(3, 8),
     DamageType::Piercing,
 );
 
@@ -22529,15 +22770,20 @@ pub static CRAB_CLAW: SimpleWeapon = SimpleWeapon::flat_melee(
 
 // ─── Deer ────────────────────────────────────────────────────────────
 
-/// Deer Ram — STR-based 1d4+STR bludgeoning melee. RAW: "Ram. Melee
-/// Attack Roll: +2, reach 5 ft. Hit: 2 (1d4) Bludgeoning damage."
-/// Strength 11 makes the modifier zero, so the printed `(1d4)` and an
-/// ordinary STR swing are the same number.
+/// Deer Ram — a flat 1d4 Bludgeoning. SRD 5.2: *"Ram. Melee Attack
+/// Roll: +2, reach 5 ft. Hit: 2 (1d4) Bludgeoning damage."*
+///
+/// `flat_melee`, because the book's Hit line prints no modifier. The
+/// deer's Strength is 11 and the modifier would be zero either way, so
+/// this changes no die on any board — it changes the *declaration* from
+/// one that happens to be right into one that says what the book says,
+/// which is the difference between a line nothing can check and a line
+/// `every_natural_weapon_matches_the_books_hit_line` reads.
 ///
 /// The deer's actual combat contribution is the **Agile** trait on its
 /// template, not this — a deer that is being swung at leaves, and the
 /// leaving is free.
-pub static DEER_RAM: SimpleWeapon = SimpleWeapon::melee(
+pub static DEER_RAM: SimpleWeapon = SimpleWeapon::flat_melee(
     "deer ram",
     &["ram-d", "deer"],
     AbilityScoreType::Strength,
