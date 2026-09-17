@@ -11133,9 +11133,32 @@ impl ActorInstance {
         let action_blocked = self.is_incapacitated();
         match resource {
             Resource::Movement(amt) => {
-                if action_blocked {
-                    return false;
-                }
+                // **Not gated on `action_blocked`**, and that is SRD
+                // 5.2 rather than an oversight. The Incapacitated
+                // condition is three sentences and none of them is
+                // about feet: *"You can't take any action, Bonus Action,
+                // or Reaction. Your Concentration is broken. You can't
+                // speak."* `Condition::Incapacitated`'s own docstring
+                // has said so since it was written — *"movement is
+                // still allowed"* — and this gate said otherwise.
+                //
+                // Every *other* member of `blocks_action_economy` is
+                // also on `zeros_movement`, and the cohort's comments
+                // say as much one by one ("the action half is this
+                // cohort; the movement half is `zeros_movement`"). So
+                // the early return that used to stand here could only
+                // ever change the answer for the one condition RAW does
+                // not apply it to, and `remaining_movement` below
+                // already refuses every other member for the right
+                // reason.
+                //
+                // SRD 5.2's Turn Undead is the proof: *"it has the
+                // Frightened and Incapacitated conditions for 1 minute.
+                // For that duration, it tries to move as far from you
+                // as it can on its turns."* A rule that both
+                // incapacitates a creature and requires it to move is
+                // a rule that cannot be read any other way.
+                //
                 // `remaining_movement`, not the raw `movement` field —
                 // the two are the same number for the overwhelming
                 // majority of actors and deliberately differ for the

@@ -6574,30 +6574,37 @@ fn resolve_turn_burst(
             }
             continue;
         }
-        // `install_condition_with_link` covers the back-link half for
-        // conditions that carry one — Charmed's back-link anchors the
-        // "can't attack your charmer" gate and Frightened's anchors
-        // both of RAW's "source of fear" clauses, so the same call
-        // serves every variant this burst can install.
-        effects.extend(crate::engine::side_effects::install_condition_with_link(
-            installed,
-            id,
-            caster_id,
-            timer,
-        ));
-        // …and the second sentence, for the rows that print one. After
-        // the escalation branch's `continue`, which is where it
-        // belongs: a creature that has just been destroyed or banished
-        // is not running anywhere. See `TurnBurst::routs`, where the
-        // split between the bursts that turn and the bursts that only
-        // frighten is argued, and `crate::engine::rout`.
-        if config.routs {
-            effects.extend(crate::engine::side_effects::install_fragile_condition(
-                Condition::Routed,
-                id,
-                caster_id,
-                timer,
-            ));
+        // Every condition this row installs, in RAW's own order: the
+        // one every member of the cohort has, then the two that only a
+        // *turn* adds. After the escalation branch's `continue`, which
+        // is where they belong — a creature that has just been
+        // destroyed or banished is not afraid of anything.
+        //
+        // See `TurnBurst::turned` for the split between the bursts that
+        // turn and the bursts that only frighten, and
+        // `crate::engine::rout` for what the flight is.
+        let mut installs = vec![installed];
+        if let Some(turned) = config.turned {
+            if turned.incapacitates {
+                installs.push(Condition::Incapacitated);
+            }
+            installs.push(Condition::Routed);
+        }
+        // RAW's early out covers the whole turn, not one clause of it,
+        // so it is applied to every condition the row installs rather
+        // than only to the running. `install_fragile_condition` and
+        // `install_condition_with_link` differ by exactly that flag and
+        // agree on the back-link, which is what lets Charmed's "can't
+        // attack your charmer" gate and Frightened's two "source of
+        // fear" clauses come out of either call.
+        let fragile = config.turned.is_some_and(|t| t.ends_on_damage);
+        for condition in installs {
+            let install = if fragile {
+                crate::engine::side_effects::install_fragile_condition
+            } else {
+                crate::engine::side_effects::install_condition_with_link
+            };
+            effects.extend(install(condition, id, caster_id, timer));
         }
     }
     effects
@@ -6634,6 +6641,60 @@ fn resolve_turn_burst(
 /// Vengeance) — class templates target a balanced playable level, not
 /// lockstep PHB progression.
 pub const DREADFUL_ASPECT_TAG: &str = "paladin.dreadful_aspect";
+
+/// What it means for this cohort's victims to be **turned**, as
+/// opposed to merely frightened.
+///
+/// SRD 5.2 spends three sentences on it where the Frightened condition
+/// spends none:
+///
+/// > Each Undead of your choice within 30 feet of you must make a
+/// > Wisdom saving throw. If the creature fails its save, it has the
+/// > Frightened and Incapacitated conditions for 1 minute. For that
+/// > duration, it tries to move as far from you as it can on its turns.
+/// > This effect ends early on the creature if it takes any damage, if
+/// > you have the Incapacitated condition, or if you die.
+///
+/// The engine had the first half of the first sentence. What this
+/// carries is the rest, and the rest is what makes turning a *tempo*
+/// play rather than a worse Bane: a turned undead cannot act, runs, and
+/// is back in the fight the moment somebody hits it.
+///
+/// A struct rather than three columns on `TurnBurst`, because the three
+/// answers are not independent — they are one printed state, and the
+/// rows differ on which printing of it they are quoting. Being `Some`
+/// is itself the flight: there is no book anywhere that turns a
+/// creature without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Turned {
+    /// SRD 5.2's *"it has the Frightened and Incapacitated
+    /// conditions"* — the clause that takes a turned undead's Action
+    /// away, and the one clause here that only the 2024 printing has.
+    ///
+    /// The 2014 turned state left its victims able to act, restricted
+    /// to Dash; Turn the Faithless and Arcane Abjuration are 2014
+    /// features and say so by leaving this `false`. Modelling "Dash
+    /// only" would need an action filter the engine has nowhere to
+    /// hang, and the rout beside it already spends the movement a Dash
+    /// would have bought.
+    pub incapacitates: bool,
+    /// RAW's early out — *"this effect ends early on the creature if it
+    /// takes any damage"* — which both printings carry and which is
+    /// the whole reason a minute-long removal is a fair thing to hand a
+    /// level-3 cleric. Applied to every condition the burst installs
+    /// for this row, so the first hit restores the creature completely.
+    ///
+    /// **Two of RAW's three early outs are absent**, and both are
+    /// about the *caster* rather than the victim: the effect also ends
+    /// if the cleric is Incapacitated or dies. The engine has no
+    /// channel for a condition that watches somebody else's state —
+    /// `Grappled` is the one condition that does, and it gets there
+    /// through a release sweep written for grapples. The damage clause
+    /// is the one that fires in practice; the other two mean the turn
+    /// outlives a cleric it should not, which is the generous
+    /// direction and is written down here rather than hidden.
+    pub ends_on_damage: bool,
+}
 
 /// Config-driven Channel Divinity turn-burst action. Every "action; each
 /// hostile of some creature-type set within 30 ft rolls a WIS save vs the
@@ -6679,36 +6740,20 @@ pub struct TurnBurst {
     /// three Turn / dread variants install Frightened; the Nature
     /// Domain's Charm Animals and Plants installs Charmed. Any back-link
     /// the condition carries is queued by the resolver.
-    /// SRD 5.2 Turn Undead's **second sentence** — *"for that duration,
-    /// it tries to move as far from you as it can on its turns"* — and
-    /// the column that says which members of this cohort print one.
-    ///
-    /// A `bool` rather than an `Option<Condition>`, because there is
-    /// only one condition it could ever install and naming it twice
-    /// would invite a row that installed something else through a lane
-    /// built for this: see [`Condition::Routed`], which is inert
-    /// without the back-link this lane supplies.
+    /// Whether this burst *turns* its victims or merely frightens them
+    /// — see [`Turned`], which is the difference.
     ///
     /// **Three of the ten rows set it, and the split is the books'
     /// rather than a judgement.** Turn Undead, Turn the Faithless and
-    /// Arcane Abjuration all *turn* their victims, and "turned" is a
-    /// state whose printed definition includes the flight. Dreadful
-    /// Aspect, Conquering Presence, Champion Challenge and the rest
-    /// merely frighten — their text is the condition and nothing more,
-    /// and a creature that is frightened of a paladin is free to stand
-    /// its ground and swing at Disadvantage, which is exactly what RAW
-    /// says and what this engine has always done.
-    ///
-    /// **The rout installed here ends on damage**, unlike the fear
-    /// beside it. That is RAW's *"this effect ends early on the
-    /// creature if it takes any damage"*, read narrowly: the book ends
-    /// the whole turn on the first hit and this ends only the running,
-    /// which leaves the victim frightened for the rest of the timer.
-    /// The narrow read is the conservative one — it keeps the clause
-    /// that makes turning a *tempo* play rather than a minute-long
-    /// removal, without quietly shortening a condition thirty other
-    /// sites install through the same chassis.
-    pub routs: bool,
+    /// Arcane Abjuration all turn, and "turned" is a named state whose
+    /// printed definition is longer than the Frightened condition it is
+    /// built on. Dreadful Aspect, Conquering Presence, Champion
+    /// Challenge and the rest merely frighten — their text *is* the
+    /// condition and nothing more, and a creature that is frightened of
+    /// a paladin is free to stand its ground and swing at Disadvantage,
+    /// which is exactly what RAW says and what this engine has always
+    /// done.
+    pub turned: Option<Turned>,
     pub installed: Condition,
     /// How long the install lasts. `Rounds(10)` is the 1-minute duration
     /// every Turn / dread variant carries in RAW and was hardcoded in
@@ -6859,11 +6904,14 @@ impl Action for TurnBurst {
 /// long-rest features).
 pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "turn undead",
-    // SRD 5.2's own second sentence: "for that duration, it tries to
-    // move as far from you as it can on its turns". The clause the
-    // feature shipped without, and the reason a cleric's Channel
-    // Divinity used to move nothing at all.
-    routs: true,
+    // SRD 5.2's turned state, whole: Frightened *and* Incapacitated,
+    // it runs, and the first hit gives all three back. The engine had
+    // the fear and nothing else, which is why a cleric's Channel
+    // Divinity used to move nothing and stop nothing.
+    turned: Some(Turned {
+        incapacitates: true,
+        ends_on_damage: true,
+    }),
     aliases: &["turn", "cd-turn"],
     tag: TURN_UNDEAD_TAG,
     dc_ability: AbilityScoreType::Wisdom,
@@ -6895,10 +6943,15 @@ pub static TURN_UNDEAD: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
 /// Protection From Evil).
 pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "turn the faithless",
-    // The Devotion oath turns rather than frightens, and "turned" is
-    // the same printed state Turn Undead's victims are in — the
-    // flight included.
-    routs: true,
+    // The Devotion oath turns rather than frightens. The 2014
+    // printing's turned state, which is the flight and the early out
+    // without the Incapacitated: a creature turned by a paladin may
+    // still act, and RAW restricts it to Dash — a restriction the rout
+    // beside it has already spent the movement for.
+    turned: Some(Turned {
+        incapacitates: false,
+        ends_on_damage: true,
+    }),
     aliases: &["ttf", "cd-turnf", "faithless"],
     tag: TURN_THE_FAITHLESS_TAG,
     // Paladin spellcasting ability is Charisma per PHB; every paladin
@@ -6941,10 +6994,14 @@ pub static TURN_THE_FAITHLESS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst 
 /// abjures *outsiders*, not evil ones.
 pub static ARCANE_ABJURATION: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "arcane abjuration",
-    // Turned, for the reason Turn the Faithless above is: the victims
-    // that clear the banishment rung's CR ceiling are sent away, and
-    // the ones that do not are turned, which means they run.
-    routs: true,
+    // Turned, in the same 2014 printing Turn the Faithless quotes:
+    // the victims that clear the banishment rung's CR ceiling are sent
+    // away, and the ones that do not are turned, which means they run
+    // until somebody hits them.
+    turned: Some(Turned {
+        incapacitates: false,
+        ends_on_damage: true,
+    }),
     aliases: &["aa", "cd-abjure", "abjuration", "abjure"],
     tag: ARCANE_ABJURATION_TAG,
     dc_ability: AbilityScoreType::Wisdom,
@@ -7026,7 +7083,7 @@ pub static ARCANE_ABJURATION: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
 /// load-bearing rather than incidental.
 pub static CHARM_ANIMALS_AND_PLANTS: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "charm animals and plants",
-    routs: false,
+    turned: None,
     aliases: &["cap", "cd-charm", "charm-nature"],
     tag: CHARM_ANIMALS_AND_PLANTS_TAG,
     dc_ability: AbilityScoreType::Wisdom,
@@ -7050,7 +7107,7 @@ pub static CHARM_ANIMALS_AND_PLANTS: LazyLock<TurnBurst> = LazyLock::new(|| Turn
 /// readily as on a horde of undead.
 pub static DREADFUL_ASPECT: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "dreadful aspect",
-    routs: false,
+    turned: None,
     aliases: &["da", "cd-dread", "dreadful", "dread"],
     tag: DREADFUL_ASPECT_TAG,
     // CHA-anchored DC per RAW paladin CD.
@@ -9228,7 +9285,7 @@ pub const ENTHRALLING_PERFORMANCE_TAG: &str = "bard.enthralling_performance";
 /// Action.
 pub static ENTHRALLING_PERFORMANCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "enthralling performance",
-    routs: false,
+    turned: None,
     aliases: &["ep", "enthrall", "perform"],
     tag: ENTHRALLING_PERFORMANCE_TAG,
     dc_ability: AbilityScoreType::Charisma,
@@ -18147,7 +18204,7 @@ pub const CONQUERING_PRESENCE_TAG: &str = "paladin.conquering_presence";
 /// makes all three cost five lines.
 pub static CONQUERING_PRESENCE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "conquering presence",
-    routs: false,
+    turned: None,
     aliases: &["cp", "cd-conquer", "conquering", "conquer"],
     tag: CONQUERING_PRESENCE_TAG,
     dc_ability: AbilityScoreType::Charisma,
@@ -18820,7 +18877,7 @@ pub const ORDERS_DEMAND_TAG: &str = "cleric.orders_demand";
 /// half either way — a charmed creature can't attack the cleric at all.
 pub static ORDERS_DEMAND: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "order's demand",
-    routs: false,
+    turned: None,
     aliases: &["od", "demand", "cd-order"],
     tag: ORDERS_DEMAND_TAG,
     dc_ability: AbilityScoreType::Wisdom,
@@ -19200,7 +19257,7 @@ pub const ASPECT_OF_THE_WYRM_TAG: &str = "monk.aspect_of_the_wyrm";
 /// asks nothing about what the creatures caught in it are made of.
 pub static ASPECT_OF_THE_WYRM: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "aspect of the wyrm",
-    routs: false,
+    turned: None,
     aliases: &["aotw", "wyrm", "aspect"],
     tag: ASPECT_OF_THE_WYRM_TAG,
     // Monk save DCs are Wisdom-anchored — the same ability Stunning
@@ -19339,7 +19396,7 @@ pub const CHAMPION_CHALLENGE_TAG: &str = "paladin.champion_challenge";
 /// controller in the engine.
 pub static CHAMPION_CHALLENGE: LazyLock<TurnBurst> = LazyLock::new(|| TurnBurst {
     name: "champion challenge",
-    routs: false,
+    turned: None,
     aliases: &["challenge", "cd-challenge"],
     tag: CHAMPION_CHALLENGE_TAG,
     dc_ability: AbilityScoreType::Charisma,

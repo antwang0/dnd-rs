@@ -16108,6 +16108,10 @@ fn a_turned_undead_runs_instead_of_standing_its_ground() {
         e.actors[&ghast].has_condition(Condition::Routed),
         "a turned undead is not merely frightened — it runs"
     );
+    assert!(
+        e.actors[&ghast].has_condition(Condition::Incapacitated),
+        "…and SRD 5.2's third clause: it cannot act while it does"
+    );
     assert_eq!(
         e.actors[&ghast].linked_by(Condition::Routed),
         Some(cleric),
@@ -16140,11 +16144,15 @@ fn a_turned_undead_runs_instead_of_standing_its_ground() {
 }
 
 /// RAW's *"this effect ends early on the creature if it takes any
-/// damage"*, read narrowly onto the running rather than onto the whole
-/// turn — see `TurnBurst::routs`. The first hit puts the undead back on
-/// its feet, still frightened.
+/// damage"* — the clause that makes turning a tempo play rather than a
+/// minute-long removal. The first hit gives the undead back all three
+/// of the conditions the turn put on it.
+///
+/// Two of RAW's three early outs are absent and both are about the
+/// *caster* (the turn also ends if the cleric is Incapacitated or
+/// dies); see `Turned::ends_on_damage`.
 #[test]
-fn a_hit_stops_the_running_and_leaves_the_fear() {
+fn a_hit_undoes_the_whole_turn_and_not_just_the_running() {
     use crate::actions::class_features::TURN_UNDEAD;
     use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
     // A ghast, for the reason the sibling test above uses one: a
@@ -16166,7 +16174,17 @@ fn a_hit_stops_the_running_and_leaves_the_fear() {
     let cast = ActionExecutionInfo::new(&*TURN_UNDEAD, cleric, None, None, None);
     e.push_action(cast);
     e.process_stack();
-    assert!(e.actors[&ghast].has_condition(Condition::Routed));
+    for condition in [
+        Condition::Routed,
+        Condition::Frightened,
+        Condition::Incapacitated,
+    ] {
+        assert!(
+            e.actors[&ghast].has_condition(condition),
+            "SRD 5.2 turns a creature with all three: {}",
+            condition.name()
+        );
+    }
 
     crate::engine::side_effects::DealDamage {
         actor_id: ghast,
@@ -16174,14 +16192,17 @@ fn a_hit_stops_the_running_and_leaves_the_fear() {
         damage_type: DamageType::Slashing,
     }
     .apply(&mut e);
-    assert!(
-        !e.actors[&ghast].has_condition(Condition::Routed),
-        "one hit and it stops running"
-    );
-    assert!(
-        e.actors[&ghast].has_condition(Condition::Frightened),
-        "…and is still afraid of the cleric, which is the rest of the timer"
-    );
+    for condition in [
+        Condition::Routed,
+        Condition::Frightened,
+        Condition::Incapacitated,
+    ] {
+        assert!(
+            !e.actors[&ghast].has_condition(condition),
+            "one hit ends the turn, and {} is part of it",
+            condition.name()
+        );
+    }
 }
 
 /// An install a creature is immune to says so, and does not report a
@@ -16239,6 +16260,52 @@ fn a_condition_that_bounces_off_an_immunity_says_so() {
         e.messages().iter().any(|m| m.contains("frightened refreshes")),
         "a second helping of a condition you can have is a refresh"
     );
+}
+
+/// SRD 5.2's Incapacitated condition is three sentences and none of
+/// them is about feet: *"You can't take any action, Bonus Action, or
+/// Reaction. Your Concentration is broken. You can't speak."*
+///
+/// `Condition::Incapacitated`'s own docstring has said "movement is
+/// still allowed" since it was written, and the resource gate said
+/// otherwise — it refused every `Resource::Movement` to anybody on the
+/// `blocks_action_economy` cohort. Every *other* member of that cohort
+/// is also on `zeros_movement`, so the refusal could only ever change
+/// the answer for the one condition RAW does not apply it to.
+#[test]
+fn incapacitated_takes_the_turn_and_leaves_the_legs() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+    e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+
+    let hero = e.actors.get_mut(&fighter).unwrap();
+    hero.add_condition(Condition::Incapacitated, ConditionTimer::Rounds(3));
+    assert!(
+        !hero.can_consume_resource(Resource::Action),
+        "the Inactive clause is the whole of the condition…"
+    );
+    assert!(
+        hero.can_consume_resource(Resource::Movement(5.0)),
+        "…and it says nothing at all about walking"
+    );
+    assert!(hero.remaining_movement() > 0.0);
+    assert!(
+        e.path_to(fighter, Coordinate::new(9, 5)).is_some(),
+        "so the pathfinder has somewhere to take it"
+    );
+
+    // Stunned is the condition that *does* stop the feet, and it says
+    // so on `zeros_movement` rather than through the action gate.
+    let hero = e.actors.get_mut(&fighter).unwrap();
+    hero.add_condition(Condition::Stunned, ConditionTimer::Rounds(3));
+    assert!(!hero.can_consume_resource(Resource::Movement(5.0)));
+    assert_eq!(hero.remaining_movement(), 0.0);
 }
 
 /// The rout is a *second* sentence and deliberately not part of the
