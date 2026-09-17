@@ -40,11 +40,14 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Radiant, DamageModifier::Vulnerability),
         ]),
-        // Undead: immune to Poisoned and Charmed.
+        // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a corpse
+        // walks until it is knocked apart, and never slower. Two
+        // conditions in the quotation and two in the list; the
+        // `Charmed` that used to make a third was the 2014 undead
+        // convention, printed under a comment ("Undead: immune to
+        // Poisoned and Charmed") that contradicted the quotation
+        // directly below it.
         condition_immunities: HashSet::from([
-            // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a corpse walks until
-            // it is knocked apart, and never slower.
-            Condition::Charmed,
             Condition::Exhausted,
             Condition::Poisoned,
         ]),
@@ -104,8 +107,10 @@ pub static OGRE_ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Radiant, DamageModifier::Vulnerability),
         ]),
+        // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned", the same
+        // line the zombie above carries and the same `Charmed` struck
+        // off it.
         condition_immunities: HashSet::from([
-            Condition::Charmed,
             Condition::Exhausted,
             Condition::Poisoned,
         ]),

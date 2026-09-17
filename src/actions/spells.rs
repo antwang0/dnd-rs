@@ -5590,17 +5590,31 @@ impl Action for Sleep {
         let pool_roll = encounter.roll(&Dice::new(5, 8));
         encounter.log(format!("  sleep: 5d8({}) = {} HP pool", pool_roll, pool_roll));
 
-        // Sort eligible targets by ascending current HP (5e RAW). Undead
-        // and Charmed-immune creatures are skipped — they don't dream.
-        // The Charmed gate doubles up: in our pool, Charm immunity is
-        // the cleanest "no mind-affecting" proxy.
+        // Sort eligible targets by ascending current HP (5e RAW), and
+        // skip the ones RAW says cannot be put under:
+        //
+        // > *"Creatures that don't sleep, such as elves, or that have
+        // > Immunity to the Exhaustion condition automatically succeed
+        // > on saves against this spell."*
+        //
+        // Exhaustion immunity is the printed clause and it is a
+        // startlingly exact one — the book has picked the condition
+        // that means "this body does not get tired", and every undead,
+        // construct and elemental on the roster carries it for that
+        // reason. The gate used to read `Charmed` instead, as a proxy
+        // for "no mind to affect", and it was a proxy that happened to
+        // agree: the engine's undead carried a `Charmed` immunity the
+        // 2014 books gave them and SRD 5.2 does not. Striking that
+        // immunity off the skeletons and the zombies is what exposed
+        // this line, because the proxy went with it and the printed
+        // clause had never been written down.
         let hit = crate::actions::action_template::pool_sweep_targets(
             encounter,
             caster_id,
             point,
             BURST_RADIUS,
             pool_roll,
-            Condition::Charmed,
+            Condition::Exhausted,
         );
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for id in hit {

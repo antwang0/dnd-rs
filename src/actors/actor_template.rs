@@ -14287,11 +14287,14 @@ mod tests {
 
     #[test]
     fn resistance_halves_round_down() {
-        // The skeleton's piercing resistance is unqualified, so the
-        // damage sink applies it without needing to know who swung.
-        let s = make(&SKELETON_TEMPLATE);
-        assert_eq!(s.effective_damage(7, DamageType::Piercing), 3);
-        assert_eq!(s.effective_damage(0, DamageType::Piercing), 0);
+        // The wight's necrotic resistance is unqualified — SRD 5.2
+        // "Resistances Necrotic", with no "from nonmagical attacks" on
+        // it — so the damage sink applies it without needing to know
+        // who swung. It stands in for the skeleton's piercing, which
+        // this test used to read and which was never RAW's.
+        let s = make(&crate::actors::creatures::wights::WIGHT_TEMPLATE);
+        assert_eq!(s.effective_damage(7, DamageType::Necrotic), 3);
+        assert_eq!(s.effective_damage(0, DamageType::Necrotic), 0);
         // Poison is immune (zeroed).
         assert_eq!(s.effective_damage(7, DamageType::Poison), 0);
     }

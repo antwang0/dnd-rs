@@ -55,10 +55,11 @@ pub static WARHORSE_SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
             (DamageType::Bludgeoning, DamageModifier::Vulnerability),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
+        // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned", the same
+        // line every skeleton on the roster carries, and the same
+        // `Charmed` — plus a `Frightened` — struck off it.
         condition_immunities: HashSet::from([
-            Condition::Charmed,
             Condition::Exhausted,
-            Condition::Frightened,
             Condition::Poisoned,
         ]),
         // The point of the stat block: something for the skeletal

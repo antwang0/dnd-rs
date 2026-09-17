@@ -48,17 +48,30 @@ pub static SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Undead,
         actions,
-        // Skeletons: vulnerable to bludgeoning (brittle bones), immune
-        // to poison (no body chemistry), piercing slips between ribs.
+        // SRD 5.2 "Vulnerabilities Bludgeoning" and "Immunities
+        // Poison" — brittle bones, and no body chemistry for a poison
+        // to work on.
+        //
+        // The piercing resistance that used to sit here was neither.
+        // It came with a note about arrows slipping between ribs, in
+        // the same breath as the two clauses that *are* printed, and
+        // the Minotaur Skeleton eighty lines down has been saying so
+        // in as many words for as long as both have existed: "SRD 5.2
+        // prints only the bludgeoning vulnerability here — no piercing
+        // resistance, unlike the archer skeleton above". It halved
+        // every arrow and every dagger against the commonest low-CR
+        // undead on the roster.
         damage_modifiers: HashMap::from([
             (DamageType::Bludgeoning, DamageModifier::Vulnerability),
             (DamageType::Poison, DamageModifier::Immunity),
-            (DamageType::Piercing, DamageModifier::Resistance),
         ]),
+        // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a pile
+        // of bones has no muscle to tire. Three conditions in the
+        // quotation and three in the list; the `Charmed` that used to
+        // make a fourth was the 2014 undead convention, which SRD 5.2
+        // does not carry and which this line has quoted against itself
+        // since the quotation was added.
         condition_immunities: HashSet::from([
-            // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a pile of bones has
-            // no muscle to tire.
-            Condition::Charmed,
             Condition::Exhausted,
             Condition::Poisoned,
         ]),
@@ -123,8 +136,10 @@ pub static MINOTAUR_SKELETON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
             (DamageType::Bludgeoning, DamageModifier::Vulnerability),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
+        // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned", the same
+        // line the archer skeleton above carries and the same `Charmed`
+        // struck off it.
         condition_immunities: HashSet::from([
-            Condition::Charmed,
             Condition::Exhausted,
             Condition::Poisoned,
         ]),
@@ -177,15 +192,22 @@ mod tests {
         assert!(charge.knocks_prone);
     }
 
-    /// Both skeletons shatter under a hammer, and only the archer
-    /// shrugs off an arrow.
+    /// Both skeletons shatter under a hammer, and neither one shrugs
+    /// off an arrow.
     ///
-    /// The pair is 5.2's, not a simplification: the archer's piercing
-    /// resistance is the "arrows pass between the ribs" clause its own
-    /// stat block prints, and the minotaur's does not print it. Copying
-    /// the row across would have been the easy mistake.
+    /// This test used to assert the opposite of its second half, on the
+    /// strength of a piercing resistance the archer carried and the
+    /// minotaur did not — and the docstring called that pair "5.2's,
+    /// not a simplification". It was the simplification. SRD 5.2 prints
+    /// *"Vulnerabilities Bludgeoning"* on both and nothing else, which
+    /// is what the minotaur's own comment had been saying all along;
+    /// the archer's resistance came with a note about arrows slipping
+    /// between ribs and no line in the book behind it.
+    ///
+    /// The half that survives is the half that was ever RAW: a hammer
+    /// is what kills a skeleton, and an arrow is just an arrow.
     #[test]
-    fn the_bull_skeleton_does_not_inherit_the_archers_ribs() {
+    fn neither_skeleton_shrugs_off_an_arrow() {
         use crate::engine::types::DamageModifier;
         let bull = make(&MINOTAUR_SKELETON_TEMPLATE);
         let archer = make(&SKELETON_TEMPLATE);
@@ -194,11 +216,7 @@ mod tests {
                 a.damage_modifier(DamageType::Bludgeoning),
                 Some(DamageModifier::Vulnerability)
             );
+            assert_eq!(a.damage_modifier(DamageType::Piercing), None);
         }
-        assert_eq!(bull.damage_modifier(DamageType::Piercing), None);
-        assert_eq!(
-            archer.damage_modifier(DamageType::Piercing),
-            Some(DamageModifier::Resistance)
-        );
     }
 }

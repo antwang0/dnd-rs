@@ -5115,19 +5115,21 @@ pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveCondit
 /// current-HP order and puts each to `Asleep` (+ `Prone` for the RAW
 /// unconscious clause) until the pool is consumed (each target consumes
 /// `current_hp` from the pool). 5e RAW: level-1 enchantment, no save —
-/// the HP-bucket IS the gate. Creatures immune to Charmed (the engine's
-/// proxy for "mind-affecting") are spared; this protects undead,
-/// constructs, and fey ancestry races RAW. Mirrors the SLEEP spell
-/// exactly — the scroll is a one-static declaration that reuses the
-/// same `pool_sweep_targets` chokepoint.
+/// the HP-bucket IS the gate. Creatures with Immunity to the Exhaustion
+/// condition are spared, which is RAW's own clause — *"Creatures that
+/// don't sleep, such as elves, or that have Immunity to the Exhaustion
+/// condition automatically succeed"* — and which covers the undead, the
+/// constructs and the elementals. Mirrors the SLEEP spell exactly: the
+/// scroll is a one-static declaration that reuses the same
+/// `pool_sweep_targets` chokepoint.
 pub static READ_SLEEP_SCROLL: ReadSleepScrollItem = ReadSleepScrollItem {};
 
 /// Scroll of Sleep — bespoke item action that mirrors the SLEEP spell's
 /// pool-sweep envelope. Doesn't fit `AreaSaveConditionItem` because that
 /// factor uses the installed condition for the immunity-prune (Asleep
-/// here) — Sleep RAW uses "mind-affecting" immunity (Charmed proxy in
-/// this engine), so undead / constructs are correctly spared via the
-/// Charmed-immunity gate inside `pool_sweep_targets`.
+/// here) — Sleep RAW gates on Immunity to Exhaustion instead, so undead
+/// and constructs are spared through the Exhaustion gate inside
+/// `pool_sweep_targets`.
 pub struct ReadSleepScrollItem {}
 
 impl Action for ReadSleepScrollItem {
@@ -5187,16 +5189,17 @@ impl Action for ReadSleepScrollItem {
             "  scroll of sleep: 5d8({}) = {} HP pool",
             pool_roll, pool_roll
         ));
-        // Mirror the SLEEP spell's "Charmed-immune is the no-mind-affecting
-        // proxy" filter — undead / constructs / fey ancestry get pruned
-        // up-front so the pool isn't burnt on no-ops.
+        // Mirror the SLEEP spell's gate, which is RAW's own: *"or that
+        // have Immunity to the Exhaustion condition"*. Undead,
+        // constructs and elementals are pruned up-front so the pool is
+        // not burnt on no-ops.
         let hit = crate::actions::action_template::pool_sweep_targets(
             encounter,
             caster_id,
             point,
             BURST_RADIUS,
             pool_roll,
-            Condition::Charmed,
+            Condition::Exhausted,
         );
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for id in hit {

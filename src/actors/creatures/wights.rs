@@ -50,13 +50,16 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         // Undead proficiencies — wights have decent CON/CHA from MM.
         proficient_saves: HashSet::from([AbilityScoreType::Constitution]),
-        // Standard undead condition immunities.
+        // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — two
+        // conditions, and the two the list carries. The `Charmed` and
+        // `Frightened` that used to sit beside them came from the 2014
+        // undead convention rather than from the line quoted above
+        // them, and they were the two that mattered most: a wight that
+        // cannot be frightened is a wight a Turn Undead does nothing
+        // to, which is the one answer a cleric is carrying for it.
         condition_immunities: HashSet::from([
-            // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned".
             Condition::Exhausted,
             Condition::Poisoned,
-            Condition::Charmed,
-            Condition::Frightened,
         ]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()

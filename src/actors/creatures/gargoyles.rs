@@ -42,20 +42,20 @@ pub static GARGOYLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_modifiers: damage_modifiers_from([
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
+        // SRD 5.2 "Immunities Poison; Exhaustion, Petrified, Poisoned"
+        // — carved rock does not tire, and a creature already carved
+        // out of rock cannot be turned to stone.
+        //
+        // Three conditions in the quotation and three in the list. The
+        // `Charmed` and `Prone` that used to sit among them came from
+        // the construct convention rather than from the line, which
+        // this block quoted twice while contradicting it: a gargoyle is
+        // an Elemental, and RAW is perfectly happy to charm one or
+        // knock it over.
         condition_immunities: HashSet::from([
-            // SRD 5.2 "Immunities Poison; Exhaustion, Petrified, Poisoned".
-            // Carved rock does not tire — and the docstring above this
-            // block used to call exhaustion unmodelled, which it has not
-            // been for some time.
             Condition::Exhausted,
-            Condition::Poisoned,
-            Condition::Charmed,
-            // SRD 5.2 "Immunities Poison; Exhaustion, Petrified,
-            // Poisoned" — a creature that is already carved out of rock
-            // cannot be turned to stone.
             Condition::Petrified,
-            // Constructs ignore prone (they're not biological).
-            Condition::Prone,
+            Condition::Poisoned,
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

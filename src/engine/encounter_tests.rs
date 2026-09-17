@@ -8866,13 +8866,15 @@ fn disengage_skips_opportunity_attacks() {
 }
 
 #[test]
-fn skeleton_resists_piercing_and_takes_vulnerable_bludgeoning() {
+fn skeleton_takes_an_arrow_whole_and_a_hammer_twice() {
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(15, 15, &[]);
-    // First skeleton: piercing — should halve.
+    // First skeleton: piercing — SRD 5.2 prints no resistance to it,
+    // so an arrow lands in full. This half used to assert the halving
+    // the archer skeleton carried and the book does not.
     let id1 = e
         .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
@@ -8883,8 +8885,7 @@ fn skeleton_resists_piercing_and_takes_vulnerable_bludgeoning() {
         damage_type: DamageType::Piercing,
     }
     .apply(&mut e);
-    // 8 piercing → 4 actual.
-    assert_eq!(e.actors[&id1].hitpoints(), max1.saturating_sub(4));
+    assert_eq!(e.actors[&id1].hitpoints(), max1.saturating_sub(8));
 
     // Second skeleton: bludgeoning — should double.
     let id2 = e
@@ -11042,16 +11043,21 @@ fn resistant_target_takes_half_damage() {
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
-    // The skeleton's piercing resistance is unqualified — the lane
-    // every damage instance is measured against, whatever produced it.
+    // The wight's necrotic resistance is unqualified — the lane every
+    // damage instance is measured against, whatever produced it.
     let id = e
-        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(
+            &crate::actors::creatures::wights::WIGHT_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
         amount: 6,
-        damage_type: DamageType::Piercing,
+        damage_type: DamageType::Necrotic,
     }
     .apply(&mut e);
     // 6 / 2 = 3 lost.
@@ -12054,19 +12060,24 @@ fn damage_resistance_halves_damage_v2() {
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
-    // Piercing is the skeleton's one unqualified resistance.
+    // Necrotic is the wight's one unqualified resistance.
     let id = e
-        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(
+            &crate::actors::creatures::wights::WIGHT_TEMPLATE,
+            Coordinate::new(2, 2),
+            0,
+            0,
+        )
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
         actor_id: id,
         amount: 8,
-        damage_type: DamageType::Piercing,
+        damage_type: DamageType::Necrotic,
     }
     .apply(&mut e);
     let after = e.actors[&id].hitpoints();
-    assert_eq!(before - after, 4, "skeleton should take half (4) of 8 piercing");
+    assert_eq!(before - after, 4, "wight should take half (4) of 8 necrotic");
 }
 
 #[test]
@@ -16217,12 +16228,17 @@ fn a_hit_undoes_the_whole_turn_and_not_just_the_running() {
 /// why nothing happened.
 #[test]
 fn a_condition_that_bounces_off_an_immunity_says_so() {
+    // Animated Armor, whose SRD 5.2 line carries the Frightened
+    // immunity this is about. It used to be a wight, on the strength of
+    // a fear immunity SRD 5.2 does not give one — and that mattered
+    // more than a fixture usually does, because a wight that cannot be
+    // frightened is a wight a cleric's Turn Undead does nothing to.
+    use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::actors::creatures::wights::WIGHT_TEMPLATE;
 
     let mut e = ei_with_terrain(20, 20, &[]);
-    let wight = e
-        .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+    let armor = e
+        .instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(5, 5), 1, 0)
         .unwrap();
     let fighter = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
@@ -16230,12 +16246,12 @@ fn a_condition_that_bounces_off_an_immunity_says_so() {
     e.pop_prompt();
 
     crate::engine::side_effects::ApplyCondition {
-        actor_id: wight,
+        actor_id: armor,
         condition: Condition::Frightened,
         timer: ConditionTimer::Rounds(10),
     }
     .apply(&mut e);
-    assert!(!e.actors[&wight].has_condition(Condition::Frightened));
+    assert!(!e.actors[&armor].has_condition(Condition::Frightened));
     assert!(
         e.messages().iter().any(|m| m.contains("is immune to frightened")),
         "the log has to name the immunity: {:?}",
@@ -19675,23 +19691,32 @@ fn command_stuns_failed_save_target() {
 
 #[test]
 fn command_skips_charm_immune_target() {
-    // A zombie (charm-immune) shouldn't be affected by Command.
+    // Animated Armor, whose SRD 5.2 line reads "Immunities Poison,
+    // Psychic; Charmed, Deafened, Exhaustion, Frightened, Paralyzed,
+    // Petrified, Poisoned" — a suit of plate with nothing inside it to
+    // give an order to. It stands in for the zombie this used to read,
+    // which SRD 5.2 does not make charm-immune.
     use crate::actions::spells::COMMAND;
+    use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     let mut e = ei_with_terrain(20, 20, &[]);
     let wizard = e
         .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    let zombie = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 4), 1, 0)
+    let armor = e
+        .instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(4, 4), 1, 0)
         .unwrap();
-    let target_ids = vec![zombie];
+    assert!(
+        e.actors[&armor].is_immune_to_condition(Condition::Charmed),
+        "the fixture has to actually be charm-immune"
+    );
+    let target_ids = vec![armor];
     let effects = COMMAND.side_effects(&mut e, wizard, Some(&target_ids), None, None);
     for eff in effects {
         eff.apply(&mut e);
     }
     assert!(
-        !e.actors[&zombie].has_condition(Condition::Stunned),
+        !e.actors[&armor].has_condition(Condition::Stunned),
         "charm-immune target should ignore Command"
     );
 }
@@ -19943,14 +19968,19 @@ fn vampiric_touch_heals_caster_on_hit() {
 
 #[test]
 fn hypnotic_pattern_skips_charm_immune_targets() {
+    // Animated Armor again, for the reason given on
+    // `command_skips_charm_immune_target`: SRD 5.2 makes the suit of
+    // plate charm-immune and does not make the zombie this used to
+    // read.
     use crate::actions::spells::HYPNOTIC_PATTERN;
+    use crate::actors::creatures::animated_armors::ANIMATED_ARMOR_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
     let mut e = ei_with_terrain(20, 20, &[]);
     let wizard = e
         .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    let zombie = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 6), 1, 0)
+    let armor = e
+        .instantiate_creature(&ANIMATED_ARMOR_TEMPLATE, Coordinate::new(6, 6), 1, 0)
         .unwrap();
     let locs = vec![Coordinate::new(6, 6)];
     let effects = HYPNOTIC_PATTERN.side_effects(&mut e, wizard, None, Some(&locs), None);
@@ -19958,8 +19988,8 @@ fn hypnotic_pattern_skips_charm_immune_targets() {
         eff.apply(&mut e);
     }
     assert!(
-        !e.actors[&zombie].has_condition(Condition::Incapacitated),
-        "charm-immune undead should ignore hypnotic pattern"
+        !e.actors[&armor].has_condition(Condition::Incapacitated),
+        "a charm-immune construct should ignore hypnotic pattern"
     );
 }
 
@@ -118666,5 +118696,149 @@ fn something_that_cannot_slip_walks_straight_across_the_ice() {
         step,
         Coordinate::new(2, 1),
         "the shortest line is straight at the goblin"
+    );
+}
+
+/// **Every condition immunity a stat block quotes is a condition
+/// immunity it carries**, and nothing else.
+///
+/// The bestiary documents itself by quotation, the same way the armoury
+/// does, and forty-odd templates carry SRD 5.2's own Immunities line in
+/// a comment beside the list it describes. Nothing checked that the two
+/// agreed, and five of them did not — all in the same direction, and
+/// all for the same reason: the 2014 books gave every undead and every
+/// construct a blanket Charmed immunity, SRD 5.2 does not, and the
+/// quotation was pasted in later without the list being read against
+/// it. The zombie's said `Charmed` in a comment of its own directly
+/// above a quotation that does not contain the word; the gargoyle
+/// quoted its line twice and added two conditions to it.
+///
+/// It is not a cosmetic difference. A wight that cannot be frightened
+/// is a wight a cleric's Turn Undead does nothing to, and the Sleep
+/// spell was reading undead charm-immunity as its "no mind to affect"
+/// gate — a proxy that stopped being true the moment the immunity came
+/// off, and which turned out to be hiding RAW's own clause (*"or that
+/// have Immunity to the Exhaustion condition"*, which is both exact and
+/// what the engine now asks).
+///
+/// **Partial by construction, and that is the bargain.** It reads the
+/// quotations that carry a `;` — the semicolon is what separates RAW's
+/// damage immunities from its condition ones — and skips the ones with
+/// a parenthetical, whose clause is conditional rather than flat. A
+/// template whose immunities come from a shared static
+/// (`ELEMENTAL_CONDITION_IMMUNITIES` and its siblings) has no literal to
+/// compare against and is not swept. What is left is the case the
+/// mistake actually lives in: a hand-written list with the book's line
+/// written out above it.
+#[test]
+fn every_quoted_immunities_line_is_the_list_beneath_it() {
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    /// RAW's condition names, lowercased. `Exhaustion` is the one the
+    /// engine spells differently — `Condition::Exhausted` — and is
+    /// folded on the way in.
+    const CONDITIONS: &[&str] = &[
+        "blinded",
+        "charmed",
+        "deafened",
+        "exhaustion",
+        "frightened",
+        "grappled",
+        "incapacitated",
+        "invisible",
+        "paralyzed",
+        "petrified",
+        "poisoned",
+        "prone",
+        "restrained",
+        "stunned",
+        "unconscious",
+    ];
+
+    fn engine_name(condition: &str) -> String {
+        let lower = condition.to_ascii_lowercase();
+        if lower == "exhausted" { "exhaustion".to_string() } else { lower }
+    }
+
+    let creatures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actors/creatures");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&creatures)
+        .expect("src/actors/creatures/ should be readable")
+        .map(|e| e.expect("a readable dir entry").path())
+        .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+        .collect();
+    files.sort();
+    assert!(files.len() > 300, "only {} stat blocks found", files.len());
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("a creature module");
+        let lines: Vec<&str> = text.lines().collect();
+        for (n, line) in lines.iter().enumerate() {
+            let Some(at) = line.find("\"Immunities ") else {
+                continue;
+            };
+            let rest = &line[at + "\"Immunities ".len()..];
+            let Some(close) = rest.find('"') else { continue };
+            let quoted = &rest[..close];
+            // A parenthetical is a clause with a condition on it — the
+            // archmage's "Charmed (with Mind Blank)" — and not a flat
+            // immunity this can compare.
+            if quoted.contains('(') {
+                continue;
+            }
+            // No semicolon, no condition half: RAW puts the damage
+            // types first and the conditions after it.
+            let Some((_, conditions)) = quoted.split_once(';') else {
+                continue;
+            };
+            let want: BTreeSet<String> = conditions
+                .split(',')
+                .map(|w| w.trim().trim_end_matches('.').to_ascii_lowercase())
+                .filter(|w| CONDITIONS.contains(&w.as_str()))
+                .collect();
+
+            // The list this line is describing: the nearest
+            // `condition_immunities:` literal, above or below.
+            let lo = n.saturating_sub(12);
+            let hi = (n + 14).min(lines.len());
+            let window = lines[lo..hi].join("\n");
+            let Some(k) = window.find("condition_immunities:") else {
+                continue;
+            };
+            let tail = &window[k..];
+            let Some(end) = tail.find("])") else { continue };
+            let body = &tail[..end];
+            if !body.contains("HashSet::from") {
+                continue;
+            }
+            let got: BTreeSet<String> = body
+                .split("Condition::")
+                .skip(1)
+                .map(|r| engine_name(name_prefix(r)))
+                .collect();
+            checked += 1;
+            if got != want {
+                wrong.push(format!(
+                    "{}:{} quotes {:?} and carries {:?}",
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    n + 1,
+                    want,
+                    got
+                ));
+            }
+        }
+    }
+    assert!(
+        checked >= 10,
+        "only {checked} quoted immunity lines swept — the walk has stopped finding them"
+    );
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks carry condition immunities their own quoted SRD line \
+         does not give them; a creature that cannot be frightened is a creature \
+         Turn Undead does nothing to:\n{}",
+        wrong.join("\n")
     );
 }
