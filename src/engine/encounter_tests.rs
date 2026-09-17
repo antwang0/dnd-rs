@@ -41581,8 +41581,13 @@ fn fog_cloud_lays_an_obscuring_zone_under_concentration() {
     use crate::engine::side_effects::Resource;
 
     let mut e = ei_with_terrain(30, 30, &[]);
+    // Well back from where the cloud is going. A 4-radius area centred
+    // on (10, 5) reaches a Medium body anchored as far out as (5, 5),
+    // which is where this fixture used to stand the wizard — inside its
+    // own fog, seeing out of it, because `Zone::covers` was drawing a
+    // smaller area than `actor_in_zone` was biting.
     let wiz = e
-        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
         .unwrap();
     // Standing inside the cloud.
     let inside = e
@@ -82005,9 +82010,11 @@ fn an_antimagic_field_is_asked_of_every_target_and_of_whole_bodies() {
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 20), 1, 0)
         .unwrap();
     // The ogre's anchor tile sits outside the sphere; its Large
-    // footprint reaches in.
+    // footprint reaches in. West of the sphere rather than east of it,
+    // because a footprint grows away from its anchor: an ogre anchored
+    // beyond the far edge has every tile beyond the far edge.
     let ogre = e
-        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(13, 13), 1, 1)
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
         .unwrap();
     e.install_zone(test_zone(
         Coordinate::new(10, 10),
@@ -82015,8 +82022,12 @@ fn an_antimagic_field_is_asked_of_every_target_and_of_whole_bodies() {
         ZoneEffect::NULLIFYING,
     ));
     assert!(
-        !e.zones()[0].covers(Coordinate::new(13, 13)),
+        !e.zones()[0].covers(Coordinate::new(6, 6)),
         "the fixture needs the ogre's anchor tile outside the sphere"
+    );
+    assert!(
+        e.zones()[0].covers(Coordinate::new(9, 9)),
+        "…and the far corner of its footprint inside it"
     );
 
     assert!(MAGIC_MISSILE.validate_input(&e, wiz, Some(&vec![clear]), None, None));

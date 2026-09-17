@@ -1103,8 +1103,38 @@ impl Zone {
     /// True if `coord` is inside the zone. Single-tile question; callers
     /// with a footprint use `EncounterInstance::actor_in_zone`, which
     /// asks the same question of the whole body.
+    ///
+    /// **The contract is that a creature standing on a tile this
+    /// accepts is a creature `actor_in_zone` catches**, and the `+ 1` is
+    /// what buys it. A `radius` on this layer is a footprint *gap* —
+    /// that is what `footprint_chebyshev` measures and what
+    /// `actor_in_zone` compares against — so a body whose nearest tile
+    /// is `radius + 1` away has a gap of `radius` and is in the area.
+    /// The same sentence and the same compensation as
+    /// `AreaShape::tiles`, which draws a burst's disc one tile wider
+    /// than its declared radius for exactly this reason.
+    ///
+    /// It used to take the radius literally, and every caller of this
+    /// answered one ring smaller than the layer it was describing.
+    /// There are six of them and none is cosmetic: `tile_is_obscured`
+    /// let a creature see through the last ring of a fog cloud it was
+    /// blind in, `tile_suppresses_magic` let it cast from inside an
+    /// Antimagic Field, `zone_movement_multiplier` sold it the last
+    /// ring of a web at walking pace, `tile_is_hazardous` routed the
+    /// pathfinder into the ring that bites, the lighting layer lit the
+    /// edge of a Darkness, and the map drew a smaller area than the one
+    /// the player was standing in. All six were the same off-by-one and
+    /// all six read better as "the area is what it says it is".
+    ///
+    /// The alternative — narrowing `actor_in_zone` to take the radius
+    /// literally too — is the same consistency bought the other way
+    /// round, and it is the wrong way round twice: it would shrink
+    /// forty tuned areas rather than widen six readings of them, and it
+    /// would leave this layer disagreeing with `AreaShape`, whose
+    /// radii are gaps and whose constants across the bestiary are
+    /// chosen for it.
     pub fn covers(&self, coord: Coordinate) -> bool {
-        self.origin.chebyshev_to(coord) <= self.radius
+        self.origin.chebyshev_to(coord) <= self.radius + 1
     }
 
     /// True if anything walking the board should route around this
@@ -1216,11 +1246,17 @@ mod tests {
         (z, owner_at)
     }
 
+    /// A radius-0 area is one tile *of gap*, which is the nine tiles
+    /// around and including its origin — see `Zone::covers`, where the
+    /// difference between a gap and a distance is written down. It is
+    /// the smallest area the layer can express and Cloud of Daggers is
+    /// what it is for.
     #[test]
-    fn a_zero_radius_zone_is_one_tile() {
+    fn a_zero_radius_zone_is_the_tile_and_its_neighbours() {
         let z = zone_at(Coordinate::new(5, 5), 0);
         assert!(z.covers(Coordinate::new(5, 5)));
-        assert!(!z.covers(Coordinate::new(5, 6)));
+        assert!(z.covers(Coordinate::new(5, 6)));
+        assert!(!z.covers(Coordinate::new(5, 7)));
     }
 
     /// Chebyshev, not Euclidean: the corner of the square is in, which
@@ -1228,8 +1264,36 @@ mod tests {
     #[test]
     fn the_radius_is_a_square_not_a_circle() {
         let z = zone_at(Coordinate::new(5, 5), 2);
-        assert!(z.covers(Coordinate::new(7, 7)));
-        assert!(!z.covers(Coordinate::new(8, 7)));
+        assert!(z.covers(Coordinate::new(8, 8)));
+        assert!(!z.covers(Coordinate::new(9, 8)));
+    }
+
+    /// The contract `Zone::covers` exists to keep: a creature standing
+    /// on a tile it accepts is a creature the layer's contact clause
+    /// catches, and one standing entirely off them is not.
+    ///
+    /// Asserted here against `footprint_chebyshev` directly — which is
+    /// what `EncounterInstance::actor_in_zone` compares — because the
+    /// two halves live in different files and nothing else would notice
+    /// them drifting apart.
+    #[test]
+    fn every_tile_a_zone_covers_is_a_tile_it_would_bite_somebody_on() {
+        use crate::engine::util::footprint_chebyshev;
+        let z = zone_at(Coordinate::new(10, 10), 3);
+        for x in 0..20isize {
+            for y in 0..20isize {
+                let tile = Coordinate::new(x, y);
+                // A Tiny body occupies exactly the tile it is on, so
+                // "is this tile in the area" and "is this body in the
+                // area" are the same question asked twice.
+                let bitten = footprint_chebyshev(tile, 1, z.origin, 1) <= z.radius;
+                assert_eq!(
+                    z.covers(tile),
+                    bitten,
+                    "{tile} is drawn and bitten differently"
+                );
+            }
+        }
     }
 
     #[test]
