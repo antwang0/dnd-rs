@@ -15791,28 +15791,29 @@ fn a_magic_circle_is_ground_the_barred_types_cannot_walk_onto() {
     for id in [zombie, fighter] {
         e.actors.get_mut(&id).unwrap().reset_for_new_round();
     }
-    // The ward covers a footprint out to a Chebyshev gap of its radius,
-    // which for a Medium body centred on (10, 10) is everything within
-    // five tiles. (16, 10) is a step outside it and (15, 10) a step in.
+    // The ward reaches its radius from the nearest tile of a body, the
+    // same measure `Zone::covers` uses for a tile — so for a Medium
+    // creature approaching (10, 10) from the east, (15, 10) is the last
+    // anchor outside the circle and (14, 10) the first one in.
     assert!(
-        e.path_to(zombie, Coordinate::new(16, 10)).is_some(),
+        e.path_to(zombie, Coordinate::new(15, 10)).is_some(),
         "the ground short of the circle is still the zombie's to walk"
     );
     assert!(
-        e.path_to(zombie, Coordinate::new(15, 10)).is_none(),
+        e.path_to(zombie, Coordinate::new(14, 10)).is_none(),
         "and the ground inside it is not, at any range"
     );
     assert!(
-        e.path_to(fighter, Coordinate::new(15, 14)).is_some(),
+        e.path_to(fighter, Coordinate::new(14, 14)).is_some(),
         "a magic circle is not a wall — it is a wall to five kinds of thing, \
          and a fighter is none of them"
     );
     assert!(
-        e.barrier_bars_step(zombie, Coordinate::new(16, 10), Coordinate::new(15, 10)),
+        e.barrier_bars_step(zombie, Coordinate::new(15, 10), Coordinate::new(14, 10)),
         "the edge itself is what is refused"
     );
     assert!(
-        !e.barrier_bars_step(fighter, Coordinate::new(16, 14), Coordinate::new(15, 14)),
+        !e.barrier_bars_step(fighter, Coordinate::new(15, 14), Coordinate::new(14, 14)),
         "and only for the types RAW names"
     );
 }
@@ -41322,10 +41323,12 @@ fn a_moving_zone_charges_who_it_arrives_on_and_not_who_it_was_already_on() {
     let right = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
         .unwrap();
-    // Radius 1 centred between them. Coverage is measured as a
-    // footprint *gap*, so a radius-1 area reaches two tiles from a
-    // Small creature's anchor and both goblins start under it.
-    let id = e.install_zone(restraining_zone(Coordinate::new(12, 10), 1, 100));
+    // Radius 2 centred between them, which is what it takes to cover
+    // both: an area reaches its radius from the nearest tile of a body
+    // (`footprint_reach_to`), so a radius-1 area centred on (12, 10)
+    // would catch the goblin one tile west of it and not the one two
+    // tiles east.
+    let id = e.install_zone(restraining_zone(Coordinate::new(12, 10), 2, 100));
     // The area's own "moves to" line names it too, so the contact
     // count has to exclude it.
     let contacts = |e: &EncounterInstance| {
@@ -82005,9 +82008,11 @@ fn an_antimagic_field_is_asked_of_every_target_and_of_whole_bodies() {
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 20), 1, 0)
         .unwrap();
     // The ogre's anchor tile sits outside the sphere; its Large
-    // footprint reaches in.
+    // footprint reaches in. West of the sphere rather than east of it,
+    // because a footprint grows away from its anchor: an ogre anchored
+    // beyond the far edge has every tile beyond the far edge.
     let ogre = e
-        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(13, 13), 1, 1)
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 6), 1, 1)
         .unwrap();
     e.install_zone(test_zone(
         Coordinate::new(10, 10),
@@ -82015,8 +82020,12 @@ fn an_antimagic_field_is_asked_of_every_target_and_of_whole_bodies() {
         ZoneEffect::NULLIFYING,
     ));
     assert!(
-        !e.zones()[0].covers(Coordinate::new(13, 13)),
+        !e.zones()[0].covers(Coordinate::new(6, 6)),
         "the fixture needs the ogre's anchor tile outside the sphere"
+    );
+    assert!(
+        e.zones()[0].covers(Coordinate::new(9, 9)),
+        "…and the far corner of its footprint inside it"
     );
 
     assert!(MAGIC_MISSILE.validate_input(&e, wiz, Some(&vec![clear]), None, None));

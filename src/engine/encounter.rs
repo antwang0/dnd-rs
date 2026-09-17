@@ -316,7 +316,9 @@ use crate::engine::zones::{BarredTeleport, Zone};
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{AbilityScoreType, Coordinate, DamageType, Size, SpellSchool};
 use crate::engine::jumping;
-use crate::engine::util::{TILE_FEET, footprint_chebyshev, footprint_tiles, get_tiles_from_size};
+use crate::engine::util::{
+    TILE_FEET, footprint_chebyshev, footprint_reach_to, footprint_tiles, get_tiles_from_size,
+};
 use fastrand::Rng;
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, RollMode, RollModeTally, Roller};
@@ -10124,6 +10126,21 @@ impl EncounterInstance {
     /// with one corner in a web is caught by it — the same rule every
     /// other area in the engine applies.
     ///
+    /// **A distance, not a gap**, and the distinction is a correction
+    /// rather than a detail. This used to ask `footprint_chebyshev`,
+    /// which reports the number of empty tiles *between* two bodies —
+    /// the right unit for a reach ("within 5 feet" is a gap of one on
+    /// this grid) and the wrong one for a radius. Against a zone's
+    /// 1×1 origin the gap is one less than the distance, so every area
+    /// on the layer caught creatures a full tile beyond the edge it
+    /// drew: `Zone::covers` answered `false` for the tile, the map drew
+    /// no hazard on it, `tile_is_hazardous` routed the AI around a
+    /// smaller shape than the one that was biting — and a creature that
+    /// stood carefully just outside a Cloudkill was poisoned anyway.
+    /// `footprint_reach_to` is the same question `covers` asks, put to
+    /// a body instead of a tile, so the area a zone catches and the
+    /// area it draws are one area.
+    ///
     /// A **burrowed** creature is in nothing. Every zone the engine can
     /// lay is something on the floor or in the air above it — a web, a
     /// grease slick, a bank of gas, a column of moonlight — and a
@@ -10139,12 +10156,8 @@ impl EncounterInstance {
         if a.is_burrowed() {
             return false;
         }
-        footprint_chebyshev(
-            a.location(),
-            get_tiles_from_size(a.size()),
-            zone.origin,
-            1,
-        ) <= zone.radius
+        footprint_reach_to(a.location(), get_tiles_from_size(a.size()), zone.origin)
+            <= zone.radius
     }
 
     /// `actor_in_zone`, asked of a tile the creature is not standing on
@@ -10164,7 +10177,7 @@ impl EncounterInstance {
         if a.is_burrowed() {
             return false;
         }
-        footprint_chebyshev(anchor, get_tiles_from_size(a.size()), zone.origin, 1) <= zone.radius
+        footprint_reach_to(anchor, get_tiles_from_size(a.size()), zone.origin) <= zone.radius
     }
 
     /// The first warded area `actor_id` would be *entering* by crossing
