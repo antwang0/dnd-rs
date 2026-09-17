@@ -2126,6 +2126,20 @@ impl ApplicableSideEffect for ApplyCondition {
             return;
         };
         let name = actor.name().to_string();
+        // Asked *before* the install, because afterwards the two
+        // reasons an install can fail to be new are indistinguishable:
+        // `add_condition` answers `false` both for "they already had
+        // it" and for "they cannot have it", and the branch below used
+        // to read every refusal as the first. A wight is immune to
+        // Frightened, so a cleric's Turn Undead reported "the wight's
+        // frightened refreshes" — a line that names a condition the
+        // creature does not have and never will, at exactly the moment
+        // the player most needs to know why nothing happened.
+        //
+        // The Exhausted arm directly below has always made this
+        // distinction (its `level == 0` branch is the same check under
+        // another name); this is the general case catching up.
+        let immune = actor.effectively_immune_to_condition(self.condition);
         let newly_added = actor.add_condition(self.condition, self.timer);
         // Exhaustion's severity is a rung, not a timer, so neither the
         // "is now exhausted" nor the "exhaustion refreshes" line says
@@ -2177,6 +2191,17 @@ impl ApplicableSideEffect for ApplyCondition {
                     .unwrap_or(self.actor_id);
                 ei.unseat(mount_id, crate::engine::mounts::UnseatCause::MountProne);
             }
+        } else if immune {
+            // Nothing landed and nothing is going to. Reported rather
+            // than swallowed, because an install that silently does
+            // nothing is the single hardest thing to read off a
+            // play-by-play — the same reason the damage lane prints
+            // "immune" instead of a zero.
+            ei.log(format!(
+                "{} is immune to {}.",
+                name,
+                self.condition.name()
+            ));
         } else {
             // Re-application — log the refresh so the player sees that
             // the timer changed (e.g. a re-cast Bless extending duration).

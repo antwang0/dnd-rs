@@ -16184,6 +16184,63 @@ fn a_hit_stops_the_running_and_leaves_the_fear() {
     );
 }
 
+/// An install a creature is immune to says so, and does not report a
+/// timer it never got.
+///
+/// `add_condition` answers `false` for two different things — "they
+/// already had it" and "they cannot have it" — and the install site
+/// used to read every refusal as the first. This engine's wight is
+/// immune to Frightened, so a cleric's Turn Undead announced that the
+/// wight's frightened was *refreshing*: a line naming a condition the
+/// creature does not have, at the moment the player most needs to know
+/// why nothing happened.
+#[test]
+fn a_condition_that_bounces_off_an_immunity_says_so() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wights::WIGHT_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wight = e
+        .instantiate_creature(&WIGHT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 5), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    crate::engine::side_effects::ApplyCondition {
+        actor_id: wight,
+        condition: Condition::Frightened,
+        timer: ConditionTimer::Rounds(10),
+    }
+    .apply(&mut e);
+    assert!(!e.actors[&wight].has_condition(Condition::Frightened));
+    assert!(
+        e.messages().iter().any(|m| m.contains("is immune to frightened")),
+        "the log has to name the immunity: {:?}",
+        e.messages()
+    );
+    assert!(
+        !e.messages().iter().any(|m| m.contains("refreshes")),
+        "and must not report a timer nobody is holding"
+    );
+
+    // The refresh line is still the right line for an actual
+    // re-application, which is what it was written for.
+    for _ in 0..2 {
+        crate::engine::side_effects::ApplyCondition {
+            actor_id: fighter,
+            condition: Condition::Frightened,
+            timer: ConditionTimer::Rounds(10),
+        }
+        .apply(&mut e);
+    }
+    assert!(
+        e.messages().iter().any(|m| m.contains("frightened refreshes")),
+        "a second helping of a condition you can have is a refresh"
+    );
+}
+
 /// The rout is a *second* sentence and deliberately not part of the
 /// condition it arrives beside. Thirty sites in the engine install
 /// Frightened through five shared chassis — every dragon's roar, every
