@@ -56,6 +56,76 @@ const GRAPPLE_DEFENSE_CONTEST: &[(
 /// number the contest would average to.
 const UNANCHORED_ESCAPE_DC: i32 = 13;
 
+/// One hold a creature can spend its Action trying to get out of.
+///
+/// The cohort behind [`GrappleEscape`], and the reason it is a table is
+/// that the list was a hard-coded triple written out twice — once in
+/// the validator that decides whether the Action is offered at all, and
+/// once in the resolver that decides what a success removes. Two
+/// spellings of one list is the shape that goes wrong silently: a
+/// fourth hold added to the resolver and not the validator is a hold
+/// whose escape never appears on the picker, and the reverse is an
+/// Action the picker offers and the resolver frees nothing for.
+///
+/// It is also the field the triple could not carry. RAW prints a
+/// *number* on some of these holds — the Energy Bow's arrow is a flat
+/// DC 20 — and the hard-coded list had exactly one DC for all of them.
+struct EscapableHold {
+    /// The flag that says the holder is in this hold.
+    condition: crate::conditions::Condition,
+    /// The DC the captive's check has to beat when the hold names
+    /// nobody to contest against.
+    dc: i32,
+    /// Whether a back-link on the condition turns this into RAW's
+    /// *contest* rather than a flat check.
+    ///
+    /// True only for `Grappled`, which is the one hold in the game
+    /// whose difficulty is another creature's Athletics — *"contested
+    /// by the grappler's Strength (Athletics) check"*. A spell's
+    /// tentacles and an arrow stuck through a boot have a printed
+    /// number and nobody straining at the other end, so their link (if
+    /// any) is there to name the source in the log, not to roll.
+    contested: bool,
+}
+
+/// Every hold the Escape action answers, in the order it tries them.
+///
+/// The three that were the hard-coded triple keep the shared
+/// unanchored DC they have always used; the fourth is the first row to
+/// bring a number of its own.
+const ESCAPABLE_HOLDS: &[EscapableHold] = &[
+    EscapableHold {
+        condition: crate::conditions::Condition::Grappled,
+        dc: UNANCHORED_ESCAPE_DC,
+        contested: true,
+    },
+    // An ooze's adhesive. RAW gives it an escape DC off the ooze's own
+    // stat block; the engine has always spent the shared number here.
+    EscapableHold {
+        condition: crate::conditions::Condition::Adhered,
+        dc: UNANCHORED_ESCAPE_DC,
+        contested: false,
+    },
+    // Maximilian's Earthen Grasp. RAW's escape is a Strength check
+    // against the caster's spell save DC, which the shared number
+    // stands in for.
+    EscapableHold {
+        condition: crate::conditions::Condition::EarthenGrasped,
+        dc: UNANCHORED_ESCAPE_DC,
+        contested: false,
+    },
+    // SRD 5.2 **Energy Bow**, Arrow of Restraint: *"As an action, a
+    // creature Restrained by an arrow can make a DC 20 Strength
+    // (Athletics) check to try to break the restraint."* The first row
+    // whose number is printed rather than averaged, and the reason the
+    // struct has a `dc` column at all.
+    EscapableHold {
+        condition: crate::conditions::Condition::ArrowPinned,
+        dc: 20,
+        contested: false,
+    },
+];
+
 pub struct Move {}
 
 impl Action for Move {
@@ -1182,7 +1252,7 @@ impl Action for Grapple {
 
 pub static GRAPPLE: LazyLock<Grapple> = LazyLock::new(|| Grapple {});
 
-/// 5e Grapple Escape — a grappled creature uses its Action to attempt to
+/// 5e Grapple Escape — a held creature uses its Action to attempt to
 /// break free: "a Strength (Athletics) or Dexterity (Acrobatics) check
 /// contested by the grappler's Strength (Athletics) check."
 ///
@@ -1191,8 +1261,23 @@ pub static GRAPPLE: LazyLock<Grapple> = LazyLock::new(|| Grapple {});
 /// Roper's tendril — carries a back-link, so the escape is the RAW
 /// contest against that creature. Everything else that pins a target —
 /// Evard's Black Tentacles, Maximilian's Earthen Grasp, an ooze's
-/// Adhered — installs the flag with nobody on the other end of it, and
-/// those keep the flat DC: there is no grappler's Athletics to roll.
+/// Adhered, an Energy Bow's arrow — installs the flag with nobody
+/// straining at the other end of it, and those roll against a flat DC
+/// instead: the shared unanchored number for the ones RAW prices off a
+/// stat block the engine has not got, and RAW's own number where it
+/// prints one.
+///
+/// Which holds those are is [`ESCAPABLE_HOLDS`], which is also where a
+/// fifth one goes.
+///
+/// **One Action buys one check, and the check is compared against every
+/// hold on the creature.** That is a widening of what the single roll
+/// has always meant rather than a new rule: the list used to carry one
+/// DC, so freeing all of them together was the same sentence. With a
+/// row at DC 20 beside three at 13 it stops being the same sentence,
+/// and per-hold is the reading that keeps both the cheap holds cheap
+/// and the expensive one expensive — a captive who is both glued to an
+/// ooze and pinned by an arrow gets out of the glue and stays pinned.
 ///
 /// A successful escape also ends the *restraint the hold was imposing*,
 /// where there is one. Several 5e holds word the restraint as a
@@ -1225,16 +1310,12 @@ impl Action for GrappleEscape {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> bool {
-        use crate::conditions::Condition;
-        encounter
-            .actors
-            .get(&caster_id)
-            .is_some_and(|a| {
-                a.is_combat_active()
-                    && (a.has_condition(Condition::Grappled)
-                        || a.has_condition(Condition::Adhered)
-                        || a.has_condition(Condition::EarthenGrasped))
-            })
+        encounter.actors.get(&caster_id).is_some_and(|a| {
+            a.is_combat_active()
+                && ESCAPABLE_HOLDS
+                    .iter()
+                    .any(|hold| a.has_condition(hold.condition))
+        })
     }
     fn side_effects(
         &self,
@@ -1248,98 +1329,120 @@ impl Action for GrappleEscape {
         let Some(actor) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // Snapshot which grapple-like conditions are active before we
-        // mutably borrow `encounter` for the roll and log calls.
-        let active_conditions: Vec<Condition> =
-            [Condition::Grappled, Condition::Adhered, Condition::EarthenGrasped]
-                .into_iter()
-                .filter(|c| actor.has_condition(*c))
-                .collect();
-        // A linked `Grappled` names the creature holding on, and that
-        // turns the escape into the contest RAW asks for. The captive
-        // gets the choice of ability (`GRAPPLE_DEFENSE_CONTEST` on the
-        // challenging side here — the roles are reversed from Grapple's,
-        // because it is the captive straining now).
-        let grappler = actor.linked_by(Condition::Grappled);
+        // Snapshot which holds are active, and who each one names,
+        // before we mutably borrow `encounter` for the roll and log
+        // calls. `(hold, holder)` — the holder is `None` for a hold
+        // that was installed with nobody on the other end of it.
+        let active: Vec<(&'static EscapableHold, Option<usize>)> = ESCAPABLE_HOLDS
+            .iter()
+            .filter(|hold| actor.has_condition(hold.condition))
+            .map(|hold| (hold, actor.linked_by(hold.condition)))
+            .collect();
+        // The restraint the holds may be imposing, and whose it is.
+        // Read once here for the same borrow reason, and used below to
+        // decide whether breaking a hold also ends it.
+        let restraint_holder = actor.linked_by(Condition::Restrained);
         // SRD 5.2's "advantage on any ability check you make to end the
         // Grappled condition" clauses — the Goliath's Powerful Build
         // today. Scoped to *what the check is for* rather than to who is
         // rolling, so it cannot ride `compute_check_mode` and arrives
         // from here instead. See `ESCAPE_CHECK_ADVANTAGES`.
         let escape_mode = encounter.escape_check_mode(caster_id);
-        let broke_free = match grappler {
-            Some(grappler_id) if encounter.actors.contains_key(&grappler_id) => encounter
-                .roll_contest_with_challenger_mode(
-                    "escape grapple",
-                    caster_id,
-                    GRAPPLE_DEFENSE_CONTEST,
-                    escape_mode,
-                    grappler_id,
-                    ATHLETICS_CONTEST,
-                ),
-            // No grappler on the other end (a spell or a monster ability
-            // installed the flag directly, or the grappler is gone):
-            // fall back to the flat DC, still rolled as a real check so
-            // proficiency and roll mode apply.
-            _ => {
-                let (ability, skill) = encounter
-                    .best_check_option(caster_id, GRAPPLE_DEFENSE_CONTEST)
-                    .unwrap_or((
-                        crate::engine::types::AbilityScoreType::Strength,
-                        crate::engine::types::Skill::Athletics,
-                    ));
-                let total = encounter.roll_ability_check_with_extra_mode(
-                    caster_id,
-                    ability,
-                    Some(skill),
-                    escape_mode,
-                );
-                encounter.log(format!(
-                    "  escape grapple: {} vs DC {}",
-                    total, UNANCHORED_ESCAPE_DC
-                ));
-                total >= UNANCHORED_ESCAPE_DC
+        // One Action, one heave: the captive's own check is rolled at
+        // most once and every flat-DC hold is measured against that one
+        // total. Rolled lazily so a creature held only by a linked
+        // grapple — the common case — spends no die here at all and the
+        // contest below is the only roll, which is what the log has
+        // always shown.
+        let mut flat_total: Option<i32> = None;
+        let mut freed: Vec<(Condition, Option<usize>)> = Vec::new();
+        for (hold, holder) in &active {
+            // A linked `Grappled` names the creature holding on, and
+            // that turns the escape into the contest RAW asks for. The
+            // captive gets the choice of ability
+            // (`GRAPPLE_DEFENSE_CONTEST` on the challenging side here —
+            // the roles are reversed from Grapple's, because it is the
+            // captive straining now).
+            let broke = match holder {
+                Some(holder_id)
+                    if hold.contested && encounter.actors.contains_key(holder_id) =>
+                {
+                    encounter.roll_contest_with_challenger_mode(
+                        "escape grapple",
+                        caster_id,
+                        GRAPPLE_DEFENSE_CONTEST,
+                        escape_mode,
+                        *holder_id,
+                        ATHLETICS_CONTEST,
+                    )
+                }
+                // Nobody straining at the other end — a spell, a monster
+                // ability or an arrow installed the flag directly, or
+                // the grappler is gone. Roll against the flat DC, still
+                // as a real check so proficiency and roll mode apply.
+                _ => {
+                    let total = match flat_total {
+                        Some(total) => total,
+                        None => {
+                            let (ability, skill) = encounter
+                                .best_check_option(caster_id, GRAPPLE_DEFENSE_CONTEST)
+                                .unwrap_or((
+                                    crate::engine::types::AbilityScoreType::Strength,
+                                    crate::engine::types::Skill::Athletics,
+                                ));
+                            let total = encounter.roll_ability_check_with_extra_mode(
+                                caster_id,
+                                ability,
+                                Some(skill),
+                                escape_mode,
+                            );
+                            flat_total = Some(total);
+                            total
+                        }
+                    };
+                    encounter
+                        .log(format!("  escape grapple: {} vs DC {}", total, hold.dc));
+                    total >= hold.dc
+                }
+            };
+            if broke {
+                freed.push((hold.condition, *holder));
             }
-        };
-        if broke_free {
-            encounter.log("  broke free!".to_string());
-            let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
-                Vec::new();
-            // Remove whichever grapple-like condition was active
-            for condition in active_conditions {
-                effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
-                    actor_id: caster_id,
-                    condition,
-                }));
-            }
-            // …and the restraint that hold was imposing, if it was
-            // imposing one. RAW words the clause as a consequence —
-            // "until the grapple ends, the target is restrained" — so
-            // breaking the grapple has to end it, and a captive who won
-            // the contest and stayed at zero movement would have gained
-            // nothing from winning.
-            //
-            // Gated on the two links naming the *same* holder, which is
-            // the whole reason `Restrained` carries one. A creature who
-            // breaks a roper's tendril while also standing in somebody
-            // else's Web is still in the web.
-            if let Some(holder) = grappler
-                && encounter
-                    .actors
-                    .get(&caster_id)
-                    .and_then(|a| a.linked_by(Condition::Restrained))
-                    == Some(holder)
-            {
-                effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
-                    actor_id: caster_id,
-                    condition: Condition::Restrained,
-                }));
-            }
-            effects
-        } else {
-            encounter.log("  failed to break free.".to_string());
-            Vec::new()
         }
+        if freed.is_empty() {
+            encounter.log("  failed to break free.".to_string());
+            return Vec::new();
+        }
+        encounter.log("  broke free!".to_string());
+        let mut effects: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        // …and the restraint those holds were imposing, if they were
+        // imposing one. RAW words the clause as a consequence — "until
+        // the grapple ends, the target is restrained", "have the
+        // Restrained condition … until it breaks the restraint" — so
+        // ending the hold has to end it, and a captive who won the
+        // contest and stayed at zero movement would have gained nothing
+        // from winning.
+        //
+        // Gated on the two links naming the *same* holder, which is the
+        // whole reason `Restrained` carries one. A creature who breaks a
+        // roper's tendril while also standing in somebody else's Web is
+        // still in the web.
+        let mut restraint_ends = false;
+        for (condition, holder) in freed {
+            effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                actor_id: caster_id,
+                condition,
+            }));
+            restraint_ends |= holder.is_some() && holder == restraint_holder;
+        }
+        if restraint_ends {
+            effects.push(Box::new(crate::engine::side_effects::RemoveCondition {
+                actor_id: caster_id,
+                condition: Condition::Restrained,
+            }));
+        }
+        effects
     }
 }
 

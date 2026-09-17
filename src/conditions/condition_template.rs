@@ -3408,6 +3408,36 @@ pub enum Condition {
     /// `Normal` for a flag with no link — so a bow that has not named an
     /// enemy is an ordinary bow rather than a cursed one.
     Oathbound,
+    /// Pinned to the spot by an **Energy Bow**'s *Arrow of Restraint* —
+    /// *"the target must succeed on a DC 15 Strength saving throw or
+    /// have the Restrained condition for 1 minute. As an action, a
+    /// creature Restrained by an arrow can make a DC 20 Strength
+    /// (Athletics) check to try to break the restraint, ending the
+    /// effect on itself on a successful check."*
+    ///
+    /// **A marker, not an envelope.** RAW's own sentence hands out
+    /// `Restrained`, which is what the victim actually suffers, and the
+    /// engine installs exactly that alongside this — so this flag is on
+    /// none of the roll-mode or movement cohorts and would change
+    /// nothing if it were. Contrast `EarthenGrasped`, which is on three
+    /// of them because it is installed *instead of* Restrained and has
+    /// to carry the envelope itself.
+    ///
+    /// What it carries is the sentence Restrained alone cannot say:
+    /// **which hold this is, and at what DC it comes off.** The
+    /// difference is worth a flag because it is the difference between
+    /// a Very Rare item and a broken one — ten rounds of Restrained
+    /// with no way out would be the strongest lockdown in the game, and
+    /// RAW's answer is not a repeated save at the end of the turn (the
+    /// `repeat_saves` ledger) but an Action spent on a check, which is
+    /// the `GrappleEscape` lane. See `ESCAPABLE_HOLDS`, where this is
+    /// the first row whose DC is not the shared unanchored 13.
+    ///
+    /// Linked to the archer, like every other hold on that cohort, so
+    /// the escape can name who the victim is straining against in the
+    /// log and so the flag reads as one arrow rather than as a state of
+    /// the world.
+    ArrowPinned,
     /// Holding a lit 5e **Sun Blade** — *"deals Radiant damage instead
     /// of Slashing damage. When you hit an Undead with it, that target
     /// takes an extra 1d8 Radiant damage."*
@@ -4286,6 +4316,7 @@ impl Condition {
             Condition::GiantsBane => "wielding a hammer of thunderbolts",
             Condition::SlayingAmmunition => "carrying slaying ammunition",
             Condition::Oathbound => "wielding an oathbow",
+            Condition::ArrowPinned => "pinned by an energy arrow",
             Condition::SunBladed => "wielding a sun blade",
             Condition::Disrupting => "wielding a mace of disruption",
             Condition::FlameTongued => "wielding a lit flame tongue",

@@ -4541,6 +4541,44 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     damage_type_menu: None,
 };
 
+/// **Energy Bow** (Weapon, Longbow or Shortbow; Very Rare) — the shot
+/// itself: *"An arrow produced by this weapon deals Force damage
+/// instead of Piercing damage on a hit."*
+///
+/// The engine's `LONGBOW` in every field but one. Ability, die, reach,
+/// normal range, Two-Handed, Heavy and the Slow mastery are all the
+/// bow's, because the item is a bow; what the magic changes is the
+/// arrow, and the arrow is the damage type.
+///
+/// **A second weapon rather than a retype of the first**, which is the
+/// answer this file already gives to the same question three times over
+/// — see `DRACONIC_STRIKE`, whose docstring spells it out: the choice
+/// belongs to the attack picker rather than to a per-hit override. It
+/// is the right answer for a *specific* reason here. Force is the least
+/// resisted damage type in the bestiary and Piercing one of the most,
+/// so a party that finds this bow has not been handed a slightly better
+/// longbow — they have been handed the answer to the skeletons, the
+/// specters and the four things on the roster that halve arrows. That
+/// is a decision the picker should be able to see, and a hidden retype
+/// of the archer's existing shot would have made it invisible.
+///
+/// The `+1` is not here. It rides the item's `ItemBonuses`, the same
+/// lane every `+N` weapon in the armoury uses, which does mean it
+/// reaches the holder's other swings too — the file's standing bargain
+/// on this axis; see `SCIMITAR_OF_SPEED`'s docstring for why.
+pub static ENERGY_BOW_SHOT: SimpleWeapon = SimpleWeapon::ranged(
+    "energy bow",
+    &["ebow", "energy-bow"],
+    AbilityScoreType::Dexterity,
+    Dice::new(1, 8),
+    DamageType::Force,
+    20,
+    12,
+)
+.mastery(WeaponMastery::Slow)
+.two_handed()
+.heavy();
+
 /// Shortbow — DEX-based 1d4 piercing ranged attack on a *bonus action*.
 /// Pairs with a primary action attack; reach 12 tiles (≈30ft).
 ///

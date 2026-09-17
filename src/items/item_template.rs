@@ -5659,6 +5659,74 @@ pub static OATHBOW: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Energy Bow** (Weapon, Longbow or Shortbow; Very Rare, requires
+/// attunement) — *"a magic weapon, which has no string. Each time you
+/// pull your arm back in a firing motion, a magical arrow made of
+/// golden energy appears nocked and ready to fire."*
+///
+/// The armoury's other bow, and the opposite of the one above it. The
+/// Oathbow is worth nothing against a room and a great deal against one
+/// creature in it; this is worth the same amount against everything,
+/// because what it changes is not a number but a *damage type*. Force is
+/// the least resisted type in the bestiary — nothing on the roster is
+/// immune to it and a handful of things resist it — and Piercing is
+/// among the most: the skeletons halve it, the specters and the
+/// shadows halve it, the oozes and the swarms shrug at it, and every
+/// creature with the nonmagical-physical line halves it again. An
+/// archer who finds this bow has not been handed a slightly better
+/// longbow. They have been handed the answer to a third of the
+/// bestiary.
+///
+/// Three clauses reach the engine and two do not.
+///
+///   - **The `+1`** rides `ItemBonuses`, the same lane every `+N`
+///     weapon in the file uses, and reaches the holder's other swings
+///     with it. See `Condition::DragonSlaying` for the standing
+///     bargain on that.
+///   - **The Force arrow** is `monster_attacks::ENERGY_BOW_SHOT`, a
+///     second weapon on the picker rather than a retype of the
+///     archer's own bow. That docstring says why the choice belongs
+///     where a player can see it.
+///   - **Arrow of Restraint** is `item_actions::FIRE_ARROW_OF_RESTRAINT`,
+///     and it is the item: a Very Rare bow whose second property is a
+///     minute of Restrained behind an attack roll and a DC 15 save,
+///     with the escape RAW prints priced at an Action and a DC 20
+///     check. Both numbers are the item's rather than the archer's,
+///     which is what separates it from every save-or-condition effect
+///     a caster brings.
+///
+/// **The arrow's own light is not modeled.** RAW's *"until it
+/// disappears, the arrow emits Bright Light in a 20-foot radius"* is a
+/// lamp that exists for the flight of an arrow — a fraction of a round
+/// — and the engine's lighting layer anchors light to a tile or to a
+/// body that persists. A lamp installed and extinguished inside one
+/// action would be visible to nothing that reads the board, because
+/// nothing reads the board in the middle of an attack roll.
+///
+/// **Arrow of Transport and Energy Ladder are not modeled either**, and
+/// for two different reasons worth telling apart. The ladder is a
+/// clause about a *wall*, and the board is flat: there is no up. The
+/// transport is a real combat verb — a Magic action that pulls a
+/// willing ally out of a bad corner and puts them beside you — and it
+/// is an honest gap rather than an impossible one; `TeleportActor` is
+/// the lane it would ride.
+pub static ENERGY_BOW: Item = Item {
+    name: crate::actions::item_actions::ENERGY_BOW_NAME,
+    glyph: ')',
+    bonuses: ItemBonuses {
+        attack_bonus: 1,
+        damage_bonus: 1,
+        ..ItemBonuses::ZERO
+    },
+    grants_magical_attacks: true,
+    on_use: &[
+        &crate::actions::monster_attacks::ENERGY_BOW_SHOT,
+        &crate::actions::item_actions::FIRE_ARROW_OF_RESTRAINT,
+    ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Giant Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus to
 /// attack rolls and damage rolls… When you hit a Giant with this weapon,
 /// the Giant takes an extra 2d6 damage of the weapon's type and must
@@ -8708,6 +8776,7 @@ pub static STAFF_OF_THUNDER_AND_LIGHTNING: Item = Item {
 /// which ones there are.
 pub static MAGIC_ARMOURY: &[&Item] = &[
     &DANCING_SWORD,
+    &ENERGY_BOW,
     &DRAGON_SLAYER,
     &HAMMER_OF_THUNDERBOLTS,
     &AMMUNITION_OF_SLAYING,
@@ -9562,6 +9631,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // across the family is what keeps that swing in the game.
     &DRAGON_SLAYER,
     &OATHBOW,
+    // The shelf's other bow, at the same single weight and for a
+    // reason the paragraph above is about: it is the family's one
+    // ungated entry that is nonetheless a swing, because what it
+    // changes is the damage *type* rather than a number. A party that
+    // draws this on the night they walk into the crypt has drawn the
+    // best item in the file; on any other night it is a `+1` longbow.
+    &ENERGY_BOW,
     &GIANT_SLAYER,
     &SUN_BLADE,
     &MACE_OF_DISRUPTION,
@@ -10108,6 +10184,12 @@ mod tests {
         //     add to a hit the wielder's arm never made.
         let no_rider: &[&Item] = &[
             &ADAMANTINE_ARMOR,
+            // The **Energy Bow** is the Scimitar of Speed's case again,
+            // from the other end of the room: its whole clause is what
+            // it fires, so both rows are `on_use` — a Force arrow and a
+            // pinning one — and there is nothing to add to a hit
+            // because the arrow *is* the hit.
+            &ENERGY_BOW,
             &MACE_OF_TERROR,
             &BERSERKER_AXE,
             &SCIMITAR_OF_SPEED,

@@ -131,6 +131,48 @@ pub struct AttackParams<'a> {
     /// direction is the only safe one. A natural weapon says nothing and
     /// gets nothing.
     pub heavy: bool,
+    /// True when RAW says this attack **does not damage what it hits** —
+    /// the *"instead of dealing damage to it"* clause.
+    ///
+    /// 5e writes a handful of attacks whose whole payload is an effect:
+    /// the Energy Bow's Arrow of Restraint (*"you can try to restrain
+    /// the target instead of dealing damage to it"*), a net, a grab.
+    /// They are attack rolls in every other respect — cover, Bless, the
+    /// advantage stack, Sanctuary, the interception cohort, the
+    /// hit-this-turn mark, the reactive taxes — and an action that
+    /// open-coded a d20 to avoid the damage would silently opt out of
+    /// all of it, which is the failure `ActionOnHitRider`'s docstring
+    /// already catalogues at length.
+    ///
+    /// So the attack goes through the shared pipeline and this field
+    /// takes the payload off at the end. **Not** the same thing as
+    /// zero dice: a swing declared with `Dice::new(0, 0)` still picks
+    /// up every flat caster-side bonus the pipeline adds — a `+1`
+    /// weapon, a Rage, Hunter's Mark — and a restraint arrow that
+    /// deals one point of Force because the bow it was fired from is
+    /// magical is not what the sentence says.
+    ///
+    /// Scoped to payloads **aimed at the target**, which is the
+    /// sentence's own scope: a swing can carry damage pointed the other
+    /// way (Fire Shield, a reflect rider), and an attack that deals the
+    /// target nothing has not stopped the target's own armour from
+    /// burning the attacker.
+    ///
+    /// **A one-shot prime spent on such a swing is spent.** A paladin
+    /// who primed a Divine Smite and then fired a restraint arrow has
+    /// burned the smite on damage the arrow does not deliver. RAW's
+    /// answer is arguably that the prime should survive, but the
+    /// riders' own consumption is a decision each row makes on its hit
+    /// and this clause runs after all of them — and the alternative
+    /// (teaching every rider to ask whether the swing will deliver
+    /// anything) is a question forty rows would have to answer for the
+    /// benefit of one attack that nothing on the roster combines with a
+    /// smite anyway.
+    ///
+    /// Defaults to `false`, and the direction is the safe one: an
+    /// attack that forgets to say so deals its damage, which is what
+    /// every attack in the game does.
+    pub deals_no_damage: bool,
 }
 
 impl AttackParams<'_> {
@@ -174,6 +216,7 @@ impl AttackParams<'_> {
         two_handed: false,
         versatile: false,
         heavy: false,
+        deals_no_damage: false,
     };
 
     /// SRD 5.2 **Great Weapon Fighting**'s weapon clause — *"the weapon
@@ -4272,6 +4315,13 @@ pub fn resolve_attack_outcome_with_rider(
         p.target_id,
     ));
     push_spent_vulnerability_removals(encounter, &mut effects, p.target_id);
+    // RAW's *"instead of dealing damage to it"* — see
+    // `AttackParams::deals_no_damage`. Last of the payload walks and
+    // after every one of them, because the clause is about the finished
+    // attack: whatever the dice, the riders, the feats and the target's
+    // own resistances left pointed at the target, this attack does not
+    // deliver it.
+    damage = damage.saturating_sub(strip_target_damage(encounter, &mut effects, &p));
     // The **Sentinel** feat's Guardian clause, the bystander's answer to
     // a swing aimed at somebody else. Last in the function, after every
     // payload the triggering swing will deal has been assembled: RAW's
@@ -4285,6 +4335,55 @@ pub fn resolve_attack_outcome_with_rider(
     // anything that reads the board.
     try_fire_sentinel_guardian(encounter, &p);
     (effects, damage)
+}
+
+/// Take every payload this swing has pointed at its target back off it,
+/// for the attacks RAW says deal none — see
+/// [`AttackParams::deals_no_damage`].
+///
+/// Returns how much was removed, which the caller subtracts from its
+/// running `damage_dealt` figure: the same bookkeeping contract as
+/// `apply_heavy_armor_reduction` directly below, and for the same
+/// reason — the figure counted this damage, so the figure has to move
+/// with it.
+///
+/// Zeroes rather than drops. A `DealDamage` of 0 applies as nothing,
+/// and leaving the effect in place keeps the vec's shape intact for
+/// every caller that reads it as a hit/miss verdict — `is_empty()` is
+/// how three chassis in `monster_attacks` ask whether the swing
+/// connected, and an attack that landed and dealt nothing must not
+/// report itself as a miss.
+fn strip_target_damage(
+    encounter: &mut EncounterInstance,
+    effects: &mut [Box<dyn ApplicableSideEffect>],
+    p: &AttackParams,
+) -> u32 {
+    if !p.deals_no_damage {
+        return 0;
+    }
+    let mut removed: u32 = 0;
+    for effect in effects.iter_mut() {
+        let Some((aimed_at, _damage_type, amount)) = effect.damage_payload() else {
+            continue;
+        };
+        // Only what is pointed at the target. A Fire Shield's answer
+        // travels the other way and is not this attack's damage.
+        if aimed_at != p.target_id || amount == 0 {
+            continue;
+        }
+        if !effect.set_damage_amount(0) {
+            continue;
+        }
+        removed = removed.saturating_add(amount);
+    }
+    if removed > 0 {
+        let name = encounter.actor_name(p.target_id);
+        encounter.log(format!(
+            "  {}: the shot spends itself on {} rather than wounding them",
+            p.action_name, name
+        ));
+    }
+    removed
 }
 
 /// The **Heavy Armor Master** feat: subtract the defender's proficiency

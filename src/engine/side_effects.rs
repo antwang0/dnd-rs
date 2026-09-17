@@ -2876,6 +2876,15 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // tell a Restrained that came off the same hold from one that came
     // off a Web spell across the room, and strips only the former.
     crate::conditions::Condition::Restrained,
+    // SRD 5.2's **Energy Bow**, Arrow of Restraint. The link is the
+    // archer, and it is what pairs the marker with the `Restrained`
+    // directly above it: both name the same creature, which is the test
+    // `GrappleEscape` makes before it lets breaking one end the other.
+    // Without the link the shaft would come out of the boot and leave
+    // the victim restrained by nothing for the rest of the minute —
+    // exactly the failure the paragraph above describes, arriving from
+    // a second direction.
+    crate::conditions::Condition::ArrowPinned,
     // 5e Sanctuary. The link is the ward's caster, and it is what lets
     // the attacker's save be rolled against that caster's own spell save
     // DC rather than against a fixed number standing in for one. A

@@ -274,6 +274,9 @@ fn legendary_attack(
             two_handed: false,
             versatile: false,
             heavy: false,
+            // Every legendary option on the lists is a blow. None of
+            // them is one of RAW's "instead of dealing damage" attacks.
+            deals_no_damage: false,
         },
     );
     let landed = !effects.is_empty();

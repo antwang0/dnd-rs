@@ -119247,3 +119247,299 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
         wrong.join("\n")
     );
 }
+
+// ─── Energy Bow ──────────────────────────────────────────────────────
+
+/// Give `archer` a bonded Energy Bow. Attunement is the item's own
+/// price and every one of its clauses is gated behind it —
+/// `pickup_item` makes the bond itself when a slot is free, which is
+/// what every party in the engine does with loot found mid-fight, and
+/// the assertion is here so a test that silently picked up a stick
+/// fails where the stick was handed over rather than three screens
+/// later.
+#[cfg(test)]
+fn arm_with_energy_bow(e: &mut EncounterInstance, archer: usize) {
+    use crate::items::item_template::ENERGY_BOW;
+    let holder = e.actors.get_mut(&archer).expect("the archer");
+    holder.pickup_item(&ENERGY_BOW);
+    assert!(
+        holder.wields_live_item(ENERGY_BOW.name),
+        "the bow wants attunement and the archer should have had a slot for it"
+    );
+}
+
+/// SRD 5.2's **Energy Bow**: *"An arrow produced by this weapon deals
+/// Force damage instead of Piercing damage on a hit."*
+///
+/// The clause that makes the item, and the reason it is a second
+/// weapon rather than a retype: a skeleton halves Piercing and takes
+/// Force whole, so the two shots are genuinely different weapons
+/// against a third of the bestiary.
+#[test]
+fn the_energy_bow_shoots_force_where_a_longbow_shoots_piercing() {
+    use crate::actions::monster_attacks::{ENERGY_BOW_SHOT, LONGBOW};
+    use crate::engine::types::DamageType;
+    assert_eq!(ENERGY_BOW_SHOT.damage_type, DamageType::Force);
+    assert_eq!(LONGBOW.damage_type, DamageType::Piercing);
+    // …and is otherwise the same bow. Compared field by field rather
+    // than asserted in prose, because the failure this guards is a
+    // retune of the longbow that the magic copy silently does not
+    // follow.
+    assert_eq!(ENERGY_BOW_SHOT.damage_dice, LONGBOW.damage_dice);
+    assert_eq!(ENERGY_BOW_SHOT.reach, LONGBOW.reach);
+    assert_eq!(ENERGY_BOW_SHOT.normal_range, LONGBOW.normal_range);
+    assert_eq!(ENERGY_BOW_SHOT.attack_ability, LONGBOW.attack_ability);
+    assert_eq!(ENERGY_BOW_SHOT.mastery, LONGBOW.mastery);
+    assert_eq!(ENERGY_BOW_SHOT.is_two_handed, LONGBOW.is_two_handed);
+    assert_eq!(ENERGY_BOW_SHOT.is_heavy, LONGBOW.is_heavy);
+}
+
+/// The bow puts **both** of its shots on the holder's action list, and
+/// neither of them once the bond is broken.
+///
+/// One item, two rows: a Force arrow and a pinning one, and the whole
+/// of RAW's *"you can try to restrain the target instead"* is the
+/// archer choosing between them each turn. The second half of the test
+/// is the attunement gate every clause on the bow sits behind — worth
+/// pinning because the rows arrive through `Item::on_use`, which
+/// `available_actions` reaches through `active_items`, and an
+/// unattuned Very Rare weapon is supposed to be a stick.
+#[test]
+fn the_bow_offers_its_two_shots_only_to_somebody_attuned_to_it() {
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::items::item_template::ENERGY_BOW;
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let archer = e
+        .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    let names = |e: &EncounterInstance, id: usize| -> Vec<String> {
+        e.actors[&id]
+            .available_actions()
+            .iter()
+            .map(|a| a.name().to_string())
+            .collect()
+    };
+    arm_with_energy_bow(&mut e, archer);
+    let bonded = names(&e, archer);
+    assert!(
+        bonded.iter().any(|n| n == "energy bow"),
+        "the Force shot should be on the list: {:?}",
+        bonded
+    );
+    assert!(
+        bonded.iter().any(|n| n == "arrow of restraint"),
+        "and so should the pinning one: {:?}",
+        bonded
+    );
+    e.actors
+        .get_mut(&archer)
+        .unwrap()
+        .end_attunement(ENERGY_BOW.name);
+    let unbonded = names(&e, archer);
+    assert!(
+        !unbonded.iter().any(|n| n == "energy bow" || n == "arrow of restraint"),
+        "an unattuned Energy Bow is a stick: {:?}",
+        unbonded
+    );
+}
+
+/// **Arrow of Restraint**, both halves: *"you can try to restrain the
+/// target instead of dealing damage to it. If the arrow hits, the
+/// target must succeed on a DC 15 Strength saving throw or have the
+/// Restrained condition for 1 minute."*
+///
+/// Run over many seeds because the shot is an attack roll and a save,
+/// and what is being pinned is that **no seed ever produces damage** —
+/// the "instead of" clause — while some produce a restraint.
+#[test]
+fn an_arrow_of_restraint_pins_without_wounding() {
+    use crate::actions::item_actions::FIRE_ARROW_OF_RESTRAINT;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut pinned = 0;
+    let mut escaped = 0;
+    for seed in 0..120u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let archer = e
+            .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 4), 1, 0)
+            .unwrap();
+        arm_with_energy_bow(&mut e, archer);
+        let full = e.actors[&goblin].hitpoints();
+        let action: &dyn Action = &FIRE_ARROW_OF_RESTRAINT;
+        let targets = vec![goblin];
+        assert!(action.validate_input(&e, archer, Some(&targets), None, None));
+        for ef in action.side_effects(&mut e, archer, Some(&targets), None, None) {
+            ef.apply(&mut e);
+        }
+        assert_eq!(
+            e.actors[&goblin].hitpoints(),
+            full,
+            "seed {seed}: the arrow restrains instead of dealing damage, and the \
+             bow's own +1 is not a loophole in that"
+        );
+        // The two flags travel together or not at all: `Restrained` is
+        // what RAW hands out, `ArrowPinned` is what tells the escape
+        // which hold it is, and either one alone is a bug.
+        assert_eq!(
+            e.actors[&goblin].has_condition(Condition::Restrained),
+            e.actors[&goblin].has_condition(Condition::ArrowPinned),
+            "seed {seed}: the restraint and its marker disagree"
+        );
+        if e.actors[&goblin].has_condition(Condition::ArrowPinned) {
+            pinned += 1;
+            assert_eq!(
+                e.actors[&goblin].linked_by(Condition::ArrowPinned),
+                Some(archer),
+                "seed {seed}: the arrow should name the archer who fired it"
+            );
+        } else {
+            escaped += 1;
+        }
+    }
+    assert!(
+        pinned > 0 && escaped > 0,
+        "an attack roll and a DC 15 save should go both ways over 120 seeds \
+         (pinned {pinned}, escaped {escaped})"
+    );
+}
+
+/// RAW's escape: *"As an action, a creature Restrained by an arrow can
+/// make a DC 20 Strength (Athletics) check to try to break the
+/// restraint, ending the effect on itself on a successful check."*
+///
+/// DC 20 is the point. It is the first row on `ESCAPABLE_HOLDS` whose
+/// number is printed rather than averaged, and a goblin — Strength 8,
+/// no Athletics — should almost never make it, where an ogre sometimes
+/// should.
+#[test]
+fn breaking_an_energy_arrow_is_a_dc_twenty_heave() {
+    use crate::actions::default_actions::GRAPPLE_ESCAPE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::actors::actor_template::CreatureTemplate;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let attempts = |template: &'static CreatureTemplate| -> usize {
+        let mut freed = 0;
+        for seed in 0..200u64 {
+            let mut e = ei_with_terrain(20, 20, &[]);
+            e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+            let archer = e
+                .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            let victim = e
+                .instantiate_creature(template, Coordinate::new(10, 4), 1, 0)
+                .unwrap();
+            for condition in [Condition::Restrained, Condition::ArrowPinned] {
+                for ef in crate::engine::side_effects::install_condition_with_link(
+                    condition,
+                    victim,
+                    archer,
+                    ConditionTimer::Rounds(10),
+                ) {
+                    ef.apply(&mut e);
+                }
+            }
+            let action: &dyn Action = &*GRAPPLE_ESCAPE;
+            assert!(
+                action.validate_input(&e, victim, None, None, None),
+                "a pinned creature should be offered the escape"
+            );
+            for ef in action.side_effects(&mut e, victim, None, None, None) {
+                ef.apply(&mut e);
+            }
+            if !e.actors[&victim].has_condition(Condition::ArrowPinned) {
+                freed += 1;
+                // Breaking the hold takes the restraint with it. RAW
+                // words the restraint as the hold's consequence, and a
+                // victim who won the check and stayed at zero movement
+                // would have gained nothing from winning.
+                assert!(
+                    !e.actors[&victim].has_condition(Condition::Restrained),
+                    "seed {seed}: the shaft came out and the restraint did not"
+                );
+            }
+        }
+        freed
+    };
+    let goblin = attempts(&GOBLIN_TEMPLATE);
+    let ogre = attempts(&OGRE_TEMPLATE);
+    assert!(
+        ogre > goblin,
+        "Strength is what the check is made of (ogre {ogre}, goblin {goblin} of 200)"
+    );
+    assert!(
+        goblin * 4 < 200,
+        "a DC 20 heave should be long odds for a goblin, not routine ({goblin} of 200)"
+    );
+}
+
+/// The escape is one Action and one heave, and it is measured against
+/// every hold on the creature separately.
+///
+/// The interesting case, and the one the table's `dc` column was added
+/// for: a captive who is both glued to an ooze (the shared unanchored
+/// 13) and pinned by an arrow (RAW's 20) gets out of the glue far more
+/// often than out of the arrow. Before the cohort there was one DC for
+/// all of them and this could not be said.
+#[test]
+fn one_heave_breaks_the_cheap_hold_more_often_than_the_dear_one() {
+    use crate::actions::default_actions::GRAPPLE_ESCAPE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut glue_only = 0;
+    let mut both = 0;
+    for seed in 0..200u64 {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        e.roller = crate::engine::dice::FastRandRoller::with_seed(seed);
+        let archer = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(10, 4), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .add_condition(Condition::Adhered, ConditionTimer::Rounds(10));
+        for condition in [Condition::Restrained, Condition::ArrowPinned] {
+            for ef in crate::engine::side_effects::install_condition_with_link(
+                condition,
+                victim,
+                archer,
+                ConditionTimer::Rounds(10),
+            ) {
+                ef.apply(&mut e);
+            }
+        }
+        let action: &dyn Action = &*GRAPPLE_ESCAPE;
+        for ef in action.side_effects(&mut e, victim, None, None, None) {
+            ef.apply(&mut e);
+        }
+        let stuck = e.actors[&victim].has_condition(Condition::Adhered);
+        let pinned = e.actors[&victim].has_condition(Condition::ArrowPinned);
+        assert!(
+            !(stuck && !pinned),
+            "seed {seed}: one roll beat DC 20 and not DC 13"
+        );
+        if !stuck && pinned {
+            glue_only += 1;
+        }
+        if !stuck && !pinned {
+            both += 1;
+        }
+    }
+    assert!(
+        glue_only > both,
+        "the cheap hold should come off on its own far more often than both do \
+         (glue only {glue_only}, both {both})"
+    );
+}

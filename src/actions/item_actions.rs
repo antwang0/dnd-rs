@@ -5961,6 +5961,10 @@ const WATER_ELEMENTAL_GEM_NAME: &str = "Water Elemental Gem";
 const HORN_OF_VALHALLA_NAME: &str = "Horn of Valhalla";
 const BAG_OF_TRICKS_NAME: &str = "Bag of Tricks";
 const OATHBOW_NAME: &str = "Oathbow";
+/// The armoury's second bow, and the loot table's only Force weapon.
+/// Public because the item literal in `items::item_template` reads it,
+/// the same way the Dimensional Shackles' name is shared.
+pub const ENERGY_BOW_NAME: &str = "Energy Bow";
 // The figurine shelf. RAW prints one item with nine statuettes under
 // it; the engine files each statuette as its own object, because an
 // inventory line that says "Figurine of Wondrous Power" tells a player
@@ -7843,6 +7847,291 @@ impl Action for SwearOathbow {
 }
 
 pub static SWEAR_OATHBOW: SwearOathbow = SwearOathbow {};
+
+/// The **Energy Bow**'s second property — *"Arrow of Restraint.
+/// Whenever you use this weapon to make a ranged attack against a
+/// creature, you can try to restrain the target instead of dealing
+/// damage to it. If the arrow hits, the target must succeed on a DC 15
+/// Strength saving throw or have the Restrained condition for 1
+/// minute."*
+///
+/// A second action beside the bow's ordinary shot rather than a mode
+/// switch on it, for the reason the engine gives every per-cast choice
+/// it cannot ask about: the prompt takes a name and a target and
+/// nothing else, so a choice made per shot has to live in the name —
+/// see `REDUCE` for the same decision on the other side of Enlarge /
+/// Reduce. Both rows sit on the item's `on_use`, so an archer holding
+/// the bow has a damaging shot and a pinning one and picks between
+/// them every turn, which is exactly the shape RAW's *"you can"* is.
+///
+/// **It really deals nothing.** RAW's *"instead of dealing damage to
+/// it"* is not the same as an attack with no dice — a shot declared at
+/// `0d0` would still pick up the bow's own `+1`, a Rage, a Hunter's
+/// Mark and every other flat caster-side term the pipeline adds, and a
+/// restraint arrow that wounds for one point of Force because the bow
+/// is magical is not the sentence. See `AttackParams::deals_no_damage`,
+/// which is the clause, and which exists so this shot can still travel
+/// through the shared attack pipeline: cover, Bless, the advantage
+/// stack, Sanctuary, the interception cohort, the reactive taxes and
+/// the hit-this-turn mark all apply to it, because RAW calls it a
+/// ranged attack and it is one.
+///
+/// **The save is fixed at 15 and the escape at 20**, both of which RAW
+/// prints — this is an item's clause, not a caster's, so neither
+/// number comes off anybody's spellcasting ability. The escape is an
+/// *Action*, not the end-of-turn repeat the `repeat_saves` ledger
+/// offers, which is what makes a minute of Restrained a price the
+/// victim pays rather than a fight it is out of: see
+/// `Condition::ArrowPinned` and `default_actions::ESCAPABLE_HOLDS`.
+///
+/// The arrow refuses a target already pinned by one, the same refusal
+/// the Sun Blade makes when it is already lit: a second arrow into a
+/// creature that cannot move buys nothing but a re-rolled timer, and
+/// the archer's Action is better spent on the damaging shot.
+pub struct ArrowOfRestraint {}
+
+impl ArrowOfRestraint {
+    /// RAW's DC 15 Strength saving throw.
+    const SAVE_DC: i32 = 15;
+    /// RAW's one minute, in rounds — the same cap every minute-long
+    /// hold in the engine carries. What ends it earlier is the Action
+    /// and the check, not this.
+    const ROUNDS: u32 = 10;
+    /// The longbow's own maximum range in tiles; the arrow is the bow's
+    /// arrow and flies exactly as far. See `ENERGY_BOW_SHOT`.
+    const REACH: isize = 20;
+    /// …and its normal range, past which the shot rolls at
+    /// disadvantage like any other.
+    const NORMAL_RANGE: isize = 12;
+}
+
+/// The arrow's on-hit clause, run by the shared attack pipeline once
+/// the swing has landed.
+///
+/// An `ActionOnHitRider` rather than a row on `ON_HIT_RIDERS`, because
+/// the cohort table is for riders that belong to the *attacker* and
+/// fire on any swing they make. This one belongs to one action: an
+/// archer holding the bow is not restraining things with their dagger.
+struct RestrainOnHit {}
+
+impl crate::engine::attack::ActionOnHitRider for RestrainOnHit {
+    fn apply(
+        &self,
+        encounter: &mut EncounterInstance,
+        p: &crate::engine::attack::AttackParams,
+        _hit: crate::engine::attack::HitContext,
+        effects: &mut Vec<Box<dyn ApplicableSideEffect>>,
+    ) -> u32 {
+        // Ahead of the save, not after it: a target that cannot be
+        // Restrained never had a save to make, and rolling one would
+        // put a "fails the save" line in the log for a hold that was
+        // never on offer. The same order `WeaponWithSaveCondition`
+        // checks its size gate in, and for the same reason.
+        let immune = encounter
+            .actors
+            .get(&p.target_id)
+            .is_some_and(|t| t.effectively_immune_to_condition(Condition::Restrained));
+        if immune {
+            let name = encounter.actor_name(p.target_id);
+            encounter.log(format!(
+                "  arrow of restraint: the arrow finds nothing on {} to pin",
+                name
+            ));
+            return 0;
+        }
+        let passed = encounter
+            .roll_save_against_caster(
+                p.target_id,
+                AbilityScoreType::Strength,
+                ArrowOfRestraint::SAVE_DC,
+                p.caster_id,
+            )
+            .passed();
+        let name = encounter.actor_name(p.target_id);
+        if passed {
+            encounter.log(format!(
+                "  arrow of restraint: {} tears free of the shaft",
+                name
+            ));
+            return 0;
+        }
+        encounter.log(format!(
+            "  arrow of restraint: the shaft pins {} where they stand",
+            name
+        ));
+        // Both flags, both linked to the archer. `Restrained` is what
+        // RAW hands out and what the victim suffers; `ArrowPinned` is
+        // the marker that says *which* hold this is, so the escape
+        // knows to charge DC 20 for it and so breaking it takes the
+        // restraint with it.
+        for effect in [Condition::Restrained, Condition::ArrowPinned]
+            .into_iter()
+            .flat_map(|condition| {
+                crate::engine::side_effects::install_condition_with_link(
+                    condition,
+                    p.target_id,
+                    p.caster_id,
+                    ConditionTimer::Rounds(ArrowOfRestraint::ROUNDS),
+                )
+            })
+        {
+            effects.push(effect);
+        }
+        0
+    }
+}
+
+impl Action for ArrowOfRestraint {
+    fn name(&self) -> &str {
+        "arrow of restraint"
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aor", "restraint arrow", "pin"]
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(Self::REACH)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+
+    /// Declared, for the reason `SimpleWeapon` and
+    /// `WeaponWithSaveCondition` declare it: this *is* a ranged weapon
+    /// attack, RAW says so in the clause's first sentence, and the
+    /// pipeline resolves it as one. The AI's picker holds a `&dyn
+    /// Action` and never sees the `AttackParams`, so the two copies of
+    /// the answer have to agree — a divergence here is the underwater
+    /// bug `WeaponWithSaveCondition::is_weapon_attack` was written to
+    /// close.
+    fn is_weapon_attack(&self) -> bool {
+        true
+    }
+
+    fn is_melee_attack(&self) -> bool {
+        false
+    }
+
+    /// `Restrained` and not `ArrowPinned`, even though the arrow
+    /// installs both.
+    ///
+    /// This is the AI's question, not the rules engine's: the item
+    /// control rungs tier a candidate by the condition it declares, and
+    /// what they are asking is *what does this do to the target*. The
+    /// answer is the restraint — `ArrowPinned` is a bookkeeping flag
+    /// that says which hold it is, and a tier table keyed on it would
+    /// have to carry a row that means nothing to anybody reading it.
+    /// `Restrained` is already on `ITEM_ATTRITION_CONDITIONS`, in the
+    /// band above the debuffs and below the turn-removals, which is
+    /// exactly where a minute of zero movement belongs.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Restrained)
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // RAW prices it as the shot it replaces — *"whenever you use
+        // this weapon to make a ranged attack"* — so it costs what the
+        // ranged attack costs and not a bonus action on top. Not
+        // routed through `item_use_cost`: the bow is in the archer's
+        // hands, not in their pack.
+        action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if !caster_holds(encounter, caster_id, ENERGY_BOW_NAME) {
+            return false;
+        }
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.is_combat_active() && !t.has_condition(Condition::ArrowPinned))
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // Deliberately no `consume_caster_item`: the bow is not spent
+        // by being fired, and RAW gives the arrow no charge pool. The
+        // validator established it is in hand; all that is left is that
+        // it still is.
+        if !caster_holds(encounter, caster_id, ENERGY_BOW_NAME) {
+            return Vec::new();
+        }
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let attack_bonus = caster.spell_attack_modifier(AbilityScoreType::Dexterity);
+        crate::engine::attack::resolve_attack_with_rider(
+            encounter,
+            crate::engine::attack::AttackParams {
+                caster_id,
+                target_id,
+                action_name: self.name(),
+                attack_bonus,
+                // The dice are the bow's, and they are rolled: the
+                // swing has to look like the swing it replaces to
+                // everything that reads it — a Mirror Image, a
+                // reaction, the log. What it does not do is deliver
+                // them. See `deals_no_damage` below.
+                damage_dice: Dice::new(1, 8),
+                damage_bonus: 0,
+                damage_type: DamageType::Force,
+                is_melee: false,
+                long_range: Some(Self::NORMAL_RANGE),
+                two_handed: true,
+                heavy: true,
+                deals_no_damage: true,
+                ..crate::engine::attack::AttackParams::DEFAULTS
+            },
+            &RestrainOnHit {},
+        )
+    }
+}
+
+pub static FIRE_ARROW_OF_RESTRAINT: ArrowOfRestraint = ArrowOfRestraint {};
 
 /// The Flame Tongue's command word. RAW's flames are a 40-ft bright
 /// radius with a 40-ft dim collar — 16 tiles each on the 2.5-ft grid,
