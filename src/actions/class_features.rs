@@ -5076,7 +5076,7 @@ pub const DRUNKEN_TECHNIQUE_TAG: &str = "monk.drunken_technique";
 ///
 /// Passive and uncharged — the whole feature is a reaction the engine
 /// spends on the monk's behalf at the miss branch of
-/// `resolve_attack_outcome`. See `engine::attack::try_fire_redirect_attack`
+/// `resolve_attack_outcome`. See `engine::attack::try_fire_attack_redirect`
 /// for the three places the implementation narrows RAW, and for why the
 /// redirected swing rolls fresh damage rather than carrying any over.
 pub const REDIRECT_ATTACK_TAG: &str = "monk.redirect_attack";
@@ -14407,8 +14407,8 @@ pub const LANDS_STRIDE_TAG: &str = "shared.lands_stride";
 /// aquatic template had to pick a value for and no code would ever
 /// compare.
 ///
-/// Ships on the aquatic bestiary — see `AQUATIC_TEMPLATES` in
-/// `creatures::mod`'s sweep, which is what stops a new sea monster from
+/// Ships on the aquatic bestiary — see `AQUATIC_TEMPLATES` and the
+/// sweep in `actors::creatures`, which is what stops a new sea monster from
 /// being added without one.
 ///
 /// Always-on passive; no per-rest charge and no condition gate.

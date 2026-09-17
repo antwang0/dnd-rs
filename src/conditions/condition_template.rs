@@ -3451,7 +3451,7 @@ pub enum Condition {
     /// arrives dark and the wielder decides when to light it — which is
     /// a real decision on a board where light is a liability as often as
     /// an asset (see `crate::engine::lighting`). Installed by
-    /// `item_actions::IGNITE_FLAME_TONGUE`, which unlike every other
+    /// `item_actions::LIGHT_FLAME_TONGUE`, which unlike every other
     /// item action on that module does *not* consume the item it fires
     /// from.
     FlameTongued,

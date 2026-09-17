@@ -65276,6 +65276,15 @@ fn a_weapon_deals_the_damage_its_name_implies() {
             "GIANT_FIRE_BEETLE_BITE",
             "RAW: the fire beetle's mandibles shear",
         ),
+        // "Thunderous Slam. Melee Attack Roll: +8, reach 10 ft. Hit:
+        // 14 (2d8 + 5) Thunder damage." A body made of moving air has
+        // no mass to swing, and the attack's own printed name says
+        // what it does instead — which is also why the elemental is
+        // Resistant to Bludgeoning and Immune to Thunder.
+        (
+            "AIR_ELEMENTAL_SLAM",
+            "RAW: the air elemental's slam is Thunderous, and thunder",
+        ),
     ];
 
     // Matches a `SimpleWeapon` static declared through one of the
@@ -102712,10 +102721,6 @@ fn coating_the_dagger_of_venom_arms_it_darkly_and_spends_it_on_a_hit() {
     // item is actually selling. The round reset is load-bearing: the
     // first coating spent this turn's Bonus Action, so the refusal
     // before it is about the action economy and not about the dagger.
-    // And it can be re-coated next turn, which is the per-turn cost the
-    // item is actually selling. The round reset is load-bearing: the
-    // first coating spent this turn's Bonus Action, so the refusal
-    // before it is about the action economy and not about the dagger.
     assert!(
         !coat.validate_input(&e, fighter, None, None, None),
         "a second coating this turn has no bonus action to pay with"
@@ -113785,6 +113790,238 @@ fn a_dropped_mantle_takes_the_free_commands_with_it() {
 /// 2"). That is a sentence a reader wants anyway, and it is the
 /// difference between a divergence and a mistake.
 ///
+/// **Every weapon deals the damage its own docstring quotes**, and
+/// reaches as far.
+///
+/// The bestiary documents itself by quotation. Most of the two hundred
+/// and fifty weapons in `monster_attacks.rs` carry RAW's own sentence
+/// above them — *"Melee Attack Roll: +8, reach 10 ft. Hit: 14 (2d8 + 5)
+/// Thunder damage"* — and then four separate constructor arguments have
+/// to agree with it. Nothing checked that they did, and the failure is
+/// completely silent: a weapon that rolls the right dice of the wrong
+/// type hits for a plausible number every time, and the only symptom is
+/// that the wrong creatures shrug it off.
+///
+/// The Air Elemental is what this was written for and it is the case
+/// that shows why the class matters. Its attack is called *Thunderous
+/// Slam*, its docstring quoted RAW's Thunder in full, and the code
+/// dealt Bludgeoning at five feet — on the one creature in the book
+/// that is Resistant to Bludgeoning and Immune to Thunder, so the
+/// clause that should have made two air elementals unable to touch each
+/// other had been inverted into one where they halve each other
+/// instead. The dice were right, the ability had been fixed by hand a
+/// commit earlier, and the sentence directly above the constructor said
+/// what the other two arguments should have been the whole time.
+///
+/// A source sweep for the same reason its neighbours are: the claim
+/// lives in prose above a `const` literal, and the only thing tying
+/// them together is adjacency.
+///
+/// **Two ways out, and both of them are readable.**
+///
+///   - *Reach 0 ft.* is not a distance this board can hold. RAW's
+///     swarms reach *"0 ft., one target in the swarm's space"*, and a
+///     gap of zero on this layer is nobody at all — there is no tile
+///     that is no tiles away. Every swarm is modeled at 1, that is the
+///     engine's rule rather than a slip, and it is skipped in the
+///     parse rather than listed four times.
+///   - *A departure that is meant* goes on `DELIBERATE` with the
+///     reason. Two do: the Ochre Jelly, which types its whole hit acid
+///     where RAW splits off a bludgeoning body, and the Triceratops,
+///     whose horn is held at ten feet because five measured from a Huge
+///     footprint's edge cannot reach what its own head is beside. A
+///     list rather than a phrase-match on the prose, because the
+///     alternative passes for any docstring containing the word
+///     "rather" — the same bargain
+///     `every_action_written_is_an_action_something_can_reach` makes
+///     with its own `EXEMPT`.
+#[test]
+fn every_weapon_deals_the_damage_its_own_docstring_quotes() {
+    /// Damage types as RAW names them. Matched case-insensitively,
+    /// because the file quotes two printings: SRD 5.2 capitalises
+    /// ("14 (2d8 + 5) Thunder damage") and the older text it is
+    /// migrating from does not ("6 (1d6 + 3) piercing damage"). Both
+    /// are quotations and both are claims.
+    const DAMAGE_TYPES: &[&str] = &[
+        "acid",
+        "bludgeoning",
+        "cold",
+        "fire",
+        "force",
+        "lightning",
+        "necrotic",
+        "piercing",
+        "poison",
+        "psychic",
+        "radiant",
+        "slashing",
+        "thunder",
+    ];
+
+    /// The weapons that depart from the RAW they quote **on purpose**,
+    /// with the reason.
+    ///
+    /// Two, and both are worth reading rather than worth suppressing —
+    /// the same bargain `every_action_written_is_an_action_something_can_reach`
+    /// makes with its own `EXEMPT`. A list is the honest shape for this:
+    /// the alternative is phrase-matching the prose for an apology,
+    /// which would pass for any docstring that happened to contain the
+    /// word "rather".
+    const DELIBERATE: &[(&str, &str)] = &[
+        (
+            "OCHRE_JELLY_PSEUDOPOD",
+            "RAW splits the hit into a bludgeoning body and an acid rider; \
+             the jelly IS the acid, and typing the whole hit acid is what \
+             makes a creature immune to acid take nothing from an ooze \
+             made of it. The black pudding beside it is typed the same \
+             way.",
+        ),
+        (
+            "TRICERATOPS_GORE",
+            "RAW's five feet, measured from a Huge footprint's edge, is a \
+             horn that cannot touch what its own head is beside on the \
+             diagonal. Held at 2 so the charge lands; named in the \
+             docstring.",
+        ),
+    ];
+
+    /// The `NdM` in a `Hit: 14 (2d8 + 5) Thunder damage` clause, with
+    /// the type that follows it, lowercased.
+    fn quoted_hit(doc: &str) -> Option<(u32, u32, &'static str)> {
+        let at = doc.find("Hit:")?;
+        let rest = &doc[at..];
+        let open = rest.find('(')?;
+        let close = rest.find(')')?;
+        if close < open {
+            return None;
+        }
+        let inside = &rest[open + 1..close];
+        let (count, tail) = inside.split_once('d')?;
+        let faces: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+        let after = rest[close + 1..].trim_start().to_ascii_lowercase();
+        let ty = DAMAGE_TYPES.iter().find(|t| after.starts_with(**t))?;
+        Some((count.trim().parse().ok()?, faces.parse().ok()?, ty))
+    }
+
+    /// The `10` in a `reach 10 ft.` clause. RAW's melee reaches are all
+    /// multiples of five and this layer's unit is one per five feet —
+    /// the scale `MELEE_REACH` is written in, and deliberately not the
+    /// 2.5-ft tile the area layer uses.
+    ///
+    /// `None` for RAW's swarms, whose *"reach 0 ft., one target in the
+    /// swarm's space"* is not a distance this board can hold: a gap of
+    /// zero is nobody at all, so every swarm is modeled at 1 and that
+    /// is the engine's rule rather than a slip.
+    fn quoted_reach_feet(doc: &str) -> Option<u32> {
+        let at = doc.find("reach ")?;
+        let rest = &doc[at + "reach ".len()..];
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || !rest[digits.len()..].trim_start().starts_with("ft") {
+            return None;
+        }
+        digits.parse().ok().filter(|feet| *feet > 0)
+    }
+
+    let source = include_str!("../actions/monster_attacks.rs");
+    let lines: Vec<&str> = source.lines().collect();
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    let mut i = 0usize;
+    while i < lines.len() {
+        if !lines[i].trim_start().starts_with("///") {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < lines.len() && lines[j].trim_start().starts_with("//") {
+            j += 1;
+        }
+        let doc: String = lines[i..j]
+            .iter()
+            .map(|l| l.trim_start().trim_start_matches('/').trim())
+            .collect::<Vec<_>>()
+            .join(" ");
+        // The declaration the doc block sits on, to the `);` that ends
+        // it — capped so a doc block introducing something other than a
+        // weapon cannot reach into the next one's body.
+        let mut k = j;
+        while k < lines.len() && !lines[k].contains(");") && k - j < 40 {
+            k += 1;
+        }
+        let code = lines[j..(k + 1).min(lines.len())].join("\n");
+        i = j.max(i + 1);
+        if !code.contains("SimpleWeapon::") {
+            continue;
+        }
+        let name = code
+            .split("pub static ")
+            .nth(1)
+            .map(name_prefix)
+            .unwrap_or("?");
+        if DELIBERATE.iter().any(|(n, _)| *n == name) {
+            continue;
+        }
+
+        if let Some((count, faces, ty)) = quoted_hit(&doc)
+            && let Some(dice) = code.split("Dice::new(").nth(1)
+        {
+            checked += 1;
+            let rolled: Vec<u32> = dice
+                .split(')')
+                .next()
+                .unwrap_or("")
+                .split(',')
+                .filter_map(|p| p.trim().parse().ok())
+                .collect();
+            if rolled.len() == 2 && rolled != vec![count, faces] {
+                wrong.push(format!(
+                    "{}: quotes {}d{} and rolls {}d{}",
+                    name, count, faces, rolled[0], rolled[1]
+                ));
+            }
+            if let Some(dealt) = code.split("DamageType::").nth(1).map(name_prefix)
+                && !dealt.eq_ignore_ascii_case(ty)
+            {
+                wrong.push(format!("{}: quotes {} and deals {}", name, ty, dealt));
+            }
+        }
+
+        if let Some(feet) = quoted_reach_feet(&doc) {
+            let expected = feet / 5;
+            let actual = if code.contains("reach_melee(") {
+                code.lines()
+                    .rev()
+                    .find_map(|l| l.trim().trim_end_matches(',').parse::<u32>().ok())
+            } else if code.contains("SimpleWeapon::melee(") {
+                Some(crate::actions::action_template::MELEE_REACH as u32)
+            } else {
+                None
+            };
+            if let Some(actual) = actual {
+                checked += 1;
+                if actual != expected {
+                    wrong.push(format!(
+                        "{}: quotes reach {} ft ({} on this layer) and reaches {}",
+                        name, feet, expected, actual
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        checked > 150,
+        "only {checked} quoted clauses swept — the walk has stopped finding them"
+    );
+    assert!(
+        wrong.is_empty(),
+        "these weapons contradict the RAW their own docstring quotes; a \
+         weapon that rolls the right dice of the wrong type is wrong in a \
+         way nothing else in the engine can see. A departure that is \
+         meant goes on `DELIBERATE` with its reason:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// Radii only. A comment naming a wall's *length* or a spell's *range*
 /// is not making a claim about a Chebyshev radius, and a sweep that
 /// compared the two would be inventing a rule rather than checking one.
@@ -114024,6 +114261,26 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
     // belongs to would need a parser, and the failure this catches is a
     // name that exists nowhere at all.
     let mut declared: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // The module names, off the manifests, because a module-qualified
+    // citation can end at a module — `see engine::breath` is a pointer
+    // at a file and a perfectly good cross-reference. The leaf modules
+    // in `sources` do not declare themselves; the `mod.rs` files do,
+    // and those are the same texts the guard one test down reads.
+    for manifest in [
+        include_str!("../main.rs"),
+        include_str!("../actions/mod.rs"),
+        include_str!("../actors/mod.rs"),
+        include_str!("../ai/mod.rs"),
+        include_str!("../conditions/mod.rs"),
+        include_str!("mod.rs"),
+        include_str!("../items/mod.rs"),
+    ] {
+        for line in manifest.lines() {
+            if let Some(rest) = line.trim().strip_prefix("pub mod ") {
+                declared.insert(rest.trim_end_matches(';').trim());
+            }
+        }
+    }
     for (_, text) in sources {
         for line in text.lines() {
             let t = line.trim_start();
@@ -114031,6 +114288,42 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
                 continue;
             }
             if let Some(rest) = t.split(" fn ").nth(1).or_else(|| t.strip_prefix("fn ")) {
+                declared.insert(name_prefix(rest));
+            }
+            // A `static` or a `const`, at any visibility — the other
+            // half of what a module-qualified citation can name. A
+            // docstring that points at `item_actions::LIGHT_FLAME_TONGUE`
+            // is making exactly the same claim as one that points at a
+            // function, and it rots exactly the same way: that one had
+            // been `IGNITE_FLAME_TONGUE` in a comment and
+            // `LIGHT_FLAME_TONGUE` in the code for as long as both had
+            // existed.
+            for keyword in [" static ", " const ", "static ", "const "] {
+                let Some(rest) = (if keyword.starts_with(' ') {
+                    t.split(keyword).nth(1)
+                } else {
+                    t.strip_prefix(keyword)
+                }) else {
+                    continue;
+                };
+                let name = name_prefix(rest);
+                if !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+                {
+                    declared.insert(name);
+                }
+                break;
+            }
+            // A `mod` declaration, so a citation of a module by path —
+            // `actors::creatures::swarms` — is not read as a citation
+            // of an item that does not exist.
+            if let Some(rest) = t
+                .split(" mod ")
+                .nth(1)
+                .or_else(|| t.strip_prefix("mod "))
+            {
                 declared.insert(name_prefix(rest));
             }
             // A field declaration: `name: Type,` at any visibility.
@@ -114071,6 +114364,54 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
                     if !declared.contains(member) {
                         stale.push(format!("{}:{} — {}::{}", path, n + 1, ty, member));
                     }
+                }
+            }
+            // …and the other half of the same claim: a **module**-
+            // qualified name, `engine::attack::try_fire_attack_redirect`
+            // rather than `Type::member`.
+            //
+            // This engine cross-references free functions and statics
+            // as freely as it does methods, and until this pass the
+            // sweep could not see any of them: five had already rotted
+            // — a `try_fire_parry` that had become
+            // `try_fire_reactive_ac_guard`, a `try_self_action_inc_items`
+            // that had never existed, a `typed_choice_side_effect` that
+            // had shipped as `install_condition_with_damage_type`, an
+            // `IGNITE_FLAME_TONGUE` that had always been
+            // `LIGHT_FLAME_TONGUE`, and a `try_fire_redirect_attack`
+            // cited twice under a name reversed from the real one.
+            for cited in module_paths_in(line) {
+                let Some((mods, last)) = cited.rsplit_once("::") else {
+                    continue;
+                };
+                let segments: Vec<&str> = mods.split("::").collect();
+                // A path into `actors/creatures`, which the sweep does
+                // not read — see the exemption on
+                // `the_doc_reference_sweep_reads_every_module_the_crate_declares`.
+                // Cited both in full and by the bare file name
+                // (`fighters::CHAMPION_TEMPLATE`), so both shapes are
+                // spared.
+                if segments.contains(&"creatures") || CREATURE_MODULES.contains(&segments[0]) {
+                    continue;
+                }
+                // `usize::MAX` and friends are the standard library's
+                // and always will be.
+                if PRIMITIVES.contains(&segments[0]) {
+                    continue;
+                }
+                let snake = last
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit());
+                let shouty = last
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit());
+                // A trailing `Type` is `TYPES`' business above, and an
+                // empty tail is not a claim about anything.
+                if last.is_empty() || !(snake || shouty) {
+                    continue;
+                }
+                if !declared.contains(last) {
+                    stale.push(format!("{}:{} — {}", path, n + 1, cited));
                 }
             }
         }
@@ -114163,6 +114504,75 @@ fn the_doc_reference_sweep_reads_every_module_the_crate_declares() {
          read these modules, so nothing they declare counts as declared \
          and their own doc comments will be reported as stale: {missing:#?}"
     );
+}
+
+/// The primitive types whose associated constants a doc comment can
+/// cite — `usize::MAX` and the rest. Lowercase, so they look exactly
+/// like a module path to the sweep, and the standard library is not
+/// something a crate-local sweep can find.
+const PRIMITIVES: &[&str] = &[
+    "usize", "isize", "u8", "u16", "u32", "u64", "u128", "i8", "i16", "i32", "i64", "i128",
+    "f32", "f64", "str", "bool", "char",
+];
+
+/// Every module under `actors/creatures`, read off its own `mod.rs`.
+///
+/// The doc-reference sweep does not read those three hundred and forty
+/// files — see the exemption on
+/// `the_doc_reference_sweep_reads_every_module_the_crate_declares` — so
+/// nothing they declare is in `declared`, and a citation of one would
+/// be reported as stale for the wrong reason. This is the list that
+/// spares them, and it is derived rather than written down: a new stat
+/// block joins it by being declared, which is the same bargain the
+/// module-manifest guard makes one test down.
+///
+/// A `LazyLock` rather than a `const` because the parse has to happen
+/// at runtime; the text itself is baked in by `include_str!`.
+static CREATURE_MODULES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
+    include_str!("../actors/creatures/mod.rs")
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("pub mod "))
+        .map(|rest| rest.trim_end_matches(';').trim())
+        .collect()
+});
+
+/// Every `` `a::b::c` `` in `line` — a backticked path of at least one
+/// lowercase module segment followed by a final name.
+///
+/// The module-qualified half of the doc-reference sweep's input. Kept
+/// as a function rather than inlined because the parse is fiddly in a
+/// way the loop that uses it should not have to be: a backtick run can
+/// hold anything at all, and what this is looking for is specifically a
+/// path whose every leading segment is a plain lowercase identifier.
+/// Anything else — a generic, a call with parentheses, a `Type::member`
+/// — is left for the pass above or dropped.
+fn module_paths_in(line: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(open) = rest.find('`') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('`') else { break };
+        let cited = &rest[..close];
+        rest = &rest[close + 1..];
+        let cited = cited.strip_prefix("crate::").unwrap_or(cited);
+        let segments: Vec<&str> = cited.split("::").collect();
+        if segments.len() < 2 {
+            continue;
+        }
+        let leading_are_modules = segments[..segments.len() - 1].iter().all(|s| {
+            !s.is_empty()
+                && s.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+                && s.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit())
+        });
+        let tail_is_a_name = segments[segments.len() - 1]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if leading_are_modules && tail_is_a_name {
+            out.push(cited);
+        }
+    }
+    out
 }
 
 /// The identifier at the head of `rest`, stopping at the first character

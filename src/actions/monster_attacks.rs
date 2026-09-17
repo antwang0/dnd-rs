@@ -11133,25 +11133,44 @@ pub static BONE_DEVIL_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| Compoun
     parts: vec![(&BONE_DEVIL_CLAWS, 2), (&*BONE_DEVIL_STING, 1)],
 });
 
-/// Air Elemental Slam — **DEX**-based 2d8 + DEX bludgeoning melee.
-/// SRD 5.2: *"Thunderous Slam. Melee Attack Roll: +8, reach 10 ft. Hit:
-/// 14 (2d8 + 5) Thunder damage."*
+/// Air Elemental Thunderous Slam — **DEX**-based 2d8 + DEX **Thunder**,
+/// reach 10 ft. SRD 5.2: *"Thunderous Slam. Melee Attack Roll: +8,
+/// reach 10 ft. Hit: 14 (2d8 + 5) Thunder damage."*
 ///
-/// The ability was Strength, and an air elemental's is 14 against a
-/// Dexterity of 20 — so the swing landed at +5 for 11 where every
-/// printing of the creature puts it at +8 for 14. A body made of moving
+/// Three of that sentence's four numbers had to be fetched separately,
+/// which is the argument for the sweep that finally caught the other
+/// two. The ability was Strength, and an air elemental's is 14 against
+/// a Dexterity of 20 — so the swing landed at +5 for 11 where every
+/// printing of the creature puts it at +8 for 14; a body made of moving
 /// air is the last thing on the roster that should have been swinging
-/// off its Strength, and the die was right the whole time: `2d8` plus
-/// the *right* modifier is the book's own number exactly.
+/// off its Strength.
+///
+/// **The damage type and the reach were wrong in the same direction**,
+/// under a docstring quoting the line they contradicted. The attack is
+/// called *Thunderous* Slam and the engine dealt Bludgeoning, which is
+/// not a cosmetic difference on this creature of all creatures: an air
+/// elemental is Resistant to Bludgeoning and Immune to Thunder, so the
+/// clause the book uses to make two of them unable to hurt each other
+/// was inverted into one where they hurt each other at half rate. The
+/// same inversion halved every slam against the four other resistant
+/// bodies on the roster — the incorporeal undead read nonmagical
+/// bludgeoning as half — where RAW's thunder goes through all of them
+/// whole.
+///
+/// The reach is RAW's ten feet, which on this layer is a gap of 2. It
+/// is also the clause that makes an elemental a *Large* creature worth
+/// keeping away from rather than one that has to walk into the party's
+/// reach to swing.
 ///
 /// Distinct damage envelope from the fire elemental's burn-touch — air
 /// elementals hit harder per swing but lack the ignition rider.
-pub static AIR_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon::melee(
+pub static AIR_ELEMENTAL_SLAM: SimpleWeapon = SimpleWeapon::reach_melee(
     "air slam",
     &["aslam"],
     AbilityScoreType::Dexterity,
     Dice::new(2, 8),
-    DamageType::Bludgeoning,
+    DamageType::Thunder,
+    2,
 );
 
 /// Air Elemental Multiattack — 2 slams per Action via the standard

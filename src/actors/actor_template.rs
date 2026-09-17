@@ -3819,7 +3819,7 @@ pub struct CreatureTemplate {
     /// skill: a marilith turning a hit into a miss five points out is a
     /// different creature from a noble scraping two.
     ///
-    /// Read at `attack::try_fire_parry`, after every other clause that
+    /// Read at `attack::try_fire_reactive_ac_guard`, after every other clause that
     /// could un-hit the swing has spoken — the parry is the defender's
     /// last word, and it fires only when it works.
     pub parry_bonus: i32,
@@ -6641,7 +6641,7 @@ impl ActorInstance {
     /// Callers normally reach this through the
     /// `SetConditionDamageType` side effect rather than directly, so
     /// the choice travels with the `ApplyCondition` that installs the
-    /// flag — see `engine::side_effects::typed_choice_side_effect`.
+    /// flag — see `engine::side_effects::install_condition_with_damage_type`.
     pub fn set_condition_damage_type(&mut self, c: Condition, chosen: Option<DamageType>) {
         match chosen {
             Some(dt) => {
@@ -7944,7 +7944,7 @@ impl ActorInstance {
     /// and reads exactly like the creature not having the action,
     /// rather than like the search having been aimed at the wrong list.
     /// `available_actions` is the list that includes them, and
-    /// `ai::simple::try_self_action_inc_items` is the AI-side lookup
+    /// `ai::simple::try_self_action` is the AI-side lookup
     /// built on it.
     pub fn find_action(&self, name: &str) -> Option<&'static (dyn Action + Send + Sync)> {
         self.actions

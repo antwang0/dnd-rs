@@ -827,7 +827,7 @@ pub static ASTRAL_SELF_MONK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new
 ///     the monk, the monk's reaction makes it land on something else
 ///     standing next to them instead. Not a counter-attack and not a
 ///     clamp — the attacker's own damage, moved. See
-///     `engine::attack::try_fire_redirect_attack`.
+///     `engine::attack::try_fire_attack_redirect`.
 ///
 ///   - **Drunkard's Luck** (lv11): once per short rest, cancel
 ///     disadvantage on an attack roll or a saving throw. See
