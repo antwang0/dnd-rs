@@ -113254,20 +113254,37 @@ fn a_dropped_mantle_takes_the_free_commands_with_it() {
 fn every_area_radius_converts_the_feet_its_own_comment_claims() {
     use crate::engine::util::tiles_from_feet;
 
-    const SPELLS: &str = include_str!("../actions/spells.rs");
+    /// Every file that declares an area radius. The bestiary's are in
+    /// `monster_attacks.rs`, the class features' in `class_features.rs`
+    /// and the armoury's in `item_actions.rs`, and the same slip is
+    /// available in all four.
+    const SOURCES: &[(&str, &str)] = &[
+        ("spells.rs", include_str!("../actions/spells.rs")),
+        ("monster_attacks.rs", include_str!("../actions/monster_attacks.rs")),
+        ("class_features.rs", include_str!("../actions/class_features.rs")),
+        ("item_actions.rs", include_str!("../actions/item_actions.rs")),
+    ];
     /// Words that mean the number beside them is not a radius. A
     /// 60-foot *wall* laid down as a squat Chebyshev block is an
     /// approximation of a shape, not a conversion of a distance.
-    const NOT_A_RADIUS: &[&str] = &["wall", "line", "cone", "long", "range", "tall"];
+    const NOT_A_RADIUS: &[&str] = &[
+        "wall", "line", "cone", "long", "range", "tall",
+        // …and a *search* radius, which is how far the engine looks for
+        // somewhere to put a summon rather than how far an effect
+        // reaches. RAW's sixty feet of placement freedom is not sixty
+        // feet of area, and the spawn searches that name it say so.
+        "search",
+    ];
     /// …and the words that halve it: a cube or a square N feet on a
     /// side has a half-width of N/2, and so does a sphere the book
     /// prints as a *diameter* — Flaming Sphere's is the only one — and
     /// N/2 is what a Chebyshev radius measures.
     const HALF_WIDTH: &[&str] = &["cube", "square", "diameter"];
 
-    let lines: Vec<&str> = SPELLS.lines().collect();
     let mut wrong: Vec<String> = Vec::new();
-    for (n, line) in lines.iter().enumerate() {
+    for (file, source) in SOURCES {
+        let lines: Vec<&str> = source.lines().collect();
+        for (n, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
         let Some(rest) = trimmed
             .strip_prefix("const ")
@@ -113312,15 +113329,17 @@ fn every_area_radius_converts_the_feet_its_own_comment_claims() {
         if doc.contains(&format!("{} tiles", expected)) {
             continue;
         }
-        wrong.push(format!(
-            "spells.rs:{}: {} = {}, but the comment says {} ft{} — which is {} tiles",
-            n + 1,
-            name,
-            tiles,
-            feet,
-            if half { " on a side" } else { "" },
-            expected
-        ));
+            wrong.push(format!(
+                "{}:{}: {} = {}, but the comment says {} ft{} — which is {} tiles",
+                file,
+                n + 1,
+                name,
+                tiles,
+                feet,
+                if half { " on a side" } else { "" },
+                expected
+            ));
+        }
     }
     assert!(
         wrong.is_empty(),

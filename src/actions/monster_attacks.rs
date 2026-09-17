@@ -10868,7 +10868,8 @@ pub static STONE_GOLEM_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 pub struct StoneGolemSlow {}
 
 impl StoneGolemSlow {
-    /// How far the ability reaches, in tiles — RAW's 10 feet.
+    /// How far the ability reaches, in tiles — RAW's 10 feet, which
+    /// is 4 on the 2.5-ft grid.
     ///
     /// An associated const rather than a `const` inside `side_effects`,
     /// because two things read it now: the resolver, and
@@ -10876,7 +10877,7 @@ impl StoneGolemSlow {
     /// each would be two numbers to keep in step, and a drift between
     /// them is invisible — the ability would simply start being chosen
     /// in the wrong situations.
-    const RADIUS: isize = 2;
+    const RADIUS: isize = 4;
 }
 
 impl Action for StoneGolemSlow {
