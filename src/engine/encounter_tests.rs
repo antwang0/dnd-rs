@@ -103953,6 +103953,132 @@ fn a_search_does_not_read_the_floor_on_the_far_side_of_the_room() {
     }
 }
 
+/// A trap whose Duration line says it resets goes off, stays on the
+/// board, and is inert until the next turn opens.
+///
+/// Three clauses of one sentence and each has its own way of going
+/// wrong. Without `ZoneEffect::rearms` the statue is spent by its
+/// first breath like every other ward; without the per-turn ledger it
+/// breathes on every creature that walks through the doorway on the
+/// same turn; and without the clear in `start_turn_for` it breathes
+/// once and never again.
+#[test]
+fn a_resetting_trap_goes_off_once_a_turn_and_stays_in_the_wall() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::traps::FIRE_CASTING_STATUE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e.install_zone(FIRE_CASTING_STATUE.zone_at(Coordinate::new(10, 10)));
+    let first = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+    let second = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+        .unwrap();
+
+    assert!(
+        !e.tile_is_hazardous(Coordinate::new(10, 10)),
+        "an unsprung trap is invisible to the pathfinder"
+    );
+    e.touch_zone(id, first);
+    assert!(
+        e.zones().iter().any(|z| z.id == id),
+        "a statue is not spent by breathing"
+    );
+    assert!(
+        e.tile_is_hazardous(Coordinate::new(10, 10)),
+        "and one that has breathed on somebody is no longer a secret"
+    );
+
+    // The same turn: the second goblin walks through the flame and
+    // nothing happens, because the statue has already fired.
+    let before = e.actors[&second].hitpoints();
+    e.touch_zone(id, second);
+    assert_eq!(
+        e.actors[&second].hitpoints(),
+        before,
+        "\"resets at the start of the next turn\" means it is inert until then"
+    );
+
+    // …and the next turn, it is armed again.
+    e.start_turn_for(second);
+    e.touch_zone(id, second);
+    assert!(
+        e.actors[&second].hitpoints() < before
+            || e.messages()
+                .iter()
+                .rev()
+                .take(8)
+                .any(|m| m.contains("fire-casting statue")),
+        "the next turn should have found the statue armed"
+    );
+}
+
+/// The darts have three springs in them and then the tubes are empty.
+///
+/// RAW's budget is the other half of the resetting lane and it is what
+/// keeps a trapped corridor from being a wall: a party that is willing
+/// to spend three rounds walking through it can.
+#[test]
+fn the_darts_run_out() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::engine::traps::POISONED_DARTS;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e.install_zone(POISONED_DARTS.zone_at(Coordinate::new(10, 10)));
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+        .unwrap();
+
+    for spring in 1..=3 {
+        e.start_turn_for(goblin);
+        e.touch_zone(id, goblin);
+        let still_there = e.zones().iter().any(|z| z.id == id);
+        assert_eq!(
+            still_there,
+            spring < 3,
+            "spring {spring}: RAW resets the darts twice and then they are done"
+        );
+    }
+}
+
+/// Detect Magic reads the statue's aura and still walks past the
+/// tripwire beside it.
+///
+/// RAW draws this line from the other side and in as many words: the
+/// Fire-Casting Statue's *Detect and Disarm* entry opens *"A Detect
+/// Magic spell reveals an aura of Evocation magic around the statue"*,
+/// and no other trap in the section says anything of the kind. It is
+/// the one case that separates the predicate the spell actually uses
+/// — is this ward magic — from the one it used to infer, which was
+/// whether anybody cast it.
+#[test]
+fn detect_magic_senses_the_statue_and_not_the_plate_beside_it() {
+    use crate::actions::action_template::Action;
+    use crate::actions::spells::DETECT_MAGIC;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::traps::{COLLAPSING_ROOF, FIRE_CASTING_STATUE};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    let statue = e.install_zone(FIRE_CASTING_STATUE.zone_at(Coordinate::new(16, 10)));
+    let tripwire = e.install_zone(COLLAPSING_ROOF.zone_at(Coordinate::new(17, 12)));
+
+    for effect in DETECT_MAGIC.side_effects(&mut e, wizard, None, None, None) {
+        effect.apply(&mut e);
+    }
+    assert!(
+        e.zones().iter().any(|z| z.id == statue && z.revealed),
+        "RAW says outright that a Detect Magic reveals the statue's aura"
+    );
+    assert!(
+        e.zones().iter().any(|z| z.id == tripwire && !z.revealed),
+        "and says nothing of the kind about a collapsing roof"
+    );
+}
+
 /// Detect Magic finds the glyph and walks straight past the
 /// pressure plate — SRD's sentence is about magic, and half the
 /// concealed areas on this layer are carpentry.

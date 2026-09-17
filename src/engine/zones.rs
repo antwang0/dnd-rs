@@ -459,7 +459,28 @@ pub enum WardTrigger {
     /// Glyph of Warding, Symbol: everybody but this team.
     EnemiesOf(usize),
     /// A dungeon trap: everybody, found against the DC the trap prints.
-    Anyone { find_dc: i32 },
+    Anyone {
+        find_dc: i32,
+        /// True for the dungeon's *magical* hardware — SRD 5.2's
+        /// Fire-Casting Statue, whose Detect and Disarm entry opens
+        /// *"A Detect Magic spell reveals an aura of Evocation magic
+        /// around the statue."*
+        ///
+        /// The flag the Detect Magic spell was always going to need.
+        /// Its first reading inferred "is this magic" from `owner_id`,
+        /// on the grounds that every area on the layer was either
+        /// somebody's spell or the dungeon's and only the first kind
+        /// had a caster — and said in its own docstring that the day a
+        /// magical trap arrived, a flag on the trap was the honest way
+        /// in rather than an inference from who owns the zone. This is
+        /// that flag, and the statue is that day.
+        ///
+        /// It lives on this variant rather than on `ZoneEffect`
+        /// because `EnemiesOf` needs no such field: a set ward is a
+        /// spell by construction, and `is_magical` says so without
+        /// asking.
+        magical: bool,
+    },
 }
 
 impl WardTrigger {
@@ -477,7 +498,21 @@ impl WardTrigger {
     pub fn find_dc(self, own_save_dc: Option<i32>) -> i32 {
         match self {
             WardTrigger::EnemiesOf(_) => own_save_dc.unwrap_or(Self::UNSAVED_FIND_DC),
-            WardTrigger::Anyone { find_dc } => find_dc,
+            WardTrigger::Anyone { find_dc, .. } => find_dc,
+        }
+    }
+
+    /// True when a Detect Magic would light this ward up.
+    ///
+    /// A set ward always answers `true` and has no field to read: RAW's
+    /// glyph, symbol and forbiddance are spells, and a spell is what
+    /// Detect Magic senses. The dungeon's own hardware is the half that
+    /// has to be asked — a pressure plate and a tripwire are carpentry,
+    /// and the Fire-Casting Statue is not. See `Anyone::magical`.
+    pub const fn is_magical(self) -> bool {
+        match self {
+            WardTrigger::EnemiesOf(_) => true,
+            WardTrigger::Anyone { magical, .. } => magical,
         }
     }
 
@@ -768,6 +803,31 @@ pub struct ZoneEffect {
     /// See `EncounterInstance::touch_zone`, which is where all three
     /// clauses are enforced.
     pub ward: Option<WardTrigger>,
+    /// SRD 5.2's *"the trap resets at the start of the next turn"* —
+    /// true for a ward the spring that fires it does **not** spend.
+    ///
+    /// False for every other area on the layer, which is not a default
+    /// so much as the rule: a glyph is spent by going off, and so is
+    /// every pit and tripwire in the book. The two entries that say
+    /// otherwise say it in as many words, in their own Duration line.
+    ///
+    /// Meaningless without `ward`. A hazard nobody set does not spring
+    /// and has nothing to rearm.
+    pub rearms: bool,
+    /// How many more times a rearming ward will fire — SRD 5.2's
+    /// *"if it has activated fewer than three times"* — or `None` for
+    /// one the book gives no budget.
+    ///
+    /// The one counter on this struct, and it is here rather than on
+    /// `Zone` because a ward's budget is a clause the book prints
+    /// beside its DC. Decremented in place as the trap fires;
+    /// `Some(0)` is a resetting trap that has run out and behaves
+    /// exactly like a one-shot one on its last spring.
+    ///
+    /// Meaningless without `rearms`, for the same reason `rearms` is
+    /// meaningless without `ward`: nothing that is spent by firing has
+    /// a second firing to budget for.
+    pub springs_left: Option<u32>,
     /// The one side this area was written to leave alone — SRD's
     /// *"you and creatures you designate when you cast the spell can
     /// pass through and be near the wall without harm"*.
@@ -828,6 +888,8 @@ impl ZoneEffect {
         suppresses_magic: false,
         darkens: None,
         ward: None,
+        rearms: false,
+        springs_left: None,
         spares_team: None,
         barrier: None,
     };
@@ -935,10 +997,33 @@ impl ZoneEffect {
 
     /// A dungeon trap (`crate::engine::traps`): the same three ward
     /// clauses, with nobody spared. See `WardTrigger::Anyone`.
-    pub const fn trap(contact: ZoneContact, find_dc: i32) -> Self {
+    ///
+    /// Four arguments rather than two because a trap's entry has four
+    /// things to say about its trigger, and the two that arrived late
+    /// are the two the book prints on its own lines: *Detect and
+    /// Disarm* decides `magical`, and *Duration* decides `rearms`. They
+    /// are columns on [`crate::engine::traps::Trap`] in exactly this
+    /// shape, so a row converts without deciding anything.
+    ///
+    /// `rearms` is `None` for a trap that is spent by going off — four
+    /// of the book's six and every other ward on the layer;
+    /// `Some(None)` for one that resets forever, which is the
+    /// Fire-Casting Statue; and `Some(n)` for the Poisoned Darts'
+    /// *"if it has activated fewer than three times"*.
+    pub const fn trap(
+        contact: ZoneContact,
+        find_dc: i32,
+        magical: bool,
+        rearms: Option<Option<u32>>,
+    ) -> Self {
         Self {
             contact: Some(contact),
-            ward: Some(WardTrigger::Anyone { find_dc }),
+            ward: Some(WardTrigger::Anyone { find_dc, magical }),
+            rearms: rearms.is_some(),
+            springs_left: match rearms {
+                Some(budget) => budget,
+                None => None,
+            },
             ..Self::DEFAULTS
         }
     }
@@ -1506,8 +1591,12 @@ mod tests {
     /// foot on it is the one that finds out.
     #[test]
     fn a_trap_springs_for_every_side_and_a_glyph_does_not() {
-        assert!(WardTrigger::Anyone { find_dc: 11 }.springs_for(0));
-        assert!(WardTrigger::Anyone { find_dc: 11 }.springs_for(7));
+        let plate = WardTrigger::Anyone {
+            find_dc: 11,
+            magical: false,
+        };
+        assert!(plate.springs_for(0));
+        assert!(plate.springs_for(7));
         assert!(!WardTrigger::EnemiesOf(0).springs_for(0));
         assert!(WardTrigger::EnemiesOf(0).springs_for(1));
 
@@ -1519,9 +1608,42 @@ mod tests {
                 DamageType::Bludgeoning,
             ),
             11,
+            false,
+            None,
         );
-        assert_eq!(trap.ward, Some(WardTrigger::Anyone { find_dc: 11 }));
+        assert_eq!(trap.ward, Some(plate));
         assert!(trap.is_bad_ground(None));
+        assert!(!trap.rearms, "a tripwire is spent by going off");
+    }
+
+    /// A Detect Magic senses the ward a caster set and the one piece of
+    /// the dungeon's own hardware the book calls magic, and nothing
+    /// else on the floor.
+    ///
+    /// The whole of the line the Detect Magic spell draws, checked at
+    /// the predicate rather than through the spell: RAW makes a glyph
+    /// magic by construction, says outright that *"a Detect Magic spell
+    /// reveals an aura of Evocation magic around the statue"*, and says
+    /// nothing of the kind about a tripwire or a hole in the floor.
+    #[test]
+    fn a_detect_magic_reads_the_glyph_and_the_statue_and_not_the_tripwire() {
+        assert!(WardTrigger::EnemiesOf(0).is_magical(), "a glyph is a spell");
+        assert!(
+            WardTrigger::Anyone {
+                find_dc: 15,
+                magical: true
+            }
+            .is_magical(),
+            "and so is whatever is carved on the statue"
+        );
+        assert!(
+            !WardTrigger::Anyone {
+                find_dc: 11,
+                magical: false
+            }
+            .is_magical(),
+            "a tripwire is carpentry"
+        );
     }
 
     #[test]

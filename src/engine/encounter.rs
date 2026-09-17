@@ -2433,6 +2433,29 @@ pub struct EncounterInstance {
     /// a creature shoved into a web on somebody else's turn triggers it,
     /// and shoving them back in on that same turn does not.
     zone_contacts_this_turn: std::collections::HashSet<(usize, usize)>,
+    /// The same ledger, keyed by ward rather than by pair: the
+    /// resetting traps that have already gone off this turn.
+    ///
+    /// SRD 5.2 prints two whose Duration line reads *"Instantaneous,
+    /// and the trap resets at the start of the next turn"* — see
+    /// `crate::engine::traps` — and the sentence has two halves the
+    /// engine has to keep apart. That it *resets* is
+    /// `ZoneEffect::rearms`, which is why the zone survives being
+    /// sprung; that it resets *at the start of the next turn* is this
+    /// set, which is why a statue that has just breathed on the fighter
+    /// does nothing to the rogue who walks through the same doorway a
+    /// second later.
+    ///
+    /// Keyed on the zone alone, unlike `zone_contacts_this_turn`
+    /// directly above, and the difference is the difference between the
+    /// two clauses: RAW's contact ledger is per-creature — *"for the
+    /// first time on a turn"* is about the creature stepping in — and a
+    /// trap's reset is about the trap. One statue, one breath, whoever
+    /// set it off.
+    ///
+    /// Cleared in the same breath as its neighbour and for the same
+    /// reason, which is that both windows are a *turn*.
+    sprung_wards_this_turn: std::collections::HashSet<usize>,
     /// The same ledger, one layer down: actors who have already tested
     /// their footing on this turn's slippery ground — see
     /// `crate::engine::footing`.
@@ -9171,23 +9194,23 @@ impl EncounterInstance {
     }
 
     /// Every concealed area within `radius` of `searcher_id`'s
-    /// footprint that **some caster put there** — Detect Magic's
-    /// candidate list, and the half of `concealed_zones_near` that a
-    /// spell can sense.
+    /// footprint that a Detect Magic would light up — that spell's
+    /// candidate list, and the half of `concealed_zones_near` a
+    /// divination can sense.
     ///
-    /// The line between the two is `owner_id`. Every area on the layer
-    /// is either somebody's spell or the dungeon's own hardware, and
-    /// [`crate::engine::traps::NOBODY`] is the id the second kind
-    /// carries — it exists precisely because a pressure plate was cast
-    /// by no one. So "was there a caster" is the same question as "is
-    /// this magic", asked in the vocabulary the layer already has.
+    /// The line is [`crate::engine::zones::WardTrigger::is_magical`],
+    /// and the book draws it from both sides. A set ward is a spell and
+    /// answers `true` without a field to read; the dungeon's own
+    /// hardware is asked, and the answer is `false` for a tripwire and
+    /// `true` for the Fire-Casting Statue, whose *Detect and Disarm*
+    /// entry opens *"A Detect Magic spell reveals an aura of Evocation
+    /// magic around the statue."*
     ///
-    /// That is worth stating plainly because it is an invariant rather
-    /// than a tautology: SRD prints a Fire-Casting Statue, which is a
-    /// trap *and* magic, and the engine does not ship it (see
-    /// [`crate::engine::traps`] for why). The day it does, this
-    /// predicate is the one that has to learn the difference — a flag
-    /// on `Trap` rather than an inference from who owns the zone.
+    /// The first reading of this inferred "is it magic" from
+    /// `owner_id`, on the grounds that only a spell has a caster — and
+    /// said in its own docstring that the day a magical trap arrived, a
+    /// flag on the trap would be the honest way in. That is what
+    /// happened and this is that flag.
     ///
     /// No DCs, unlike its neighbour, because RAW's sentence has no
     /// check in it: *"you sense the presence of magical effects within
@@ -9195,7 +9218,7 @@ impl EncounterInstance {
     /// between this and the Search action.
     pub fn concealed_magical_zones_near(&self, searcher_id: usize, radius: isize) -> Vec<usize> {
         self.concealed_zones_within(searcher_id, radius)
-            .filter(|z| z.owner_id != crate::engine::traps::NOBODY)
+            .filter(|z| z.effect.ward.is_some_and(|w| w.is_magical()))
             .map(|z| z.id)
             .collect()
     }
@@ -10704,6 +10727,14 @@ impl EncounterInstance {
         {
             return;
         }
+        // SRD 5.2's *"the trap resets at the start of the next turn"*,
+        // read as the sentence it is: a resetting trap that has already
+        // fired is inert until the next turn opens, whoever set it off.
+        // The ordinary ward never reaches this — it is removed by the
+        // spring that fires it and has no id left to be in the set.
+        if ward.is_some() && self.sprung_wards_this_turn.contains(&zone_id) {
+            return;
+        }
         // The layer's *other* friend-or-foe clause, and the only one
         // that is about an area doing nothing rather than about who can
         // set one off: SRD's Prismatic Wall spares the caster's side by
@@ -10738,6 +10769,16 @@ impl EncounterInstance {
     /// every other area here ends on a round-end tick or on dropped
     /// concentration, and "the spell ends when it is triggered" is
     /// neither.
+    ///
+    /// …unless it is one of SRD 5.2's two **resetting** traps, whose
+    /// Duration line reads *"Instantaneous, and the trap resets at the
+    /// start of the next turn"*. Those stay on the board, spend a
+    /// spring out of whatever budget they have, and go into
+    /// `sprung_wards_this_turn` so nothing else sets them off before
+    /// the next turn opens. A resetting trap on its last spring is
+    /// removed exactly like a one-shot one — the reset is what the
+    /// budget buys, and a trap with none left has nothing to come back
+    /// for. See `crate::engine::traps`.
     fn detonate_ward(&mut self, zone_id: usize, sprung_by: usize) {
         let (name, caught) = {
             let Some(zone) = self.zones.iter().find(|z| z.id == zone_id) else {
@@ -10755,12 +10796,54 @@ impl EncounterInstance {
             caught.sort_unstable();
             (zone.name, caught)
         };
-        self.log(format!("The {} flares and is spent.", name));
+        // Decided before the blast rather than after it, because
+        // `apply_zone_contact` can kill somebody and a dead creature's
+        // cleanup walks the zone list.
+        let rearms = {
+            let Some(zone) = self.zones.iter_mut().find(|z| z.id == zone_id) else {
+                return;
+            };
+            match (zone.effect.rearms, zone.effect.springs_left) {
+                // Out of darts. RAW's budget counts the springs *after*
+                // the first, so a zero here is the last one.
+                (true, Some(0)) | (false, _) => false,
+                (true, budget) => {
+                    zone.effect.springs_left = budget.map(|n| n - 1);
+                    true
+                }
+            }
+        };
+        self.log(if rearms {
+            format!("The {} goes off, and settles back into the wall.", name)
+        } else {
+            format!("The {} flares and is spent.", name)
+        });
         for id in caught {
             self.zone_contacts_this_turn.insert((zone_id, id));
             self.apply_zone_contact(zone_id, id);
         }
-        self.remove_zone(zone_id);
+        if rearms {
+            self.sprung_wards_this_turn.insert(zone_id);
+            // A trap that has gone off is no longer a secret, and RAW
+            // agrees by omission: the Duration line says the *trap*
+            // resets, not that the party forgets where it is. This is
+            // the clause that makes a resetting trap a decision rather
+            // than a tax — revealed, the pathfinder routes around the
+            // statue (`Zone::deters_walkers`) and the corridor it
+            // blocks becomes a question about the detour. Without it
+            // the AI would walk into the same flame every turn for the
+            // rest of the fight.
+            //
+            // Silent, unlike `reveal_zone`'s own line: the detonation
+            // has just printed two of its own, and "a fire-casting
+            // statue is spotted at (10, 10)" after the thing has
+            // breathed on somebody reads like a second trap.
+            if let Some(zone) = self.zones.iter_mut().find(|z| z.id == zone_id) {
+                zone.revealed = true;
+            }
+        } else {
+            self.remove_zone(zone_id);
+        }
     }
 
     /// Resolve one zone's contact clause against one creature: the save
@@ -15172,6 +15255,7 @@ impl EncounterInstance {
             zones: Vec::new(),
             zone_id_next: 0,
             zone_contacts_this_turn: std::collections::HashSet::new(),
+            sprung_wards_this_turn: std::collections::HashSet::new(),
             footing_checks_this_turn: std::collections::HashSet::new(),
             trait_immunities: std::collections::HashSet::new(),
             staged_saves: std::collections::HashMap::new(),
@@ -17240,6 +17324,12 @@ impl EncounterInstance {
         // clause, in the same breath and for the same reason. See
         // `crate::engine::footing`.
         self.footing_checks_this_turn.clear();
+        // …and the trap layer's, which is RAW's *"the trap resets at
+        // the start of the next turn"* in full. This is the line that
+        // is the reset: `ZoneEffect::rearms` only keeps the zone on the
+        // board, and without a clear here the statue would be inert for
+        // the rest of the fight. See `sprung_wards_this_turn`.
+        self.sprung_wards_this_turn.clear();
         // "The cloud moves 10 feet away from you at the start of each of
         // your turns", and the attached sphere's "it moves with you".
         // Runs after the ledger clear, so a creature the cloud arrives
