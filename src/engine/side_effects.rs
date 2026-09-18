@@ -1765,6 +1765,61 @@ impl ApplicableSideEffect for Heal {
     }
 }
 
+/// SRD 5.2 **Breaking Objects**, the half of it that arrives by swing:
+/// one blow that has already hit, landing on one tile.
+///
+/// The attack roll is not here. It is made in
+/// `default_actions::Sunder::side_effects`, beside the choice of which
+/// weapon the swinger reached for, because both need the *swinger* and
+/// this needs only the wall. What is queued is the consequence, so a
+/// breach lands in the same order as everything else the turn does.
+pub struct DamageObjectAt {
+    pub coord: Coordinate,
+    pub amount: u32,
+    pub damage_type: DamageType,
+}
+
+impl ApplicableSideEffect for DamageObjectAt {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.damage_object_at(self.coord, self.amount, self.damage_type);
+    }
+}
+
+/// SRD 5.2 **Breaking Objects**, the half of it that arrives by spell:
+/// every breakable tile inside an area takes the area's damage.
+///
+/// A side effect rather than a call inside the burst helper, and the
+/// difference is the ordering. The helper runs while the spell is still
+/// a list of unapplied boxes; breaching a wall inside it would open the
+/// hole *before* the Fireball that made it had landed on anybody, and a
+/// creature standing in the wall's shadow would be caught by a blast
+/// that had not yet gone off. Queued, it resolves with the rest of the
+/// cast.
+///
+/// The full rolled number, not the halved one: *"an object … fails all
+/// saving throws"*, so the wall takes what the dice said while the
+/// creatures beside it take what their saves left. See
+/// `EncounterInstance::damage_object_at`.
+pub struct DamageObjectsInArea {
+    pub caster_id: usize,
+    pub shape: crate::engine::areas::AreaShape,
+    pub aim: Coordinate,
+    pub amount: u32,
+    pub damage_type: DamageType,
+}
+
+impl ApplicableSideEffect for DamageObjectsInArea {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.damage_objects_in_area(
+            self.caster_id,
+            self.shape,
+            self.aim,
+            self.amount,
+            self.damage_type,
+        );
+    }
+}
+
 /// Grant `amount` temporary HP. 5e: doesn't stack — the bigger of the
 /// existing pool and the new grant wins. No-op if `amount` is 0 or the
 /// actor is missing.

@@ -91,6 +91,28 @@ pub struct ConjuredTerrain {
     /// it replaced: `Floor` written over `Water` is a trench and
     /// `Floor` written over `Wall` would be a doorway.
     pub verb: &'static str,
+    /// What it takes to knock a hole in this, or `None` for a patch
+    /// nothing can break — SRD 5.2's *Breaking Objects*, and see
+    /// [`crate::engine::objects`] for which patches get one and why the
+    /// dungeon's own stone does not.
+    ///
+    /// Two of the engine's patches carry one, because two of the book's
+    /// wall spells print an AC and a hit point line in their own text.
+    /// Wall of Force is the pointed absence: *"it is immune to all
+    /// damage"*, which is exactly `None` and is most of what a
+    /// fifth-level slot buys over the fifth-level Wall of Stone beside
+    /// it.
+    pub integrity: Option<&'static crate::engine::objects::ObjectProfile>,
+    /// Hit points left in each tile this patch is holding, parallel to
+    /// [`Self::restore`] and empty when [`Self::integrity`] is `None`.
+    ///
+    /// Parallel to the *ledger* rather than to `tiles`, because the
+    /// ledger is what the patch really owns — a requested tile that was
+    /// off the map or had somebody standing on it was never taken, and
+    /// a hit point pool for it would be a pool nothing could ever spend.
+    /// The two are written in one pass at install and are removed in one
+    /// pass when a tile falls, which is what keeps the indices honest.
+    pub hp: Vec<u32>,
 }
 
 impl ConjuredTerrain {
@@ -113,6 +135,8 @@ impl ConjuredTerrain {
             rounds_remaining,
             concentration,
             verb: "rises across",
+            integrity: None,
+            hp: Vec::new(),
         }
     }
 
@@ -122,9 +146,34 @@ impl ConjuredTerrain {
         self
     }
 
+    /// Declare that this patch is an object somebody can break, and
+    /// what breaking it costs — see [`Self::integrity`].
+    ///
+    /// A builder rather than a constructor argument for the reason
+    /// `with_verb` is one: every patch in the engine predates this and
+    /// none of them should have to say they are indestructible.
+    pub fn breakable(
+        mut self,
+        profile: &'static crate::engine::objects::ObjectProfile,
+    ) -> Self {
+        self.integrity = Some(profile);
+        self
+    }
+
     /// True if this patch is holding `coord`.
     pub fn covers(&self, coord: Coordinate) -> bool {
         self.restore.iter().any(|(c, _)| *c == coord)
+    }
+
+    /// Where `coord` sits in this patch's ledger, if it is holding it.
+    ///
+    /// The index is the join between [`Self::restore`] and
+    /// [`Self::hp`], and it is the only thing that keeps the two lists
+    /// meaning the same tile. Exposed rather than open-coded at the two
+    /// call sites so that invariant lives next to the fields it is
+    /// about.
+    pub fn slot_of(&self, coord: Coordinate) -> Option<usize> {
+        self.restore.iter().position(|(c, _)| *c == coord)
     }
 }
 

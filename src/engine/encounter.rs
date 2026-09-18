@@ -309,6 +309,7 @@ use crate::engine::terrain::{TerrainInfo, TerrainType};
 use crate::engine::underwater::{AttackInWater, UnderwaterVerdict};
 use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::conjured_terrain::ConjuredTerrain;
+use crate::engine::objects::{ObjectDamageOutcome, ObjectProfile};
 use crate::engine::hovering_blade::{BladeProfile, HoveringBlade};
 use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
 use crate::engine::weather::Weather;
@@ -9719,6 +9720,81 @@ impl EncounterInstance {
         })
     }
 
+    /// The tile to hit, when the reason this creature has nothing to do
+    /// is a wall somebody conjured across the room — the gate the AI's
+    /// sunder rung is built on.
+    ///
+    /// The flood-fill sibling of `a_longer_leap_would_open_a_route`, and
+    /// the same three questions in the same order: is there anything on
+    /// this board that could be in the way, is this creature actually
+    /// cut off, and is the thing in the way something it can reach.
+    /// The first line is what keeps it off every other board — nobody
+    /// conjures a wall in most fights, so the whole thing collapses to
+    /// a scan of a usually-empty vector.
+    ///
+    /// **Cut off, not merely far away.** The walk flood fill ignores
+    /// the movement budget and every creature on the board, so what it
+    /// answers is *"is there a route at all"*. A creature that is
+    /// simply twenty tiles from the fight gets `None` and goes back to
+    /// walking, which is the rung below.
+    ///
+    /// **The tile to walk to, not necessarily the tile to hit this
+    /// turn.** The rung that reads this is responsible for closing the
+    /// distance — see `ai::simple`'s `try_sunder_a_wall`, which steps
+    /// when it is not yet in reach and swings when it is. The walk rung
+    /// underneath cannot do that job: it paths to an *enemy*, and the
+    /// whole premise here is that there is no path to one.
+    ///
+    /// Picks the *weakest* reachable tile, because a wall comes down one
+    /// hole at a time and the cheapest way through is the one to swing
+    /// at — which matters the moment a second creature has already been
+    /// working on one of them. Ties break on the tile the walker can get
+    /// to soonest, which on a wall of untouched panels is every tile and
+    /// so is the usual case.
+    pub fn a_breach_would_open_a_route(&self, actor_id: usize) -> Option<Coordinate> {
+        if self.conjured_terrain.iter().all(|p| p.integrity.is_none()) {
+            return None;
+        }
+        let actor = self.actors.get(&actor_id)?;
+        let team = actor.team();
+        let walkable = self.reachable_anchors(actor_id, 0);
+        let mut any_enemy = false;
+        for (&other, a) in self.actors.iter() {
+            if other == actor_id || a.team() == team || !a.is_combat_active() {
+                continue;
+            }
+            any_enemy = true;
+            if self.anchor_set_touches(&walkable, actor_id, other) {
+                // There is a way round. Walking is the rung below, and
+                // it is cheaper than a wall.
+                return None;
+            }
+        }
+        if !any_enemy {
+            return None;
+        }
+        let span = get_tiles_from_size(actor.size());
+        let loc = actor.location();
+        let mut best: Option<(u32, isize, Coordinate)> = None;
+        for patch in self.conjured_terrain.iter().filter(|p| p.integrity.is_some()) {
+            for (slot, (coord, _)) in patch.restore.iter().enumerate() {
+                let gap = footprint_chebyshev(loc, span, *coord, 1);
+                // Reachable, which for a tile nobody can walk onto means
+                // "there is somewhere beside it this creature can stand".
+                // A wall on the far side of a second wall is not this
+                // creature's problem yet.
+                if gap > 1 && self.step_toward_tile(actor_id, *coord).is_none() {
+                    continue;
+                }
+                let hp = patch.hp.get(slot).copied().unwrap_or(u32::MAX);
+                if best.as_ref().is_none_or(|(b, d, _)| (hp, gap) < (*b, *d)) {
+                    best = Some((hp, gap, *coord));
+                }
+            }
+        }
+        best.map(|(_, _, coord)| coord)
+    }
+
     /// True when any anchor in `reached` puts a body of `mover_id`'s size
     /// within arm's length of `target_id`.
     fn anchor_set_touches(&self, reached: &[bool], mover_id: usize, target_id: usize) -> bool {
@@ -9785,6 +9861,12 @@ impl EncounterInstance {
             }
             self.set_terrain_at(coord, patch.terrain_type);
             patch.restore.push((coord, was));
+            // The hit point pool for the tile just taken, written in the
+            // same pass so the two lists cannot disagree about which
+            // tile they mean — see `ConjuredTerrain::hp`.
+            if let Some(profile) = patch.integrity {
+                patch.hp.push(profile.hp_per_tile);
+            }
         }
         let (name, verb, taken) = (patch.name, patch.verb, patch.restore.len());
         self.conjured_terrain.push(patch);
@@ -9812,6 +9894,156 @@ impl EncounterInstance {
             }
         }
         true
+    }
+
+    /// What stands on `coord` that somebody could break, if anything —
+    /// the patch that owns the tile and the profile that prices it.
+    ///
+    /// SRD 5.2 *Breaking Objects*, read side. `None` for open floor, for
+    /// the dungeon's own walls, and for a Wall of Force, which is
+    /// *"immune to all damage"* and carries no profile — see
+    /// [`crate::engine::objects`] for why those three are one answer.
+    pub fn breakable_at(
+        &self,
+        coord: Coordinate,
+    ) -> Option<(usize, &'static ObjectProfile)> {
+        self.conjured_terrain
+            .iter()
+            .find(|p| p.integrity.is_some() && p.covers(coord))
+            .map(|p| (p.id, p.integrity.expect("filtered on Some")))
+    }
+
+    /// Hit points left in the breakable thing standing on `coord`, or
+    /// `None` if nothing breakable is there.
+    ///
+    /// For the panel and the tests; nothing in the resolution path reads
+    /// it, because [`Self::damage_object_at`] does its own lookup and
+    /// writing through a getter would be two lookups for one answer.
+    pub fn object_hp_at(&self, coord: Coordinate) -> Option<u32> {
+        self.conjured_terrain
+            .iter()
+            .filter(|p| p.integrity.is_some())
+            .find_map(|p| p.slot_of(coord).and_then(|i| p.hp.get(i).copied()))
+    }
+
+    /// SRD 5.2 **Breaking Objects**: land `amount` of `damage_type` on
+    /// whatever breakable thing is standing on `coord`, and hand the
+    /// tile back to the floor if that was the last of it.
+    ///
+    /// Returns what happened, so a caller can log a hit and a breach
+    /// differently without asking twice.
+    ///
+    /// **The object never saves.** *"An object lacks ability scores …
+    /// without ability scores, an object can't make ability checks, and
+    /// it fails all saving throws"*, so what arrives here is the full
+    /// rolled damage rather than the halved amount the creatures beside
+    /// it took on a successful save. That is the caller's
+    /// responsibility, and the one caller that could get it wrong —
+    /// `resolve_area_save_damage_saves` — is handed the number before it
+    /// halves anything.
+    ///
+    /// **A breach is a hole, not a demolition.** RAW's *"reducing a
+    /// panel to 0 Hit Points destroys it and leaves behind a hole"* is a
+    /// sentence about one part of a wall, so the tile is restored to
+    /// whatever was underneath it and the rest of the patch stands. The
+    /// patch itself survives an empty ledger: it still expires, still
+    /// answers to its owner's concentration, and can still be dispelled,
+    /// which keeps "the spell is up" and "the spell has anything left"
+    /// as the two separate questions `conjure_terrain` already treats
+    /// them as.
+    pub fn damage_object_at(
+        &mut self,
+        coord: Coordinate,
+        amount: u32,
+        damage_type: DamageType,
+    ) -> ObjectDamageOutcome {
+        let Some((patch_id, profile)) = self.breakable_at(coord) else {
+            return ObjectDamageOutcome::NothingThere;
+        };
+        let scaled = profile.effective_damage(amount, damage_type);
+        if scaled == 0 {
+            self.log(format!(
+                "  the {} is unharmed by {:?}.",
+                profile.label, damage_type
+            ));
+            return ObjectDamageOutcome::Shrugged;
+        }
+        let Some(patch) = self.conjured_terrain.iter_mut().find(|p| p.id == patch_id) else {
+            return ObjectDamageOutcome::NothingThere;
+        };
+        let Some(slot) = patch.slot_of(coord) else {
+            return ObjectDamageOutcome::NothingThere;
+        };
+        let left = patch.hp[slot].saturating_sub(scaled);
+        patch.hp[slot] = left;
+        if left > 0 {
+            let label = profile.label;
+            self.log(format!(
+                "  the {} takes {} {:?} at {} ({} HP left).",
+                label, scaled, damage_type, coord, left
+            ));
+            return ObjectDamageOutcome::Damaged { remaining: left };
+        }
+        // The tile falls. Removed from both lists in one pass, so the
+        // ledger and the pool stay the same length and the same tiles —
+        // see `ConjuredTerrain::hp`.
+        let (was, name) = (patch.restore[slot].1, patch.name);
+        let written = patch.terrain_type;
+        patch.restore.remove(slot);
+        patch.hp.remove(slot);
+        // Only if the tile still carries what this patch wrote. Anything
+        // else has been claimed since, and handing it back would undo
+        // somebody else's spell — the same guard `dispel_conjured_terrain`
+        // makes, for the same reason.
+        if self.terrain_at(coord).map(|t| t.terrain_type) == Some(written) {
+            self.set_terrain_at(coord, was);
+        }
+        self.log(format!("  the {} is breached at {}.", name, coord));
+        ObjectDamageOutcome::Breached
+    }
+
+    /// Land `amount` of `damage_type` on every breakable tile inside an
+    /// area — the spell half of RAW's *"objects can be harmed by attacks
+    /// and by some spells"*.
+    ///
+    /// Walks the area's own tile list rather than its actor list, which
+    /// is the difference between this and every other area sweep in the
+    /// engine: a wall is not a creature, has no footprint to catch and
+    /// is not on anybody's team, so `neutral_area_targets` cannot see
+    /// it and never could.
+    ///
+    /// Tiles are collected before any of them is hit, because breaching
+    /// one changes the terrain the shape is being walked over and a
+    /// list being edited underneath a walk is the bug that would follow.
+    pub fn damage_objects_in_area(
+        &mut self,
+        caster_id: usize,
+        shape: crate::engine::areas::AreaShape,
+        aim: Coordinate,
+        amount: u32,
+        damage_type: DamageType,
+    ) {
+        if amount == 0 || self.conjured_terrain.iter().all(|p| p.integrity.is_none()) {
+            return;
+        }
+        // The caster's own anchor and size, because a Cone's apex is
+        // measured from the body that breathed it — the same two
+        // arguments every other reader of `AreaShape::tiles` passes.
+        let Some((anchor, size)) = self
+            .actors
+            .get(&caster_id)
+            .map(|a| (a.location(), a.size()))
+        else {
+            return;
+        };
+        let tiles: Vec<Coordinate> = shape
+            .tiles(anchor, size, aim)
+            .into_iter()
+            .filter(|c| self.breakable_at(*c).is_some())
+            .collect();
+        for coord in tiles {
+            self.damage_object_at(coord, amount, damage_type);
+        }
     }
 
     /// Expire one round off every patch and take down the ones that ran
@@ -14595,20 +14827,61 @@ impl EncounterInstance {
         steps
     }
 
+    /// The first step toward standing next to one **tile** — the
+    /// creature-free half of `step_toward_actor`.
+    ///
+    /// Same BFS, same two passes, same "ignores the movement budget
+    /// because the AI may need several turns" contract; what differs is
+    /// only what counts as arriving. It exists because SRD 5.2's
+    /// *Breaking Objects* gave the AI its first destination that is not
+    /// a creature: a wall tile it wants to be within arm's length of.
+    /// See `crate::ai::simple`'s sunder rung.
+    ///
+    /// Returns `None` when the walker is already adjacent — the same
+    /// answer `step_toward_actor` gives for a creature already in
+    /// melee, and for the same reason: there is nothing to walk.
+    pub fn step_toward_tile(&self, actor_id: usize, tile: Coordinate) -> Option<Coordinate> {
+        if self.has_bad_ground_for(actor_id)
+            && let Some(step) = self.step_toward_goal(actor_id, tile, 1, true)
+        {
+            return Some(step);
+        }
+        self.step_toward_goal(actor_id, tile, 1, false)
+    }
+
     fn step_toward_actor_inner(
         &self,
         actor_id: usize,
         target_id: usize,
         avoid_hazards: bool,
     ) -> Option<Coordinate> {
+        let target = self.actors.get(&target_id)?;
+        let (t_loc, t_size) = (target.location(), get_tiles_from_size(target.size()));
+        self.step_toward_goal(actor_id, t_loc, t_size, avoid_hazards)
+    }
+
+    /// The BFS both `step_toward_actor` and `step_toward_tile` are
+    /// wrappers on: walk until the walker's footprint is within arm's
+    /// length of the `goal_span`-wide box anchored at `goal`.
+    ///
+    /// Taking a box rather than a target id is what lets the two share
+    /// it. Everything else about the walk — the hazard pass, the
+    /// magic-circle refusal, the directional step ordering — is a fact
+    /// about the *walker* and the board, and neither of them cares
+    /// whether the thing being walked to breathes.
+    fn step_toward_goal(
+        &self,
+        actor_id: usize,
+        goal: Coordinate,
+        goal_span: usize,
+        avoid_hazards: bool,
+    ) -> Option<Coordinate> {
         use std::collections::{HashMap, VecDeque};
 
         let actor = self.actors.get(&actor_id)?;
-        let target = self.actors.get(&target_id)?;
         let start = actor.location();
         let my_size = get_tiles_from_size(actor.size());
-        let t_loc = target.location();
-        let t_size = get_tiles_from_size(target.size());
+        let (t_loc, t_size) = (goal, goal_span);
 
         // Read once for the whole walk rather than per candidate tile:
         // nothing about the walker changes as the BFS spreads, and both
@@ -22668,6 +22941,30 @@ impl EncounterInstance {
         // full to put one body back down is precisely the deadlock this
         // check exists to break rather than a reason to keep waiting.
         if self.actors.values().any(|a| a.belongs_off_board()) {
+            return false;
+        }
+        // A wall somebody *cast* is not the permanent arrangement this
+        // check is about either, and for two reasons at once: it is on a
+        // clock (`rounds_remaining`, ten rounds for every wall in the
+        // book), and — since SRD 5.2's *Breaking Objects* arrived — it
+        // has hit points somebody can take off it. See
+        // `crate::engine::objects`.
+        //
+        // Without this the engine called a draw the moment a wizard
+        // partitioned the room, which is the opposite of what the spell
+        // does: a Wall of Stone across a corridor is a *delay*, and a
+        // fight declared over because of one is a fight the caster won
+        // by casting it. Only the patches that block, because a
+        // Passwall or a parted lake separates nobody.
+        //
+        // The attrition half below still owns the real runaway case: a
+        // board that goes four hundred rounds without anybody losing a
+        // hit point is a draw whatever is standing on it.
+        if self
+            .conjured_terrain
+            .iter()
+            .any(|p| !p.restore.is_empty() && !p.terrain_type.is_passable())
+        {
             return false;
         }
         let combatants: Vec<(usize, usize)> = self

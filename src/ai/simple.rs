@@ -1905,6 +1905,16 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 7c''. Cut the wall down. Third and last of the "the reason
+        //       nobody is in reach is the board" family, below the leap
+        //       and the burrow because it is the slowest of the three:
+        //       a jump and a tunnel each cross a gap in one turn, and a
+        //       wall of stone is several rounds of swinging. See
+        //       `try_sunder_a_wall`.
+        if let Some(aei) = try_sunder_a_wall(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -1966,6 +1976,60 @@ impl Controller for SimpleAi {
         // 9. Nothing useful. End the turn.
         skip_or_await(encounter, actor_id)
     }
+}
+
+/// Swing at the wall, when the wall is the reason this creature has
+/// nothing to do — SRD 5.2's *Breaking Objects*, from the other side of
+/// a Wall of Stone.
+///
+/// Sibling to `try_buy_a_leap` immediately above it, and the same
+/// shape: a rung that exists because the *board* is what is stopping
+/// this turn, sitting just above the approach rung it is there to
+/// unblock. `try_step_toward_lowest_hp` walks whatever route the
+/// pathfinder can find, and behind a conjured wall there is no route to
+/// find until somebody makes one.
+///
+/// Every gate is in `EncounterInstance::a_breach_would_open_a_route`,
+/// which is where it belongs — the question is about the board, and the
+/// board is what can answer it cheaply. What is left here is the
+/// action, and the one thing the board cannot check: whether this
+/// creature has anything to swing. A gelatinous cube reaches this rung,
+/// finds `Sunder` refuses it for want of a weapon profile, and goes
+/// back to walking.
+///
+/// **No caster reaches this rung with a slot in hand**, because the
+/// area-damage lanes sit far above it: a wizard behind an ice wall
+/// throws a Fireball at it from the attack rungs, and only a creature
+/// that has run out of every one of those gets here. Which is right —
+/// chopping is what you do when you have nothing better.
+fn try_sunder_a_wall(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let coord = encounter.a_breach_would_open_a_route(actor_id)?;
+    // Not in reach yet: walk. This rung owns the approach because the
+    // rung below it cannot — `try_step_toward_lowest_hp` paths to an
+    // *enemy*, and the premise of this whole lane is that there is no
+    // path to one. Without it a fighter behind a wall of stone Dashes
+    // on the spot for the rest of the fight, which is what it did.
+    if encounter
+        .footprint_distance_to_point(actor_id, coord)
+        .is_some_and(|gap| gap > 1)
+    {
+        let step = encounter.step_toward_tile(actor_id, coord)?;
+        let move_action = encounter.actors.get(&actor_id)?.find_action("move")?;
+        let aei =
+            ActionExecutionInfo::new(move_action, actor_id, None, Some(vec![step]), None);
+        return aei.validate(encounter).then_some(aei);
+    }
+    let aei = ActionExecutionInfo::new(
+        &*crate::actions::default_actions::SUNDER,
+        actor_id,
+        None,
+        Some(vec![coord]),
+        None,
+    );
+    aei.validate(encounter).then_some(aei)
 }
 
 /// Spend a Bonus Action on SRD 5.2's **Jump**, when the board is the
@@ -16397,6 +16461,111 @@ mod tests {
             e.actors[&paladin].location(),
             e.actors[&steed].location(),
             "and rides where it stands"
+        );
+    }
+
+    /// A fighter walled off from the fight chops its way through.
+    ///
+    /// The rung this drives is the third member of the "the board is
+    /// what is stopping this turn" family, and the only one whose
+    /// obstacle somebody *put* there. Worth driving through the whole
+    /// ladder rather than calling `try_sunder_a_wall` directly, because
+    /// the interesting claim is about *placement*: the fighter has to
+    /// walk to the wall first (rung 8 carries it), find it has nowhere
+    /// left to walk, and only then swing — and the rung has to decline
+    /// on every turn before that, or the fighter would stand where it
+    /// spawned hitting nothing.
+    #[test]
+    fn a_fighter_walled_off_from_the_fight_chops_through() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::conjured_terrain::ConjuredTerrain;
+        use crate::engine::objects::WALL_OF_STONE_PROFILE;
+        use crate::engine::terrain::TerrainType;
+        use crate::engine::types::Coordinate;
+
+        let mut e = empty_arena();
+        // A wizard on one side and a fighter on the other, with a wall
+        // of stone between them.
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(24, 10), 1, 0)
+            .unwrap();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 10), 0, 0)
+            .unwrap();
+        // Laid by hand, wall-to-wall, rather than cast: the spell's own
+        // panel is nine tiles and the arena is twenty, so a cast wall
+        // has a way round it and this test would be about walking. It
+        // holds no concentration for the same reason — the wizard is
+        // scenery here, and a wall that fell when it did would end the
+        // test before the fighter reached it.
+        let column: Vec<Coordinate> = (0..20).map(|y| Coordinate::new(14, y)).collect();
+        e.conjure_terrain(
+            ConjuredTerrain::new(
+                "wall of stone",
+                wizard,
+                TerrainType::Wall,
+                column,
+                100,
+                false,
+            )
+            .breakable(&WALL_OF_STONE_PROFILE),
+        );
+        // The gate names a tile on the near face of the wall even from
+        // across the room — the rung walks there first. What it must
+        // *not* name is a tile on the far side, which nothing can stand
+        // beside.
+        let aim = e
+            .a_breach_would_open_a_route(fighter)
+            .expect("the wall is the reason there is nothing to do");
+        assert_eq!(aim.x, 14, "the wall is the column at x = 14");
+
+        let ai = SimpleAi;
+        let mut swung = false;
+        for _ in 0..200 {
+            e.process_stack();
+            if e.is_complete() {
+                break;
+            }
+            let Some(prompt) = e.peek_prompt() else { break };
+            let actor_id = prompt.actor_id();
+            // Only the fighter is driven; the wizard is scenery holding
+            // the wall up, and a wizard taking turns would spend the
+            // fight casting at something it cannot see.
+            if actor_id != fighter {
+                e.pop_prompt();
+                e.push_action(ActionExecutionInfo::new(
+                    &*crate::actions::default_actions::SKIP,
+                    actor_id,
+                    None,
+                    None,
+                    None,
+                ));
+                continue;
+            }
+            match ai.decide(&e, actor_id) {
+                ControllerDecision::Act(aei) => {
+                    if aei.action().name() == "sunder" {
+                        swung = true;
+                    }
+                    e.pop_prompt();
+                    e.push_action(aei);
+                }
+                ControllerDecision::AwaitInput => break,
+            }
+            if e.messages().iter().any(|m| m.contains("is breached at")) {
+                break;
+            }
+        }
+        assert!(
+            swung,
+            "the fighter should have reached the wall and swung at it:\n{}",
+            e.messages().join("\n")
+        );
+        assert!(
+            e.messages().iter().any(|m| m.contains("is breached at")),
+            "…and should have got through it:\n{}",
+            e.messages().join("\n")
         );
     }
 

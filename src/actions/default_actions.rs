@@ -2330,6 +2330,192 @@ impl Action for Surface {
 
 pub static SURFACE: LazyLock<Surface> = LazyLock::new(|| Surface {});
 
+/// **Sunder** — SRD 5.2 *Breaking Objects*, swung by hand.
+///
+/// > Objects can be harmed by attacks and by some spells … **Armor
+/// > Class.** The Object Armor Class table suggests ACs for various
+/// > substances. **Hit Points.** An object is destroyed when it has 0
+/// > Hit Points.
+///
+/// One Action, one adjacent tile of something breakable, one swing of
+/// whatever the swinger is already holding. What it is for is the
+/// party that meets a Wall of Stone and has nothing that explodes: the
+/// spell half of this rule (`EncounterInstance::damage_objects_in_area`)
+/// belongs to casters, and without this one a fighter's answer to a
+/// wall is to walk around it or to stand there.
+///
+/// ## Why a separate action rather than the attack lane
+///
+/// Because the attack lane is built out of target *ids*. Every step of
+/// it — the roll-mode tally, cover, the resistance table, the damage
+/// payload, the drop-to-zero cohort — reads an `ActorInstance`, and a
+/// wall of ice does not have one. Giving it one would mean a creature
+/// on the board with no turn, no team and no initiative slot, which is
+/// a much larger change than this and would have to be excluded by hand
+/// from every sweep in the engine.
+///
+/// So the swing is taken apart instead: the weapon is asked what it
+/// would have rolled ([`Action::melee_swing_profile`]), the roll is made
+/// against the object's own AC, and the damage goes to
+/// `EncounterInstance::damage_object_at`, which owns the object side of
+/// the pipeline the way `DealDamage` owns the creature side.
+///
+/// ## What it swings
+///
+/// The best melee weapon in the swinger's repertoire, by the average
+/// the profile itself describes — so ranking and resolution cannot
+/// disagree, which is the failure `weapon_expected_damage_named`'s
+/// docstring describes from the other side. A creature whose whole kit
+/// is a save-or-suck (a gelatinous cube's engulf, a roper's tendril)
+/// has no profile to offer and cannot sunder, which is the right
+/// answer: half of what those attacks do is a rule about a creature.
+///
+/// ## What is not modelled
+///
+/// **A critical hit.** RAW allows one against an object and the engine
+/// does not roll for it here, because the crit lane is
+/// `engine::criticals` and every entry point it has takes an
+/// `AttackParams`. The cost is a small underestimate of how fast a
+/// wall comes down, in the same direction as every other simplification
+/// on this action.
+pub struct Sunder {}
+
+impl Sunder {
+    /// The swinger's best melee swing, and what it is worth on average.
+    ///
+    /// `attack_repertoire` rather than `available_actions`, for the
+    /// reason `best_melee_damage_if_closed` gives: the question is
+    /// "what could I *swing*", which is the stat block plus the one
+    /// thing the loot table hands out that is a swing.
+    fn best_swing(
+        encounter: &EncounterInstance,
+        actor_id: usize,
+    ) -> Option<crate::actions::action_template::MeleeSwingProfile> {
+        let actor = encounter.actors.get(&actor_id)?;
+        let mut best: Option<(f32, crate::actions::action_template::MeleeSwingProfile)> = None;
+        for action in actor.attack_repertoire() {
+            let Some(profile) = action.melee_swing_profile() else {
+                continue;
+            };
+            let worth = profile.dice.average_roll()
+                + profile.flat_bonus as f32
+                + profile
+                    .damage_ability
+                    .map(|a| actor.ability_modifier(a) as f32)
+                    .unwrap_or(0.0);
+            if best.as_ref().is_none_or(|(b, _)| worth > *b) {
+                best = Some((worth, profile));
+            }
+        }
+        best.map(|(_, p)| p)
+    }
+}
+
+impl Action for Sunder {
+    fn name(&self) -> &str {
+        "sunder"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["smash", "breach"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // A tile, not a creature — which is the whole reason this action
+        // exists. See the type docs.
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        // No creature loses hit points, which is what this answer is
+        // about: the AI's focus-fire pipeline prices actions by what
+        // they take off an enemy, and a wall is not an enemy.
+        false
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        crate::actions::action_template::action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        encounter.breakable_at(point).is_some()
+            && Self::best_swing(encounter, caster_id).is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some((_, profile)) = encounter.breakable_at(point) else {
+            return Vec::new();
+        };
+        let Some(swing) = Self::best_swing(encounter, caster_id) else {
+            return Vec::new();
+        };
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let name = actor.name().to_string();
+        let to_hit = actor.spell_attack_modifier(swing.attack_ability);
+        let damage_bonus = swing
+            .damage_ability
+            .map(|a| actor.ability_modifier(a))
+            .unwrap_or(0)
+            + swing.flat_bonus;
+        // A plain d20 against a number, with no roll-mode tally: an
+        // object is not Prone, not Invisible, not flanked and not
+        // dodging, so every input the shared tally reads is absent by
+        // construction. See the type docs for the one thing that *is*
+        // absent and should not be — the crit.
+        let roll = encounter.roll(&crate::engine::dice::Dice::new(1, 20)) as i32;
+        let total = roll + to_hit;
+        if total < profile.ac as i32 {
+            encounter.log(format!(
+                "  {} swings at the {} and misses (d20 {} {:+} = {} vs AC {}).",
+                name, profile.label, roll, to_hit, total, profile.ac
+            ));
+            return Vec::new();
+        }
+        let rolled = encounter.roll(&swing.dice) as i32;
+        let amount = (rolled + damage_bonus).max(0) as u32;
+        encounter.log(format!(
+            "  {} strikes the {} (d20 {} {:+} = {} vs AC {}).",
+            name, profile.label, roll, to_hit, total, profile.ac
+        ));
+        vec![Box::new(crate::engine::side_effects::DamageObjectAt {
+            coord: point,
+            amount,
+            damage_type: swing.damage_type,
+        })]
+    }
+}
+
+pub static SUNDER: LazyLock<Sunder> = LazyLock::new(|| Sunder {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
     || {
         vec![
@@ -2353,6 +2539,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*SEARCH,
             &*WIPE_ACID,
             &*DROP_AND_ROLL,
+            &*SUNDER,
             &*BURROW,
             &*SURFACE,
         ]

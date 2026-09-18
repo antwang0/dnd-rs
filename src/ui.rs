@@ -784,15 +784,32 @@ pub fn render_sideinfo(
             layer_line(glyph, zone.name, detail);
         }
         for patch in encounter.conjured_terrain() {
-            layer_line(
-                '▚',
-                patch.name,
-                format!(
+            // A breakable patch carries one column the others don't: how
+            // close the party is to getting through it. The *weakest*
+            // tile rather than the pool, because a wall comes down one
+            // hole at a time — RAW's "reducing a panel to 0 Hit Points
+            // destroys it and leaves behind a hole" — so the number a
+            // player is deciding on is the cheapest way through. See
+            // `engine::objects`.
+            let weakest = patch
+                .restore
+                .iter()
+                .filter_map(|(c, _)| encounter.object_hp_at(*c))
+                .min();
+            let detail = match weakest {
+                Some(hp) => format!(
+                    " {} tiles — {}r — thinnest {} HP",
+                    patch.restore.len(),
+                    patch.rounds_remaining,
+                    hp
+                ),
+                None => format!(
                     " {} tiles — {}r",
                     patch.restore.len(),
                     patch.rounds_remaining
                 ),
-            );
+            };
+            layer_line('▚', patch.name, detail);
         }
         // And the blades, which carry one column the other two layers
         // don't: a Dancing Sword ends on a count of swings rather than

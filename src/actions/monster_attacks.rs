@@ -2545,6 +2545,25 @@ impl Action for SimpleWeapon {
             .get(&caster_id)
             .is_some_and(|a| a.has_condition(required))
     }
+    /// The four numbers a swing puts into a thing — see
+    /// `Action::melee_swing_profile`, and note the *melee* in the name:
+    /// a longbow has these fields too and a wall is not something you
+    /// shoot a hole in at range. Finesse is deliberately unresolved
+    /// here; it needs a wielder, and the one caller re-asks.
+    fn melee_swing_profile(
+        &self,
+    ) -> Option<crate::actions::action_template::MeleeSwingProfile> {
+        if !self.is_melee {
+            return None;
+        }
+        Some(crate::actions::action_template::MeleeSwingProfile {
+            attack_ability: self.attack_ability,
+            dice: self.damage_dice,
+            damage_ability: self.damage_ability,
+            flat_bonus: self.flat_damage_bonus,
+            damage_type: self.damage_type,
+        })
+    }
     /// The picker's estimate, resolved through the same Finesse choice
     /// the swing makes — a rogue weighing a scimitar has to be told what
     /// *they* will roll with it, not what the object's declaration says.

@@ -9,6 +9,29 @@ use crate::engine::{
     types::{AbilityScoreType, Coordinate, DamageType},
 };
 
+/// What one swing of a weapon would roll, decoupled from anybody to
+/// swing it at — see [`Action::melee_swing_profile`].
+///
+/// A copy of the four fields `simple_weapon_swing` reads off a
+/// `SimpleWeapon` before it builds an `AttackParams`, and deliberately
+/// only those four: the properties that change *how* a swing is
+/// resolved against a creature (finesse, reach, mastery, the bloodied
+/// die swap) all need a target to mean anything, and a wall is neither
+/// finessable nor bloodied.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MeleeSwingProfile {
+    /// The ability the to-hit roll is made with.
+    pub attack_ability: AbilityScoreType,
+    pub dice: crate::engine::dice::Dice,
+    /// The ability whose modifier joins the damage, or `None` for the
+    /// Hit lines that print none.
+    pub damage_ability: Option<AbilityScoreType>,
+    /// The Hit line's flat term that is nobody's ability modifier — see
+    /// `SimpleWeapon::flat_damage_bonus`.
+    pub flat_bonus: i32,
+    pub damage_type: DamageType,
+}
+
 /// **The** per-target save-and-damage loop. Every burst in the engine
 /// resolves through this function — the two neutral / enemy wrappers
 /// below it, and `spells::burst_save_damage`, which layers a shared
@@ -227,7 +250,7 @@ pub fn resolve_area_save_damage_saves(
     // folding it here keeps the caster-exclusion / geometry / sorted-ids
     // invariant in one place instead of re-inlining the loop.
     let target_ids = encounter.neutral_area_targets(caster_id, shape, aim);
-    resolve_burst_targets(
+    let (mut effects, saves) = resolve_burst_targets(
         encounter,
         caster_id,
         encounter.area_origin(caster_id, shape, aim),
@@ -238,7 +261,28 @@ pub fn resolve_area_save_damage_saves(
         damage_type,
         SaveDamagePolicy::HalfOnSave,
         &shielded,
-    )
+    );
+    // SRD 5.2 **Breaking Objects**: *"Objects can be harmed by attacks
+    // and by some spells."* This is the friend-or-foe area lane — every
+    // Fireball, Cone of Cold, Lightning Bolt and Shatter in the engine
+    // resolves through it — and so it is the one place a spell meets a
+    // wall of ice. The enemy-only sibling below deliberately does not
+    // carry this: the features on it (Radiance of the Dawn, Searing
+    // Sunburst) are written about *hostile creatures*, and a cleric's
+    // burst of dawn does not knock the party's own wall down.
+    //
+    // Queued rather than resolved, and handed the undamaged roll — see
+    // `DamageObjectsInArea` for both reasons.
+    effects.push(Box::new(
+        crate::engine::side_effects::DamageObjectsInArea {
+            caster_id,
+            shape,
+            aim,
+            amount: damage,
+            damage_type,
+        },
+    ));
+    (effects, saves)
 }
 
 /// Enemy-only sibling of `resolve_burst_save_damage`. Every combat-active
@@ -1727,6 +1771,32 @@ pub trait Action {
     /// every spell: RAW's mastery table lists objects out of the weapon
     /// shop, and a bite is not one.
     fn weapon_mastery(&self) -> Option<crate::engine::mastery::WeaponMastery> {
+        None
+    }
+
+    /// The dice this action puts into whatever it hits, for a caller
+    /// that has no *creature* to aim them at.
+    ///
+    /// Every swing in the engine resolves against a target id: the
+    /// attack pipeline needs a sheet to read an AC off, a resistance
+    /// table to scale against, and hit points to take away. SRD 5.2's
+    /// *Breaking Objects* has none of those — a wall of ice has an AC
+    /// and hit points and is not a creature — so the one action that
+    /// swings at a wall ([`crate::actions::default_actions::Sunder`])
+    /// needs to ask a weapon what it would have rolled rather than tell
+    /// it where to roll.
+    ///
+    /// Implemented by [`crate::actions::monster_attacks::SimpleWeapon`]
+    /// and by nothing else, which covers every object in the armoury and
+    /// most of the bestiary's natural weapons. The chassis that decline
+    /// — the ones carrying a save rider, a condition, a swallow — do so
+    /// because their dice are only half of what they do, and half of a
+    /// roper's tendril landing on a wall is not a rule anybody wrote. A
+    /// creature holding nothing else simply cannot sunder, which is the
+    /// right answer for a gelatinous cube.
+    ///
+    /// Defaults to `None`: a spell is not a swing, and neither is a Dash.
+    fn melee_swing_profile(&self) -> Option<MeleeSwingProfile> {
         None
     }
 

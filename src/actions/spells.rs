@@ -1065,7 +1065,7 @@ fn area_save_damage(
         }
     };
     let target_ids = targets.ids(encounter, caster_id, shape, aim);
-    crate::actions::action_template::resolve_burst_targets(
+    let (mut effects, saves) = crate::actions::action_template::resolve_burst_targets(
         encounter,
         caster_id,
         encounter.area_origin(caster_id, shape, aim),
@@ -1076,7 +1076,37 @@ fn area_save_damage(
         damage_type,
         outcome,
         &shielded,
-    )
+    );
+    // SRD 5.2 **Breaking Objects**: *"Objects can be harmed by attacks
+    // and by some spells."* This is the spell lane's own area
+    // chokepoint — every Fireball, Cone of Cold, Lightning Bolt and
+    // Shatter in the file passes through it — and so it is where a
+    // spell meets a wall of ice. The sibling in `action_template` does
+    // the same for the areas that are not spells (a scroll, a class
+    // feature, an item's burst); the two are separate because the spell
+    // lane rolls its own shared damage above and never calls the other.
+    //
+    // **Neutral areas only.** `BurstTargets::Enemy` is the engine's
+    // spelling of RAW's *"each creature hostile to you"*, a sentence
+    // that names creatures and excludes the caster's own side — and a
+    // wall belongs to somebody. A blast that spares the party's cleric
+    // by its own text should not bring the party's wall down.
+    //
+    // Queued rather than resolved, and handed `raw` rather than any
+    // target's post-save number: an object fails every saving throw, so
+    // it takes what the dice said. See `DamageObjectsInArea`.
+    if matches!(targets, BurstTargets::Neutral) {
+        effects.push(Box::new(
+            crate::engine::side_effects::DamageObjectsInArea {
+                caster_id,
+                shape,
+                aim,
+                amount: raw,
+                damage_type,
+            },
+        ));
+    }
+    (effects, saves)
 }
 
 /// Enemy-only, save-for-half, over an area of any shape — the
@@ -25677,7 +25707,15 @@ impl Action for WallOfIce {
                 10,
                 true,
             )
-            .with_verb("freezes a panel of ice across"),
+            .with_verb("freezes a panel of ice across")
+            // SRD 5.2: *"The wall is an object that can be damaged and
+            // thus breached. It has AC 12 and 30 Hit Points per 10-foot
+            // section, and it has Immunity to Cold, Poison, and Psychic
+            // damage and Vulnerability to Fire damage."* — the clause
+            // that makes this a delay rather than a door, and the
+            // reason a Fireball is the answer to it. See
+            // `engine::objects::WALL_OF_ICE_PROFILE`.
+            .breakable(&crate::engine::objects::WALL_OF_ICE_PROFILE),
         }));
         effects.push(Box::new(StartConcentration {
             caster_id,
@@ -30162,7 +30200,14 @@ impl Action for WallOfStone {
                     wall_tiles(caster_at, point, Self::REACH),
                     10,
                     true,
-                ),
+                )
+                // SRD 5.2: *"Each panel has AC 15 and 30 Hit Points per
+                // inch of thickness, and it has Immunity to Poison and
+                // Psychic damage."* Six inches of it, which is why this
+                // is the wall a party has to decide about rather than
+                // one they burn through. See
+                // `engine::objects::WALL_OF_STONE_PROFILE`.
+                .breakable(&crate::engine::objects::WALL_OF_STONE_PROFILE),
             }),
             Box::new(StartConcentration {
                 caster_id,

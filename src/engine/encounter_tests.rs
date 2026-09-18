@@ -114800,6 +114800,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/magic.rs", include_str!("magic.rs")),
         ("engine/mastery.rs", include_str!("mastery.rs")),
         ("engine/mounts.rs", include_str!("mounts.rs")),
+        ("engine/objects.rs", include_str!("objects.rs")),
         ("engine/poisons.rs", include_str!("poisons.rs")),
         ("engine/prompt.rs", include_str!("prompt.rs")),
         ("engine/repeat_saves.rs", include_str!("repeat_saves.rs")),
@@ -120314,5 +120315,268 @@ fn a_fiend_steeds_glare_frightens_once_a_day() {
     assert!(
         !e.actors[&steed].is_recharge_available(FELL_GLARE_KEY),
         "\"Recharges after a Long Rest\" is not \"Recharge 5-6\""
+    );
+}
+
+// ---------------------------------------------------------------------
+// Breaking Objects — SRD 5.2's rule for hitting a thing that is not a
+// creature, and the two wall spells that print their own AC and hit
+// point line.
+//
+// The feature is a hole in a wall, so every test here ends by asking
+// the pathfinder the same question: is there a way through now that
+// there was not before? That is the only consequence any of it has, and
+// a hit point counter that never turns into a route would be a ledger
+// nobody reads.
+// ---------------------------------------------------------------------
+
+/// A wall of ice across a corridor, with a wizard on one side and
+/// somebody to get at on the other. Returns the board, the caster, and
+/// the tile the wall is anchored on.
+fn walled_off(
+    wall: &'static (dyn crate::actions::action_template::Action + Send + Sync),
+) -> (EncounterInstance, usize, Coordinate) {
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    // A corridor running east-west, two tiles deep — which is one
+    // Medium creature wide on the 2.5 ft grid, and the narrowest one a
+    // wizard can stand in. The wall the spell raises across it is then
+    // the only way from one end to the other.
+    let mut walls: Vec<(isize, isize)> = Vec::new();
+    for x in 0..20 {
+        walls.push((x, 4));
+        walls.push((x, 7));
+    }
+    let mut e = ei_with_terrain(20, 12, &walls);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 5), 0, 0)
+        .unwrap();
+    let anchor = Coordinate::new(10, 5);
+    for x in wall.execute(&mut e, wizard, None, Some(&vec![anchor]), None) {
+        x.apply(&mut e);
+    }
+    // The wall cost the wizard their Action; every test below wants
+    // them able to cast again. `reset_for_new_round` hands back the
+    // action economy and leaves the concentration holding the wall up,
+    // which is exactly what the next round would do.
+    e.actors.get_mut(&wizard).unwrap().reset_for_new_round();
+    (e, wizard, anchor)
+}
+
+/// The wall goes up, the corridor closes, and the wall is an object
+/// with hit points — RAW's *"the wall is an object that can be damaged
+/// and thus breached."*
+#[test]
+fn a_conjured_wall_is_an_object_and_a_natural_one_is_not() {
+    use crate::actions::spells::{WALL_OF_FORCE, WALL_OF_ICE};
+    use crate::engine::objects::WALL_OF_ICE_PROFILE;
+
+    let (e, wizard, anchor) = walled_off(&*WALL_OF_ICE);
+    assert!(
+        e.path_to(wizard, Coordinate::new(13, 5)).is_none(),
+        "the wall should close the corridor"
+    );
+    let (_, profile) = e.breakable_at(anchor).expect("the ice is an object");
+    assert_eq!(profile.ac, WALL_OF_ICE_PROFILE.ac);
+    assert_eq!(e.object_hp_at(anchor), Some(WALL_OF_ICE_PROFILE.hp_per_tile));
+    // The dungeon's own stone is scenery, not an object — see
+    // `engine::objects` for why that narrowing is deliberate.
+    assert!(e.breakable_at(Coordinate::new(10, 4)).is_none());
+
+    // And the pointed absence: RAW's Wall of Force is *"immune to all
+    // damage"*, which is most of what its fifth-level slot buys over the
+    // fifth-level Wall of Stone beside it.
+    let (force, _, anchor) = walled_off(&*WALL_OF_FORCE);
+    assert!(
+        force.breakable_at(anchor).is_none(),
+        "nothing gets through a wall of force by hitting it"
+    );
+}
+
+/// One Fireball, one hole — and the corridor is open again.
+///
+/// This is the whole reason Wall of Ice prints a *Vulnerability to
+/// Fire* line: the doubled damage clears a tile's hit points several
+/// times over, so a third-level slot answers a sixth-level wall. The
+/// route is the assertion rather than the hit points, because a ledger
+/// that never becomes a path is a ledger nobody reads.
+#[test]
+fn a_fireball_melts_a_hole_through_a_wall_of_ice() {
+    use crate::actions::spells::{FIREBALL, WALL_OF_ICE};
+
+    let (mut e, wizard, anchor) = walled_off(&*WALL_OF_ICE);
+    // Just past the wall, and inside a wizard's move: `path_to` is
+    // budget-limited, so a destination across the room would answer
+    // `None` whether the wall was there or not.
+    let far = Coordinate::new(13, 5);
+    assert!(e.path_to(wizard, far).is_none(), "the wall is in the way");
+    // Aimed at the floor in front of the wall rather than at the wall
+    // itself, because the wall blocks the line of sight the spell
+    // needs — which is the ordinary way a party actually does this, and
+    // a nice reminder that a wall of ice is opaque. The blast's radius
+    // reaches the panel from there.
+    let in_front = Coordinate::new(anchor.x - 1, anchor.y);
+    let effects = FIREBALL.execute(&mut e, wizard, None, Some(&vec![in_front]), None);
+    assert!(
+        !effects.is_empty(),
+        "the cast has to land for the rest of this to mean anything"
+    );
+    for x in effects {
+        x.apply(&mut e);
+    }
+    assert_eq!(
+        e.object_hp_at(anchor),
+        None,
+        "the tile the blast was centred on should be gone"
+    );
+    assert!(
+        e.path_to(wizard, far).is_some(),
+        "and the corridor should be open through the hole"
+    );
+}
+
+/// The other half of the same two lines: a Cone of Cold aimed at a wall
+/// of ice does nothing whatsoever to it.
+///
+/// RAW gives the wall *Immunity to Cold*, and without it the engine's
+/// answer would be "half the damage, because it failed its save" — an
+/// object fails every save, so an immunity it did not have would be the
+/// worst of both.
+#[test]
+fn a_wall_of_ice_cannot_be_taken_down_with_cold() {
+    use crate::actions::spells::{CONE_OF_COLD, WALL_OF_ICE};
+    use crate::engine::objects::WALL_OF_ICE_PROFILE;
+
+    let (mut e, wizard, anchor) = walled_off(&*WALL_OF_ICE);
+    let in_front = Coordinate::new(anchor.x - 1, anchor.y);
+    let effects = CONE_OF_COLD.execute(&mut e, wizard, None, Some(&vec![in_front]), None);
+    assert!(
+        !effects.is_empty(),
+        "the cast has to land for the rest of this to mean anything"
+    );
+    for x in effects {
+        x.apply(&mut e);
+    }
+    assert_eq!(
+        e.object_hp_at(anchor),
+        Some(WALL_OF_ICE_PROFILE.hp_per_tile),
+        "the wall is made of the thing being thrown at it"
+    );
+    assert!(e.path_to(wizard, Coordinate::new(13, 5)).is_none());
+}
+
+/// A fighter with an axe gets through a wall of stone, and it takes a
+/// while.
+///
+/// The swing half of RAW's *"objects can be harmed by attacks and by
+/// some spells"*, and the reason it has to exist: a party with no area
+/// damage meets a Wall of Stone and otherwise simply stops. Forty-five
+/// hit points a tile is several rounds of greatsword, which is the
+/// difference between this wall and the ice one — see
+/// `engine::objects::WALL_OF_STONE_PROFILE`.
+#[test]
+fn a_fighter_can_chop_through_a_wall_of_stone() {
+    use crate::actions::default_actions::SUNDER;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::objects::WALL_OF_STONE_PROFILE;
+
+    let (mut e, _wizard, anchor) = walled_off(&*crate::actions::spells::WALL_OF_STONE);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(9, 5), 0, 0)
+        .unwrap();
+    assert_eq!(e.object_hp_at(anchor), Some(WALL_OF_STONE_PROFILE.hp_per_tile));
+    assert!(
+        ActionExecutionInfo::new(&*SUNDER, fighter, None, Some(vec![anchor]), None)
+            .validate(&e),
+        "a fighter standing against the wall can swing at it"
+    );
+    // Out of reach is out of reach, which is what makes this an Action
+    // and not a ranged one.
+    assert!(
+        !ActionExecutionInfo::new(
+            &*SUNDER,
+            fighter,
+            None,
+            Some(vec![Coordinate::new(10, 5) + Coordinate::new(3, 0)]),
+            None
+        )
+        .validate(&e)
+    );
+
+    // Swing until it falls, refreshing the Action each round. A cap
+    // rather than a loop-until-true so a regression that made the wall
+    // invulnerable fails here rather than hanging the suite.
+    let mut swings = 0;
+    while e.object_hp_at(anchor).is_some() && swings < 40 {
+        for x in SUNDER.execute(&mut e, fighter, None, Some(&vec![anchor]), None) {
+            x.apply(&mut e);
+        }
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+        swings += 1;
+    }
+    assert!(
+        e.object_hp_at(anchor).is_none(),
+        "forty swings of a greatsword should see off one tile of stone"
+    );
+    assert!(
+        swings > 2,
+        "…and should not see it off in one: forty-five hit points is the spell"
+    );
+}
+
+/// A breach is a hole, not a demolition.
+///
+/// RAW's *"reducing a panel to 0 Hit Points destroys it and leaves
+/// behind a hole"* is a sentence about one part of a wall. The tile
+/// that fell goes back to being floor and every other tile stands —
+/// and the patch itself is still up, still on its clock, and still
+/// answering to the caster's concentration, which is the invariant a
+/// ledger edited in place is most likely to break.
+#[test]
+fn a_breach_leaves_the_rest_of_the_wall_standing() {
+    use crate::actions::spells::WALL_OF_ICE;
+    use crate::engine::terrain::TerrainType;
+
+    let (mut e, wizard, anchor) = walled_off(&*WALL_OF_ICE);
+    let tiles_before = e.conjured_terrain()[0].restore.len();
+    assert!(tiles_before > 1, "a wall is more than one tile");
+    // A single tile's worth of fire rather than a Fireball, so exactly
+    // one tile falls: the burst would take the whole wall.
+    e.damage_object_at(anchor, 100, crate::engine::types::DamageType::Fire);
+
+    let patch = &e.conjured_terrain()[0];
+    assert_eq!(patch.restore.len(), tiles_before - 1, "one tile, not the wall");
+    assert_eq!(
+        patch.hp.len(),
+        patch.restore.len(),
+        "the ledger and the hit point pool have to stay the same length"
+    );
+    assert!(!patch.covers(anchor));
+    assert_eq!(
+        e.terrain_at(anchor).map(|t| t.terrain_type),
+        Some(TerrainType::Floor),
+        "the hole is floor again"
+    );
+    // …and the tile beside it, which the same wall is still holding, is
+    // still ice.
+    let still_held = patch.restore[0].0;
+    assert_eq!(
+        e.terrain_at(still_held).map(|t| t.terrain_type),
+        Some(TerrainType::Wall),
+        "a breach at one tile is not a breach at the next"
+    );
+    // The spell is still up: a wall with a hole in it has not been
+    // dispelled, and the caster is still holding it.
+    assert!(e.actors[&wizard].is_concentrating());
+    assert_eq!(e.conjured_terrain().len(), 1);
+
+    // And when it does come down, the tiles it still holds are handed
+    // back and the one it lost is not handed back twice.
+    let id = e.conjured_terrain()[0].id;
+    assert!(e.dispel_conjured_terrain(id));
+    assert!(e.conjured_terrain().is_empty());
+    assert_eq!(
+        e.terrain_at(still_held).map(|t| t.terrain_type),
+        Some(TerrainType::Floor),
+        "and the rest of the wall is handed back when the spell ends"
     );
 }
