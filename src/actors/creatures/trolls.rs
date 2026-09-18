@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BITE, SLAM, TROLL_LIMB_REND};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -39,6 +39,7 @@ pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         regen_per_round: 3,
         regen_suppressors: HashSet::from([DamageType::Acid, DamageType::Fire]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

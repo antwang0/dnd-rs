@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{ERINYES_LONGSWORD, ERINYES_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -89,6 +89,7 @@ pub static ERINYES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // marilith on the whole roster — a devil that has been
         // fighting since before the party's grandparents.
         parry_bonus: 4,
+        skills: HashSet::from([Skill::Perception, Skill::Persuasion]),
         ..CreatureTemplate::defaults()
     }
 });

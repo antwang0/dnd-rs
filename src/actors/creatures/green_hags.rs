@@ -2,7 +2,7 @@ use crate::actions::class_features::UNDERWATER_BREATHING_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREEN_HAG_CLAWS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -48,6 +48,12 @@ pub static GREEN_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // no particular grace in it, so a pool still charges her
         // double to wade through.
         features: HashSet::from([UNDERWATER_BREATHING_TAG]),
+        skills: HashSet::from([
+            Skill::Arcana,
+            Skill::Deception,
+            Skill::Perception,
+            Skill::Stealth,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

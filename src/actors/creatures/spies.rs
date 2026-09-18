@@ -64,7 +64,6 @@ pub static SPY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Skill::Insight,
             Skill::Investigation,
             Skill::Perception,
-            Skill::Persuasion,
             Skill::SleightOfHand,
             Skill::Stealth,
         ]),

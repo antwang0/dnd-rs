@@ -34,7 +34,7 @@ pub static JACKAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 3,
         wisdom: 12,
         charisma: 6,
-        skills: HashSet::from([Skill::Perception]),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         cr: 0.0,
         size: Size::Small,
         creature_type: CreatureType::Beast,

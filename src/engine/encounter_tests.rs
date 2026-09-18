@@ -123876,6 +123876,432 @@ fn every_stat_blocks_saving_throws_match_the_book() {
     );
 }
 
+/// Every stat block's **Skills** row, against what the bestiary
+/// declares.
+///
+/// The seventh book-conformance sweep, and the one with the most rows
+/// simply missing: a hundred and forty-three stat blocks declared no
+/// skill proficiency at all, where the book prints one or more. It is
+/// not a cosmetic row. Two of the eighteen skills are read on every
+/// turn of every fight:
+///
+///   - **Perception** sets `passive_perception`, which is what the
+///     top-of-turn sweep compares against a hidden creature's Stealth
+///     total, and what the Search action rolls. A dragon printed with
+///     *"Perception +11"* was watching the room at +6.
+///   - **Stealth** is the other half of that contest — the roll the
+///     Hide action makes, and the number a creature is then found
+///     against. Half the bestiary's ambushers had none: the cloaker,
+///     the darkmantle, the mimic, the gargoyle, the grick, the quasit,
+///     the shambling mound and the four mephits all hide for a living
+///     and all hid on a bare Dexterity check.
+///
+/// The rest are read wherever an ability check is rolled for a
+/// creature that has one — Athletics on the giants' grapples and
+/// shoves, and the social and lore skills wherever a check reaches
+/// them.
+///
+/// ## The book does not print proficiencies here either
+///
+/// The Skills row prints a total per skill, not a proficiency, in the
+/// same shape the SAVE column does: *"Skills Perception +11, Stealth
+/// +7"*. The engine stores the proficiency — `skills: HashSet<Skill>`,
+/// read through `has_skill` — so what the table records is membership,
+/// which is what a printed row means. Expertise (a total of ability
+/// plus twice the proficiency bonus, which several stat blocks print)
+/// is **not** modelled on this side, so a doubled row is stored as a
+/// plain proficiency; the same rounding the engine already makes
+/// everywhere else it reads `has_skill`.
+///
+/// ## What it found
+///
+/// A hundred and fifty-six rows, and the shape is lopsided:
+///
+///   - **A hundred and forty-three were empty.** Every dragon (all
+///     forty — fixed at `DragonRow`, which grew a `skills` column
+///     because colour and age both move the row), every giant, the
+///     whole devil and demon cohort above CR 5, the lich and archmage's
+///     lore skills, and most of the animal appendix, where Perception
+///     is the one thing a beast is reliably trained in.
+///   - **Thirteen were wrong rather than missing.** The assassin had
+///     Deception the book does not give it; the gladiator had
+///     Intimidation where 5.2 prints Performance; the priest had
+///     Persuasion where it prints Perception; the merfolk skirmisher
+///     had Perception where it prints Stealth; the spy and the incubus
+///     each carried one skill too many; and the bandit captain, bugbear
+///     warrior, ettercap, minotaur, scout, werewolf, giant weasel and
+///     jackal were each short one.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its six
+/// siblings; see there for the rename and the player-character
+/// exclusion.
+#[test]
+fn every_stat_blocks_skills_match_the_book() {
+    /// `(name, "Skill, Skill")` — SRD 5.2's Skills row, one row per stat
+    /// block, in the engine's spelling and sorted so the table reads the
+    /// same way twice. An empty string is a stat block that prints no
+    /// Skills row, which is a little under half the bestiary.
+    const SRD_SKILLS: &[(&str, &str)] = &[
+    ("Aboleth", "History, Perception"),
+    ("Adult Black Dragon", "Perception, Stealth"),
+    ("Adult Blue Dragon", "Perception, Stealth"),
+    ("Adult Brass Dragon", "History, Perception, Persuasion, Stealth"),
+    ("Adult Bronze Dragon", "Insight, Perception, Stealth"),
+    ("Adult Copper Dragon", "Deception, Perception, Stealth"),
+    ("Adult Gold Dragon", "Insight, Perception, Persuasion, Stealth"),
+    ("Adult Green Dragon", "Deception, Perception, Persuasion, Stealth"),
+    ("Adult Red Dragon", "Perception, Stealth"),
+    ("Adult Silver Dragon", "History, Perception, Stealth"),
+    ("Adult White Dragon", "Perception, Stealth"),
+    ("Air Elemental", ""),
+    ("Allosaurus", "Perception"),
+    ("Ancient Black Dragon", "Perception, Stealth"),
+    ("Ancient Blue Dragon", "Perception, Stealth"),
+    ("Ancient Brass Dragon", "History, Perception, Persuasion, Stealth"),
+    ("Ancient Bronze Dragon", "Insight, Perception, Stealth"),
+    ("Ancient Copper Dragon", "Deception, Perception, Stealth"),
+    ("Ancient Gold Dragon", "Insight, Perception, Persuasion, Stealth"),
+    ("Ancient Green Dragon", "Deception, Perception, Persuasion, Stealth"),
+    ("Ancient Red Dragon", "Perception, Stealth"),
+    ("Ancient Silver Dragon", "History, Perception, Stealth"),
+    ("Ancient White Dragon", "Perception, Stealth"),
+    ("Animated Armor", ""),
+    ("Animated Flying Sword", ""),
+    ("Animated Rug of Smothering", ""),
+    ("Ankheg", ""),
+    ("Ankylosaurus", ""),
+    ("Ape", "Athletics, Perception"),
+    ("Archelon", "Stealth"),
+    ("Archmage", "Arcana, History, Perception"),
+    ("Assassin", "Acrobatics, Perception, Stealth"),
+    ("Avatar of Death", ""),
+    ("Awakened Shrub", ""),
+    ("Awakened Tree", ""),
+    ("Axe Beak", ""),
+    ("Azer Sentinel", ""),
+    ("Baboon", ""),
+    ("Badger", "Perception"),
+    ("Balor", "Perception"),
+    ("Bandit", ""),
+    ("Bandit Captain", "Athletics, Deception"),
+    ("Barbed Devil", "Deception, Insight, Perception"),
+    ("Basilisk", ""),
+    ("Bat", ""),
+    ("Bearded Devil", ""),
+    ("Behir", "Perception, Stealth"),
+    ("Berserker", ""),
+    ("Black Bear", "Perception"),
+    ("Black Dragon Wyrmling", "Perception, Stealth"),
+    ("Black Pudding", ""),
+    ("Blink Dog", "Perception, Stealth"),
+    ("Blood Hawk", "Perception"),
+    ("Blue Dragon Wyrmling", "Perception, Stealth"),
+    ("Boar", ""),
+    ("Bone Devil", "Deception, Insight"),
+    ("Brass Dragon Wyrmling", "Perception, Stealth"),
+    ("Bronze Dragon Wyrmling", "Perception, Stealth"),
+    ("Brown Bear", "Perception"),
+    ("Bugbear Stalker", "Stealth, Survival"),
+    ("Bugbear Warrior", "Stealth, Survival"),
+    ("Bulette", "Perception"),
+    ("Camel", ""),
+    ("Cat", "Perception, Stealth"),
+    ("Centaur Trooper", "Athletics, Perception"),
+    ("Chain Devil", ""),
+    ("Chimera", "Perception"),
+    ("Chuul", "Perception"),
+    ("Clay Golem", ""),
+    ("Cloaker", "Stealth"),
+    ("Cloud Giant", "Insight, Perception"),
+    ("Cockatrice", ""),
+    ("Commoner", ""),
+    ("Constrictor Snake", "Perception, Stealth"),
+    ("Copper Dragon Wyrmling", "Perception, Stealth"),
+    ("Couatl", ""),
+    ("Crab", "Stealth"),
+    ("Crocodile", "Stealth"),
+    ("Cultist", "Deception, Religion"),
+    ("Cultist Fanatic", "Deception, Persuasion, Religion"),
+    ("Darkmantle", "Stealth"),
+    ("Death Dog", "Perception, Stealth"),
+    ("Deer", "Perception"),
+    ("Deva", "Insight, Perception"),
+    ("Dire Wolf", "Perception, Stealth"),
+    ("Djinni", ""),
+    ("Doppelganger", "Deception, Insight"),
+    ("Draconic Spirit", ""),
+    ("Draft Horse", ""),
+    ("Dragon Turtle", ""),
+    ("Dretch", ""),
+    ("Drider", "Perception, Stealth"),
+    ("Dryad", "Perception, Stealth"),
+    ("Dust Mephit", "Perception, Stealth"),
+    ("Eagle", "Perception"),
+    ("Earth Elemental", ""),
+    ("Efreeti", ""),
+    ("Elephant", ""),
+    ("Elk", "Perception"),
+    ("Erinyes", "Perception, Persuasion"),
+    ("Ettercap", "Perception, Stealth, Survival"),
+    ("Ettin", "Perception"),
+    ("Fire Elemental", ""),
+    ("Fire Giant", "Athletics, Perception"),
+    ("Flesh Golem", ""),
+    ("Flying Snake", ""),
+    ("Frog", "Perception, Stealth"),
+    ("Frost Giant", "Athletics, Perception"),
+    ("Gargoyle", "Stealth"),
+    ("Gelatinous Cube", ""),
+    ("Ghast", ""),
+    ("Ghost", ""),
+    ("Ghoul", ""),
+    ("Giant Ape", "Athletics, Perception, Survival"),
+    ("Giant Badger", "Perception"),
+    ("Giant Bat", ""),
+    ("Giant Boar", ""),
+    ("Giant Centipede", ""),
+    ("Giant Constrictor Snake", "Perception"),
+    ("Giant Crab", "Stealth"),
+    ("Giant Crocodile", "Stealth"),
+    ("Giant Eagle", "Perception"),
+    ("Giant Elk", "Perception"),
+    ("Giant Fire Beetle", ""),
+    ("Giant Fly", ""),
+    ("Giant Frog", "Perception, Stealth"),
+    ("Giant Goat", "Perception"),
+    ("Giant Hyena", "Perception"),
+    ("Giant Insect", ""),
+    ("Giant Lizard", ""),
+    ("Giant Octopus", "Perception, Stealth"),
+    ("Giant Owl", "Perception, Stealth"),
+    ("Giant Rat", "Perception"),
+    ("Giant Scorpion", ""),
+    ("Giant Seahorse", ""),
+    ("Giant Shark", "Perception"),
+    ("Giant Spider", "Perception, Stealth"),
+    ("Giant Toad", ""),
+    ("Giant Venomous Snake", "Perception"),
+    ("Giant Vulture", "Perception"),
+    ("Giant Wasp", ""),
+    ("Giant Weasel", "Acrobatics, Perception, Stealth"),
+    ("Giant Wolf Spider", "Perception, Stealth"),
+    ("Gibbering Mouther", ""),
+    ("Glabrezu", "Deception, Perception"),
+    ("Gladiator", "Athletics, Performance"),
+    ("Gnoll Warrior", ""),
+    ("Goat", "Perception"),
+    ("Goblin Boss", "Stealth"),
+    ("Goblin Minion", "Stealth"),
+    ("Goblin Warrior", "Stealth"),
+    ("Gold Dragon Wyrmling", "Perception, Stealth"),
+    ("Gorgon", "Perception"),
+    ("Gray Ooze", "Stealth"),
+    ("Green Dragon Wyrmling", "Perception, Stealth"),
+    ("Green Hag", "Arcana, Deception, Perception, Stealth"),
+    ("Grick", "Stealth"),
+    ("Griffon", "Perception"),
+    ("Grimlock", "Athletics, Perception, Stealth"),
+    ("Guard", "Perception"),
+    ("Guard Captain", "Athletics, Perception"),
+    ("Guardian Naga", "Arcana, History, Religion"),
+    ("Harpy", ""),
+    ("Hawk", "Perception"),
+    ("Hell Hound", "Perception"),
+    ("Hezrou", ""),
+    ("Hill Giant", "Perception"),
+    ("Hippogriff", "Perception"),
+    ("Hippopotamus", "Perception"),
+    ("Hobgoblin Captain", ""),
+    ("Hobgoblin Warrior", ""),
+    ("Homunculus", ""),
+    ("Horned Devil", ""),
+    ("Hunter Shark", "Perception"),
+    ("Hydra", "Perception"),
+    ("Hyena", "Perception"),
+    ("Ice Devil", "Insight, Perception, Persuasion"),
+    ("Ice Mephit", "Perception, Stealth"),
+    ("Imp", "Deception, Insight, Stealth"),
+    ("Incubus", "Deception, Insight, Perception, Persuasion, Stealth"),
+    ("Invisible Stalker", "Perception, Stealth"),
+    ("Iron Golem", ""),
+    ("Jackal", "Perception, Stealth"),
+    ("Killer Whale", "Perception, Stealth"),
+    ("Knight", ""),
+    ("Kobold Warrior", ""),
+    ("Kraken", "History, Perception"),
+    ("Lamia", "Deception, Insight, Stealth"),
+    ("Lemure", ""),
+    ("Lich", "Arcana, History, Insight, Perception"),
+    ("Lion", "Perception, Stealth"),
+    ("Lizard", ""),
+    ("Mage", "Arcana, History, Perception"),
+    ("Magma Mephit", "Stealth"),
+    ("Magmin", ""),
+    ("Mammoth", ""),
+    ("Manticore", ""),
+    ("Marilith", "Perception"),
+    ("Mastiff", "Perception"),
+    ("Medusa", "Deception, Perception, Stealth"),
+    ("Merfolk Skirmisher", ""),
+    ("Merrow", ""),
+    ("Mimic", "Stealth"),
+    ("Minotaur Skeleton", ""),
+    ("Minotaur of Baphomet", "Perception, Survival"),
+    ("Mule", ""),
+    ("Mummy", ""),
+    ("Mummy Lord", "History, Perception, Religion"),
+    ("Nalfeshnee", ""),
+    ("Night Hag", "Deception, Insight, Perception, Stealth"),
+    ("Nightmare", ""),
+    ("Noble", "Deception, Insight, Persuasion"),
+    ("Ochre Jelly", ""),
+    ("Octopus", "Perception, Stealth"),
+    ("Ogre", ""),
+    ("Ogre Zombie", ""),
+    ("Oni", "Arcana, Deception, Perception"),
+    ("Otyugh", ""),
+    ("Owl", "Perception, Stealth"),
+    ("Owlbear", "Perception"),
+    ("Panther", "Perception, Stealth"),
+    ("Pegasus", "Perception"),
+    ("Phase Spider", "Stealth"),
+    ("Piranha", ""),
+    ("Pirate", ""),
+    ("Pirate Captain", "Acrobatics, Perception"),
+    ("Pit Fiend", "Perception, Persuasion"),
+    ("Planetar", "Perception"),
+    ("Plesiosaurus", "Perception, Stealth"),
+    ("Polar Bear", "Perception, Stealth"),
+    ("Pony", ""),
+    ("Priest", "Medicine, Perception, Religion"),
+    ("Priest Acolyte", "Medicine, Religion"),
+    ("Pseudodragon", "Perception, Stealth"),
+    ("Pteranodon", "Perception"),
+    ("Purple Worm", ""),
+    ("Quasit", "Stealth"),
+    ("Rakshasa", "Deception, Insight, Perception"),
+    ("Rat", "Perception"),
+    ("Raven", "Perception"),
+    ("Red Dragon Wyrmling", "Perception, Stealth"),
+    ("Reef Shark", "Perception"),
+    ("Remorhaz", ""),
+    ("Rhinoceros", ""),
+    ("Riding Horse", ""),
+    ("Roc", "Perception"),
+    ("Roper", "Perception, Stealth"),
+    ("Rust Monster", ""),
+    ("Saber-Toothed Tiger", "Perception, Stealth"),
+    ("Sahuagin Warrior", "Perception"),
+    ("Salamander", ""),
+    ("Satyr", "Perception, Performance, Stealth"),
+    ("Scorpion", ""),
+    ("Scout", "Nature, Perception, Stealth, Survival"),
+    ("Sea Hag", ""),
+    ("Seahorse", "Perception, Stealth"),
+    ("Shadow", "Stealth"),
+    ("Shambling Mound", "Stealth"),
+    ("Shield Guardian", ""),
+    ("Shrieker Fungus", ""),
+    ("Silver Dragon Wyrmling", "Perception, Stealth"),
+    ("Skeleton", ""),
+    ("Solar", "Perception"),
+    ("Specter", ""),
+    ("Sphinx of Lore", "Arcana, History, Perception, Religion"),
+    ("Sphinx of Valor", "Arcana, Perception, Religion"),
+    ("Sphinx of Wonder", "Arcana, Religion, Stealth"),
+    ("Spider", "Stealth"),
+    ("Spirit Naga", ""),
+    ("Sprite", "Perception, Stealth"),
+    ("Spy", "Deception, Insight, Investigation, Perception, SleightOfHand, Stealth"),
+    ("Steam Mephit", "Stealth"),
+    ("Stirge", ""),
+    ("Stone Giant", "Athletics, Perception, Stealth"),
+    ("Stone Golem", ""),
+    ("Storm Giant", "Arcana, Athletics, History, Perception"),
+    ("Succubus", "Deception, Insight, Perception, Persuasion, Stealth"),
+    ("Tarrasque", "Perception"),
+    ("Tiger", "Perception, Stealth"),
+    ("Tough", ""),
+    ("Tough Boss", ""),
+    ("Treant", ""),
+    ("Triceratops", ""),
+    ("Troll", "Perception"),
+    ("Troll Limb", ""),
+    ("Tyrannosaurus Rex", "Perception"),
+    ("Unicorn", ""),
+    ("Vampire", "Perception, Stealth"),
+    ("Vampire Familiar", "Perception, Persuasion, Stealth"),
+    ("Vampire Spawn", "Perception, Stealth"),
+    ("Venomous Snake", ""),
+    ("Violet Fungus", ""),
+    ("Vrock", ""),
+    ("Vulture", "Perception"),
+    ("Warhorse", ""),
+    ("Warhorse Skeleton", ""),
+    ("Warrior Infantry", ""),
+    ("Warrior Veteran", "Athletics, Perception"),
+    ("Water Elemental", ""),
+    ("Weasel", "Acrobatics, Perception, Stealth"),
+    ("Werebear", "Perception"),
+    ("Wereboar", "Perception"),
+    ("Wererat", "Perception, Stealth"),
+    ("Weretiger", "Perception, Stealth"),
+    ("Werewolf", "Perception, Stealth"),
+    ("White Dragon Wyrmling", "Perception, Stealth"),
+    ("Wight", "Perception, Stealth"),
+    ("Will-o’-Wisp", ""),
+    ("Winter Wolf", "Perception, Stealth"),
+    ("Wolf", "Perception, Stealth"),
+    ("Worg", "Perception"),
+    ("Wraith", ""),
+    ("Wyvern", "Perception"),
+    ("Xorn", "Perception, Stealth"),
+    ("Young Black Dragon", "Perception, Stealth"),
+    ("Young Blue Dragon", "Perception, Stealth"),
+    ("Young Brass Dragon", "Perception, Persuasion, Stealth"),
+    ("Young Bronze Dragon", "Insight, Perception, Stealth"),
+    ("Young Copper Dragon", "Deception, Perception, Stealth"),
+    ("Young Gold Dragon", "Insight, Perception, Persuasion, Stealth"),
+    ("Young Green Dragon", "Deception, Perception, Stealth"),
+    ("Young Red Dragon", "Perception, Stealth"),
+    ("Young Silver Dragon", "History, Perception, Stealth"),
+    ("Young White Dragon", "Perception, Stealth"),
+    ("Zombie", ""),
+    ];
+
+    let found = bestiary_by_name();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, printed) in SRD_SKILLS {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        checked += 1;
+        let mut got: Vec<String> = t.skills.iter().map(|s| format!("{s:?}")).collect();
+        got.sort();
+        if got.join(", ") != *printed {
+            wrong.push(format!(
+                "{name}: the book prints [{printed}] and it is trained in [{}]",
+                got.join(", ")
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's Skills row:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count — see the sibling sweeps for why a match
+    // that silently stops matching is the failure this guards.
+    assert!(
+        checked > 320,
+        "only {checked} of the book's {} stat blocks were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_SKILLS.len()
+    );
+}
+
 /// Every stat block's **Resistances**, **Immunities** and
 /// **Vulnerabilities** rows, against what the bestiary declares.
 ///

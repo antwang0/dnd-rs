@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BROWN_BEAR_BITE, BROWN_BEAR_CLAWS, BROWN_BEAR_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -36,6 +36,7 @@ pub static BROWN_BEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

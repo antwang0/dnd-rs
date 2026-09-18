@@ -1,9 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{POLAR_BEAR_BITE, POLAR_BEAR_CLAWS, POLAR_BEAR_MULTI};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
-use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Size, SpecialSense,
-};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -44,6 +42,7 @@ pub static POLAR_BEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DamageType::Cold,
             DamageModifier::Resistance,
         )]),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -2,7 +2,7 @@ use crate::actions::class_features::{AQUATIC_ONLY_TAG, SWIM_SPEED_TAG, UNDERWATE
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::REEF_SHARK_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -80,6 +80,7 @@ pub static REEF_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // RAW's *only*: the shark drowns in air.
             AQUATIC_ONLY_TAG,
         ]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

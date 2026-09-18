@@ -3,7 +3,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_FROG_BITE, SWALLOW_ACTION};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::jumping::Leap;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -97,6 +97,7 @@ pub static GIANT_FROG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         swallow: Some(&crate::actions::monster_attacks::GIANT_FROG_SWALLOW),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

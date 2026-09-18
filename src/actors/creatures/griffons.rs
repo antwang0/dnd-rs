@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GRIFFON_BEAK, GRIFFON_MULTI, GRIFFON_TALONS};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -75,6 +75,7 @@ pub static GRIFFON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Monstrosity,
         actions,
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

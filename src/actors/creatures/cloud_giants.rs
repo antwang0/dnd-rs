@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     CLOUD_GIANT_MORNINGSTAR, CLOUD_GIANT_MULTI, CLOUD_GIANT_ROCK,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -55,6 +55,7 @@ pub static CLOUD_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // this used to carry are the 2014 giant's.
         proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         has_extra_attack: true,
+        skills: HashSet::from([Skill::Insight, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -4,7 +4,7 @@ use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::attachment::AttachProfile;
 use crate::engine::lighting::SunlightFrailty;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -88,6 +88,7 @@ pub static CLOAKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // question the frailty lane asks — so a cloaker caught under a
         // torch gets away with it and one caught outdoors does not.
         sunlight_frailty: Some(SunlightFrailty::Sensitivity),
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

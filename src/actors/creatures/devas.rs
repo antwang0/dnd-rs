@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{DEVA_HEALING_TOUCH, DEVA_MACE, DEVA_MULTI}
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -123,6 +123,7 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         recharge_abilities: vec![("healing_touch", 4)],
         // 5e **Angelic Weapons**: "the deva's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        skills: HashSet::from([Skill::Insight, Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

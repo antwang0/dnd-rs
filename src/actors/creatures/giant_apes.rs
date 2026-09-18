@@ -2,7 +2,8 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_APE_FIST, GIANT_APE_MULTI, GIANT_APE_ROCK};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::jumping::Leap;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, Skill};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Giant Ape — CR 7 huge beast. The classic Kong-style brute: AC 12, big
@@ -38,6 +39,7 @@ pub static GIANT_APE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Huge,
         creature_type: CreatureType::Beast,
         actions,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception, Skill::Survival]),
         ..CreatureTemplate::defaults()
     }
 });

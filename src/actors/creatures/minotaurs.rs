@@ -40,7 +40,7 @@ pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Monstrosity,
         actions,
-        skills: HashSet::from([Skill::Perception]),
+        skills: HashSet::from([Skill::Perception, Skill::Survival]),
         // RAW: when the minotaur closes at least the clause's distance in a
         // straight line and then connects with its gore, the hit carries
         // extra 2d8 piercing and a Strength save vs prone. Read at the melee attack

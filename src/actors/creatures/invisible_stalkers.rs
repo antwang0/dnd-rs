@@ -5,7 +5,7 @@ use crate::actors::creatures::fire_elementals::{
     elemental_body_defaults,
 };
 use crate::conditions::{Condition, ConditionTimer};
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -108,6 +108,7 @@ pub static INVISIBLE_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // Hidden / Helped / Inspired one-shot cohort, never plain
         // Invisible).
         innate_conditions: vec![(Condition::Invisible, ConditionTimer::Permanent)],
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..elemental_body_defaults([])
     }
 });

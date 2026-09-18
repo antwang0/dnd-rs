@@ -2,7 +2,7 @@ use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GOBLIN_BOSS_MULTI, SHORTBOW};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -37,6 +37,7 @@ pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Small,
         creature_type: CreatureType::Fey,
         actions,
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

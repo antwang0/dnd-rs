@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -154,6 +154,7 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Radiant, DamageModifier::Resistance),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
+        skills: HashSet::from([Skill::Arcana, Skill::Perception, Skill::Religion]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

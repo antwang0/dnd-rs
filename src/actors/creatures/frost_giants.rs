@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{FROST_GIANT_GREATAXE, FROST_GIANT_ROCK};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -45,6 +47,7 @@ pub static FROST_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         has_extra_attack: true,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

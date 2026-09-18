@@ -10,7 +10,7 @@ use crate::actions::spells::{
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -137,6 +137,12 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e lair actions — the phylactery's home answers to it once
         // a round. See `engine::lair_actions`.
         lair_actions: crate::engine::lair_actions::LICH_LAIR,
+        skills: HashSet::from([
+            Skill::Arcana,
+            Skill::History,
+            Skill::Insight,
+            Skill::Perception,
+        ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

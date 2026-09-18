@@ -4,7 +4,7 @@ use crate::actions::class_features::{
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::HUNTER_SHARK_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -83,6 +83,7 @@ pub static HUNTER_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
             // RAW's *only*: the shark drowns in air.
             AQUATIC_ONLY_TAG,
         ]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

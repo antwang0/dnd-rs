@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     DRIDER_BITE, DRIDER_LONGBOW, DRIDER_LONGSWORD, DRIDER_MULTI,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -84,6 +84,7 @@ pub static DRIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Approximated as full immunity to Charmed (+ magical Sleep) at the
         // `dynamic_immunity_to` chokepoint.
         has_fey_ancestry: true,
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

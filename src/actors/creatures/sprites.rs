@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SPRITE_LONGBOW, SPRITE_SHORTSWORD};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -74,6 +74,7 @@ pub static SPRITE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Fey,
         actions,
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

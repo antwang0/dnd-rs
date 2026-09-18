@@ -73,7 +73,12 @@ pub static SCOUT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Humanoid,
         actions,
-        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        skills: HashSet::from([
+            Skill::Nature,
+            Skill::Perception,
+            Skill::Stealth,
+            Skill::Survival,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

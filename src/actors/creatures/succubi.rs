@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SUCCUBUS_CHARM, SUCCUBUS_CLAWS, SUCCUBUS_DRAINING_KISS};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -76,6 +76,13 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // succubus resists the mind as well as the body, which is
             // the half of its defences that matches what it does.
             (DamageType::Psychic, DamageModifier::Resistance),
+        ]),
+        skills: HashSet::from([
+            Skill::Deception,
+            Skill::Insight,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

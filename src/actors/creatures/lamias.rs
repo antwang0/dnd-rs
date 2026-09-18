@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LAMIA_CLAWS, LAMIA_INTOXICATING_TOUCH, LAMIA_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::jumping::Leap;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -79,6 +79,7 @@ pub static LAMIA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Fiend,
         actions,
+        skills: HashSet::from([Skill::Deception, Skill::Insight, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

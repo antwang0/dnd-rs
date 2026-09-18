@@ -6,7 +6,7 @@ use crate::actions::spells::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -98,6 +98,7 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_actions: crate::engine::legendary_actions::SOLAR_LEGENDARY,
         // 5e **Angelic Weapons**: "the solar's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

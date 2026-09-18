@@ -52,7 +52,7 @@ pub static GLADIATOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 10,
         wisdom: 12,
         charisma: 15,
-        skills: HashSet::from([Skill::Athletics, Skill::Intimidation]),
+        skills: HashSet::from([Skill::Athletics, Skill::Performance]),
         languages: HashSet::from([Language::Common]),
         cr: 5.0,
         size: Size::Medium,

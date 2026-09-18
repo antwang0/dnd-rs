@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HIPPOGRIFF_BEAK, HIPPOGRIFF_MULTI, HIPPOGRIFF_TALONS};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, Skill};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Hippogriff — CR 1 monstrosity. Mid-tier melee threat with a beak +
@@ -38,6 +39,7 @@ pub static HIPPOGRIFF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Monstrosity,
         actions,
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

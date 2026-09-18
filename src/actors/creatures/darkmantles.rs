@@ -4,7 +4,7 @@ use crate::actions::spells::DARKNESS;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::attachment::AttachProfile;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -114,6 +114,7 @@ pub static DARKMANTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // currency the engine has for an innate cast.
         spell_slots_by_level: vec![0, 1],
         attach: Some(&DARKMANTLE_ATTACH),
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

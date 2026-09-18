@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ONI_CLAW, ONI_GLAIVE, ONI_MULTI};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -76,6 +76,7 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DamageType::Cold,
             DamageModifier::Resistance,
         )]),
+        skills: HashSet::from([Skill::Arcana, Skill::Deception, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MASTIFF_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, Skill, SpecialSense};
 use std::sync::LazyLock;
 use std::collections::HashSet;
 
@@ -64,6 +64,7 @@ pub static MASTIFF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -61,6 +61,7 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             Condition::Deafened,
             Condition::Exhausted,
         ]),
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

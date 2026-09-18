@@ -5,7 +5,7 @@ use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 #[cfg(test)]
 use crate::engine::types::DamageType;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -57,6 +57,7 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
+        skills: HashSet::from([Skill::History, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

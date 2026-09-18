@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -74,6 +74,7 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         has_extra_attack: true,
         // 5e **Magic Weapons**: "the balor's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

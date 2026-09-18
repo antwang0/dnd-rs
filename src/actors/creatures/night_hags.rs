@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{NIGHT_HAG_CLAWS, NIGHT_HAG_MULTI};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -101,6 +103,12 @@ pub static NIGHT_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Magic Resistance — advantage on saves vs spells / magical
         // effects. Standard mid-tier fiend defensive lane.
         has_magic_resistance: true,
+        skills: HashSet::from([
+            Skill::Deception,
+            Skill::Insight,
+            Skill::Perception,
+            Skill::Stealth,
+        ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

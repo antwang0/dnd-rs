@@ -77,7 +77,7 @@ use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::dice::Dice;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -238,6 +238,15 @@ struct DragonRow {
     cr: f32,
     blindsight: u32,
     darkvision: u32,
+    /// The stat block's **Skills** row. Colour and age both move it:
+    /// every dragon is trained in Perception and Stealth, and the
+    /// metallics pick up a social or lore skill as they grow — the
+    /// brass adds Persuasion at Young and History at Adult, the gold
+    /// carries Insight and Persuasion from Young, the silver History.
+    /// A per-row list rather than a rule, because the pattern has
+    /// exceptions the book does not explain and a rule would have to
+    /// be written as a table of them anyway.
+    skills: &'static [Skill],
 }
 
 /// Every dragon in SRD 5.2, ordered colour-major and youngest-first
@@ -260,6 +269,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 2.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Black Dragon — CR 7, 15d10 + 45.
     DragonRow {
@@ -274,6 +284,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 7.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Adult Black Dragon — CR 14, 17d12 + 85.
     DragonRow {
@@ -288,6 +299,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 14.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Ancient Black Dragon — CR 21, 21d20 + 147.
     DragonRow {
@@ -302,6 +314,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 21.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Wyrmling Blue Dragon — CR 3, 10d8 + 20.
     DragonRow {
@@ -316,6 +329,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 3.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Blue Dragon — CR 9, 16d10 + 64.
     DragonRow {
@@ -330,6 +344,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 9.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Adult Blue Dragon — CR 16, 17d12 + 102.
     DragonRow {
@@ -344,6 +359,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 16.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Ancient Blue Dragon — CR 23, 26d20 + 208.
     DragonRow {
@@ -358,6 +374,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 23.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Wyrmling Green Dragon — CR 2, 7d8 + 7.
     DragonRow {
@@ -372,6 +389,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 2.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Green Dragon — CR 8, 16d10 + 48.
     DragonRow {
@@ -386,6 +404,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 8.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Deception, Skill::Perception, Skill::Stealth],
     },
     // Adult Green Dragon — CR 15, 18d12 + 90.
     DragonRow {
@@ -400,6 +419,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 15.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[
+            Skill::Deception,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Ancient Green Dragon — CR 22, 23d20 + 161.
     DragonRow {
@@ -414,6 +439,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 22.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[
+            Skill::Deception,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Wyrmling Red Dragon — CR 4, 10d8 + 30.
     DragonRow {
@@ -428,6 +459,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 4.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Red Dragon — CR 10, 17d10 + 85.
     DragonRow {
@@ -442,6 +474,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 10.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Adult Red Dragon — CR 17, 19d12 + 133.
     DragonRow {
@@ -456,6 +489,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 17.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Ancient Red Dragon — CR 24, 26d20 + 234.
     DragonRow {
@@ -470,6 +504,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 24.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Wyrmling White Dragon — CR 2, 5d8 + 10.
     DragonRow {
@@ -484,6 +519,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 2.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young White Dragon — CR 6, 13d10 + 52.
     DragonRow {
@@ -498,6 +534,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 6.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Adult White Dragon — CR 13, 16d12 + 96.
     DragonRow {
@@ -512,6 +549,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 13.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Ancient White Dragon — CR 20, 18d20 + 144.
     DragonRow {
@@ -526,6 +564,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 20.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Wyrmling Brass Dragon — CR 1, 4d8 + 4.
     DragonRow {
@@ -540,6 +579,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 1.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Brass Dragon — CR 6, 13d10 + 39.
     DragonRow {
@@ -554,6 +594,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 6.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Perception, Skill::Persuasion, Skill::Stealth],
     },
     // Adult Brass Dragon — CR 13, 15d12 + 75.
     DragonRow {
@@ -568,6 +609,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 13.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[
+            Skill::History,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Ancient Brass Dragon — CR 20, 19d20 + 133.
     DragonRow {
@@ -582,6 +629,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 20.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[
+            Skill::History,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Wyrmling Bronze Dragon — CR 2, 6d8 + 12.
     DragonRow {
@@ -596,6 +649,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 2.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Bronze Dragon — CR 8, 15d10 + 60.
     DragonRow {
@@ -610,6 +664,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 8.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Insight, Skill::Perception, Skill::Stealth],
     },
     // Adult Bronze Dragon — CR 15, 17d12 + 102.
     DragonRow {
@@ -624,6 +679,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 15.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Insight, Skill::Perception, Skill::Stealth],
     },
     // Ancient Bronze Dragon — CR 22, 24d20 + 192.
     DragonRow {
@@ -638,6 +694,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 22.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Insight, Skill::Perception, Skill::Stealth],
     },
     // Wyrmling Copper Dragon — CR 1, 4d8 + 4.
     DragonRow {
@@ -652,6 +709,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 1.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Copper Dragon — CR 7, 14d10 + 42.
     DragonRow {
@@ -666,6 +724,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 7.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::Deception, Skill::Perception, Skill::Stealth],
     },
     // Adult Copper Dragon — CR 14, 16d12 + 80.
     DragonRow {
@@ -680,6 +739,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 14.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Deception, Skill::Perception, Skill::Stealth],
     },
     // Ancient Copper Dragon — CR 21, 21d20 + 147.
     DragonRow {
@@ -694,6 +754,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 21.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::Deception, Skill::Perception, Skill::Stealth],
     },
     // Wyrmling Gold Dragon — CR 3, 8d8 + 24.
     DragonRow {
@@ -708,6 +769,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 3.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Gold Dragon — CR 10, 17d10 + 85.
     DragonRow {
@@ -722,6 +784,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 10.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[
+            Skill::Insight,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Adult Gold Dragon — CR 17, 18d12 + 126.
     DragonRow {
@@ -736,6 +804,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 17.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[
+            Skill::Insight,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Ancient Gold Dragon — CR 24, 28d20 + 252.
     DragonRow {
@@ -750,6 +824,12 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 24.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[
+            Skill::Insight,
+            Skill::Perception,
+            Skill::Persuasion,
+            Skill::Stealth,
+        ],
     },
     // Wyrmling Silver Dragon — CR 2, 6d8 + 18.
     DragonRow {
@@ -764,6 +844,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 2.0,
         blindsight: 10,
         darkvision: 60,
+        skills: &[Skill::Perception, Skill::Stealth],
     },
     // Young Silver Dragon — CR 9, 16d10 + 80.
     DragonRow {
@@ -778,6 +859,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 9.0,
         blindsight: 30,
         darkvision: 120,
+        skills: &[Skill::History, Skill::Perception, Skill::Stealth],
     },
     // Adult Silver Dragon — CR 16, 16d12 + 112.
     DragonRow {
@@ -792,6 +874,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 16.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::History, Skill::Perception, Skill::Stealth],
     },
     // Ancient Silver Dragon — CR 23, 24d20 + 216.
     DragonRow {
@@ -806,6 +889,7 @@ const DRAGONS: [DragonRow; 40] = [
         cr: 23.0,
         blindsight: 60,
         darkvision: 120,
+        skills: &[Skill::History, Skill::Perception, Skill::Stealth],
     },
 ];
 
@@ -2270,6 +2354,7 @@ fn dragon_template(index: usize) -> CreatureTemplate {
         intelligence: row.abilities[3],
         wisdom: row.abilities[4],
         charisma: row.abilities[5],
+        skills: row.skills.iter().copied().collect(),
         senses,
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: row.cr,

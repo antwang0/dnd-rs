@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -58,6 +58,7 @@ pub static BEHIR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // window across every breath-bearing creature in the engine.
         recharge_abilities: vec![("breath_weapon", 5)],
         swallow: Some(&crate::actions::monster_attacks::BEHIR_SWALLOW),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

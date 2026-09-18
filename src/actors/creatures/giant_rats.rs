@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_RAT_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -68,6 +68,7 @@ pub static GIANT_RAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // target. The load-bearing trait at the giant rat's CR tier.
         has_pack_tactics: true,
         proficient_saves: HashSet::from([AbilityScoreType::Dexterity]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

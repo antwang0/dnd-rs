@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WEREBEAR_BITE, WEREBEAR_CLAWS, WEREBEAR_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -86,6 +86,7 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // nonmagical attacks that aren't silvered. Same call as the
         // werewolf template, and shared with it through the
         // constructor rather than restated here.
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });

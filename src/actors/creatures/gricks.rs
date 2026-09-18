@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GRICK_TENTACLES_WEAPON, GRICK_BEAK};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -30,6 +30,7 @@ pub static GRICK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Aberration,
         actions,
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

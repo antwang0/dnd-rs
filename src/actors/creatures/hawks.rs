@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::HAWK_TALONS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, Skill};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Hawk — CR 0 tiny beast. The canonical "flying scout" ambient beast:
@@ -71,6 +72,7 @@ pub static HAWK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Beast,
         actions,
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

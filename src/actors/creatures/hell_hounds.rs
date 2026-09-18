@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HELL_HOUND_BITE, HELL_HOUND_FIRE_BREATH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -42,6 +44,7 @@ pub static HELL_HOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Fiends are immune to being charmed by mortals — keeps the
         // hound's pack discipline from being broken by Charm Person.
         condition_immunities: HashSet::from([Condition::Charmed]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

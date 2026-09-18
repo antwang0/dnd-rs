@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{FIRE_BOLT, IMP_STING};
 use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -58,6 +60,7 @@ pub static IMP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // exactly backwards: RAW darkvision is precisely what magical
         // darkness defeats.
         features: HashSet::from([crate::actions::class_features::DEVILS_SIGHT_TAG]),
+        skills: HashSet::from([Skill::Deception, Skill::Insight, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

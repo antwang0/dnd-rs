@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{GLABREZU_FIST, GLABREZU_MULTI, GLABREZU_PI
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -66,6 +66,7 @@ pub static GLABREZU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Frightened,
         ]),
         has_magic_resistance: true,
+        skills: HashSet::from([Skill::Deception, Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

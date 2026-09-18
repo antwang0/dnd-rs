@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::PTERANODON_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -71,6 +71,7 @@ pub static PTERANODON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // suppression lane in `dispatch_opportunity_attacks`, and gated
         // there on the creature actually being airborne.
         features: HashSet::from([crate::actions::class_features::FLYBY_TAG]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

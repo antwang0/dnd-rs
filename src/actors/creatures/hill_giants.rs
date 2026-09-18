@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{HILL_GIANT_BOULDER, HILL_GIANT_GREATCLUB};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -45,6 +45,7 @@ pub static HILL_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Hold Monster from neutralizing the giant outright.
         condition_immunities: HashSet::from([Condition::Charmed]),
         has_extra_attack: true,
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

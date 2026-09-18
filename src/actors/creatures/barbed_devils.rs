@@ -8,7 +8,7 @@ use crate::conditions::Condition;
 use crate::engine::attack::{MeleeReflect, ReflectDamage};
 use crate::engine::dice::Dice;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -99,6 +99,7 @@ pub static BARBED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         has_magic_resistance: true,
         features: HashSet::from([DEVILS_SIGHT_TAG, MAGICAL_ATTACKS_TAG]),
         natural_melee_reflect: Some(BARBED_DEVIL_BARBED_HIDE),
+        skills: HashSet::from([Skill::Deception, Skill::Insight, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

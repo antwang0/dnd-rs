@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{QUASIT_CLAWS, QUASIT_SCARE};
 use crate::conditions::Condition;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -62,6 +62,7 @@ pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Magic Resistance: advantage on saves vs spells and other
         // magical effects. Slots into the standard caster-counter lane.
         has_magic_resistance: true,
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

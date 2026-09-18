@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     LONGBOW, MEDUSA_MULTI, MEDUSA_PETRIFYING_GAZE, MEDUSA_SNAKE_HAIR,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -48,6 +48,7 @@ pub static MEDUSA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Monstrosity,
         actions,
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
+        skills: HashSet::from([Skill::Deception, Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

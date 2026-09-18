@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DRYAD_CLUB, DRYAD_FEY_CHARM, DRYAD_THORN_BURST};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -54,6 +54,7 @@ pub static DRYAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // `has_fey_ancestry` flag which gates Charmed / Asleep immunity
         // at the `dynamic_immunity_to` chokepoint.
         has_fey_ancestry: true,
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

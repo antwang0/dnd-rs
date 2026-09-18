@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DEATH_DOG_BITE, DEATH_DOG_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -79,6 +79,7 @@ pub static DEATH_DOG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // `CreatureTemplate::has_multiple_heads`.
         has_multiple_heads: true,
         actions,
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

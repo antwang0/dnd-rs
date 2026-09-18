@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MIMIC_BITE;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -37,6 +37,7 @@ pub static MIMIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_modifiers: HashMap::from([(DamageType::Acid, DamageModifier::Immunity)]),
         // Amorphous: can't be knocked prone.
         condition_immunities: HashSet::from([Condition::Prone]),
+        skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{FIRE_GIANT_GREATSWORD, FIRE_GIANT_ROCK};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -55,6 +55,7 @@ pub static FIRE_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // spells like Charm Person / Hold Monster.
         condition_immunities: HashSet::from([Condition::Charmed]),
         has_extra_attack: true,
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

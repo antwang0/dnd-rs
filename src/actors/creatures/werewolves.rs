@@ -46,7 +46,7 @@ pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 100 gp coating simply cannot hurt is RAW and is not a
         // fight. Halving leaves them wanting an answer and still able
         // to have the fight without one.
-        skills: HashSet::from([Skill::Perception]),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });

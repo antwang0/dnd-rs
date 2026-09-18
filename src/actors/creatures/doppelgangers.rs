@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DOPPELGANGER_MULTI, DOPPELGANGER_SLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -42,6 +42,7 @@ pub static DOPPELGANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // shapeshift mechanics.
         condition_immunities: HashSet::from([Condition::Charmed]),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        skills: HashSet::from([Skill::Deception, Skill::Insight]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -42,7 +42,7 @@ pub static BUGBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Fey,
         actions,
-        skills: HashSet::from([Skill::Stealth]),
+        skills: HashSet::from([Skill::Stealth, Skill::Survival]),
         ..CreatureTemplate::defaults()
     }
 });

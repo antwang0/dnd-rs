@@ -6,7 +6,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -103,6 +103,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         legendary_actions: crate::engine::legendary_actions::TARRASQUE_LEGENDARY,
         has_extra_attack: true,
         swallow: Some(&crate::actions::monster_attacks::TARRASQUE_SWALLOW),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

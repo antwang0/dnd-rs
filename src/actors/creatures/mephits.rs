@@ -9,7 +9,9 @@ use crate::actors::actor_template::CreatureTemplate;
 use crate::actors::creatures::fire_elementals::{
     elemental_body_defaults,
 };
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -78,6 +80,7 @@ pub static ICE_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // resistance from the shared elemental baseline.
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&ICE_MEPHIT_DEATH_BURST),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..elemental_body_defaults([
             (DamageType::Cold, DamageModifier::Immunity),
             (DamageType::Fire, DamageModifier::Vulnerability),
@@ -139,6 +142,7 @@ pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         actions,
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&STEAM_MEPHIT_DEATH_BURST),
+        skills: HashSet::from([Skill::Stealth]),
         ..elemental_body_defaults([(
             DamageType::Fire,
             DamageModifier::Immunity,
@@ -201,6 +205,7 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         actions,
         recharge_abilities: vec![("breath_weapon", 6)],
         death_burst: Some(&MAGMA_MEPHIT_DEATH_BURST),
+        skills: HashSet::from([Skill::Stealth]),
         ..elemental_body_defaults([
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Vulnerability),
@@ -277,6 +282,7 @@ pub static DUST_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // flame goes through. It is also the only one of the four that
         // was missing it, which is what made the omission look like a
         // rule rather than a gap.
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..elemental_body_defaults([(DamageType::Fire, DamageModifier::Vulnerability)])
     }
 });

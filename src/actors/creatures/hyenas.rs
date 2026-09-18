@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::HYENA_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::sync::LazyLock;
 use std::collections::HashSet;
 
@@ -34,6 +34,7 @@ pub static HYENA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         has_pack_tactics: true,
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

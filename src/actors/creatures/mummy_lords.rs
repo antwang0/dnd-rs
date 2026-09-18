@@ -6,7 +6,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -153,6 +153,7 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // signature. Three failed saves per long rest are auto-promoted to
         // passes, neutralizing the party's save-or-suck control spells.
         legendary_resistances: 3,
+        skills: HashSet::from([Skill::History, Skill::Perception, Skill::Religion]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

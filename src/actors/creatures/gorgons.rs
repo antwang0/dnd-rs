@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -65,6 +65,7 @@ pub static GORGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Petrifying breath gates on a d6 of 5-6 at the start of the
         // gorgon's turn — shared `"breath_weapon"` pool with the dragons.
         recharge_abilities: vec![("breath_weapon", 5)],
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

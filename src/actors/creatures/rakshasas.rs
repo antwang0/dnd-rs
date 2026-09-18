@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{RAKSHASA_CLAW, RAKSHASA_MULTI};
 use crate::conditions::Condition;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -89,6 +89,7 @@ pub static RAKSHASA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the simplification rationale.
         has_magic_resistance: true,
         has_extra_attack: true,
+        skills: HashSet::from([Skill::Deception, Skill::Insight, Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

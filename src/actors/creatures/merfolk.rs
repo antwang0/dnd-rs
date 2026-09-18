@@ -2,7 +2,7 @@ use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MERFOLK_SPEAR;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, Skill};
+use crate::engine::types::{CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -58,7 +58,7 @@ pub static MERFOLK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 11,
         wisdom: 14,
         charisma: 12,
-        skills: HashSet::from([Skill::Perception]),
+        skills: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::Primordial]),
         cr: 0.125,
         size: Size::Medium,

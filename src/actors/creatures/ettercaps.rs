@@ -76,7 +76,7 @@ pub static ETTERCAP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // chassis (start-of-turn d6 roll, available again on 5+).
         // Keeps the ettercap from spamming the web every turn.
         recharge_abilities: vec![("ettercap_web", 5)],
-        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth, Skill::Survival]),
         ..CreatureTemplate::defaults()
     }
 });

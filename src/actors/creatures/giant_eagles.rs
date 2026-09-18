@@ -1,9 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_EAGLE_BEAK, GIANT_EAGLE_MULTI, GIANT_EAGLE_TALONS};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
-use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Size,
-};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Giant Eagle — CR 1 large beast. Aerial predator with a one-beak +
@@ -48,6 +47,7 @@ pub static GIANT_EAGLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Radiant, DamageModifier::Resistance),
         ]),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

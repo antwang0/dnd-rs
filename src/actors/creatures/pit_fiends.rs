@@ -4,7 +4,7 @@ use crate::engine::emanations::PIT_FIEND_FEAR_AURA;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -96,6 +96,7 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             // are magical."
             crate::actions::class_features::MAGICAL_ATTACKS_TAG,
         ]),
+        skills: HashSet::from([Skill::Perception, Skill::Persuasion]),
         ..CreatureTemplate::defaults()
     }
 });

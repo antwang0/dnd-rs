@@ -60,7 +60,7 @@ pub static PRIEST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 13,
         wisdom: 16,
         charisma: 13,
-        skills: HashSet::from([Skill::Medicine, Skill::Persuasion, Skill::Religion]),
+        skills: HashSet::from([Skill::Medicine, Skill::Perception, Skill::Religion]),
         languages: HashSet::from([Language::Common, Language::Celestial]),
         cr: 2.0,
         size: Size::Medium,

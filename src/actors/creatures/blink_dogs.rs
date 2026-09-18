@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BLINK_DOG_BITE, BLINK_DOG_TELEPORT};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -69,6 +69,7 @@ pub static BLINK_DOG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // start-of-turn d6 roll, available again on 4+. Keeps the
         // blink-bite tempo from being a free repositioning loop.
         recharge_abilities: vec![("blink_dog_teleport", 4)],
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -71,6 +71,12 @@ pub static STORM_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         senses: HashSet::from([SpecialSense::Darkvision(120), SpecialSense::Truesight(30)]),
+        skills: HashSet::from([
+            Skill::Arcana,
+            Skill::Athletics,
+            Skill::History,
+            Skill::Perception,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

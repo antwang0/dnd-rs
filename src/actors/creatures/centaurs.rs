@@ -3,7 +3,7 @@ use crate::actions::monster_attacks::{
     CENTAUR_HOOVES, CENTAUR_MULTI, CENTAUR_PIKE, LONGBOW,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -50,6 +50,7 @@ pub static CENTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 3d6 piercing off a thirty-foot run-up. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::CENTAUR_CHARGE),
+        skills: HashSet::from([Skill::Athletics, Skill::Perception]),
         ..CreatureTemplate::defaults()
     }
 });

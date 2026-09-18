@@ -77,12 +77,7 @@ pub static ASSASSIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 16,
         wisdom: 11,
         charisma: 10,
-        skills: HashSet::from([
-            Skill::Acrobatics,
-            Skill::Deception,
-            Skill::Perception,
-            Skill::Stealth,
-        ]),
+        skills: HashSet::from([Skill::Acrobatics, Skill::Perception, Skill::Stealth]),
         languages: HashSet::from([Language::Common, Language::ThievesCant]),
         cr: 8.0,
         size: Size::Medium,

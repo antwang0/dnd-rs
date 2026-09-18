@@ -92,6 +92,7 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // exactly the point of the trait and the reason a vampire fight
         // happens at night.
         sunlight_frailty: Some(SunlightFrailty::Hypersensitivity),
+        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

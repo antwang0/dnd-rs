@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WEREBOAR_MAUL, WEREBOAR_MULTI, WEREBOAR_TUSKS};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -75,6 +75,7 @@ pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 2d6 slashing and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::WEREBOAR_CHARGE),
+        skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
     }
 });

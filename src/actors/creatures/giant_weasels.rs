@@ -36,7 +36,7 @@ pub static GIANT_WEASEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         wisdom: 12,
         charisma: 5,
         senses: HashSet::from([crate::engine::types::SpecialSense::Darkvision(60)]),
-        skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        skills: HashSet::from([Skill::Acrobatics, Skill::Perception, Skill::Stealth]),
         cr: 0.125,
         size: Size::Medium,
         creature_type: CreatureType::Beast,
