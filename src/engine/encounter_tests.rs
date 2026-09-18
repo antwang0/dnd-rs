@@ -127774,3 +127774,73 @@ fn a_laughing_caster_cannot_hold_the_spell() {
         "a creature that cannot take an action cannot hold a spell up"
     );
 }
+
+
+/// A **carrier** is a reservoir and not a patient, and the distinction
+/// is worth pinning because getting it wrong is silent and expensive.
+///
+/// SRD 5.2 names four stat blocks as Sewer Plague's vectors — the
+/// Otyugh, the Rat, the Giant Rat and the Swarm of Rats — and Sewer
+/// Plague's *Fatigue* line grants a level of Exhaustion to whoever
+/// catches it. Pay that out to the carriers and every otyugh in the
+/// game walks onto the board two points down on every d20 test and five
+/// feet slower, sick with a Humanoid's disease that the entry's own
+/// type gate says an Aberration cannot catch.
+///
+/// Three properties, and the third is the one a refactor would break:
+///
+///   - a carrier walks in **carrying**, so its first wounding blow is
+///     an exposure;
+///   - it walks in **unexhausted**, because a reservoir does not
+///     suffer;
+///   - and a night's sleep neither cures it nor makes it worse, because
+///     there is nothing there to fight off.
+#[test]
+fn a_plague_carrier_is_a_reservoir_and_not_a_patient() {
+    use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
+    use crate::actors::creatures::otyughs::OTYUGH_TEMPLATE;
+    use crate::actors::creatures::rats::RAT_TEMPLATE;
+    use crate::actors::creatures::swarms::SWARM_OF_RATS_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::dice::FastRandRoller;
+
+    for template in [
+        &*OTYUGH_TEMPLATE,
+        &*RAT_TEMPLATE,
+        &*GIANT_RAT_TEMPLATE,
+        &*SWARM_OF_RATS_TEMPLATE,
+    ] {
+        let mut carrier = lone_actor(template);
+        assert!(
+            carrier.has_symptoms_of(ContagionKind::SewerPlague),
+            "{} is one of RAW's four vectors",
+            template.name
+        );
+        assert!(carrier.carries_contagion(ContagionKind::SewerPlague));
+        assert_eq!(
+            carrier.exhaustion_level(),
+            0,
+            "{} is where the plague lives, not something it is killing",
+            template.name
+        );
+
+        // A hundred nights change nothing in either direction.
+        let mut roller = FastRandRoller::with_seed(3);
+        for _ in 0..100 {
+            carrier.long_rest();
+            carrier.contagion_night(&mut roller);
+        }
+        assert!(
+            carrier.carries_contagion(ContagionKind::SewerPlague)
+                && carrier.has_symptoms_of(ContagionKind::SewerPlague),
+            "{} cannot roll its way out of being itself",
+            template.name
+        );
+        assert_eq!(
+            carrier.exhaustion_level(),
+            0,
+            "{} cannot roll its way into being sick either",
+            template.name
+        );
+    }
+}

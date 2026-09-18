@@ -5567,6 +5567,15 @@ pub struct ActorInstance {
     /// The contagions this creature cannot catch, copied from its
     /// template. See `CreatureTemplate::contagion_immunities`.
     contagion_immunities: &'static [crate::engine::contagions::ContagionKind],
+    /// The contagions this creature is a **reservoir** for, copied from
+    /// its template. See `CreatureTemplate::carries`.
+    ///
+    /// Kept on the instance as well as on the sheet because one rule
+    /// reads it at runtime and nothing else could: a carrier does not
+    /// *suffer* the thing it carries, so `contagion_night` leaves those
+    /// rows alone. An otyugh is not fighting off Sewer Plague; it is
+    /// where Sewer Plague lives.
+    carries: &'static [crate::engine::contagions::ContagionKind],
     /// The creature this actor is currently latched onto, or `None` for
     /// everything that fights at arm's length.
     ///
@@ -6531,6 +6540,7 @@ impl ActorInstance {
             attach: ct.attach,
             emanations: ct.emanations,
             contagion_immunities: ct.contagion_immunities,
+            carries: ct.carries,
             attached_to: None,
             swallow: ct.swallow,
             swallowed_by: None,
@@ -6577,6 +6587,17 @@ impl ActorInstance {
             // RAW's "creatures that dwell in such areas, including
             // otyughs and rats". Symptomatic from the start: a carrier
             // is not incubating, it is the outbreak.
+            //
+            // Built here rather than through `infect`, and the
+            // difference is load-bearing rather than a shortcut:
+            // `infect` pays out the onset, and Sewer Plague's onset is a
+            // level of Exhaustion. Routed through it, every otyugh, rat
+            // and swarm of rats in the game would walk onto the board
+            // two points down on every d20 test and five feet slower —
+            // sick with a Humanoid's disease that its own type gate
+            // says it cannot catch. A reservoir is not a patient. See
+            // `carries` above, and `contagion_night`, which leaves
+            // these rows alone for the same reason.
             infections: ct
                 .carries
                 .iter()
@@ -10482,6 +10503,16 @@ impl ActorInstance {
         self.infection(kind).is_some()
     }
 
+    /// True if this creature is a declared **reservoir** for `kind`
+    /// rather than a victim of it — see `CreatureTemplate::carries`.
+    ///
+    /// The difference is what `contagion_night` reads: a carrier's row
+    /// is a fact about the species, so there is no incubation to end
+    /// and no nightly save to shake it off with.
+    pub fn carries_contagion(&self, kind: crate::engine::contagions::ContagionKind) -> bool {
+        self.carries.contains(&kind)
+    }
+
     /// True while `kind`'s symptoms are actually doing something, which
     /// is the question every *rule* asks. The incubation window is a
     /// fact about the ledger and nothing else: RAW's effects all begin
@@ -10708,6 +10739,12 @@ impl ActorInstance {
             .collect();
         for (kind, was_incubating) in rows {
             let row = kind.row();
+            // A reservoir is not a patient. An otyugh is not fighting
+            // off Sewer Plague overnight and cannot roll its way out of
+            // being an otyugh — see `carries_contagion`.
+            if self.carries_contagion(kind) {
+                continue;
+            }
             if was_incubating {
                 // The compression: RAW's 1d4 days, rounded to the one
                 // night the engine has. See the module docstring.
