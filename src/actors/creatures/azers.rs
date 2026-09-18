@@ -62,7 +62,14 @@ pub static AZER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&AZER_WARHAMMER);
     CreatureTemplate {
-        name: "Azer",
+        // SRD 5.2 calls this stat block **Azer Sentinel**; the engine
+        // carried the 2014 heading ("Azer") until the sweep that
+        // compares the two had to keep a translation table to do
+        // its job. The file and the static keep their old spelling,
+        // because that is the word this codebase files the creature
+        // under and moving it buys nothing a reader wants; the name
+        // a player sees is the book's.
+        name: "Azer Sentinel",
         // 'z' (lowercase) — the tail of the word rather than its head,
         // because 'a' is the Salamander's and 'A' the Animated Armor /
         // Assassin band, and 'z' is otherwise unclaimed.

@@ -28,7 +28,14 @@ pub static CULT_FANATIC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
     actions.push(&*HEX);
     actions.push(&*BESTOW_CURSE);
     CreatureTemplate {
-        name: "Cult Fanatic",
+        // SRD 5.2 calls this stat block **Cultist Fanatic**; the engine
+        // carried the 2014 heading ("Cult Fanatic") until the sweep that
+        // compares the two had to keep a translation table to do
+        // its job. The file and the static keep their old spelling,
+        // because that is the word this codebase files the creature
+        // under and moving it buys nothing a reader wants; the name
+        // a player sees is the book's.
+        name: "Cultist Fanatic",
         // 'V' for villain — distinct from 'C' (Cleric).
         glyph: 'V',
         ac: 13,

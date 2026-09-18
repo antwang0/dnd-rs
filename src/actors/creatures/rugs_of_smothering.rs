@@ -39,7 +39,14 @@ pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&RUG_OF_SMOTHERING_SMOTHER);
     CreatureTemplate {
-        name: "Rug of Smothering",
+        // SRD 5.2 calls this stat block **Animated Rug of Smothering**; the engine
+        // carried the 2014 heading ("Rug of Smothering") until the sweep that
+        // compares the two had to keep a translation table to do
+        // its job. The file and the static keep their old spelling,
+        // because that is the word this codebase files the creature
+        // under and moving it buys nothing a reader wants; the name
+        // a player sees is the book's.
+        name: "Animated Rug of Smothering",
         // 'r' (lowercase) — free; 'R' is the Roper / Rogue / Remorhaz
         // band and this is not one of those.
         glyph: 'r',

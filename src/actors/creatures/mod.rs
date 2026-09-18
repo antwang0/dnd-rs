@@ -1247,7 +1247,7 @@ mod tests {
         SpeedDivergence { name: "Hunter Shark", why: "walks 5, swims 40" },
         SpeedDivergence { name: "Killer Whale", why: "walks 5, swims 60" },
         SpeedDivergence { name: "Kraken", why: "walks 30, swims 120" },
-        SpeedDivergence { name: "Merfolk", why: "walks 10, swims 40" },
+        SpeedDivergence { name: "Merfolk Skirmisher", why: "walks 10, swims 40" },
         SpeedDivergence { name: "Merrow", why: "walks 10, swims 40" },
         SpeedDivergence { name: "Octopus", why: "walks 5, swims 30" },
         SpeedDivergence { name: "Piranha", why: "walks 5, swims 40" },
@@ -1287,9 +1287,13 @@ mod tests {
     /// blocks the 5.2 roster dropped. None of those have a book to
     /// disagree with.
     ///
-    /// Names that differ between the two are annotated with the SRD's:
-    /// 5.2 renamed a dozen rank-and-file monsters into "<thing>
-    /// Warrior" shapes, and the bestiary keeps the shorter name.
+    /// Names no longer differ between the two. This table used to
+    /// annotate two dozen rows with the SRD's own heading — 5.2 renamed
+    /// a dozen rank-and-file monsters into "<thing> Warrior" shapes,
+    /// among sixteen renames in all — and the bestiary now prints the
+    /// book's name. The files and the statics keep the shorter word,
+    /// which is what this codebase files a creature under; see any
+    /// renamed template for the split.
     fn srd_stat_block_table() -> Vec<SrdStatBlock> {
         use super::*;
         [
@@ -1300,13 +1304,13 @@ mod tests {
         (&*bandit_captains::BANDIT_CAPTAIN_TEMPLATE, 15, "8d8+16", [15, 16, 14, 14, 11, 14], 30, 0, 2.0),
         (&*basilisks::BASILISK_TEMPLATE, 15, "8d8+16", [16, 8, 15, 2, 8, 7], 20, 0, 3.0),
         (&*berserkers::BERSERKER_TEMPLATE, 13, "9d8+27", [16, 12, 17, 9, 11, 9], 30, 0, 2.0),
-        (&*bugbears::BUGBEAR_TEMPLATE, 14, "6d8+6", [15, 14, 13, 8, 11, 9], 30, 0, 1.0),  // SRD 5.2: Bugbear Warrior
+        (&*bugbears::BUGBEAR_TEMPLATE, 14, "6d8+6", [15, 14, 13, 8, 11, 9], 30, 0, 1.0),
         (&*bugbears::BUGBEAR_STALKER_TEMPLATE, 15, "10d8+20", [17, 14, 14, 11, 12, 11], 30, 0, 3.0),
         (&*chimeras::CHIMERA_TEMPLATE, 14, "12d10+48", [19, 11, 19, 3, 14, 10], 30, 60, 6.0),
         (&*chuuls::CHUUL_TEMPLATE, 16, "9d10+27", [19, 10, 16, 5, 11, 5], 30, 0, 4.0),
         (&*cloakers::CLOAKER_TEMPLATE, 14, "14d10+14", [17, 15, 12, 13, 14, 7], 10, 40, 8.0),
         (&*cockatrices::COCKATRICE_TEMPLATE, 11, "5d6+5", [6, 12, 12, 2, 13, 5], 20, 40, 0.5),
-        (&*cult_fanatics::CULT_FANATIC_TEMPLATE, 13, "8d8+8", [11, 14, 12, 10, 14, 13], 30, 0, 2.0),  // SRD 5.2: Cultist Fanatic
+        (&*cult_fanatics::CULT_FANATIC_TEMPLATE, 13, "8d8+8", [11, 14, 12, 10, 14, 13], 30, 0, 2.0),
         (&*dire_wolves::DIRE_WOLF_TEMPLATE, 14, "3d10+6", [17, 15, 15, 3, 12, 7], 50, 0, 1.0),
         (&*doppelgangers::DOPPELGANGER_TEMPLATE, 14, "8d8+16", [11, 18, 14, 11, 12, 14], 30, 0, 3.0),
         (&*ettins::ETTIN_TEMPLATE, 12, "10d10+30", [21, 8, 17, 6, 10, 8], 40, 0, 4.0),
@@ -1316,25 +1320,25 @@ mod tests {
         (&*ghosts::GHOST_TEMPLATE, 11, "10d8", [7, 13, 10, 10, 12, 17], 5, 40, 4.0),
         (&*ghouls::GHOUL_TEMPLATE, 12, "5d8", [13, 15, 10, 7, 10, 6], 30, 0, 1.0),
         (&*giant_scorpions::GIANT_SCORPION_TEMPLATE, 15, "7d10+14", [16, 13, 15, 1, 9, 3], 40, 0, 3.0),
-        (&*gnolls::GNOLL_TEMPLATE, 15, "6d8", [14, 12, 11, 6, 10, 7], 30, 0, 0.5),  // SRD 5.2: Gnoll Warrior
+        (&*gnolls::GNOLL_TEMPLATE, 15, "6d8", [14, 12, 11, 6, 10, 7], 30, 0, 0.5),
         (&*gricks::GRICK_TEMPLATE, 14, "12d8", [14, 14, 11, 3, 14, 5], 30, 0, 2.0),
-        (&*goblins::GOBLIN_TEMPLATE, 15, "3d6", [8, 15, 10, 10, 8, 8], 30, 0, 0.25),  // SRD 5.2: Goblin Warrior
+        (&*goblins::GOBLIN_TEMPLATE, 15, "3d6", [8, 15, 10, 10, 8, 8], 30, 0, 0.25),
         (&*goblins::GOBLIN_MINION_TEMPLATE, 12, "2d6", [8, 15, 10, 10, 8, 8], 30, 0, 0.125),
         (&*goblin_bosses::GOBLIN_BOSS_TEMPLATE, 17, "6d6", [10, 15, 10, 10, 8, 10], 30, 0, 1.0),
         (&*harpies::HARPY_TEMPLATE, 11, "7d8+7", [12, 13, 12, 7, 10, 13], 20, 40, 1.0),
         (&*hell_hounds::HELL_HOUND_TEMPLATE, 15, "9d8+18", [17, 12, 14, 6, 13, 6], 50, 0, 3.0),
         (&*hill_giants::HILL_GIANT_TEMPLATE, 13, "10d12+40", [21, 8, 19, 5, 9, 6], 40, 0, 5.0),
         (&*hippogriffs::HIPPOGRIFF_TEMPLATE, 11, "4d10+4", [17, 13, 13, 2, 12, 8], 40, 60, 1.0),
-        (&*hobgoblins::HOBGOBLIN_TEMPLATE, 18, "2d8+2", [13, 12, 12, 10, 10, 9], 30, 0, 0.5),  // SRD 5.2: Hobgoblin Warrior
+        (&*hobgoblins::HOBGOBLIN_TEMPLATE, 18, "2d8+2", [13, 12, 12, 10, 10, 9], 30, 0, 0.5),
         (&*hobgoblins::HOBGOBLIN_CAPTAIN_TEMPLATE, 17, "9d8+18", [15, 14, 14, 12, 10, 13], 30, 0, 3.0),
         (&*hydras::HYDRA_TEMPLATE, 15, "16d12+80", [20, 12, 20, 2, 10, 7], 40, 0, 8.0),
-        (&*kobolds::KOBOLD_TEMPLATE, 14, "3d6-3", [7, 15, 9, 8, 7, 8], 30, 0, 0.125),  // SRD 5.2: Kobold Warrior
+        (&*kobolds::KOBOLD_TEMPLATE, 14, "3d6-3", [7, 15, 9, 8, 7, 8], 30, 0, 0.125),
         (&*knights::KNIGHT_TEMPLATE, 18, "8d8+16", [16, 11, 14, 11, 11, 15], 30, 0, 3.0),
         (&*mages::MAGE_TEMPLATE, 15, "18d8", [9, 14, 11, 17, 12, 11], 30, 0, 6.0),
         (&*manticores::MANTICORE_TEMPLATE, 14, "8d10+24", [17, 16, 17, 7, 12, 8], 30, 50, 3.0),
         (&*medusas::MEDUSA_TEMPLATE, 15, "17d8+51", [10, 17, 16, 12, 13, 15], 30, 0, 6.0),
         (&*mimics::MIMIC_TEMPLATE, 12, "9d8+18", [17, 12, 15, 5, 13, 8], 20, 0, 2.0),
-        (&*minotaurs::MINOTAUR_TEMPLATE, 14, "10d10+30", [18, 11, 16, 6, 16, 9], 40, 0, 3.0),  // SRD 5.2: Minotaur of Baphomet
+        (&*minotaurs::MINOTAUR_TEMPLATE, 14, "10d10+30", [18, 11, 16, 6, 16, 9], 40, 0, 3.0),
         (&*mummies::MUMMY_TEMPLATE, 11, "9d8+18", [16, 8, 15, 6, 12, 12], 20, 0, 3.0),
         (&*nightmares::NIGHTMARE_TEMPLATE, 13, "8d10+24", [18, 15, 16, 10, 13, 15], 60, 90, 3.0),
         (&*ogres::OGRE_TEMPLATE, 11, "8d10+24", [19, 8, 16, 5, 7, 7], 40, 0, 2.0),
@@ -1354,7 +1358,7 @@ mod tests {
         (&*trolls::TROLL_TEMPLATE, 15, "9d10+45", [18, 13, 20, 7, 9, 7], 30, 0, 5.0),
         (&*trolls::TROLL_LIMB_TEMPLATE, 13, "4d6", [18, 12, 10, 1, 9, 1], 20, 0, 0.5),
         (&*vampire_spawns::VAMPIRE_SPAWN_TEMPLATE, 16, "12d8+36", [16, 16, 16, 11, 10, 12], 30, 0, 5.0),
-        (&*veterans::VETERAN_TEMPLATE, 17, "10d8+20", [16, 13, 14, 10, 11, 10], 30, 0, 3.0),  // SRD 5.2: Warrior Veteran
+        (&*veterans::VETERAN_TEMPLATE, 17, "10d8+20", [16, 13, 14, 10, 11, 10], 30, 0, 3.0),
         (&*veterans::WARRIOR_INFANTRY_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),
         (&*vrocks::VROCK_TEMPLATE, 15, "16d10+64", [17, 15, 18, 8, 13, 8], 40, 60, 6.0),
         (&*werewolves::WEREWOLF_TEMPLATE, 15, "11d8+22", [16, 14, 14, 10, 11, 10], 30, 0, 3.0),
@@ -1379,9 +1383,9 @@ mod tests {
         (&*imps::IMP_TEMPLATE, 13, "6d4+6", [6, 17, 13, 11, 12, 14], 20, 40, 1.0),
         (&*couatls::COUATL_TEMPLATE, 19, "8d8+24", [16, 20, 17, 18, 20, 18], 30, 90, 4.0),
         (&*giant_eagles::GIANT_EAGLE_TEMPLATE, 13, "4d10+4", [16, 17, 13, 8, 14, 10], 10, 80, 1.0),
-        (&*sahuagins::SAHUAGIN_TEMPLATE, 12, "4d8+4", [13, 11, 12, 12, 13, 9], 30, 0, 0.5),  // SRD 5.2: Sahuagin Warrior
+        (&*sahuagins::SAHUAGIN_TEMPLATE, 12, "4d8+4", [13, 11, 12, 12, 13, 9], 30, 0, 0.5),
         (&*giant_apes::GIANT_APE_TEMPLATE, 12, "16d12+64", [23, 14, 18, 5, 12, 7], 40, 0, 7.0),
-        (&*centaurs::CENTAUR_TEMPLATE, 16, "6d10+12", [18, 14, 14, 9, 13, 11], 50, 0, 2.0),  // SRD 5.2: Centaur Trooper
+        (&*centaurs::CENTAUR_TEMPLATE, 16, "6d10+12", [18, 14, 14, 9, 13, 11], 50, 0, 2.0),
         (&*boars::BOAR_TEMPLATE, 11, "2d8+4", [13, 11, 14, 2, 9, 5], 40, 0, 0.25),
         (&*brown_bears::BROWN_BEAR_TEMPLATE, 11, "3d10+6", [17, 12, 15, 2, 13, 7], 40, 0, 1.0),
         (&*tigers::TIGER_TEMPLATE, 13, "4d10+8", [17, 16, 14, 3, 12, 8], 40, 0, 1.0),
@@ -1418,7 +1422,7 @@ mod tests {
         (&*rakshasas::RAKSHASA_TEMPLATE, 17, "26d8+104", [14, 17, 18, 13, 16, 20], 40, 0, 13.0),
         (&*dragon_turtles::DRAGON_TURTLE_TEMPLATE, 20, "23d20+115", [25, 10, 20, 10, 12, 12], 20, 0, 17.0),
         (&*krakens::KRAKEN_TEMPLATE, 18, "26d20+208", [30, 11, 26, 22, 18, 20], 30, 0, 23.0),
-        (&*androsphinxes::ANDROSPHINX_TEMPLATE, 17, "19d10+95", [22, 10, 20, 16, 23, 18], 40, 60, 17.0),  // SRD 5.2: Sphinx of Valor
+        (&*androsphinxes::ANDROSPHINX_TEMPLATE, 17, "19d10+95", [22, 10, 20, 16, 23, 18], 40, 60, 17.0),
         (&*unicorns::UNICORN_TEMPLATE, 12, "13d10+26", [18, 14, 15, 11, 17, 16], 50, 0, 5.0),
         (&*driders::DRIDER_TEMPLATE, 19, "13d10+52", [16, 19, 18, 13, 16, 12], 30, 0, 6.0),
         (&*sea_hags::SEA_HAG_TEMPLATE, 14, "7d8+21", [16, 13, 16, 12, 12, 13], 30, 0, 2.0),
@@ -1462,11 +1466,11 @@ mod tests {
         (&*giant_octopuses::GIANT_OCTOPUS_TEMPLATE, 11, "7d10+7", [17, 13, 13, 5, 10, 4], 10, 0, 1.0),
         (&*plesiosauruses::PLESIOSAURUS_TEMPLATE, 13, "8d10+24", [18, 15, 16, 2, 12, 5], 20, 0, 2.0),
         (&*pteranodons::PTERANODON_TEMPLATE, 13, "3d8", [12, 15, 10, 2, 9, 5], 10, 60, 0.25),
-        (&*thugs::THUG_TEMPLATE, 12, "5d8+10", [15, 12, 14, 10, 10, 11], 30, 0, 0.5),  // SRD 5.2: Tough
+        (&*thugs::THUG_TEMPLATE, 12, "5d8+10", [15, 12, 14, 10, 10, 11], 30, 0, 0.5),
         (&*pirates::PIRATE_TEMPLATE, 14, "6d8+6", [10, 16, 12, 8, 12, 14], 30, 0, 1.0),
         (&*pirates::PIRATE_CAPTAIN_TEMPLATE, 17, "13d8+26", [10, 18, 14, 10, 14, 17], 30, 0, 6.0),
-        (&*thugs::TOUGH_BOSS_TEMPLATE, 16, "11d8+33", [17, 14, 16, 11, 10, 11], 30, 0, 4.0),  // SRD 5.2: Tough Boss
-        (&*tribal_warriors::TRIBAL_WARRIOR_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),  // SRD 5.2: Warrior Infantry
+        (&*thugs::TOUGH_BOSS_TEMPLATE, 16, "11d8+33", [17, 14, 16, 11, 10, 11], 30, 0, 4.0),
+        (&*tribal_warriors::TRIBAL_WARRIOR_TEMPLATE, 13, "2d8", [13, 11, 11, 8, 11, 8], 30, 0, 0.125),
         (&*scouts::SCOUT_TEMPLATE, 13, "3d8+3", [11, 14, 12, 11, 13, 11], 30, 0, 0.5),
         (&*giant_rats::GIANT_RAT_TEMPLATE, 13, "2d6", [7, 16, 11, 2, 10, 4], 30, 0, 0.125),
         (&*ghasts::GHAST_TEMPLATE, 13, "8d8", [16, 17, 10, 11, 10, 8], 30, 0, 2.0),
@@ -1518,7 +1522,7 @@ mod tests {
         (&*stone_golems::STONE_GOLEM_TEMPLATE, 18, "21d10+105", [22, 9, 20, 3, 11, 1], 30, 0, 10.0),
         (&*clay_golems::CLAY_GOLEM_TEMPLATE, 14, "13d10+52", [20, 9, 18, 3, 8, 1], 30, 0, 9.0),
         (&*tarrasques::TARRASQUE_TEMPLATE, 25, "34d20+340", [30, 11, 30, 3, 11, 11], 60, 0, 30.0),
-        (&*acolytes::ACOLYTE_TEMPLATE, 13, "2d8+2", [14, 10, 12, 10, 14, 11], 30, 0, 0.25),  // SRD 5.2: Priest Acolyte
+        (&*acolytes::ACOLYTE_TEMPLATE, 13, "2d8+2", [14, 10, 12, 10, 14, 11], 30, 0, 0.25),
         (&*cultists::CULTIST_TEMPLATE, 12, "2d8", [11, 12, 10, 10, 11, 10], 30, 0, 0.125),
         (&*nobles::NOBLE_TEMPLATE, 15, "2d8", [11, 12, 11, 12, 14, 16], 30, 0, 0.125),
         (&*spies::SPY_TEMPLATE, 12, "6d8", [10, 15, 10, 12, 14, 16], 30, 0, 1.0),
@@ -1526,7 +1530,7 @@ mod tests {
         (&*gladiators::GLADIATOR_TEMPLATE, 16, "15d8+45", [18, 15, 16, 10, 12, 15], 30, 0, 5.0),
         (&*assassins::ASSASSIN_TEMPLATE, 16, "15d8+30", [11, 18, 14, 16, 11, 10], 30, 0, 8.0),
         (&*archmages::ARCHMAGE_TEMPLATE, 17, "31d8+31", [10, 14, 12, 20, 15, 16], 30, 0, 12.0),
-        (&*azers::AZER_TEMPLATE, 17, "6d8+12", [17, 12, 15, 12, 13, 10], 30, 0, 2.0),  // SRD 5.2: Azer Sentinel
+        (&*azers::AZER_TEMPLATE, 17, "6d8+12", [17, 12, 15, 12, 13, 10], 30, 0, 2.0),
         (&*barbed_devils::BARBED_DEVIL_TEMPLATE, 15, "13d8+52", [16, 17, 18, 12, 14, 14], 30, 0, 5.0),
         (&*chain_devils::CHAIN_DEVIL_TEMPLATE, 15, "10d8+40", [18, 15, 18, 11, 12, 14], 30, 0, 8.0),
         (&*darkmantles::DARKMANTLE_TEMPLATE, 11, "5d6+5", [16, 12, 13, 2, 10, 5], 10, 30, 0.5),
@@ -1538,8 +1542,8 @@ mod tests {
         (&*warhorse_skeletons::WARHORSE_SKELETON_TEMPLATE, 13, "3d10+6", [18, 12, 15, 2, 8, 5], 60, 0, 0.5),
         (&*panthers::PANTHER_TEMPLATE, 13, "3d8", [14, 16, 10, 3, 14, 7], 50, 0, 0.25),
         (&*remorhazes::REMORHAZ_TEMPLATE, 17, "17d12+85", [24, 13, 21, 4, 10, 5], 40, 0, 11.0),
-        (&*rugs_of_smothering::RUG_OF_SMOTHERING_TEMPLATE, 12, "5d10", [17, 14, 10, 1, 3, 1], 10, 0, 2.0),  // SRD 5.2: Animated Rug of Smothering
-        (&*merfolk::MERFOLK_TEMPLATE, 11, "2d8+2", [10, 13, 12, 11, 14, 12], 10, 0, 0.125),  // SRD 5.2: Merfolk Skirmisher
+        (&*rugs_of_smothering::RUG_OF_SMOTHERING_TEMPLATE, 12, "5d10", [17, 14, 10, 1, 3, 1], 10, 0, 2.0),
+        (&*merfolk::MERFOLK_TEMPLATE, 11, "2d8+2", [10, 13, 12, 11, 14, 12], 10, 0, 0.125),
         (&*homunculi::HOMUNCULUS_TEMPLATE, 13, "1d4+2", [4, 15, 14, 10, 10, 7], 20, 40, 0.0),
         (&*giant_fire_beetles::GIANT_FIRE_BEETLE_TEMPLATE, 13, "1d6+1", [8, 10, 12, 1, 7, 3], 30, 0, 0.0),
         (&*giant_weasels::GIANT_WEASEL_TEMPLATE, 13, "2d8", [11, 17, 10, 4, 12, 5], 40, 0, 0.125),
@@ -1588,11 +1592,11 @@ mod tests {
         (&*dragons::BLACK_DRAGON_WYRMLING_TEMPLATE, 17, "6d8+6", [15, 14, 13, 10, 11, 13], 30, 60, 2.0),
         // The five Draconic Origins are one SRD stat block printed
         // five times, so all five rows read the same numbers.
-        (&*half_dragons::ACID_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
-        (&*half_dragons::COLD_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
-        (&*half_dragons::FIRE_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
-        (&*half_dragons::LIGHTNING_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
-        (&*half_dragons::POISON_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),  // SRD 5.2: Half-Dragon
+        (&*half_dragons::ACID_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),
+        (&*half_dragons::COLD_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),
+        (&*half_dragons::FIRE_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),
+        (&*half_dragons::LIGHTNING_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),
+        (&*half_dragons::POISON_HALF_DRAGON_TEMPLATE, 18, "14d8+42", [19, 14, 16, 10, 15, 14], 40, 0, 5.0),
         (&*dragons::YOUNG_BLACK_DRAGON_TEMPLATE, 18, "15d10+45", [19, 14, 17, 12, 11, 15], 40, 80, 7.0),
         (&*dragons::ADULT_BLACK_DRAGON_TEMPLATE, 19, "17d12+85", [23, 14, 21, 14, 13, 19], 40, 80, 14.0),
         (&*dragons::ANCIENT_BLACK_DRAGON_TEMPLATE, 22, "21d20+147", [27, 14, 25, 16, 15, 22], 40, 80, 21.0),

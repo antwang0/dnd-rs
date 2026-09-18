@@ -122074,69 +122074,23 @@ fn the_two_breaths_that_never_fired_now_do() {
     }
 }
 
-/// SRD 5.2's name for a stat block, translated to the engine's — and
-/// the book's name back unchanged when the two agree, which is the
-/// answer for three hundred and seven of them.
+/// SRD 5.2's name for a stat block, as the engine spells it.
 ///
-/// SRD 5.2 renamed seventeen stat blocks the engine still carries
-/// under their 2014 headings, and the book's Bestiary is where a
-/// reader of a conformance sweep would otherwise have to go to find
-/// that out. Each row is `(what the book calls it, what the engine
-/// calls it)`.
+/// One row, and it is a typography difference rather than a name: the
+/// book sets the will-o'-wisp's apostrophe as a right single quotation
+/// mark and this codebase types an ASCII one.
 ///
-/// They are aliased rather than renamed because a creature's name is
-/// read by the prompt, by the panel, by the encounter generator's
-/// logs and by a few hundred test fixtures, and moving seventeen of
-/// them is a change worth making on purpose rather than as a side
-/// effect of a conformance sweep. What the aliases buy is the
-/// nineteen rows the sweep was silently skipping — and with them
-/// every dragon-tier NPC in the book, since the Sphinx of Valor and
-/// the Warrior Veteran are among them.
-///
-/// `Priest Acolyte` is the one that is *not* a rename and is the
-/// reason the list is written as pairs rather than guessed at: SRD
-/// 5.2 prints both a `Priest` (CR 2, 38 hit points) and a `Priest
-/// Acolyte` (CR 1/4, 11), and the engine carries both as `Priest`
-/// and `Acolyte`. Pairing the book's `Priest Acolyte` with the
-/// engine's `Priest` — the obvious guess — reports a creature that
-/// is right as though it were wrong by twenty-seven hit points.
-///
-/// `Half-Dragon` is deliberately absent from that list and from the
-/// sweep. SRD 5.2 prints one stat block with a Draconic Origin trait
-/// that picks the damage type; the engine ships the five it resolves
-/// to — Acid, Cold, Fire, Lightning and Poison Half-Dragon — so
-/// there is no single template to pair the book's row with, and all
-/// five carry the same defences anyway.
-///
-/// Shared by `every_stat_blocks_defences_match_the_book` and
-/// `every_stat_block_is_the_size_and_kind_the_book_says`, which is
-/// what made it a function: two copies of a seventeen-row translation
-/// table is one copy that goes stale.
+/// It used to be seventeen rows, because SRD 5.2 renamed sixteen stat
+/// blocks the engine still carried under their 2014 headings — the
+/// Goblin is a Goblin Warrior, the Androsphinx a Sphinx of Valor, the
+/// Thug a Tough. Those are renamed now, at the templates, where the
+/// name a player sees is the book's; see any of them for why the file
+/// and the static keep the older word.
 fn renamed_to_engine(book: &str) -> &str {
-    const RENAMED: &[(&str, &str)] = &[
-        ("Animated Rug of Smothering", "Rug of Smothering"),
-        ("Azer Sentinel", "Azer"),
-        ("Bugbear Warrior", "Bugbear"),
-        ("Centaur Trooper", "Centaur"),
-        ("Cultist Fanatic", "Cult Fanatic"),
-        ("Gnoll Warrior", "Gnoll"),
-        ("Goblin Warrior", "Goblin"),
-        ("Hobgoblin Warrior", "Hobgoblin"),
-        ("Kobold Warrior", "Kobold"),
-        ("Merfolk Skirmisher", "Merfolk"),
-        ("Minotaur of Baphomet", "Minotaur"),
-        ("Priest Acolyte", "Acolyte"),
-        ("Sahuagin Warrior", "Sahuagin"),
-        ("Sphinx of Valor", "Androsphinx"),
-        ("Tough", "Thug"),
-        ("Warrior Veteran", "Veteran"),
-        ("Will-o\u{2019}-Wisp", "Will-o'-Wisp"),
-    ];
-    RENAMED
-        .iter()
-        .find(|(name, _)| *name == book)
-        .map(|(_, engine)| *engine)
-        .unwrap_or(book)
+    if book == "Will-o\u{2019}-Wisp" {
+        return "Will-o'-Wisp";
+    }
+    book
 }
 
 /// Every stat block SRD 5.2 prints a flat armour class and a flat hit
@@ -122148,6 +122102,15 @@ fn renamed_to_engine(book: &str) -> &str {
 /// docstring quotes, and that cannot catch a docstring quoting the
 /// wrong number. Only a third source can, and the third source is the
 /// book's own AC and HP lines, transcribed here one row per monster.
+///
+/// **It overlaps `the_bestiary_agrees_with_the_srd_about_the_top_of_the_page`
+/// and does not replace it.** That sweep is deeper on the rows it has —
+/// abilities, both speeds, the hit *dice* rather than their average,
+/// challenge rating — and this one is wider, because its rows are the
+/// book's whole roster rather than the templates somebody has got round
+/// to transcribing. A stat block absent from that table is one nothing
+/// was checking at all, and the four sweeps in this file are the floor
+/// underneath it.
 ///
 /// The comparison this automates, run once by hand over the whole
 /// roster, turned up one wrong stat block — the **Draconic Spirit**,

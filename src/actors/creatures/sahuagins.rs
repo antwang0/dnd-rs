@@ -37,7 +37,14 @@ pub static SAHUAGIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&SPEAR);
     actions.push(&THROWN_SPEAR);
     CreatureTemplate {
-        name: "Sahuagin",
+        // SRD 5.2 calls this stat block **Sahuagin Warrior**; the engine
+        // carried the 2014 heading ("Sahuagin") until the sweep that
+        // compares the two had to keep a translation table to do
+        // its job. The file and the static keep their old spelling,
+        // because that is the word this codebase files the creature
+        // under and moving it buys nothing a reader wants; the name
+        // a player sees is the book's.
+        name: "Sahuagin Warrior",
         // 'S' — uppercase since lowercase 's' is Stirge; 'S' was free in
         // the medium-humanoid lane.
         glyph: 'S',

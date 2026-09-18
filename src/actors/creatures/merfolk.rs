@@ -37,7 +37,14 @@ pub static MERFOLK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&MERFOLK_SPEAR);
     CreatureTemplate {
-        name: "Merfolk",
+        // SRD 5.2 calls this stat block **Merfolk Skirmisher**; the engine
+        // carried the 2014 heading ("Merfolk") until the sweep that
+        // compares the two had to keep a translation table to do
+        // its job. The file and the static keep their old spelling,
+        // because that is the word this codebase files the creature
+        // under and moving it buys nothing a reader wants; the name
+        // a player sees is the book's.
+        name: "Merfolk Skirmisher",
         // 'e' (lowercase) — free. 'm' is the Merrow's and the Magmin's,
         // and this is neither.
         glyph: 'e',

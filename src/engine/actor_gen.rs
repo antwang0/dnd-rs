@@ -242,7 +242,7 @@ mod tests {
             );
         }
         assert!(
-            affordable.iter().any(|&i| p[i].name == "Goblin"),
+            affordable.iter().any(|&i| p[i].name == "Goblin Warrior"),
             "a CR-1/4 goblin has to still be reachable"
         );
     }

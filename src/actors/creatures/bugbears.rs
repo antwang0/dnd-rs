@@ -17,7 +17,14 @@ pub static BUGBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*BUGBEAR_MORNINGSTAR);
     CreatureTemplate {
-        name: "Bugbear",
+        // SRD 5.2 calls this stat block **Bugbear Warrior**; the engine
+        // carried the 2014 heading ("Bugbear") until the sweep that
+        // compares the two had to keep a translation table to do
+        // its job. The file and the static keep their old spelling,
+        // because that is the word this codebase files the creature
+        // under and moving it buys nothing a reader wants; the name
+        // a player sees is the book's.
+        name: "Bugbear Warrior",
         // 'B' for bugbear — distinct from 'b' (boots-of-striding glyph).
         glyph: 'B',
         ac: 14,
