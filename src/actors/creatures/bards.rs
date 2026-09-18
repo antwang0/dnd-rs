@@ -211,6 +211,17 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // and lv4 Freedom of Movement (ally-buff restraint cleanse).
     actions.push(&*crate::actions::spells::SILENCE);
     actions.push(&*crate::actions::spells::FREEDOM_OF_MOVEMENT);
+    // The divination lane, all three of which are on the bard's RAW
+    // list and all three of which fit the chassis for the same reason:
+    // a bard's job on a board is to know things first. lv2 **Detect
+    // Thoughts** finds the people in the dark and pointedly not the
+    // animals with them; lv4 **Locate Creature** spends a bigger slot
+    // to pin one enemy for the whole fight; lv3 **Nondetection** is
+    // what a bard puts on the party's scout. See
+    // `spells::DETECT_THOUGHTS`.
+    actions.push(&*crate::actions::spells::DETECT_THOUGHTS);
+    actions.push(&*crate::actions::spells::LOCATE_CREATURE);
+    actions.push(&*crate::actions::spells::NONDETECTION);
     // lv3 **Summon Fey** (TCE) — the bard's one summon, and RAW's own
     // pick. Fits the chassis better than the number suggests: a Fey
     // Spirit's charm rider lands on the same axis as Vicious Mockery and

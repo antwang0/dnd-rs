@@ -1712,7 +1712,28 @@ const CLASS_BLINDSIGHT_TILES: isize = 4;
 /// aren't here. They have no radius to compare, so their callers
 /// short-circuit before the distance read rather than passing an
 /// `isize::MAX` through it.
-fn nonvisual_sense_reaches(viewer: &ActorInstance, subject: &ActorInstance) -> bool {
+fn nonvisual_sense_reaches(
+    viewer: &ActorInstance,
+    subject: &ActorInstance,
+    subject_id: usize,
+) -> bool {
+    // SRD 5.2 **Nondetection**: *"The target can't be targeted by any
+    // Divination spell **or perceived** through magical scrying
+    // sensors."* Checked first and for the whole helper, because the
+    // two magical rungs below are the only ones it speaks to and
+    // failing closed at the top is cheaper than two gates further
+    // down — a warded creature is still perfectly findable by a bat's
+    // echolocation, which is not magic looking for it.
+    let warded = subject.has_condition(Condition::Undetectable);
+    // SRD 5.2 **Locate Creature**, whose whole content is the link:
+    // *"you sense the direction to the creature's location if that
+    // creature is within 1,000 feet"*. Four hundred tiles is wider
+    // than any board the generator makes, so on this engine the range
+    // clause is "anywhere" and there is nothing to measure — see
+    // `Condition::Located`.
+    if !warded && viewer.linked_by(Condition::Located) == Some(subject_id) {
+        return true;
+    }
     let mut envelope = viewer.blindsight_tiles();
     if subject.is_grounded() {
         envelope = envelope.max(viewer.tremorsense_tiles());
@@ -1722,6 +1743,18 @@ fn nonvisual_sense_reaches(viewer: &ActorInstance, subject: &ActorInstance) -> b
     }
     if viewer.has_blind_fighting_style() {
         envelope = envelope.max(CLASS_BLINDSIGHT_TILES);
+    }
+    // SRD 5.2 **Detect Thoughts**, *Sense Thoughts*: *"within 30 feet
+    // of yourself … creatures that know languages or are telepathic"*.
+    // The engine's first *filtered* rung — the envelope only opens for
+    // a subject with something to think in, which is what separates it
+    // from the four unconditional senses above. See
+    // `Condition::MindReading`.
+    if !warded
+        && viewer.has_condition(Condition::MindReading)
+        && subject.knows_a_language()
+    {
+        envelope = envelope.max(DETECT_THOUGHTS_TILES);
     }
     if envelope == 0 {
         return false;
@@ -1734,6 +1767,15 @@ fn nonvisual_sense_reaches(viewer: &ActorInstance, subject: &ActorInstance) -> b
     );
     dist <= envelope
 }
+
+/// SRD 5.2 **Detect Thoughts**' *"within 30 feet"*, in tiles on the
+/// 2.5-ft grid.
+///
+/// Converted through `tiles_from_feet` like every other radius in the
+/// engine, so the spell's thirty feet and a paladin's aura's thirty
+/// feet are the same thirty feet.
+pub const DETECT_THOUGHTS_TILES: isize =
+    crate::engine::util::tiles_from_feet(30) as isize;
 
 /// Lowest foretold face a Divination Wizard will spend on a d20 they
 /// want to land *high* (their own roll, or an ally's). See
@@ -6011,7 +6053,7 @@ impl EncounterInstance {
         else {
             return false;
         };
-        if viewer.has_truesight() || nonvisual_sense_reaches(viewer, subject) {
+        if viewer.has_truesight() || nonvisual_sense_reaches(viewer, subject, subject_id) {
             return false;
         }
         // Magical darkness first, and on its own terms: darkvision does
@@ -6169,7 +6211,7 @@ impl EncounterInstance {
         if viewer.has_truesight() {
             return false;
         }
-        if nonvisual_sense_reaches(viewer, subject) {
+        if nonvisual_sense_reaches(viewer, subject, subject_id) {
             return false;
         }
         self.obscured_between(viewer.location(), subject.location())
@@ -6284,7 +6326,7 @@ impl EncounterInstance {
         let Some(subject) = self.actors.get(&subject_id) else {
             return fallback;
         };
-        if nonvisual_sense_reaches(viewer, subject) {
+        if nonvisual_sense_reaches(viewer, subject, subject_id) {
             ConcealmentPiercing::All
         } else {
             fallback

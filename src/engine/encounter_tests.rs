@@ -127313,3 +127313,236 @@ fn an_outbreak_seeds_the_locals_and_leaves_the_party_alone() {
         "seeding the party spends the rule before the first round"
     );
 }
+
+// ---------------------------------------------------------------------
+// The divination lane — SRD 5.2's Detect Thoughts, Locate Creature and
+// the Nondetection that answers both.
+//
+// All three resolve through `nonvisual_sense_reaches`, which is the
+// engine's one answer to "can this viewer find that subject without
+// looking", so the tests below are about what each rung opens and what
+// closes it again.
+// ---------------------------------------------------------------------
+
+/// SRD 5.2 **Detect Thoughts**, *Sense Thoughts*: *"You sense the
+/// presence of thoughts within 30 feet of yourself that belong to
+/// creatures that know languages or are telepathic."*
+///
+/// Three things at once, and the third is the one that makes the spell
+/// worth a level-2 slot rather than a worse blindsight:
+///
+///   - it finds an **Invisible** creature, which is what a wizard buys
+///     it for;
+///   - it stops at **thirty feet**, so the same creature one step
+///     further out is gone again;
+///   - it finds nothing **without a language**. A goblin is a person; a
+///     wolf is not, and a wizard who casts this at a wolf pack has
+///     spent a slot on nothing.
+#[test]
+fn detect_thoughts_finds_the_people_in_the_dark_and_not_the_animals() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    // Four tiles off — ten feet, well inside the envelope.
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    let wolf = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(2, 8), 1, 0)
+        .unwrap();
+    for hidden in [goblin, wolf] {
+        e.actors
+            .get_mut(&hidden)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    }
+    assert!(
+        !e.viewer_can_see(wizard, goblin),
+        "the fixture's own premise: both are invisible"
+    );
+    assert!(!e.viewer_can_see(wizard, wolf));
+
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .add_condition(Condition::MindReading, ConditionTimer::Rounds(10));
+
+    assert!(
+        e.viewer_can_see(wizard, goblin),
+        "a goblin has Common and Goblin to think in"
+    );
+    assert!(
+        !e.viewer_can_see(wizard, wolf),
+        "a wolf has nothing to think in, which is the whole filter"
+    );
+
+    // …and thirty feet is thirty feet. Twelve tiles is the envelope, so
+    // a step past it is out of the spell.
+    e.place_actor_at(goblin, Coordinate::new(2, 18)).unwrap();
+    assert!(
+        !e.viewer_can_see(wizard, goblin),
+        "sixteen tiles is forty feet, and the spell says thirty"
+    );
+}
+
+/// SRD 5.2 **Locate Creature**: *"You sense the direction to the
+/// creature's location if that creature is within 1,000 feet of you."*
+///
+/// A thousand feet is four hundred tiles, which is wider than any board
+/// the generator makes — so what the spell buys on this engine is one
+/// named enemy that can never be hidden again, at any distance and
+/// through any concealment. It is a single-target Truesight, and it is
+/// scoped to exactly the creature the caster named: the second
+/// invisible thing in the room is still invisible.
+#[test]
+fn locate_creature_pins_one_enemy_and_only_that_one() {
+    use crate::actions::spells::LOCATE_CREATURE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let quarry = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 30), 1, 0)
+        .unwrap();
+    let other = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(30, 20), 1, 1)
+        .unwrap();
+    for hidden in [quarry, other] {
+        e.actors
+            .get_mut(&hidden)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    }
+
+    let targets = vec![quarry];
+    for ef in LOCATE_CREATURE.side_effects(&mut e, wizard, Some(&targets), None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&wizard].linked_by(Condition::Located),
+        Some(quarry),
+        "the link is the whole spell"
+    );
+    assert!(
+        e.viewer_can_see(wizard, quarry),
+        "the named creature cannot be hidden, at any distance"
+    );
+    assert!(
+        !e.viewer_can_see(wizard, other),
+        "and its neighbour is exactly as invisible as it was"
+    );
+}
+
+/// SRD 5.2 **Nondetection**: *"The target can't be targeted by any
+/// Divination spell **or perceived** through magical scrying
+/// sensors."*
+///
+/// Both clauses, and they live in different places for a reason — see
+/// `Condition::Undetectable`. The targeting half is a gate in
+/// `Action::validate_input` scoped to the whole school; the perception
+/// half drops the two magical rungs off the sense lane.
+///
+/// The third assertion is the one that would be easiest to get wrong:
+/// the ward does nothing whatsoever about being *seen*. A creature
+/// under Nondetection walks down the corridor in plain sight.
+#[test]
+fn nondetection_hides_a_creature_from_magic_and_not_from_eyes() {
+    use crate::actions::spells::{LOCATE_CREATURE, NONDETECTION};
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+
+    // Before the ward: a legal Locate Creature target.
+    assert!(
+        LOCATE_CREATURE.validate_input(&e, wizard, Some(&vec![goblin]), None, None),
+        "the fixture's own premise"
+    );
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Undetectable, ConditionTimer::Rounds(100));
+    assert!(
+        !LOCATE_CREATURE.validate_input(&e, wizard, Some(&vec![goblin]), None, None),
+        "RAW: can't be targeted by any Divination spell"
+    );
+
+    // …and the perception half, on a creature the caster could not
+    // otherwise see.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .add_condition(Condition::MindReading, ConditionTimer::Rounds(10));
+    assert!(
+        !e.viewer_can_see(wizard, goblin),
+        "RAW: or perceived — the ward closes the sense rung too"
+    );
+
+    // But nothing at all about ordinary sight.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .remove_condition(Condition::Invisible);
+    assert!(
+        e.viewer_can_see(wizard, goblin),
+        "a warded creature is not a hidden one — it walks down the \
+         corridor in plain sight"
+    );
+
+    // The ward is a shield, not a weapon: the goblin is still perfectly
+    // fireball-able.
+    assert!(
+        crate::actions::spells::FIREBALL.validate_input(
+            &e,
+            wizard,
+            None,
+            Some(&vec![e.actors[&goblin].location()]),
+            None
+        ),
+        "Nondetection is not a ward against being hit"
+    );
+
+    // And the ward cuts a Locate Creature that was already running,
+    // rather than merely declining to report it — see
+    // `Nondetection::side_effects`.
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let hunted = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+        .unwrap();
+    let targets = vec![hunted];
+    for ef in LOCATE_CREATURE.side_effects(&mut e, wizard, Some(&targets), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&wizard].is_concentrating());
+    let warded = vec![hunted];
+    for ef in NONDETECTION.side_effects(&mut e, hunted, Some(&warded), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&wizard].is_concentrating(),
+        "the ward ends the spell that was looking, rather than leaving \
+         it to resume when the ward lapses"
+    );
+    assert!(e.actors[&hunted].has_condition(Condition::Undetectable));
+}

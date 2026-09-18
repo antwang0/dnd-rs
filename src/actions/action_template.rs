@@ -2460,6 +2460,31 @@ pub trait Action {
             {
                 return false;
             }
+            // SRD 5.2 **Nondetection**: *"The target can't be targeted
+            // by any Divination spell."* One gate for the whole school
+            // rather than a clause on each of its spells, which is what
+            // RAW's own sentence is — it names the school, not a list.
+            //
+            // Beside the banishment gate above because it is the same
+            // shape: a fact about the named target that no amount of
+            // reach or line of sight can get around, and one that binds
+            // on every name in the list rather than only the first.
+            //
+            // The other half of the ward — *"or perceived"* — is not
+            // here; it lives on the sense lane, in
+            // `nonvisual_sense_reaches`, because being *found* is not
+            // something anybody spends an action on. See
+            // `Condition::Undetectable`.
+            if self.school() == Some(crate::engine::types::SpellSchool::Divination)
+                && targets.iter().any(|tid| {
+                    encounter
+                        .actors
+                        .get(tid)
+                        .is_some_and(|t| t.has_condition(crate::conditions::Condition::Undetectable))
+                })
+            {
+                return false;
+            }
             if let Some(reach) = self.reach_tiles() {
                 let Some(dist) = encounter.footprint_distance(caster_id, target_id) else {
                     return false;

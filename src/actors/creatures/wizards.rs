@@ -745,6 +745,27 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // against a plain Invisible opponent the lv2 self-buff is the right
     // spend, and the lv6 slot stays free for Globe / Mass Suggestion.
     actions.push(&*crate::actions::spells::SEE_INVISIBILITY);
+    // Detect Thoughts — the lv2 sense that finds what is *not* there to
+    // be seen at all. See Invisibility above answers "something is
+    // standing there and I cannot see it"; this answers "is anything
+    // standing there", which is the question a wizard in an unlit
+    // corridor actually has. It pays for its narrowness — nothing
+    // without a language registers — with the one thing no other sense
+    // on this loadout does: it does not care what is between the
+    // caster and the mind, only that no wall is. See
+    // `spells::DETECT_THOUGHTS`.
+    actions.push(&*crate::actions::spells::DETECT_THOUGHTS);
+    // Locate Creature — the lv4 half of the same lane, spent on one
+    // enemy instead of on a radius. A single-target Truesight at two
+    // slot levels less: once it lands, the thing it named cannot be
+    // hidden from the wizard again for the rest of the fight, by dark,
+    // fog, invisibility or distance.
+    actions.push(&*crate::actions::spells::LOCATE_CREATURE);
+    // Nondetection — the counter to both of the above, on the wizard's
+    // own list, and the reason the lane is a decision rather than a
+    // one-way street. A lv3 slot with no concentration cost that takes
+    // one creature off every divination on the board.
+    actions.push(&*crate::actions::spells::NONDETECTION);
     // Detect Magic — the lv1 third of the same family, and the one
     // that looks at the floor rather than at the room. A wizard walking
     // a corridor with this up finds the lich's Glyph of Warding from

@@ -3151,6 +3151,12 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // theirs and not a second rogue's. Same positive polarity as Sworn
     // directly above.
     crate::conditions::Condition::Analyzed,
+    // SRD 5.2 **Locate Creature**, and the row with the most link in it
+    // of any on this list: the condition sits on the *caster* and the
+    // link is the quarry, so a `Located` with nothing on the other end
+    // of it is a spell that located nobody. Same positive polarity as
+    // the two rows directly above. See `Condition::Located`.
+    crate::conditions::Condition::Located,
     crate::conditions::Condition::EldritchStruck,
     crate::conditions::Condition::WardingBonded,
     crate::conditions::Condition::HexbladeCursed,

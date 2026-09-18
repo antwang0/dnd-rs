@@ -2461,6 +2461,96 @@ pub enum Condition {
     /// timer plus the standard `is_dispellable_buff` hook so Dispel
     /// Magic can strip it, matching `TrueSighted` exactly on both.
     SeeingInvisible,
+    /// **Detect Thoughts** — SRD 5.2 level-2 divination (Bard,
+    /// Sorcerer, Wizard), action, Self, concentration up to 1 minute.
+    ///
+    /// > *Sense Thoughts. You sense the presence of thoughts within 30
+    /// > feet of yourself that belong to creatures that know languages
+    /// > or are telepathic. You don't read the thoughts, but you know
+    /// > that a thinking creature is present.*
+    /// >
+    /// > *The spell is blocked by 1 foot of stone, dirt, or wood; 1 inch
+    /// > of metal; or a thin sheet of lead.*
+    ///
+    /// The engine's first **filtered** sense, and that is what makes it
+    /// worth having beside blindsight rather than a weaker copy of it.
+    /// Every other non-visual envelope in
+    /// `EncounterInstance::nonvisual_sense_reaches` finds whatever is
+    /// standing there; this one finds a goblin scout in the dark and
+    /// not the wolf beside it, because the wolf has no language to
+    /// think in. A wizard who spends a level-2 slot on it against a
+    /// pack of beasts has bought nothing at all.
+    ///
+    /// RAW's blocking clause needs no code: a foot of stone is a wall,
+    /// and `viewer_can_see` asks `total_cover_separates` and the
+    /// line-of-sight walk before anything on the sense lane can help.
+    /// What the sense *does* lift is the fog, the dark and the
+    /// invisibility — which is exactly the list RAW does not name as
+    /// blocking it.
+    ///
+    /// **Read Thoughts is deliberately absent.** The spell's second
+    /// half — *"you learn what is most on the target's mind right
+    /// now"*, the deeper probe, the Intelligence (Arcana) check to
+    /// throw the caster out — is a conversation, and the engine has no
+    /// surface for information a creature knows. The clause that *does*
+    /// have one is the sense, and it is the whole of what is modelled.
+    MindReading,
+    /// **Locate Creature** — SRD 5.2 level-4 divination (Bard, Cleric,
+    /// Druid, Paladin, Ranger, Wizard), action, Self, concentration up
+    /// to 1 hour.
+    ///
+    /// > *Describe or name a creature that is familiar to you. You
+    /// > sense the direction to the creature's location if that creature
+    /// > is within 1,000 feet of you. If the creature is moving, you
+    /// > know the direction of its movement.*
+    ///
+    /// Held by the **caster** and linked to the creature they named —
+    /// the same polarity as `Sworn` and `Analyzed`, and the opposite of
+    /// most of `LINKED_CONDITIONS`, whose rows sit on the victim. The
+    /// link is the whole content: a Locate Creature with nothing on the
+    /// other end of it is a spell that located nobody.
+    ///
+    /// A thousand feet is four hundred tiles on the 2.5-ft grid, which
+    /// is wider than any board the generator makes. So on this engine
+    /// the range clause is *"anywhere"*, and the spell reads as: one
+    /// named creature can never be hidden from you again — not by
+    /// darkness, not by a fog bank, not by Invisibility. That is a
+    /// narrower thing than it sounds and a sharper one: it costs a
+    /// level-4 slot and concentration, and it answers exactly one
+    /// enemy.
+    ///
+    /// RAW's *"can't locate a creature if any thickness of lead blocks
+    /// a direct path"* is the same clause `MindReading` leans on and
+    /// needs no code for the same reason.
+    Located,
+    /// **Nondetection** — SRD 5.2 level-3 abjuration (Bard, Ranger,
+    /// Wizard), action, touch, 8 hours.
+    ///
+    /// > *For the duration, you hide a target that you touch from
+    /// > Divination spells. The target can't be targeted by any
+    /// > Divination spell or perceived through magical scrying
+    /// > sensors.*
+    ///
+    /// The counter, and the reason the two divinations above are worth
+    /// having at all: a lane with no answer is a lane, and a lane with
+    /// an answer is a decision. Two clauses, and the engine reads both
+    /// off `Action::school()`:
+    ///
+    ///   - **"can't be targeted by any Divination spell"** —
+    ///     `Action::affects_creature` refuses a warded target for every
+    ///     spell that declares `SpellSchool::Divination`, which is the
+    ///     shared gate the whole school goes through rather than a
+    ///     clause on each of them;
+    ///   - **"or perceived"** — the two sense rungs above both skip a
+    ///     warded subject, so a Nondetection hides its bearer from a
+    ///     Detect Thoughts already running and from a Locate Creature
+    ///     that named them before the ward went up.
+    ///
+    /// Deliberately **not** a `countered_by_truesight` concealment: it
+    /// does not make its bearer harder to *see*. A creature under
+    /// Nondetection walks down the corridor in plain sight; what it is
+    /// hidden from is magic that looks for it.
+    Undetectable,
     /// **Detecting magic** — SRD 5.2 *Detect Magic*, level-1 divination,
     /// Concentration.
     ///
@@ -4421,6 +4511,9 @@ impl Condition {
             Condition::Gaseous => "gaseous",
             Condition::TrueSighted => "true-sighted",
             Condition::SeeingInvisible => "seeing-invisible",
+            Condition::MindReading => "sensing thoughts",
+            Condition::Located => "tracking a creature",
+            Condition::Undetectable => "hidden from divination",
             Condition::DetectingMagic => "sensing magic",
             Condition::Immolated => "immolated",
             Condition::GuidedStriking => "primed with a guided strike",
@@ -4669,6 +4762,15 @@ impl Condition {
                 | Condition::Stoneskinned
                 | Condition::MirroredImages
                 | Condition::Blurred
+                // The divination lane and its counter — see
+                // `Condition::MindReading`. All three are timed magical
+                // benefits on a willing holder, which is this list's
+                // whole membership test, and a Nondetection is the one
+                // of the three most obviously worth a Dispel Magic: it
+                // is what somebody put up to keep from being found.
+                | Condition::MindReading
+                | Condition::Located
+                | Condition::Undetectable
                 | Condition::DeathWarded
                 | Condition::Helped
                 | Condition::Sanctuary

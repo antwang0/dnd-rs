@@ -6754,6 +6754,28 @@ impl ActorInstance {
     /// direction: `remove_condition` drops the entry, so a link can
     /// never outlive its condition even if a future caller forgets to
     /// clear it explicitly.
+    /// True if this creature thinks in words — SRD 5.2 **Detect
+    /// Thoughts**' *"creatures that know languages or are
+    /// telepathic"*.
+    ///
+    /// The whole of the filter that makes `Condition::MindReading` a
+    /// different sense from blindsight, and the reason the bestiary's
+    /// `languages` field is worth having been filled in as carefully as
+    /// it has: a goblin scout has Common and Goblin and is found in the
+    /// dark; the wolf beside it has nothing and is not.
+    ///
+    /// **Telepathy is the half that is missing**, and it is missing
+    /// rather than decided: the engine has no field for it. SRD 5.2
+    /// prints it on the *Languages* line as free text — *"Languages
+    /// Otyugh; telepathy 120 ft."* — and the engine's `languages` is a
+    /// set of named tongues with nowhere to put it. Every creature in
+    /// the bestiary that is telepathic also knows at least one language,
+    /// so the gap is currently unobservable; a mind flayer that spoke
+    /// nothing would slip through it.
+    pub fn knows_a_language(&self) -> bool {
+        !self.languages.is_empty()
+    }
+
     pub fn linked_by(&self, c: Condition) -> Option<usize> {
         if !self.has_condition(c) {
             return None;

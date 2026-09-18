@@ -34886,6 +34886,398 @@ impl Action for SeeInvisibility {
 
 pub static SEE_INVISIBILITY: LazyLock<SeeInvisibility> = LazyLock::new(|| SeeInvisibility {});
 
+/// **Detect Thoughts** — SRD 5.2 level-2 divination (Bard, Sorcerer,
+/// Wizard), action, Self, concentration up to 1 minute.
+///
+/// > *Sense Thoughts. You sense the presence of thoughts within 30 feet
+/// > of yourself that belong to creatures that know languages or are
+/// > telepathic. You don't read the thoughts, but you know that a
+/// > thinking creature is present.*
+/// >
+/// > *The spell is blocked by 1 foot of stone, dirt, or wood; 1 inch of
+/// > metal; or a thin sheet of lead.*
+///
+/// The fourth magical sense on this page, and the first with a **type
+/// filter** on it. `SEE_INVISIBILITY` and `TRUE_SEEING` answer *"who is
+/// standing there"* for any value of who; this one answers it only for
+/// things that think in words. A wizard who drops it on a pack of dire
+/// wolves has spent a level-2 slot on nothing, and one who drops it in
+/// a dark corridor a drow patrol is creeping down has bought the whole
+/// fight.
+///
+/// It is the cheapest answer in the engine to the two things that are
+/// otherwise very expensive to answer — **darkness** and
+/// **invisibility** — and it is cheap because it is narrow. Thirty feet
+/// is twelve tiles, it does not reach through the wall RAW says stops
+/// it (the sight gate asks Total Cover and line of sight before the
+/// sense lane is consulted at all), and it finds nothing that is not a
+/// person.
+///
+/// **Read Thoughts is deliberately absent** — see
+/// [`Condition::MindReading`], which argues it: the spell's second half
+/// is a conversation, and there is no surface in a fight for what a
+/// creature knows.
+pub struct DetectThoughts {}
+
+impl Action for DetectThoughts {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
+    fn name(&self) -> &str {
+        "detect thoughts"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["dt", "detect-thoughts", "sense thoughts"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(2)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|c| c.is_concentrating())
+        {
+            return false;
+        }
+        actor_lacks_condition(encounter, caster_id, Condition::MindReading)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        encounter.log(format!(
+            "  detect thoughts: {} listens for minds within 30 feet.",
+            encounter.actor_name(caster_id)
+        ));
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: caster_id,
+                condition: Condition::MindReading,
+                // RAW's minute.
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Detect Thoughts",
+                    vec![(caster_id, Condition::MindReading)],
+                ),
+            }),
+        ]
+    }
+}
+
+pub static DETECT_THOUGHTS: LazyLock<DetectThoughts> = LazyLock::new(|| DetectThoughts {});
+
+/// **Locate Creature** — SRD 5.2 level-4 divination (Bard, Cleric,
+/// Druid, Paladin, Ranger, Wizard), action, Self, concentration up to 1
+/// hour.
+///
+/// > *Describe or name a creature that is familiar to you. You sense the
+/// > direction to the creature's location if that creature is within
+/// > 1,000 feet of you. If the creature is moving, you know the
+/// > direction of its movement.*
+///
+/// One creature, named, and from then on it cannot be hidden from you.
+/// Not by the dark, not by a fog bank, not by Invisibility, not by
+/// distance — a thousand feet is four hundred tiles and no board is
+/// that wide. See [`Condition::Located`], which carries the link.
+///
+/// **A single-target Truesight, at two slot levels less and for one
+/// enemy only**, which is the trade worth making the spell for: the
+/// party's answer to *the* invisible thing rather than to invisibility.
+/// A `SingleActor` target rather than RAW's "describe or name", because
+/// the engine has no way to be told about a creature it cannot see —
+/// and that narrowing is the honest one, since the interesting case at
+/// a table is naming something you have just lost sight of rather than
+/// something you have never met.
+///
+/// Refuses a target already carrying Nondetection, which is RAW's own
+/// sentence from the other side — see [`Condition::Undetectable`]. That
+/// refusal does not need a clause here: `Action::validate_input` gates
+/// the whole Divination school on it.
+pub struct LocateCreature {}
+
+impl Action for LocateCreature {
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Divination)
+    }
+    fn name(&self) -> &str {
+        "locate creature"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["lc", "locate", "locate-creature"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn is_harmful(&self) -> bool {
+        // RAW's target is not a target in the hostile sense: nothing is
+        // rolled at it and nothing lands on it. The condition sits on
+        // the caster. Declaring it harmless is what keeps it out of the
+        // Charmed / attach / swallow hostility gates, none of which
+        // have anything to say about somebody thinking about you.
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    /// **No reach and no line of sight**, and both absences are the
+    /// spell. RAW's range is *Self* — the thousand feet is the sense's
+    /// envelope rather than a targeting range — and a Locate Creature
+    /// that needed to see its quarry would be a spell for finding
+    /// things that are not lost.
+    fn reach_tiles(&self) -> Option<isize> {
+        None
+    }
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if target_id == caster_id {
+            return false;
+        }
+        if encounter
+            .actors
+            .get(&caster_id)
+            .is_some_and(|c| c.is_concentrating())
+        {
+            return false;
+        }
+        encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| t.is_combat_active())
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        encounter.log(format!(
+            "  locate creature: {} fixes on {}, wherever they go.",
+            encounter.actor_name(caster_id),
+            encounter.actor_name(target_id)
+        ));
+        // The link points *from* the caster *at* the quarry, which is
+        // the opposite polarity from most of `LINKED_CONDITIONS` and
+        // the same one `Sworn` and `Analyzed` use. See
+        // `Condition::Located`.
+        let mut effects = crate::engine::side_effects::install_condition_with_link(
+            Condition::Located,
+            caster_id,
+            target_id,
+            // RAW's hour, as the `Rounds(100)` stand-in every other
+            // hour-long concentration buff in this file uses.
+            ConditionTimer::Rounds(100),
+        );
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Locate Creature",
+                vec![(caster_id, Condition::Located)],
+            ),
+        }));
+        effects
+    }
+}
+
+pub static LOCATE_CREATURE: LazyLock<LocateCreature> = LazyLock::new(|| LocateCreature {});
+
+/// **Nondetection** — SRD 5.2 level-3 abjuration (Bard, Ranger,
+/// Wizard), action, touch, 8 hours.
+///
+/// > *For the duration, you hide a target that you touch from Divination
+/// > spells. The target can't be targeted by any Divination spell or
+/// > perceived through magical scrying sensors.*
+///
+/// The answer to the two spells above it, and the reason they are worth
+/// having: a lane with no counter is a lane, and a lane with a counter
+/// is a decision. Both of RAW's clauses are carried and neither of them
+/// is written here — see [`Condition::Undetectable`], which is the
+/// whole spell. `Action::validate_input` refuses a warded creature to
+/// every spell that declares `SpellSchool::Divination`, and
+/// `nonvisual_sense_reaches` drops the two magical rungs for them.
+///
+/// **Not concentration**, which is what makes it worth a level-3 slot:
+/// RAW's eight hours are free of the caster's attention, so a party
+/// that knows it is being hunted can ward its scout and keep casting.
+/// The engine's stand-in is the same `Rounds(100)` every other
+/// hour-plus buff on this page takes.
+///
+/// It does nothing whatsoever against being *seen*. A creature under
+/// Nondetection walks down the corridor in plain sight; what it is
+/// hidden from is magic that goes looking.
+pub struct Nondetection {}
+
+impl Action for Nondetection {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Abjuration)
+    }
+    fn name(&self) -> &str {
+        "nondetection"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["nd", "non-detection", "ward"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // Touch.
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        let team = caster.team();
+        // "A willing creature": the caster's own side, still standing,
+        // and not already warded.
+        encounter.actors.get(&target_id).is_some_and(|t| {
+            t.team() == team
+                && t.is_combat_active()
+                && !t.has_condition(Condition::Undetectable)
+        })
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        _caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // RAW's *"or perceived"* reaches backwards as well as forwards:
+        // a Locate Creature already fixed on this creature is magic
+        // looking for them, and the ward is what stops it. Dropped here
+        // rather than left to the sense lane — the sense lane declines
+        // to *report* a warded subject, but leaving the link standing
+        // would mean the spell silently resumed the moment the ward
+        // lapsed, which is a longer memory than RAW gives it.
+        let trackers: Vec<usize> = encounter
+            .sorted_actor_ids()
+            .into_iter()
+            .filter(|id| {
+                encounter
+                    .actors
+                    .get(id)
+                    .and_then(|a| a.linked_by(Condition::Located))
+                    == Some(target_id)
+            })
+            .collect();
+        for tracker in trackers {
+            let (tracker_name, target_name) =
+                (encounter.actor_name(tracker), encounter.actor_name(target_id));
+            encounter.log(format!(
+                "  nondetection: {} loses the thread on {}.",
+                tracker_name, target_name
+            ));
+            encounter.drop_concentration(tracker);
+        }
+        encounter.log(format!(
+            "  nondetection: {} drops out of every scrying in the world.",
+            encounter.actor_name(target_id)
+        ));
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Undetectable,
+            timer: ConditionTimer::Rounds(100),
+        })]
+    }
+}
+
+pub static NONDETECTION: LazyLock<Nondetection> = LazyLock::new(|| Nondetection {});
+
 /// Detect Magic — SRD 5.2 level-1 divination (Ritual), Concentration.
 ///
 /// > *"For the duration, you sense the presence of magical effects
