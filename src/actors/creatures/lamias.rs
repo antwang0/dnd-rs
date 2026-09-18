@@ -77,7 +77,7 @@ pub static LAMIA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         cr: 4.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Fiend,
         actions,
         ..CreatureTemplate::defaults()
     }
@@ -103,7 +103,7 @@ mod tests {
         .unwrap();
         assert_eq!(a.cr(), 4.0);
         assert_eq!(a.size(), Size::Large);
-        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
+        assert_eq!(a.creature_type(), CreatureType::Fiend);
         // The lamia's three action lanes — multi (claws + curse touch)
         // primary, with each part also exposed as a standalone fallback
         // for the AI's per-resource picking (e.g. when the AI wants to

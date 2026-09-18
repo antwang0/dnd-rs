@@ -38,7 +38,7 @@ pub static WYVERN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 6.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Dragon,
         actions,
         ..CreatureTemplate::defaults()
     }

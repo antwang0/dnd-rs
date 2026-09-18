@@ -64,7 +64,7 @@ pub static WEREBOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 4.0,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Monstrosity,
         actions,
         // Lycanthrope BPS resistance qualified to nonmagical attacks
         // that aren't silvered — same envelope as Werewolf / Werebear,
@@ -98,7 +98,7 @@ mod tests {
         .unwrap();
         assert_eq!(a.cr(), 4.0);
         assert_eq!(a.size(), Size::Medium);
-        assert_eq!(a.creature_type(), CreatureType::Humanoid);
+        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
         assert!(a.find_action("wereboar multiattack").is_some());
         assert!(a.find_action("wereboar tusks").is_some());
         assert!(a.find_action("wereboar maul").is_some());

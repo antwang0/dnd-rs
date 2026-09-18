@@ -50,7 +50,7 @@ pub static GORGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 5.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Construct,
         actions,
         // Gorgons resist nothing in MM but are immune to Petrified
         // themselves (their own breath can't stone-lock them — a

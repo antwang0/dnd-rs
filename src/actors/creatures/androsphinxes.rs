@@ -94,7 +94,7 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Sylvan]),
         cr: 17.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Celestial,
         actions,
         // Nonmagical B/P/S resistance — the boss "magic weapons or
         // nothing" envelope. No damage-type resistances beyond physical;

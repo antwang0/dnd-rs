@@ -54,7 +54,7 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Giant]),
         cr: 7.0,
         size: Size::Large,
-        creature_type: CreatureType::Giant,
+        creature_type: CreatureType::Fiend,
         actions,
         // 5e Oni proficient saves: DEX / CON / WIS / CHA.
         proficient_saves: HashSet::from([

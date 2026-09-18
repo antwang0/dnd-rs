@@ -64,8 +64,8 @@ pub static WERETIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common]),
         cr: 4.0,
-        size: Size::Large,
-        creature_type: CreatureType::Humanoid,
+        size: Size::Medium,
+        creature_type: CreatureType::Monstrosity,
         actions,
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
@@ -90,8 +90,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.cr(), 4.0);
-        assert_eq!(a.size(), Size::Large);
-        assert_eq!(a.creature_type(), CreatureType::Humanoid);
+        assert_eq!(a.size(), Size::Medium);
+        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
         assert!(a.find_action("weretiger multiattack").is_some());
         assert!(a.find_action("weretiger bite").is_some());
         assert!(a.find_action("weretiger claws").is_some());

@@ -55,7 +55,7 @@ pub static MERFOLK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Primordial]),
         cr: 0.125,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Elemental,
         actions,
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         ..CreatureTemplate::defaults()
@@ -84,7 +84,7 @@ mod tests {
     fn merfolk_template_shape() {
         let a = make();
         assert_eq!(a.cr(), 0.125);
-        assert_eq!(a.creature_type(), CreatureType::Humanoid);
+        assert_eq!(a.creature_type(), CreatureType::Elemental);
         assert!(a.find_action("merfolk spear").is_some());
     }
 

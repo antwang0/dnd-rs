@@ -53,7 +53,7 @@ pub static MERROW_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Abyssal, Language::Primordial]),
         cr: 2.0,
         size: Size::Large,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Monstrosity,
         actions,
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.

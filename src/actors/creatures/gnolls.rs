@@ -33,7 +33,7 @@ pub static GNOLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 0.5,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fiend,
         actions,
         // SRD 5.2 **Rampage** — the first kill is the one that
         // cascades. See `RAMPAGE_TAG`.

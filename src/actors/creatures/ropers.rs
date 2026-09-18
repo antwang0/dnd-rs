@@ -36,7 +36,7 @@ pub static ROPER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 5.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Aberration,
         actions,
         ..CreatureTemplate::defaults()
     }

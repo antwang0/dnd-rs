@@ -58,7 +58,7 @@ pub static WERERAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 2.0,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Monstrosity,
         actions,
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::resistant_to_nonmagical_nonsilvered_physical()
@@ -84,7 +84,7 @@ mod tests {
         .unwrap();
         assert_eq!(a.cr(), 2.0);
         assert_eq!(a.size(), Size::Medium);
-        assert_eq!(a.creature_type(), CreatureType::Humanoid);
+        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
         assert!(a.find_action("wererat multiattack").is_some());
         assert!(a.find_action("wererat bite").is_some());
         assert!(a.find_action("wererat shortsword").is_some());

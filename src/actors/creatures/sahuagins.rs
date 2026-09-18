@@ -54,7 +54,7 @@ pub static SAHUAGIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 0.5,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fiend,
         actions,
         // Blood Frenzy passive: advantage on melee attacks vs wounded
         // targets. Read by `compute_attack_mode`'s gate.

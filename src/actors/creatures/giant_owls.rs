@@ -87,7 +87,7 @@ pub static GIANT_OWL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         // 5e Mounted Combat: MM's night-flying mount, on the same terms as the giant eagle.
         mountable: true,
-        creature_type: CreatureType::Beast,
+        creature_type: CreatureType::Celestial,
         actions,
         // 5e **Flyby**: "doesn't provoke an opportunity attack when it
         // flies out of an enemy's reach." Read by the mover-side
@@ -121,7 +121,7 @@ mod tests {
         let a = make();
         assert_eq!(a.cr(), 0.25);
         assert_eq!(a.size(), Size::Large);
-        assert_eq!(a.creature_type(), CreatureType::Beast);
+        assert_eq!(a.creature_type(), CreatureType::Celestial);
         assert!(a.find_action("giant owl talons").is_some());
     }
 

@@ -18156,8 +18156,8 @@ mod tests {
 
     #[test]
     fn ai_casts_hold_person_when_available() {
+        use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
         use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
-        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 
         let mut e = empty_arena();
         let cleric = e
@@ -18166,11 +18166,17 @@ mod tests {
         // Place enemies outside Spirit Guardians 6-tile aura range so the
         // AI falls through to Hold Person. At distance 8+, Spirit Guardians
         // won't fire, letting the disabler priority shine.
+        //
+        // Bandits rather than goblins, because Hold Person names a
+        // Humanoid and SRD 5.2's goblins are Fey: with goblins on the
+        // board the spell has no legal target at all, and the rung the
+        // test is about is skipped for the right reason and the wrong
+        // one at once.
         let _e1 = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(14, 5), 1, 0)
             .unwrap();
         let _e2 = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(15, 5), 1, 1)
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(15, 5), 1, 1)
             .unwrap();
 
         let ai = SimpleAi;

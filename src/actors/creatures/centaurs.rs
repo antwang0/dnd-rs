@@ -36,7 +36,7 @@ pub static CENTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Elvish, Language::Sylvan]),
         cr: 2.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Fey,
         actions,
         // RAW: when the centaur closes at least the clause's distance in a
         // straight line and then connects with its pike, the hit carries

@@ -79,7 +79,7 @@ pub static GRIMLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Undercommon]),
         cr: 0.25,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Aberration,
         actions,
         skills: HashSet::from([Skill::Athletics, Skill::Perception, Skill::Stealth]),
         ..CreatureTemplate::defaults()
@@ -109,7 +109,7 @@ mod tests {
         let a = make();
         assert_eq!(a.cr(), 0.25);
         assert_eq!(a.size(), Size::Medium);
-        assert_eq!(a.creature_type(), CreatureType::Humanoid);
+        assert_eq!(a.creature_type(), CreatureType::Aberration);
         assert!(a.find_action("spiked bone club").is_some());
     }
 

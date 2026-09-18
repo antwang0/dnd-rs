@@ -39,7 +39,7 @@ pub static GOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 0.25,
         size: Size::Small,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         skills: HashSet::from([Skill::Stealth]),
         // SRD 5.2 **Redirect Attack** (Reaction): *"the goblin chooses a
@@ -104,7 +104,7 @@ pub static GOBLIN_MINION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 0.125,
         size: Size::Small,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()

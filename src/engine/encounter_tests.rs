@@ -19321,9 +19321,12 @@ fn dispel_evil_and_good_sends_an_adjacent_undead_home() {
     assert!(banished, "the dismissal never landed across 40 seeds");
 }
 
-/// The dismissal is type-scoped in both directions. A goblin standing
+/// The dismissal is type-scoped in both directions. A bandit standing
 /// in exactly the tile the zombie stood in is a Humanoid, is not on
 /// RAW's list, and is never asked to save at all — across every seed.
+///
+/// The Humanoid was a goblin until SRD 5.2 made goblins Fey, which is
+/// on the spell's list; see `creature_type_tags_are_correct`.
 #[test]
 fn dispel_evil_and_good_leaves_a_humanoid_where_it_stands() {
     use crate::actions::spells::DISPEL_EVIL_AND_GOOD;
@@ -19333,8 +19336,8 @@ fn dispel_evil_and_good_leaves_a_humanoid_where_it_stands() {
         let cleric = e
             .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let goblin = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        let bandit = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(3, 2), 1, 0)
             .unwrap();
         e.pop_prompt();
         e.push_action(ActionExecutionInfo::new(
@@ -19346,7 +19349,7 @@ fn dispel_evil_and_good_leaves_a_humanoid_where_it_stands() {
         ));
         e.process_stack();
         assert!(
-            !e.actors[&goblin].has_condition(Condition::Banished),
+            !e.actors[&bandit].has_condition(Condition::Banished),
             "seed {seed}: a Humanoid is not on the spell's list"
         );
     }
@@ -19371,16 +19374,20 @@ fn dispel_evil_and_good_breaks_only_the_charms_it_names() {
     let fiend_charmed = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 2), 0, 0)
         .unwrap();
-    let goblin_charmed = e
+    let mortal_charmed = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 3), 0, 1)
         .unwrap();
     let zombie = e
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 9), 1, 0)
         .unwrap();
-    let goblin = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+    // A bandit, and it used to be a goblin: SRD 5.2 made goblins Fey,
+    // which puts them *on* the spell's list and so on the wrong side of
+    // the assertion this fixture is for. See
+    // `creature_type_tags_are_correct`.
+    let bandit = e
+        .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(10, 9), 1, 0)
         .unwrap();
-    for (victim, source) in [(fiend_charmed, zombie), (goblin_charmed, goblin)] {
+    for (victim, source) in [(fiend_charmed, zombie), (mortal_charmed, bandit)] {
         for effect in
             install_condition_with_link(Condition::Charmed, victim, source, ConditionTimer::Rounds(10))
         {
@@ -19402,8 +19409,8 @@ fn dispel_evil_and_good_breaks_only_the_charms_it_names() {
         "a charm laid by the Undead is what the spell is for"
     );
     assert!(
-        e.actors[&goblin_charmed].has_condition(Condition::Charmed),
-        "a goblin's charm is not on the spell's list"
+        e.actors[&mortal_charmed].has_condition(Condition::Charmed),
+        "a bandit's charm is not on the spell's list"
     );
 }
 
@@ -19481,10 +19488,14 @@ fn a_warded_creature_refuses_a_fear_from_a_fiend() {
     assert!(!e.actors[&ward_holder].has_condition(Condition::Frightened));
 }
 
-/// The ward is type-scoped, not blanket immunity. A goblin's charm is
+/// The ward is type-scoped, not blanket immunity. A bandit's charm is
 /// a Humanoid's charm, and RAW's list does not contain Humanoids — so
 /// the same install through the same lane lands normally, back-link and
 /// all.
+///
+/// The Humanoid here was a goblin until SRD 5.2 made goblins Fey, which
+/// is the list's own first entry after Aberrations and would have made
+/// the fixture prove the opposite of its name.
 #[test]
 fn a_warded_creature_is_still_charmed_by_a_humanoid() {
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
@@ -19493,10 +19504,10 @@ fn a_warded_creature_is_still_charmed_by_a_humanoid() {
     let ward_holder = e
         .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(3, 3), 0, 0)
         .unwrap();
-    let goblin = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 3), 1, 0)
+    let bandit = e
+        .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 3), 1, 0)
         .unwrap();
-    assert!(!e.actors[&goblin].creature_type().affected_by_protection());
+    assert!(!e.actors[&bandit].creature_type().affected_by_protection());
     e.actors
         .get_mut(&ward_holder)
         .unwrap()
@@ -19504,7 +19515,7 @@ fn a_warded_creature_is_still_charmed_by_a_humanoid() {
     for effect in install_condition_with_link(
         Condition::Charmed,
         ward_holder,
-        goblin,
+        bandit,
         ConditionTimer::Rounds(10),
     ) {
         effect.apply(&mut e);
@@ -19512,7 +19523,7 @@ fn a_warded_creature_is_still_charmed_by_a_humanoid() {
     assert!(e.actors[&ward_holder].has_condition(Condition::Charmed));
     assert_eq!(
         e.actors[&ward_holder].linked_by(Condition::Charmed),
-        Some(goblin),
+        Some(bandit),
         "the fused install still records who did it"
     );
 }
@@ -48533,27 +48544,48 @@ fn grapple_escape_invalid_when_not_grappled() {
     );
 }
 
+/// The four type predicates, against four creatures chosen so that each
+/// answers differently.
+///
+/// **The goblin used to be the Humanoid here and is now the Fey**, which
+/// is SRD 5.2's own change and is the sharpest illustration of why the
+/// type column is not decoration. Protection from Evil and Good names
+/// *"Aberrations, Celestials, Elementals, Fey, Fiends and Undead"*, so
+/// the most common monster in the game moved from the half of the
+/// bestiary that ward does nothing about to the half it does. A bandit
+/// stands in as the Humanoid, because a bandit still is one.
 #[test]
 fn creature_type_tags_are_correct() {
     use crate::engine::types::CreatureType;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::balors::BALOR_TEMPLATE;
     use crate::actors::creatures::dragons::ADULT_RED_DRAGON_TEMPLATE;
     let mut e = ei_with_terrain(20, 20, &[]);
     let z = e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0).unwrap();
-    let g = e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0).unwrap();
+    let h = e.instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 2), 1, 0).unwrap();
+    let g = e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 2), 1, 0).unwrap();
     let b = e.instantiate_creature(&BALOR_TEMPLATE, Coordinate::new(2, 10), 2, 0).unwrap();
     let d = e.instantiate_creature(&ADULT_RED_DRAGON_TEMPLATE, Coordinate::new(10, 10), 3, 0).unwrap();
     assert_eq!(e.actors[&z].creature_type(), CreatureType::Undead);
-    assert_eq!(e.actors[&g].creature_type(), CreatureType::Humanoid);
+    assert_eq!(e.actors[&h].creature_type(), CreatureType::Humanoid);
+    assert_eq!(
+        e.actors[&g].creature_type(),
+        CreatureType::Fey,
+        "SRD 5.2: \"Small Fey (Goblinoid)\""
+    );
     assert_eq!(e.actors[&b].creature_type(), CreatureType::Fiend);
     assert_eq!(e.actors[&d].creature_type(), CreatureType::Dragon);
     assert!(e.actors[&z].creature_type().is_undead());
-    assert!(!e.actors[&g].creature_type().is_undead());
+    assert!(!e.actors[&h].creature_type().is_undead());
     assert!(e.actors[&z].creature_type().affected_by_protection());
     assert!(e.actors[&b].creature_type().affected_by_protection());
-    assert!(!e.actors[&g].creature_type().affected_by_protection());
+    assert!(
+        e.actors[&g].creature_type().affected_by_protection(),
+        "a Fey goblin is on the ward's list and a Humanoid one was not"
+    );
+    assert!(!e.actors[&h].creature_type().affected_by_protection());
 }
 
 #[test]
@@ -51247,7 +51279,6 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
     use crate::actions::action_template::ActionExecutionInfo;
     use crate::actions::item_actions::READ_HOLD_PERSON_SCROLL;
     use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
-    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::conditions::Condition;
     use crate::items::item_template::SCROLL_OF_HOLD_PERSON;
@@ -51259,8 +51290,11 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
         let caster = e
             .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let goblin = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        // A bandit, and it used to be a humanoid: SRD 5.2 made goblins
+        // Fey, so the scroll's Humanoid gate refuses one now and the
+        // fixture would be testing the refusal twice over.
+        let humanoid = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 2), 1, 0)
             .unwrap();
         // RAW: *"Choose a **Humanoid** that you can see."* The zombie is
         // here to be refused — it used to be the only creature in this
@@ -51287,7 +51321,7 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
         let aei = ActionExecutionInfo::new(
             &READ_HOLD_PERSON_SCROLL,
             caster,
-            Some(vec![goblin]),
+            Some(vec![humanoid]),
             None,
             None,
         );
@@ -51299,7 +51333,7 @@ fn scroll_of_hold_person_installs_paralyzed_on_failed_save() {
             "scroll should be consumed (seed {})",
             seed
         );
-        if e.actors[&goblin].has_condition(Condition::Paralyzed) {
+        if e.actors[&humanoid].has_condition(Condition::Paralyzed) {
             any_paralyzed = true;
             break;
         }
@@ -67980,7 +68014,6 @@ fn arcane_abjuration_frightens_a_fiend_but_not_a_humanoid() {
     use crate::actions::action_template::Action;
     use crate::actions::class_features::{ARCANE_ABJURATION, ARCANE_ABJURATION_TAG};
     use crate::actors::creatures::clerics::ARCANA_CLERIC_TEMPLATE;
-    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::imps::IMP_TEMPLATE;
     use crate::conditions::Condition;
     use crate::engine::dice::FastRandRoller;
@@ -67994,8 +68027,11 @@ fn arcane_abjuration_frightens_a_fiend_but_not_a_humanoid() {
         let imp = e
             .instantiate_creature(&IMP_TEMPLATE, Coordinate::new(4, 4), 1, 0)
             .unwrap();
-        let goblin = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 4), 1, 1)
+        // A bandit, and it used to be a goblin: SRD 5.2 made goblins
+        // Fey, which is a type this filter *does* name. See
+        // `creature_type_tags_are_correct`.
+        let bandit = e
+            .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(5, 4), 1, 1)
             .unwrap();
         let effects = ARCANE_ABJURATION.side_effects(&mut e, cleric, None, None, None);
         for eff in effects {
@@ -68006,8 +68042,8 @@ fn arcane_abjuration_frightens_a_fiend_but_not_a_humanoid() {
             "the burst must spend a Channel Divinity press"
         );
         assert!(
-            !e.actors[&goblin].has_condition(Condition::Frightened)
-                && !e.actors[&goblin].has_condition(Condition::Banished),
+            !e.actors[&bandit].has_condition(Condition::Frightened)
+                && !e.actors[&bandit].has_condition(Condition::Banished),
             "a humanoid is outside the celestial/elemental/fey/fiend filter"
         );
         // The imp is CR 1, which is exactly the escalation ceiling, so
@@ -69278,7 +69314,6 @@ fn turn_the_faithless_ships_on_devotion_paladin_template() {
 fn turn_the_faithless_only_targets_fey_and_fiend() {
     use crate::actions::class_features::{TURN_THE_FAITHLESS, TURN_THE_FAITHLESS_TAG};
     use crate::actions::action_template::Action;
-    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE; // Humanoid
     use crate::actors::creatures::paladins::DEVOTION_PALADIN_TEMPLATE;
     use crate::actors::creatures::skeletons::SKELETON_TEMPLATE; // Undead
     use crate::actors::creatures::imps::IMP_TEMPLATE; // Fiend
@@ -69294,8 +69329,10 @@ fn turn_the_faithless_only_targets_fey_and_fiend() {
     let dev = e
         .instantiate_creature(&DEVOTION_PALADIN_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    let goblin = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+    // A bandit rather than a goblin: SRD 5.2's goblins are Fey, which
+    // is half of what this filter *does* name.
+    let bandit = e
+        .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(4, 2), 1, 0)
         .unwrap();
     let skeleton = e
         .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 4), 1, 0)
@@ -69312,12 +69349,12 @@ fn turn_the_faithless_only_targets_fey_and_fiend() {
     for eff in effects {
         eff.apply(&mut e);
     }
-    // The humanoid goblin and the undead skeleton are outside the
+    // The humanoid bandit and the undead skeleton are outside the
     // creature-type filter — they must not pick up Frightened
     // regardless of save roll.
     assert!(
-        !e.actors[&goblin].has_condition(crate::conditions::Condition::Frightened),
-        "humanoid goblin outside the fey/fiend filter — never Frightened"
+        !e.actors[&bandit].has_condition(crate::conditions::Condition::Frightened),
+        "humanoid bandit outside the fey/fiend filter — never Frightened"
     );
     assert!(
         !e.actors[&skeleton].has_condition(crate::conditions::Condition::Frightened),
@@ -105221,7 +105258,6 @@ fn every_elemental_ring_is_wired_to_its_own_plane() {
 #[test]
 fn the_person_spells_refuse_what_the_monster_spells_accept() {
     use crate::actions::action_template::ActionExecutionInfo;
-    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::slimes::SLIME_TEMPLATE;
     use crate::actors::creatures::warlocks::WARLOCK_TEMPLATE;
 
@@ -105229,8 +105265,12 @@ fn the_person_spells_refuse_what_the_monster_spells_accept() {
     let warlock = e
         .instantiate_creature(&WARLOCK_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    let goblin = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+    // A bandit, because the Humanoid in this fixture used to be a
+    // goblin and SRD 5.2 made goblins Fey — which Hold Person refuses
+    // and Hold Monster does not, i.e. exactly the distinction the test
+    // is about, landing on the wrong side of it.
+    let humanoid = e
+        .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(6, 2), 1, 0)
         .unwrap();
     // An Ooze: not a Humanoid by anybody's reading, and squarely inside
     // "a creature".
@@ -105246,8 +105286,8 @@ fn the_person_spells_refuse_what_the_monster_spells_accept() {
     };
 
     assert!(
-        aimed(&e, "hold person", goblin),
-        "a goblin is a Humanoid and Hold Person is for Humanoids"
+        aimed(&e, "hold person", humanoid),
+        "a bandit is a Humanoid and Hold Person is for Humanoids"
     );
     assert!(
         !aimed(&e, "hold person", ooze),
@@ -105259,7 +105299,7 @@ fn the_person_spells_refuse_what_the_monster_spells_accept() {
          the extra slot levels buy"
     );
     assert!(
-        aimed(&e, "charm person", goblin) && !aimed(&e, "charm person", ooze),
+        aimed(&e, "charm person", humanoid) && !aimed(&e, "charm person", ooze),
         "the same clause, one pair down the ladder"
     );
 }
@@ -122021,6 +122061,71 @@ fn the_two_breaths_that_never_fired_now_do() {
     }
 }
 
+/// SRD 5.2's name for a stat block, translated to the engine's — and
+/// the book's name back unchanged when the two agree, which is the
+/// answer for three hundred and seven of them.
+///
+/// SRD 5.2 renamed seventeen stat blocks the engine still carries
+/// under their 2014 headings, and the book's Bestiary is where a
+/// reader of a conformance sweep would otherwise have to go to find
+/// that out. Each row is `(what the book calls it, what the engine
+/// calls it)`.
+///
+/// They are aliased rather than renamed because a creature's name is
+/// read by the prompt, by the panel, by the encounter generator's
+/// logs and by a few hundred test fixtures, and moving seventeen of
+/// them is a change worth making on purpose rather than as a side
+/// effect of a conformance sweep. What the aliases buy is the
+/// nineteen rows the sweep was silently skipping — and with them
+/// every dragon-tier NPC in the book, since the Sphinx of Valor and
+/// the Warrior Veteran are among them.
+///
+/// `Priest Acolyte` is the one that is *not* a rename and is the
+/// reason the list is written as pairs rather than guessed at: SRD
+/// 5.2 prints both a `Priest` (CR 2, 38 hit points) and a `Priest
+/// Acolyte` (CR 1/4, 11), and the engine carries both as `Priest`
+/// and `Acolyte`. Pairing the book's `Priest Acolyte` with the
+/// engine's `Priest` — the obvious guess — reports a creature that
+/// is right as though it were wrong by twenty-seven hit points.
+///
+/// `Half-Dragon` is deliberately absent from that list and from the
+/// sweep. SRD 5.2 prints one stat block with a Draconic Origin trait
+/// that picks the damage type; the engine ships the five it resolves
+/// to — Acid, Cold, Fire, Lightning and Poison Half-Dragon — so
+/// there is no single template to pair the book's row with, and all
+/// five carry the same defences anyway.
+///
+/// Shared by `every_stat_blocks_defences_match_the_book` and
+/// `every_stat_block_is_the_size_and_kind_the_book_says`, which is
+/// what made it a function: two copies of a seventeen-row translation
+/// table is one copy that goes stale.
+fn renamed_to_engine(book: &str) -> &str {
+    const RENAMED: &[(&str, &str)] = &[
+        ("Animated Rug of Smothering", "Rug of Smothering"),
+        ("Azer Sentinel", "Azer"),
+        ("Bugbear Warrior", "Bugbear"),
+        ("Centaur Trooper", "Centaur"),
+        ("Cultist Fanatic", "Cult Fanatic"),
+        ("Gnoll Warrior", "Gnoll"),
+        ("Goblin Warrior", "Goblin"),
+        ("Hobgoblin Warrior", "Hobgoblin"),
+        ("Kobold Warrior", "Kobold"),
+        ("Merfolk Skirmisher", "Merfolk"),
+        ("Minotaur of Baphomet", "Minotaur"),
+        ("Priest Acolyte", "Acolyte"),
+        ("Sahuagin Warrior", "Sahuagin"),
+        ("Sphinx of Valor", "Androsphinx"),
+        ("Tough", "Thug"),
+        ("Warrior Veteran", "Veteran"),
+        ("Will-o\u{2019}-Wisp", "Will-o'-Wisp"),
+    ];
+    RENAMED
+        .iter()
+        .find(|(name, _)| *name == book)
+        .map(|(_, engine)| *engine)
+        .unwrap_or(book)
+}
+
 /// Every stat block SRD 5.2 prints a flat armour class and a flat hit
 /// point total for, against what the bestiary actually declares.
 ///
@@ -122435,62 +122540,10 @@ fn every_stat_blocks_defences_match_the_book() {
         found.insert(t.name, (t.ac, t.hitpoints.average_roll()));
     }
 
-    // SRD 5.2 renamed seventeen stat blocks the engine still carries
-    // under their 2014 headings, and the book's Bestiary is where a
-    // reader of this sweep would otherwise have to go to find that out.
-    // Each row is `(what the book calls it, what the engine calls it)`.
-    //
-    // They are aliased rather than renamed because a creature's name is
-    // read by the prompt, by the panel, by the encounter generator's
-    // logs and by a few hundred test fixtures, and moving seventeen of
-    // them is a change worth making on purpose rather than as a side
-    // effect of a conformance sweep. What the aliases buy is the
-    // nineteen rows the sweep was silently skipping — and with them
-    // every dragon-tier NPC in the book, since the Sphinx of Valor and
-    // the Warrior Veteran are among them.
-    //
-    // `Priest Acolyte` is the one that is *not* a rename and is the
-    // reason the list is written as pairs rather than guessed at: SRD
-    // 5.2 prints both a `Priest` (CR 2, 38 hit points) and a `Priest
-    // Acolyte` (CR 1/4, 11), and the engine carries both as `Priest`
-    // and `Acolyte`. Pairing the book's `Priest Acolyte` with the
-    // engine's `Priest` — the obvious guess — reports a creature that
-    // is right as though it were wrong by twenty-seven hit points.
-    const RENAMED: &[(&str, &str)] = &[
-        ("Animated Rug of Smothering", "Rug of Smothering"),
-        ("Azer Sentinel", "Azer"),
-        ("Bugbear Warrior", "Bugbear"),
-        ("Centaur Trooper", "Centaur"),
-        ("Cultist Fanatic", "Cult Fanatic"),
-        ("Gnoll Warrior", "Gnoll"),
-        ("Goblin Warrior", "Goblin"),
-        ("Hobgoblin Warrior", "Hobgoblin"),
-        ("Kobold Warrior", "Kobold"),
-        ("Merfolk Skirmisher", "Merfolk"),
-        ("Minotaur of Baphomet", "Minotaur"),
-        ("Priest Acolyte", "Acolyte"),
-        ("Sahuagin Warrior", "Sahuagin"),
-        ("Sphinx of Valor", "Androsphinx"),
-        ("Tough", "Thug"),
-        ("Warrior Veteran", "Veteran"),
-        ("Will-o\u{2019}-Wisp", "Will-o'-Wisp"),
-    ];
-    // `Half-Dragon` is deliberately absent from that list and from the
-    // sweep. SRD 5.2 prints one stat block with a Draconic Origin trait
-    // that picks the damage type; the engine ships the five it resolves
-    // to — Acid, Cold, Fire, Lightning and Poison Half-Dragon — so
-    // there is no single template to pair the book's row with, and all
-    // five carry the same defences anyway.
-
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (name, book_ac, book_hp) in SRD_DEFENCES {
-        let engine_name = RENAMED
-            .iter()
-            .find(|(book, _)| book == name)
-            .map(|(_, engine)| *engine)
-            .unwrap_or(name);
-        let Some((ac, hp)) = found.get(engine_name) else {
+        let Some((ac, hp)) = found.get(renamed_to_engine(name)) else {
             continue;
         };
         checked += 1;
@@ -122526,3 +122579,424 @@ fn every_stat_blocks_defences_match_the_book() {
     );
 }
 
+
+/// Every stat block's **size** and **creature type**, against what the
+/// bestiary declares.
+///
+/// The third of the book-conformance sweeps, after the Hit lines and
+/// the defences, and the one that found the most: SRD 5.2 retyped
+/// thirty-five of these stat blocks and resized three, and the engine
+/// was carrying every one of them at its 2014 value.
+///
+/// **Type is not decoration in this engine.** It is a gate on Hold
+/// Person and Charm Person (Humanoid), on Animal Friendship and
+/// Dominate Beast (Beast), on Protection from Evil and Good and Dispel
+/// Evil and Good (Aberration, Celestial, Elemental, Fey, Fiend,
+/// Undead), on the paladin's Turn the Faithless (Fey, Fiend), on the
+/// cleric's Arcane Abjuration and Destroy Undead, and on a Ranger's
+/// favoured quarry. The retypings move the most common monsters in the
+/// game across several of those lines at once — a goblin is Fey now, so
+/// Hold Person no longer touches it and Protection from Evil and Good
+/// does; a kobold is a Dragon; the five lycanthropes are Monstrosities,
+/// which takes them out of Charm Person and out of Hold Person
+/// together.
+///
+/// **Size is load-bearing in a way it is in no book.** This grid is
+/// 2.5 feet to the tile, so a size is a footprint: the Roc going from
+/// Huge to Gargantuan and the Werebear and Weretiger from Large to
+/// Medium changes how many tiles they stand on, what they can be
+/// grappled by, what squeezes past them in a corridor and what a cone
+/// catches.
+///
+/// Two of the book's rows print an either — *"Medium or Small
+/// Monstrosity (Lycanthrope)"* — and the table stores both, because
+/// picking one would be asserting a choice RAW leaves to whoever plays
+/// the creature.
+///
+/// Shares `RENAMED` and the player-character exclusion with
+/// `every_stat_blocks_defences_match_the_book`; see there for both.
+#[test]
+fn every_stat_block_is_the_size_and_kind_the_book_says() {
+    /// `(name, allowed sizes, creature type)` — SRD 5.2, one row per
+    /// stat block, sizes separated by `|` where the book prints an
+    /// either.
+    const SRD_SIZE_AND_TYPE: &[(&str, &str, &str)] = &[
+    ("Aboleth", "Large", "Aberration"),
+    ("Adult Black Dragon", "Huge", "Dragon"),
+    ("Adult Blue Dragon", "Huge", "Dragon"),
+    ("Adult Brass Dragon", "Huge", "Dragon"),
+    ("Adult Bronze Dragon", "Huge", "Dragon"),
+    ("Adult Copper Dragon", "Huge", "Dragon"),
+    ("Adult Gold Dragon", "Huge", "Dragon"),
+    ("Adult Green Dragon", "Huge", "Dragon"),
+    ("Adult Red Dragon", "Huge", "Dragon"),
+    ("Adult Silver Dragon", "Huge", "Dragon"),
+    ("Adult White Dragon", "Huge", "Dragon"),
+    ("Air Elemental", "Large", "Elemental"),
+    ("Allosaurus", "Large", "Beast"),
+    ("Ancient Black Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Blue Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Brass Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Bronze Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Copper Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Gold Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Green Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Red Dragon", "Gargantuan", "Dragon"),
+    ("Ancient Silver Dragon", "Gargantuan", "Dragon"),
+    ("Ancient White Dragon", "Gargantuan", "Dragon"),
+    ("Animated Armor", "Medium", "Construct"),
+    ("Animated Flying Sword", "Small", "Construct"),
+    ("Animated Rug of Smothering", "Large", "Construct"),
+    ("Ankheg", "Large", "Monstrosity"),
+    ("Ankylosaurus", "Huge", "Beast"),
+    ("Ape", "Medium", "Beast"),
+    ("Archelon", "Huge", "Beast"),
+    ("Archmage", "Medium|Small", "Humanoid"),
+    ("Assassin", "Medium|Small", "Humanoid"),
+    ("Avatar of Death", "Medium", "Undead"),
+    ("Awakened Shrub", "Small", "Plant"),
+    ("Awakened Tree", "Huge", "Plant"),
+    ("Axe Beak", "Large", "Monstrosity"),
+    ("Azer Sentinel", "Medium", "Elemental"),
+    ("Baboon", "Small", "Beast"),
+    ("Badger", "Tiny", "Beast"),
+    ("Balor", "Huge", "Fiend"),
+    ("Bandit", "Medium|Small", "Humanoid"),
+    ("Bandit Captain", "Medium|Small", "Humanoid"),
+    ("Barbed Devil", "Medium", "Fiend"),
+    ("Basilisk", "Medium", "Monstrosity"),
+    ("Bat", "Tiny", "Beast"),
+    ("Bearded Devil", "Medium", "Fiend"),
+    ("Behir", "Huge", "Monstrosity"),
+    ("Berserker", "Medium|Small", "Humanoid"),
+    ("Black Bear", "Medium", "Beast"),
+    ("Black Dragon Wyrmling", "Medium", "Dragon"),
+    ("Black Pudding", "Large", "Ooze"),
+    ("Blink Dog", "Medium", "Fey"),
+    ("Blood Hawk", "Small", "Beast"),
+    ("Blue Dragon Wyrmling", "Medium", "Dragon"),
+    ("Boar", "Medium", "Beast"),
+    ("Bone Devil", "Large", "Fiend"),
+    ("Brass Dragon Wyrmling", "Medium", "Dragon"),
+    ("Bronze Dragon Wyrmling", "Medium", "Dragon"),
+    ("Brown Bear", "Large", "Beast"),
+    ("Bugbear Stalker", "Medium", "Fey"),
+    ("Bugbear Warrior", "Medium", "Fey"),
+    ("Bulette", "Large", "Monstrosity"),
+    ("Camel", "Large", "Beast"),
+    ("Cat", "Tiny", "Beast"),
+    ("Centaur Trooper", "Large", "Fey"),
+    ("Chain Devil", "Medium", "Fiend"),
+    ("Chimera", "Large", "Monstrosity"),
+    ("Chuul", "Large", "Aberration"),
+    ("Clay Golem", "Large", "Construct"),
+    ("Cloaker", "Large", "Aberration"),
+    ("Cloud Giant", "Huge", "Giant"),
+    ("Cockatrice", "Small", "Monstrosity"),
+    ("Commoner", "Medium|Small", "Humanoid"),
+    ("Constrictor Snake", "Large", "Beast"),
+    ("Copper Dragon Wyrmling", "Medium", "Dragon"),
+    ("Couatl", "Medium", "Celestial"),
+    ("Crab", "Tiny", "Beast"),
+    ("Crocodile", "Large", "Beast"),
+    ("Cultist", "Medium|Small", "Humanoid"),
+    ("Cultist Fanatic", "Medium|Small", "Humanoid"),
+    ("Darkmantle", "Small", "Aberration"),
+    ("Death Dog", "Medium", "Monstrosity"),
+    ("Deer", "Medium", "Beast"),
+    ("Deva", "Medium", "Celestial"),
+    ("Dire Wolf", "Large", "Beast"),
+    ("Djinni", "Large", "Elemental"),
+    ("Doppelganger", "Medium", "Monstrosity"),
+    ("Draconic Spirit", "Large", "Dragon"),
+    ("Draft Horse", "Large", "Beast"),
+    ("Dragon Turtle", "Gargantuan", "Dragon"),
+    ("Dretch", "Small", "Fiend"),
+    ("Drider", "Large", "Monstrosity"),
+    ("Druid", "Medium|Small", "Humanoid"),
+    ("Dryad", "Medium", "Fey"),
+    ("Dust Mephit", "Small", "Elemental"),
+    ("Eagle", "Small", "Beast"),
+    ("Earth Elemental", "Large", "Elemental"),
+    ("Efreeti", "Large", "Elemental"),
+    ("Elephant", "Huge", "Beast"),
+    ("Elk", "Large", "Beast"),
+    ("Erinyes", "Medium", "Fiend"),
+    ("Ettercap", "Medium", "Monstrosity"),
+    ("Ettin", "Large", "Giant"),
+    ("Fire Elemental", "Large", "Elemental"),
+    ("Fire Giant", "Huge", "Giant"),
+    ("Flesh Golem", "Medium", "Construct"),
+    ("Flying Snake", "Tiny", "Monstrosity"),
+    ("Frog", "Tiny", "Beast"),
+    ("Frost Giant", "Huge", "Giant"),
+    ("Gargoyle", "Medium", "Elemental"),
+    ("Gelatinous Cube", "Large", "Ooze"),
+    ("Ghast", "Medium", "Undead"),
+    ("Ghost", "Medium", "Undead"),
+    ("Ghoul", "Medium", "Undead"),
+    ("Giant Ape", "Huge", "Beast"),
+    ("Giant Badger", "Medium", "Beast"),
+    ("Giant Bat", "Large", "Beast"),
+    ("Giant Boar", "Large", "Beast"),
+    ("Giant Centipede", "Small", "Beast"),
+    ("Giant Constrictor Snake", "Huge", "Beast"),
+    ("Giant Crab", "Medium", "Beast"),
+    ("Giant Crocodile", "Huge", "Beast"),
+    ("Giant Eagle", "Large", "Celestial"),
+    ("Giant Elk", "Huge", "Celestial"),
+    ("Giant Fire Beetle", "Small", "Beast"),
+    ("Giant Fly", "Large", "Beast"),
+    ("Giant Frog", "Medium", "Beast"),
+    ("Giant Goat", "Large", "Beast"),
+    ("Giant Hyena", "Large", "Beast"),
+    ("Giant Insect", "Large", "Beast"),
+    ("Giant Lizard", "Large", "Beast"),
+    ("Giant Octopus", "Large", "Beast"),
+    ("Giant Owl", "Large", "Celestial"),
+    ("Giant Rat", "Small", "Beast"),
+    ("Giant Scorpion", "Large", "Beast"),
+    ("Giant Seahorse", "Large", "Beast"),
+    ("Giant Shark", "Huge", "Beast"),
+    ("Giant Spider", "Large", "Beast"),
+    ("Giant Toad", "Large", "Beast"),
+    ("Giant Venomous Snake", "Medium", "Beast"),
+    ("Giant Vulture", "Large", "Monstrosity"),
+    ("Giant Wasp", "Medium", "Beast"),
+    ("Giant Weasel", "Medium", "Beast"),
+    ("Giant Wolf Spider", "Medium", "Beast"),
+    ("Gibbering Mouther", "Medium", "Aberration"),
+    ("Glabrezu", "Large", "Fiend"),
+    ("Gladiator", "Medium|Small", "Humanoid"),
+    ("Gnoll Warrior", "Medium", "Fiend"),
+    ("Goat", "Medium", "Beast"),
+    ("Goblin Boss", "Small", "Fey"),
+    ("Goblin Minion", "Small", "Fey"),
+    ("Goblin Warrior", "Small", "Fey"),
+    ("Gold Dragon Wyrmling", "Medium", "Dragon"),
+    ("Gorgon", "Large", "Construct"),
+    ("Gray Ooze", "Medium", "Ooze"),
+    ("Green Dragon Wyrmling", "Medium", "Dragon"),
+    ("Green Hag", "Medium", "Fey"),
+    ("Grick", "Medium", "Aberration"),
+    ("Griffon", "Large", "Monstrosity"),
+    ("Grimlock", "Medium", "Aberration"),
+    ("Guard", "Medium|Small", "Humanoid"),
+    ("Guard Captain", "Medium|Small", "Humanoid"),
+    ("Guardian Naga", "Large", "Celestial"),
+    ("Half-Dragon", "Medium", "Dragon"),
+    ("Harpy", "Medium", "Monstrosity"),
+    ("Hawk", "Tiny", "Beast"),
+    ("Hell Hound", "Medium", "Fiend"),
+    ("Hezrou", "Large", "Fiend"),
+    ("Hill Giant", "Huge", "Giant"),
+    ("Hippogriff", "Large", "Monstrosity"),
+    ("Hippopotamus", "Large", "Beast"),
+    ("Hobgoblin Captain", "Medium", "Fey"),
+    ("Hobgoblin Warrior", "Medium", "Fey"),
+    ("Homunculus", "Tiny", "Construct"),
+    ("Horned Devil", "Large", "Fiend"),
+    ("Hunter Shark", "Large", "Beast"),
+    ("Hydra", "Huge", "Monstrosity"),
+    ("Hyena", "Medium", "Beast"),
+    ("Ice Devil", "Large", "Fiend"),
+    ("Ice Mephit", "Small", "Elemental"),
+    ("Imp", "Tiny", "Fiend"),
+    ("Incubus", "Medium", "Fiend"),
+    ("Invisible Stalker", "Large", "Elemental"),
+    ("Iron Golem", "Large", "Construct"),
+    ("Jackal", "Small", "Beast"),
+    ("Killer Whale", "Huge", "Beast"),
+    ("Knight", "Medium|Small", "Humanoid"),
+    ("Kobold Warrior", "Small", "Dragon"),
+    ("Kraken", "Gargantuan", "Monstrosity"),
+    ("Lamia", "Large", "Fiend"),
+    ("Lemure", "Medium", "Fiend"),
+    ("Lich", "Medium", "Undead"),
+    ("Lion", "Large", "Beast"),
+    ("Lizard", "Tiny", "Beast"),
+    ("Mage", "Medium|Small", "Humanoid"),
+    ("Magma Mephit", "Small", "Elemental"),
+    ("Magmin", "Small", "Elemental"),
+    ("Mammoth", "Huge", "Beast"),
+    ("Manticore", "Large", "Monstrosity"),
+    ("Marilith", "Large", "Fiend"),
+    ("Mastiff", "Medium", "Beast"),
+    ("Medusa", "Medium", "Monstrosity"),
+    ("Merfolk Skirmisher", "Medium", "Elemental"),
+    ("Merrow", "Large", "Monstrosity"),
+    ("Mimic", "Medium", "Monstrosity"),
+    ("Minotaur Skeleton", "Large", "Undead"),
+    ("Minotaur of Baphomet", "Large", "Monstrosity"),
+    ("Mule", "Medium", "Beast"),
+    ("Mummy", "Medium|Small", "Undead"),
+    ("Mummy Lord", "Medium|Small", "Undead"),
+    ("Nalfeshnee", "Large", "Fiend"),
+    ("Night Hag", "Medium", "Fiend"),
+    ("Nightmare", "Large", "Fiend"),
+    ("Noble", "Medium|Small", "Humanoid"),
+    ("Ochre Jelly", "Large", "Ooze"),
+    ("Octopus", "Small", "Beast"),
+    ("Ogre", "Large", "Giant"),
+    ("Ogre Zombie", "Large", "Undead"),
+    ("Oni", "Large", "Fiend"),
+    ("Otherworldly Steed", "Large", "Celestial"),
+    ("Otyugh", "Large", "Aberration"),
+    ("Owl", "Tiny", "Beast"),
+    ("Owlbear", "Large", "Monstrosity"),
+    ("Panther", "Medium", "Beast"),
+    ("Pegasus", "Large", "Celestial"),
+    ("Phase Spider", "Large", "Monstrosity"),
+    ("Piranha", "Tiny", "Beast"),
+    ("Pirate", "Medium|Small", "Humanoid"),
+    ("Pirate Captain", "Medium|Small", "Humanoid"),
+    ("Pit Fiend", "Large", "Fiend"),
+    ("Planetar", "Large", "Celestial"),
+    ("Plesiosaurus", "Large", "Beast"),
+    ("Polar Bear", "Large", "Beast"),
+    ("Pony", "Medium", "Beast"),
+    ("Priest", "Medium|Small", "Humanoid"),
+    ("Priest Acolyte", "Medium|Small", "Humanoid"),
+    ("Pseudodragon", "Tiny", "Dragon"),
+    ("Pteranodon", "Medium", "Beast"),
+    ("Purple Worm", "Gargantuan", "Monstrosity"),
+    ("Quasit", "Tiny", "Fiend"),
+    ("Rakshasa", "Medium", "Fiend"),
+    ("Rat", "Tiny", "Beast"),
+    ("Raven", "Tiny", "Beast"),
+    ("Red Dragon Wyrmling", "Medium", "Dragon"),
+    ("Reef Shark", "Medium", "Beast"),
+    ("Remorhaz", "Huge", "Monstrosity"),
+    ("Rhinoceros", "Large", "Beast"),
+    ("Riding Horse", "Large", "Beast"),
+    ("Roc", "Gargantuan", "Monstrosity"),
+    ("Roper", "Large", "Aberration"),
+    ("Rust Monster", "Medium", "Monstrosity"),
+    ("Saber-Toothed Tiger", "Large", "Beast"),
+    ("Sahuagin Warrior", "Medium", "Fiend"),
+    ("Salamander", "Large", "Elemental"),
+    ("Satyr", "Medium", "Fey"),
+    ("Scorpion", "Tiny", "Beast"),
+    ("Scout", "Medium|Small", "Humanoid"),
+    ("Sea Hag", "Medium", "Fey"),
+    ("Seahorse", "Tiny", "Beast"),
+    ("Shadow", "Medium", "Undead"),
+    ("Shambling Mound", "Large", "Plant"),
+    ("Shield Guardian", "Large", "Construct"),
+    ("Shrieker Fungus", "Medium", "Plant"),
+    ("Silver Dragon Wyrmling", "Medium", "Dragon"),
+    ("Skeleton", "Medium", "Undead"),
+    ("Solar", "Large", "Celestial"),
+    ("Specter", "Medium", "Undead"),
+    ("Sphinx of Lore", "Large", "Celestial"),
+    ("Sphinx of Valor", "Large", "Celestial"),
+    ("Sphinx of Wonder", "Tiny", "Celestial"),
+    ("Spider", "Tiny", "Beast"),
+    ("Spirit Naga", "Large", "Fiend"),
+    ("Sprite", "Tiny", "Fey"),
+    ("Spy", "Medium|Small", "Humanoid"),
+    ("Steam Mephit", "Small", "Elemental"),
+    ("Stirge", "Tiny", "Monstrosity"),
+    ("Stone Giant", "Huge", "Giant"),
+    ("Stone Golem", "Large", "Construct"),
+    ("Storm Giant", "Huge", "Giant"),
+    ("Succubus", "Medium", "Fiend"),
+    ("Tarrasque", "Gargantuan", "Monstrosity"),
+    ("Tiger", "Large", "Beast"),
+    ("Tough", "Medium|Small", "Humanoid"),
+    ("Tough Boss", "Medium|Small", "Humanoid"),
+    ("Treant", "Huge", "Plant"),
+    ("Triceratops", "Huge", "Beast"),
+    ("Troll", "Large", "Giant"),
+    ("Troll Limb", "Small", "Giant"),
+    ("Tyrannosaurus Rex", "Huge", "Beast"),
+    ("Unicorn", "Large", "Celestial"),
+    ("Vampire", "Medium|Small", "Undead"),
+    ("Vampire Familiar", "Medium|Small", "Humanoid"),
+    ("Vampire Spawn", "Medium|Small", "Undead"),
+    ("Venomous Snake", "Tiny", "Beast"),
+    ("Violet Fungus", "Medium", "Plant"),
+    ("Vrock", "Large", "Fiend"),
+    ("Vulture", "Medium", "Beast"),
+    ("Warhorse", "Large", "Beast"),
+    ("Warhorse Skeleton", "Large", "Undead"),
+    ("Warrior Infantry", "Medium|Small", "Humanoid"),
+    ("Warrior Veteran", "Medium|Small", "Humanoid"),
+    ("Water Elemental", "Large", "Elemental"),
+    ("Weasel", "Tiny", "Beast"),
+    ("Werebear", "Medium|Small", "Monstrosity"),
+    ("Wereboar", "Medium|Small", "Monstrosity"),
+    ("Wererat", "Medium|Small", "Monstrosity"),
+    ("Weretiger", "Medium|Small", "Monstrosity"),
+    ("Werewolf", "Medium|Small", "Monstrosity"),
+    ("White Dragon Wyrmling", "Medium", "Dragon"),
+    ("Wight", "Medium", "Undead"),
+    ("Will-o’-Wisp", "Tiny", "Undead"),
+    ("Winter Wolf", "Large", "Monstrosity"),
+    ("Wolf", "Medium", "Beast"),
+    ("Worg", "Large", "Fey"),
+    ("Wraith", "Medium|Small", "Undead"),
+    ("Wyvern", "Large", "Dragon"),
+    ("Xorn", "Medium", "Elemental"),
+    ("Young Black Dragon", "Large", "Dragon"),
+    ("Young Blue Dragon", "Large", "Dragon"),
+    ("Young Brass Dragon", "Large", "Dragon"),
+    ("Young Bronze Dragon", "Large", "Dragon"),
+    ("Young Copper Dragon", "Large", "Dragon"),
+    ("Young Gold Dragon", "Large", "Dragon"),
+    ("Young Green Dragon", "Large", "Dragon"),
+    ("Young Red Dragon", "Large", "Dragon"),
+    ("Young Silver Dragon", "Large", "Dragon"),
+    ("Young White Dragon", "Large", "Dragon"),
+    ("Zombie", "Medium", "Undead"),
+    ];
+
+    let pcs: std::collections::HashSet<usize> =
+        crate::actors::creatures::pc_template_families()
+            .into_iter()
+            .flat_map(|(_, templates)| templates)
+            .map(|t| std::ptr::from_ref(t) as usize)
+            .collect();
+    let mut found: std::collections::BTreeMap<&str, (String, String)> =
+        std::collections::BTreeMap::new();
+    for t in every_reachable_creature_template() {
+        if pcs.contains(&(std::ptr::from_ref(t) as usize)) {
+            continue;
+        }
+        found.insert(
+            t.name,
+            (format!("{:?}", t.size), format!("{:?}", t.creature_type)),
+        );
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, sizes, kind) in SRD_SIZE_AND_TYPE {
+        let engine_name = renamed_to_engine(name);
+        let Some((size, creature_type)) = found.get(engine_name) else {
+            continue;
+        };
+        checked += 1;
+        if !sizes.split('|').any(|s| s == size) {
+            wrong.push(format!(
+                "{name}: the book prints {sizes} and it stands {size}"
+            ));
+        }
+        if creature_type != kind {
+            wrong.push(format!(
+                "{name}: the book prints {kind} and it is a {creature_type}"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks are not the creature SRD 5.2 says they are:\n  {}",
+        wrong.join("\n  ")
+    );
+    assert!(
+        checked > 320,
+        "only {checked} of the book's {} stat blocks were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_SIZE_AND_TYPE.len()
+    );
+}

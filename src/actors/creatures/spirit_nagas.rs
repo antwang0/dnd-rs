@@ -82,7 +82,7 @@ pub static SPIRIT_NAGA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Abyssal, Language::Common]),
         cr: 8.0,
         size: Size::Large,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Fiend,
         actions,
         // 5e Spirit Naga RAW save proficiencies: DEX +6, CON +5, WIS +5,
         // CHA +6. We model the full save proficiency envelope so the
@@ -133,7 +133,7 @@ mod tests {
         .unwrap();
         assert_eq!(a.cr(), 8.0);
         assert_eq!(a.size(), Size::Large);
-        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
+        assert_eq!(a.creature_type(), CreatureType::Fiend);
         // The naga's primary attack lane.
         assert!(a.find_action("naga bite").is_some());
         // The spell list — every entry in the casting roster should land

@@ -33,7 +33,7 @@ pub static BUGBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 1.0,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
@@ -94,7 +94,7 @@ pub static BUGBEAR_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 3.0,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         skills: HashSet::from([Skill::Stealth, Skill::Survival]),
         ..CreatureTemplate::defaults()

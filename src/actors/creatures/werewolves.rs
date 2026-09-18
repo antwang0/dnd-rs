@@ -36,7 +36,7 @@ pub static WEREWOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common]),
         cr: 3.0,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Monstrosity,
         actions,
         // Lycanthrope resistance to the physical trio, qualified to
         // nonmagical attacks that aren't silvered — both exemptions

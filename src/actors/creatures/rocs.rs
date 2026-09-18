@@ -45,8 +45,8 @@ pub static ROC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         skills: HashSet::from([Skill::Perception]),
         senses: HashSet::from([SpecialSense::Darkvision(120)]),
         cr: 11.0,
-        size: Size::Huge,
-        creature_type: CreatureType::Beast,
+        size: Size::Gargantuan,
+        creature_type: CreatureType::Monstrosity,
         actions,
         // 5e Roc proficient saves: STR / DEX / CON / WIS per MM.
         proficient_saves: HashSet::from([

@@ -68,7 +68,7 @@ pub static STIRGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 0.125,
         size: Size::Tiny,
-        creature_type: CreatureType::Beast,
+        creature_type: CreatureType::Monstrosity,
         actions,
         attach: Some(&STIRGE_ATTACH),
         ..CreatureTemplate::defaults()

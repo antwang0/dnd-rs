@@ -37,7 +37,7 @@ pub static HOBGOBLIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 0.5,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         // SRD 5.2 **Martial Advantage** — the reason a hobgoblin line
         // is worth more than the sum of its hobgoblins. See
@@ -100,7 +100,7 @@ pub static HOBGOBLIN_CAPTAIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 3.0,
         size: Size::Medium,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         // SRD 5.2 **Martial Advantage** — the reason a hobgoblin line
         // is worth more than the sum of its hobgoblins. See

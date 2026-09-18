@@ -70,7 +70,7 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         charisma: 7,
         cr: 1.0,
         size: Size::Large,
-        creature_type: CreatureType::Beast,
+        creature_type: CreatureType::Monstrosity,
         actions,
         // 5e Pack Tactics — advantage on the attack roll when an ally
         // is within 5ft of the target. The load-bearing tactical trait
@@ -112,7 +112,7 @@ mod tests {
         let a = make();
         assert_eq!(a.cr(), 1.0);
         assert_eq!(a.size(), Size::Large);
-        assert_eq!(a.creature_type(), CreatureType::Beast);
+        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
         assert!(a.find_action("giant vulture multiattack").is_some());
     }
 

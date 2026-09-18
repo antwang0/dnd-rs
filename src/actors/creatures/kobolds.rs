@@ -37,7 +37,7 @@ pub static KOBOLD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Draconic]),
         cr: 0.125,
         size: Size::Small,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Dragon,
         actions,
         has_pack_tactics: true,
         // 5e Kobold **Sunlight Sensitivity**: "while in sunlight, the

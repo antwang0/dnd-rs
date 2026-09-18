@@ -108,7 +108,7 @@ pub static DARKMANTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Blindsight(60)]),
         cr: 0.5,
         size: Size::Small,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Aberration,
         actions,
         // One level-2 slot: RAW's "1/day" Darkness, priced in the only
         // currency the engine has for an innate cast.
@@ -141,7 +141,7 @@ mod tests {
         let a = make();
         assert_eq!(a.cr(), 0.5);
         assert_eq!(a.size(), Size::Small);
-        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
+        assert_eq!(a.creature_type(), CreatureType::Aberration);
         assert!(a.find_action("darkmantle crush").is_some());
     }
 

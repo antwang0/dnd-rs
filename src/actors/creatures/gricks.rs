@@ -28,7 +28,7 @@ pub static GRICK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 2.0,
         size: Size::Medium,
-        creature_type: CreatureType::Monstrosity,
+        creature_type: CreatureType::Aberration,
         actions,
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

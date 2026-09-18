@@ -35,7 +35,7 @@ pub static GOBLIN_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         languages: HashSet::from([Language::Common, Language::Goblin]),
         cr: 1.0,
         size: Size::Small,
-        creature_type: CreatureType::Humanoid,
+        creature_type: CreatureType::Fey,
         actions,
         ..CreatureTemplate::defaults()
     }

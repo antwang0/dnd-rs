@@ -79,8 +79,8 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         senses: HashSet::new(),
         languages: HashSet::from([Language::Common]),
         cr: 5.0,
-        size: Size::Large,
-        creature_type: CreatureType::Humanoid,
+        size: Size::Medium,
+        creature_type: CreatureType::Monstrosity,
         actions,
         // Lycanthrope resistance to the physical trio, qualified to
         // nonmagical attacks that aren't silvered. Same call as the
@@ -108,8 +108,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a.cr(), 5.0);
-        assert_eq!(a.size(), Size::Large);
-        assert_eq!(a.creature_type(), CreatureType::Humanoid);
+        assert_eq!(a.size(), Size::Medium);
+        assert_eq!(a.creature_type(), CreatureType::Monstrosity);
         // The werebear's three action lanes — multi (bite + claws)
         // primary, with each part also exposed as a standalone fallback
         // for the AI's per-resource picking.
