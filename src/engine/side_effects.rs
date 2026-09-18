@@ -1864,6 +1864,26 @@ impl ApplicableSideEffect for DamageObjectAt {
     }
 }
 
+/// The same blow, landing on the one object in the engine that is stuck
+/// to a creature rather than standing on a tile: a Giant Spider's web.
+///
+/// The sibling of [`DamageObjectAt`] directly above, and here for the
+/// same reason it is — the roll happens in
+/// `default_actions::CutFree::side_effects`, beside the choice of
+/// weapon, and only the consequence is queued. Separate from it because
+/// the two address different things: a coordinate and an actor id.
+pub struct DamageWebOn {
+    pub actor_id: usize,
+    pub amount: u32,
+    pub damage_type: DamageType,
+}
+
+impl ApplicableSideEffect for DamageWebOn {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.damage_web_on(self.actor_id, self.amount, self.damage_type);
+    }
+}
+
 /// SRD 5.2 **Breaking Objects**, the half of it that arrives by spell:
 /// every breakable tile inside an area takes the area's damage.
 ///
@@ -3047,6 +3067,13 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // exactly the failure the paragraph above describes, arriving from
     // a second direction.
     crate::conditions::Condition::ArrowPinned,
+    // SRD 5.2's Giant Spider web, and the link is on this list for the
+    // arrow's reason one door along: the hold has no escape check, so
+    // the only thing the link is for is the log — but a victim
+    // restrained by a web that names nobody is the same unreadable
+    // state, and the flag is meant to read as one spider's web rather
+    // than as a fact about the world. See `Condition::Webbed`.
+    crate::conditions::Condition::Webbed,
     // 5e Sanctuary. The link is the ward's caster, and it is what lets
     // the attacker's save be rolled against that caster's own spell save
     // DC rather than against a fixed number standing in for one. A

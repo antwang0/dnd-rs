@@ -4107,6 +4107,36 @@ pub enum Condition {
     /// the Fates card"* — and a curse a level-3 spell shrugs off is not
     /// the card the book printed.
     EuryalesCurse,
+    /// Wrapped in a **Giant Spider**'s web — SRD 5.2: *"Failure: The
+    /// target has the Restrained condition until the web is destroyed
+    /// (AC 10; HP 5; Vulnerability to Fire damage; Immunity to Poison
+    /// and Psychic damage)."*
+    ///
+    /// **A marker, not an envelope**, and the sibling of `ArrowPinned`
+    /// in every respect the docstring there sets out: RAW's own sentence
+    /// hands out `Restrained`, which is what the victim actually
+    /// suffers, and this rides beside it saying *which* hold it is. So
+    /// it is on none of the roll-mode or movement cohorts and would
+    /// change nothing if it were.
+    ///
+    /// What it carries is the sentence Restrained alone cannot say, and
+    /// here it is a stranger one than the arrow's: **there is no escape
+    /// check at all.** The Energy Bow's pin comes off on a DC 20
+    /// Athletics check and is therefore on `ESCAPABLE_HOLDS`; a spider's
+    /// web comes off when somebody destroys the web, which is an object
+    /// with five hit points and a Fire vulnerability. That is why this
+    /// is *not* on that cohort, and why the hit points live on the board
+    /// rather than on the condition — see `EncounterInstance::web_on`.
+    ///
+    /// `ConditionTimer::Permanent`, because RAW's duration is *"until
+    /// the web is destroyed"* and a round count would be a different
+    /// rule. The engine's answer to it is `default_actions::CUT_FREE`,
+    /// and fire from any source at all: five hit points doubled is one
+    /// torch.
+    ///
+    /// Linked to the spider, like every other hold on the cohort, so the
+    /// log can name what the victim is stuck to.
+    Webbed,
 }
 
 /// The Long Jump distance the SRD 5.2 **Jump** spell grants, in feet.
@@ -4125,6 +4155,7 @@ impl Condition {
             Condition::Bounding => "bounding",
             Condition::Springing => "springing",
             Condition::EuryalesCurse => "cursed by Euryale",
+            Condition::Webbed => "wrapped in a spider's web",
             Condition::StaffStriking => "staff of striking charged",
             Condition::StaffWithering => "staff of withering charged",
             Condition::StaffLightning => "staff lightning charged",

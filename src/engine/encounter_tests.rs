@@ -121576,3 +121576,231 @@ fn the_deck_spends_a_card_a_draw_and_then_has_none() {
         "somebody without the deck cannot draw from it"
     );
 }
+
+/// SRD 5.2's Giant Spider: *"Web (Recharge 5–6). Dexterity Saving
+/// Throw: DC 13, one creature the spider can see within 60 feet.
+/// Failure: The target has the Restrained condition until the web is
+/// destroyed (AC 10; HP 5; Vulnerability to Fire damage; Immunity to
+/// Poison and Psychic damage)."*
+///
+/// The whole clause end to end, on a victim with a Dexterity low enough
+/// that the save is the formality rather than the test: a zombie's DEX
+/// is 6, so a DC 13 save fails on nineteen faces in twenty.
+#[test]
+fn a_spiders_web_restrains_until_somebody_destroys_it() {
+    use crate::actions::monster_attacks::SPIDER_WEB_SHOT;
+    use crate::actors::creatures::giant_spiders::GIANT_SPIDER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    // Walked across seeds so the assertion is about the rule rather
+    // than about one roll; the failures are the rows being checked and
+    // the successes are skipped.
+    let mut webbed_at_least_once = false;
+    for seed in 0..12u64 {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], 1100 + seed);
+        let spider = e
+            .instantiate_creature(&GIANT_SPIDER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(12, 4), 1, 0)
+            .unwrap();
+        for ef in SPIDER_WEB_SHOT.side_effects(&mut e, spider, Some(&vec![victim]), None, None) {
+            ef.apply(&mut e);
+        }
+        if !e.actors[&victim].has_condition(Condition::Restrained) {
+            // The save was made; nothing should have been spun.
+            assert!(
+                e.web_on(victim).is_none(),
+                "seed {seed}: a made save leaves no web"
+            );
+            continue;
+        }
+        webbed_at_least_once = true;
+        assert!(
+            e.actors[&victim].has_condition(Condition::Webbed),
+            "seed {seed}: the marker rides beside the restraint"
+        );
+        assert_eq!(
+            e.actors[&victim].linked_by(Condition::Webbed),
+            Some(spider),
+            "seed {seed}: and names the spider that spun it"
+        );
+        assert_eq!(
+            e.web_on(victim),
+            Some(5),
+            "seed {seed}: RAW's five hit points"
+        );
+    }
+    assert!(
+        webbed_at_least_once,
+        "a DC 13 Dexterity save against a zombie should fail at least once in twelve"
+    );
+}
+
+/// The web's own lines: AC 10, 5 hit points, and Fire doubled. Three
+/// points of fire is six against silk, which is the whole of it — and
+/// three points of cold is three, which is not.
+#[test]
+fn the_web_burns_twice_as_fast_as_it_cuts() {
+    use crate::engine::objects::{ObjectDamageOutcome, SPIDER_WEB_PROFILE};
+
+    assert_eq!(SPIDER_WEB_PROFILE.ac, 10);
+    assert_eq!(SPIDER_WEB_PROFILE.hp_per_tile, 5);
+    assert_eq!(
+        SPIDER_WEB_PROFILE.effective_damage(3, DamageType::Fire),
+        6,
+        "RAW's Vulnerability to Fire"
+    );
+    assert_eq!(
+        SPIDER_WEB_PROFILE.effective_damage(3, DamageType::Cold),
+        3,
+        "and nothing else is doubled"
+    );
+    for immune in [DamageType::Poison, DamageType::Psychic] {
+        assert_eq!(
+            SPIDER_WEB_PROFILE.effective_damage(9, immune),
+            0,
+            "an object cannot be poisoned or driven mad"
+        );
+    }
+
+    // And end to end on a board: a torch's three points of fire clear
+    // five hit points of web in one blow, where three of cold does not.
+    for (damage_type, expected_breach) in
+        [(DamageType::Fire, true), (DamageType::Cold, false)]
+    {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let victim = e
+            .instantiate_creature(
+                &crate::actors::creatures::zombies::ZOMBIE_TEMPLATE,
+                Coordinate::new(5, 5),
+                0,
+                0,
+            )
+            .unwrap();
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .add_condition(Condition::Webbed, ConditionTimer::Permanent);
+        e.actors
+            .get_mut(&victim)
+            .unwrap()
+            .add_condition(Condition::Restrained, ConditionTimer::Permanent);
+        e.spin_web_on(victim);
+        let outcome = e.damage_web_on(victim, 3, damage_type);
+        if expected_breach {
+            assert_eq!(outcome, ObjectDamageOutcome::Breached);
+            assert!(e.web_on(victim).is_none());
+            assert!(
+                !e.actors[&victim].has_condition(Condition::Restrained),
+                "destroying the web ends the restraint — both conditions, together"
+            );
+            assert!(!e.actors[&victim].has_condition(Condition::Webbed));
+        } else {
+            assert_eq!(outcome, ObjectDamageOutcome::Damaged { remaining: 2 });
+            assert!(
+                e.actors[&victim].has_condition(Condition::Restrained),
+                "two hit points of silk still hold"
+            );
+        }
+    }
+}
+
+/// A web whose condition has been stripped some other way — Freedom of
+/// Movement, a restoration, an end-of-fight sweep — leaves a number in
+/// the ledger that describes nothing, and `web_on` reads the condition
+/// first so it never reports it. See its docstring.
+#[test]
+fn the_web_ledger_cannot_outlive_the_web() {
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let victim = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&victim)
+        .unwrap()
+        .add_condition(Condition::Webbed, ConditionTimer::Permanent);
+    e.spin_web_on(victim);
+    assert_eq!(e.web_on(victim), Some(5));
+    e.actors
+        .get_mut(&victim)
+        .unwrap()
+        .remove_condition(Condition::Webbed);
+    assert!(
+        e.web_on(victim).is_none(),
+        "the condition is the truth and the number is bookkeeping"
+    );
+}
+
+/// **Cut Free** — the action that exists because RAW's web has no
+/// escape check. A fighter with a scimitar cuts a webbed ally loose,
+/// and the same fighter cuts themselves loose.
+#[test]
+fn cut_free_takes_a_web_off_a_friend_and_off_yourself() {
+    use crate::actions::default_actions::CUT_FREE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    for on_self in [false, true] {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], 1200);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let ally = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let victim = if on_self { fighter } else { ally };
+        for condition in [Condition::Webbed, Condition::Restrained] {
+            e.actors
+                .get_mut(&victim)
+                .unwrap()
+                .add_condition(condition, ConditionTimer::Permanent);
+        }
+        e.spin_web_on(victim);
+        assert!(
+            CUT_FREE.custom_validate_input(&e, fighter, Some(&vec![victim]), None, None),
+            "a webbed target in reach is a legal one"
+        );
+        // Swing until the web is gone — a scimitar against AC 10 is not
+        // a guarantee, and the test is about the web coming off rather
+        // than about one roll.
+        for _ in 0..12 {
+            if e.web_on(victim).is_none() {
+                break;
+            }
+            for ef in CUT_FREE.side_effects(&mut e, fighter, Some(&vec![victim]), None, None) {
+                ef.apply(&mut e);
+            }
+        }
+        assert!(
+            e.web_on(victim).is_none(),
+            "on_self={on_self}: twelve swings at AC 10 should find the web"
+        );
+        assert!(!e.actors[&victim].has_condition(Condition::Restrained));
+    }
+}
+
+/// And the action refuses what it has no business touching: somebody
+/// who is not webbed at all.
+#[test]
+fn cut_free_refuses_a_target_with_no_web_on_them() {
+    use crate::actions::default_actions::CUT_FREE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let clean = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .unwrap();
+    assert!(!CUT_FREE.custom_validate_input(&e, fighter, Some(&vec![clean]), None, None));
+    assert!(
+        CUT_FREE
+            .side_effects(&mut e, fighter, Some(&vec![clean]), None, None)
+            .is_empty()
+    );
+}

@@ -1885,6 +1885,15 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 7b'. The one hold the rung above cannot answer, because RAW
+        //      gives it no escape check: a Giant Spider's web comes off
+        //      when somebody destroys the web. Same family, same
+        //      placement, same "is anything in reach" gate. See
+        //      `try_cut_a_web`.
+        if let Some(aei) = try_cut_a_web(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 7c. Buy a Long Jump, when the reason nobody is in reach is a
         //     hole in the floor. Immediately above the approach rung
         //     because that is the rung it is fixing: `try_step_toward`
@@ -3414,6 +3423,13 @@ const ATTRITION: &[LockdownPick] = &[
     LockdownPick { name: "levitate", condition: Some(Condition::Lifted) },
     LockdownPick { name: "stone snare", condition: Some(Condition::EarthenGrasped) },
     LockdownPick { name: "ettercap web", condition: Some(Condition::Restrained) },
+    // The Giant Spider's, beside the ettercap's because it is the same
+    // sentence — a ranged Restrained install off a recharge — and one
+    // rung stronger in practice for a reason the cohort cannot see:
+    // RAW gives the ettercap's web an escape check and the spider's
+    // none at all. What comes off a spider's web is five hit points of
+    // somebody else's Action. See `monster_attacks::SPIDER_WEB`.
+    LockdownPick { name: "spider web", condition: Some(Condition::Restrained) },
     LockdownPick { name: "scare", condition: Some(Condition::Frightened) },
 ];
 
@@ -12492,6 +12508,85 @@ fn try_escape_grapple(
     try_self_action(encounter, actor_id, "escape")
 }
 
+/// Cut a Giant Spider's web off somebody — SRD 5.2's *"until the web is
+/// destroyed (AC 10; HP 5; …)"*.
+///
+/// The `try_escape_grapple` rung directly above cannot answer this hold,
+/// and the reason is worth being precise about: that rung reaches for
+/// the `escape` action, whose validator walks `ESCAPABLE_HOLDS`, and a
+/// web is deliberately not on that list because RAW gives it no escape
+/// check. There is no contest to win. There is an object with five hit
+/// points, and somebody has to hit it.
+///
+/// **Self first, then an ally.** A webbed creature has a speed of zero
+/// and rolls its attacks at Disadvantage, so its own turn is worth
+/// almost nothing until the web is gone — and nobody else has to spend
+/// an Action on it if it can spend its own. Only when the actor is not
+/// webbed does the rung look for a webbed friend within reach.
+///
+/// **The same gate `try_escape_grapple` has, for the same reason**: if
+/// something hostile is already inside the actor's own reach, swinging
+/// at it beats cutting silk. A creature webbed *and* engaged is in a
+/// fight it can still take part in; a creature webbed and alone in a
+/// corner is not.
+///
+/// Sits in the hold-breaking family at rung 7b, below every attack lane,
+/// because the web is only worth a turn when it is the reason the turn
+/// has nothing else in it.
+fn try_cut_a_web(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    let actor = encounter.actors.get(&actor_id)?;
+    let my_team = actor.team();
+    let best_reach = actor
+        .attack_repertoire()
+        .iter()
+        .filter(|a| a.is_harmful() && a.deals_damage())
+        .filter_map(|a| a.reach_tiles())
+        .max()
+        .unwrap_or(0);
+    for (id, t) in encounter.actors.iter() {
+        if *id == actor_id || t.team() == my_team || !t.is_combat_active() {
+            continue;
+        }
+        if actor.footprint_gap_to(t) <= best_reach {
+            return None;
+        }
+    }
+    if encounter.web_on(actor_id).is_some()
+        && let Some(aei) = try_self_action(encounter, actor_id, "cut free")
+    {
+        return Some(aei);
+    }
+    let action = actor.find_action("cut free")?;
+    // The most tangled ally first — fewest hit points left in their web
+    // is the one a single swing is likeliest to finish.
+    let mut best: Option<(u32, ActionExecutionInfo)> = None;
+    for ally_id in encounter.sorted_actor_ids() {
+        if ally_id == actor_id {
+            continue;
+        }
+        let Some(ally) = encounter.actors.get(&ally_id) else {
+            continue;
+        };
+        if ally.team() != my_team || !ally.is_combat_active() {
+            continue;
+        }
+        let Some(left) = encounter.web_on(ally_id) else {
+            continue;
+        };
+        let aei = ActionExecutionInfo::new(action, actor_id, Some(vec![ally_id]), None, None);
+        if !aei.validate(encounter) {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(b, _)| left < *b) {
+            best = Some((left, aei));
+        }
+    }
+    best.map(|(_, aei)| aei)
+}
+
 /// Spend an Action pulling a latched creature off — 5e's "the target or
 /// a creature within 5 feet of it can take an action to try to detach
 /// the cloaker."
@@ -13604,6 +13699,76 @@ mod tests {
             try_buy_a_leap(&already, pc).is_none(),
             "the ring is already turned"
         );
+    }
+
+    /// A webbed creature cuts itself loose, and a friend cuts it loose
+    /// when it cannot.
+    ///
+    /// The rung exists because `try_escape_grapple` cannot answer this
+    /// hold: a spider's web has no escape check in RAW, only five hit
+    /// points. Before it, a webbed creature with nothing in reach fell
+    /// through to the approach lane and spent every turn of the fight
+    /// Dashing on a speed of zero.
+    #[test]
+    fn a_webbed_creature_cuts_itself_out_and_a_friend_cuts_it_out() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+        use crate::conditions::ConditionTimer;
+
+        // The enemy is far enough away that nothing is in reach, which
+        // is the gate both hold-breaking rungs share: a creature webbed
+        // next to something it can hit should hit it.
+        let board = || {
+            let tp = TerrainGenParams {
+                width: 30,
+                height: 30,
+                branch_depth: 0,
+                branch_prob: 0.0,
+            };
+            let ap = ActorGenParams {
+                cr_target: 0.0,
+                n_teams: 0,
+                pc_template: None,
+                start_team: 0,
+            };
+            let mut e = EncounterInstance::from_params(&tp, &ap, Some(3)).unwrap();
+            let fighter = e
+                .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+                .unwrap();
+            let wizard = e
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(6, 4), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+                .unwrap();
+            (e, fighter, wizard)
+        };
+        let web = |e: &mut EncounterInstance, id: usize| {
+            for c in [Condition::Webbed, Condition::Restrained] {
+                e.actors.get_mut(&id).unwrap().add_condition(c, ConditionTimer::Permanent);
+            }
+            e.spin_web_on(id);
+        };
+
+        // Nobody is webbed: the rung declines and the ladder moves on.
+        let (clean, fighter, _) = board();
+        assert!(try_cut_a_web(&clean, fighter).is_none());
+
+        // The fighter is webbed: it cuts its own way out rather than
+        // waiting to be rescued.
+        let (mut own, fighter, _) = board();
+        web(&mut own, fighter);
+        let aei = try_cut_a_web(&own, fighter).expect("a webbed actor cuts itself free");
+        assert_eq!(aei.action().name(), "cut free");
+        assert_eq!(aei.target_ids(), Some(&[fighter][..]));
+
+        // The wizard is webbed and the fighter is not: the fighter goes
+        // to it.
+        let (mut ally, fighter, wizard) = board();
+        web(&mut ally, wizard);
+        let aei = try_cut_a_web(&ally, fighter).expect("a friend in a web is worth a turn");
+        assert_eq!(aei.action().name(), "cut free");
+        assert_eq!(aei.target_ids(), Some(&[wizard][..]));
     }
 
     /// A blade warlock spends its invocations on the blade.

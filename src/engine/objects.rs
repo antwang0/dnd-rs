@@ -248,6 +248,33 @@ pub static WALL_OF_STONE_PROFILE: ObjectProfile = ObjectProfile {
     immune_to: &[],
 };
 
+/// **Giant Spider Web**, SRD 5.2: *"The target has the Restrained
+/// condition until the web is destroyed (AC 10; HP 5; Vulnerability to
+/// Fire damage; Immunity to Poison and Psychic damage)."*
+///
+/// The first profile on this table that is not a wall, and the first
+/// whose hit points are printed for the whole object rather than per
+/// section — a web is one thing wrapped around one creature, so
+/// `hp_per_tile` is simply its hit points and the division the two
+/// walls each show does not apply. The field keeps its name because the
+/// walls are what it is named for and a second name for the same number
+/// would be worse.
+///
+/// Every line of the parenthesis lands, and the last two land for free:
+/// Poison and Psychic are [`OBJECT_IMMUNITIES`], which the book prints
+/// on this web because it prints them on every object. Fire is the line
+/// that matters — five hit points doubled away by any burning thing at
+/// all, which is why a torch is the classic answer to a spider and why
+/// RAW bothered to write a vulnerability onto something with five hit
+/// points.
+pub static SPIDER_WEB_PROFILE: ObjectProfile = ObjectProfile {
+    label: "web",
+    ac: 10,
+    hp_per_tile: 5,
+    vulnerable_to: Some(DamageType::Fire),
+    immune_to: &[],
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

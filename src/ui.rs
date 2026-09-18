@@ -1436,6 +1436,18 @@ pub fn render_sideinfo(
                 // `None` and reads exactly as it did. Folded in before
                 // the timer suffix rather than after, so the duration
                 // stays where the eye expects it.
+                // The one hold in the game whose duration is an
+                // object's hit points rather than a clock. SRD 5.2's
+                // spider web is *"until the web is destroyed (AC 10;
+                // HP 5)"*, so it prints `Permanent` and a player
+                // reading that has no idea whether one more swing will
+                // do it. The number is the whole of what they can act
+                // on. See `EncounterInstance::web_on`.
+                if matches!(c, crate::conditions::Condition::Webbed)
+                    && let Some(left) = encounter.web_on(curr_actor_id)
+                {
+                    return (format!("{} [{} HP]", c.name(), left), c.name());
+                }
                 let stem = match curr_actor.damage_type_of(*c) {
                     Some(dt) => format!("{} vs {:?}", c.name(), dt),
                     None => c.name().to_string(),
@@ -2090,6 +2102,46 @@ mod tests {
         assert!(
             !rendered_panel(&e).contains("Phasing"),
             "a goblin has a wall like everybody else"
+        );
+    }
+
+    /// A web prints what is left of it, because nothing else can.
+    ///
+    /// SRD 5.2's spider web holds *"until the web is destroyed (AC 10;
+    /// HP 5)"*, which the engine spells as a `Permanent` timer — and a
+    /// conditions row reading a bare "webbed" tells a player nothing
+    /// they can act on. Whether one more swing frees their friend is
+    /// the only question they have.
+    #[test]
+    fn the_panel_prices_the_web_a_creature_is_stuck_in() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        e.process_stack();
+        let id = e.current_turn_actor_id().expect("somebody is up");
+        assert!(
+            !rendered_panel(&e).contains("spider's web"),
+            "nobody starts the fight in a web"
+        );
+
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .add_condition(Condition::Webbed, ConditionTimer::Permanent);
+        e.spin_web_on(id);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("spider's web [5 HP]"),
+            "the panel prints the web's own hit points:\n{panel}"
+        );
+
+        // …and counts them down as somebody cuts.
+        e.damage_web_on(id, 2, crate::engine::types::DamageType::Slashing);
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("spider's web [3 HP]"),
+            "and follows them down:\n{panel}"
         );
     }
 

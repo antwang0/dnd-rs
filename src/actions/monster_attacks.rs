@@ -533,6 +533,158 @@ impl Action for SaveOrCondition {
     }
 }
 
+/// SRD 5.2 **Giant Spider**, *Web (Recharge 5–6)* — *"Dexterity Saving
+/// Throw: DC 13, one creature the spider can see within 60 feet.
+/// Failure: The target has the Restrained condition until the web is
+/// destroyed (AC 10; HP 5; Vulnerability to Fire damage; Immunity to
+/// Poison and Psychic damage)."*
+///
+/// The one action in the bestiary whose duration is an *object's* hit
+/// points, and it shipped for years as a documented scope cut: the
+/// spider's docstring said the clause was *"a ranged Restrained-install
+/// on a destructible object, and the engine has no object HP."* It has
+/// since — [`crate::engine::objects`] arrived with the two conjured
+/// walls — so the reason is gone and the clause lands.
+///
+/// **Two conditions, and only one of them is RAW's.** The book installs
+/// `Restrained`; the engine adds [`Condition::Webbed`] beside it as the
+/// marker that says which hold this is, exactly as `ArrowPinned` rides
+/// beside the Energy Bow's restraint. The marker is what
+/// `EncounterInstance::web_on` reads to find the hit points, and what
+/// `default_actions::CUT_FREE` looks for. Installing one without the
+/// other is the failure both conditions' docstrings describe from their
+/// own side: a creature held by nothing, or a web around nobody.
+///
+/// **A bespoke action rather than a `SaveOrCondition` row**, which is
+/// otherwise its exact shape — one save, one condition, one range. Two
+/// things do not fit. The chassis installs a single condition, and this
+/// installs two; and the chassis takes a `ConditionTimer`, where this
+/// one's duration is five hit points sitting in a map. Either could be
+/// bolted on, and both would be a column every other row on that
+/// chassis exists to leave blank.
+///
+/// The recharge is not here — it is [`RechargingAttack`] wrapped around
+/// this, which is what that chassis is for.
+pub struct SpiderWeb {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// RAW's *"within 60 feet"*, in tiles.
+    pub reach: isize,
+    pub save_dc: i32,
+}
+
+impl Action for SpiderWeb {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    /// `Restrained` rather than `Webbed`, and the choice is the same one
+    /// the Energy Bow's arrow makes for the same reason: the AI's
+    /// "they already have it" gate should refuse to web something that
+    /// is already held, by a web or by anything else, and `Restrained`
+    /// is the condition that answers that question. `Webbed` is
+    /// bookkeeping.
+    fn installs_condition(&self) -> Option<Condition> {
+        Some(Condition::Restrained)
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn requires_los(&self) -> bool {
+        // RAW: "one creature the spider **can see**".
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        crate::actions::action_template::action_only()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        // The save is rolled once, against `Restrained`, and the marker
+        // follows it rather than getting a second roll — RAW's sentence
+        // has one save in it.
+        let mut effects = save_or_condition_from_caster(
+            encounter,
+            caster_id,
+            target_id,
+            Condition::Restrained,
+            AbilityScoreType::Dexterity,
+            self.save_dc,
+            ConditionTimer::Permanent,
+            "web",
+        );
+        if effects.is_empty() {
+            return effects;
+        }
+        effects.extend(crate::engine::side_effects::install_condition_with_link(
+            Condition::Webbed,
+            target_id,
+            caster_id,
+            ConditionTimer::Permanent,
+        ));
+        // The hit points, which are the duration. Written now rather
+        // than from a side effect because the effects above are a list
+        // of boxes the caller has yet to apply, and a web whose hit
+        // points arrived before its conditions would be a web
+        // `web_on` cannot see — that getter reads the condition first,
+        // on purpose. Writing the number early is harmless in the other
+        // direction: an entry with no condition beside it counts for
+        // nothing and is overwritten by the next web.
+        encounter.spin_web_on(target_id);
+        effects
+    }
+}
+
+/// The spider's web, before the recharge gate goes on it.
+pub static SPIDER_WEB_SHOT: SpiderWeb = SpiderWeb {
+    // "spider web" rather than "web", for the reason the ettercap's is
+    // "ettercap web": the Web *spell* is called "web", and the AI's
+    // control cohorts are keyed on an action's name. A row for the
+    // spider that read "web" would also match a wizard's third-level
+    // area spell, which is a different thing in every respect — it is a
+    // burst, it takes a point rather than a creature, and it would be
+    // picked by a rung that thinks it is choosing a single-target hold.
+    display_name: "spider web",
+    aliases: &["web", "spin web"],
+    // RAW's 60 feet on a 2.5-foot grid.
+    reach: 24,
+    save_dc: 13,
+};
+
+/// SRD 5.2's *Web (Recharge 5–6)*, gated. The key matches the
+/// `recharge_abilities` row on the Giant Spider's template.
+pub static SPIDER_WEB: LazyLock<RechargingAttack> = LazyLock::new(|| RechargingAttack {
+    display_name: "spider web",
+    sub_attack: &SPIDER_WEB_SHOT,
+    recharge_key: "web",
+});
+
 /// The chassis for a limited-use **ally heal** — a whole action whose
 /// entire payload is "touch one creature, restore some hit points",
 /// spent out of a named recharge pool.

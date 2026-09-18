@@ -2527,6 +2527,148 @@ impl Action for Sunder {
 
 pub static SUNDER: LazyLock<Sunder> = LazyLock::new(|| Sunder {});
 
+/// **Cut Free** — SRD 5.2 *Breaking Objects*, swung at something stuck
+/// to a friend.
+///
+/// The Giant Spider's web is *"AC 10; HP 5; Vulnerability to Fire
+/// damage"* and holds its victim *"until the web is destroyed"*. There
+/// is no escape check in that sentence — no Athletics, no repeated save
+/// — so without an action that attacks the web, a webbed creature stays
+/// webbed for the rest of the fight and RAW's five hit points are a
+/// number nobody can spend.
+///
+/// [`Sunder`]'s sibling, and separate from it for the reason that
+/// action's own docstring gives from the other side: Sunder's schema is
+/// `SinglePoint` because a wall of ice has no actor id, and a web has
+/// nothing *but* an actor id. One of the two has to take a creature and
+/// one has to take a tile, and an action cannot do both.
+///
+/// Everything else is shared. The same [`Sunder::best_swing`] picks the
+/// weapon, the same buffs and item bonuses fold into the same numbers,
+/// the same plain d20 goes against the object's armour class with no
+/// roll-mode tally — a web is not Prone or Invisible or dodging either
+/// — and the damage lands through `EncounterInstance::damage_web_on`,
+/// which shares `ObjectProfile::effective_damage` with the walls. A
+/// torch-wielding fighter doubles their die against silk for the same
+/// line of code that doubles a Fireball against ice.
+///
+/// **The victim may cut themselves free**, and there is no clause
+/// stopping them: `Restrained` costs its holder their movement and
+/// taxes their attack rolls, and takes nothing off their Action. That
+/// reads correctly — RAW's web is an object in reach of the creature
+/// wearing it — and it is the difference between a hold that ends a
+/// character and one that costs them a turn.
+pub struct CutFree {}
+
+impl Action for CutFree {
+    fn name(&self) -> &str {
+        "cut free"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["cut", "free", "burn web"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        // A creature, not a tile — the whole reason this is not Sunder.
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn deals_damage(&self) -> bool {
+        // The web loses hit points and the creature wearing it does not,
+        // which is what this answer is about: the AI prices actions by
+        // what they take off a target, and the target here keeps every
+        // point they have.
+        false
+    }
+    fn is_harmful(&self) -> bool {
+        // Aimed at a friend, almost always. Answering `true` would put
+        // this on every hostile-action scan in the AI and would break
+        // the swinger's own Sanctuary for cutting an ally loose.
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        crate::actions::action_template::action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter.web_on(target_id).is_some()
+            && Sunder::best_swing(encounter, caster_id).is_some()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        if encounter.web_on(target_id).is_none() {
+            return Vec::new();
+        }
+        let Some(swing) = Sunder::best_swing(encounter, caster_id) else {
+            return Vec::new();
+        };
+        let profile = &crate::engine::objects::SPIDER_WEB_PROFILE;
+        let Some(actor) = encounter.actors.get(&caster_id) else {
+            return Vec::new();
+        };
+        let name = actor.name().to_string();
+        let ability_to_hit = actor.spell_attack_modifier(swing.attack_ability);
+        let damage_bonus = swing
+            .damage_ability
+            .map(|a| actor.ability_modifier(a))
+            .unwrap_or(0)
+            + swing.flat_bonus
+            + actor.item_damage_bonus()
+            + actor.damage_bonus_buff();
+        let (flat_buff, condition_buff) = encounter.caster_attack_buffs(caster_id, false);
+        let to_hit = ability_to_hit + flat_buff + condition_buff;
+        let roll = encounter.roll(&crate::engine::dice::Dice::new(1, 20)) as i32;
+        let total = roll + to_hit;
+        let victim = encounter.actor_name(target_id);
+        if total < profile.ac as i32 {
+            encounter.log(format!(
+                "  {} cuts at the web on {} and misses (d20 {} {:+} = {} vs AC {}).",
+                name, victim, roll, to_hit, total, profile.ac
+            ));
+            return Vec::new();
+        }
+        let rolled = encounter.roll(&swing.dice) as i32;
+        let amount = (rolled + damage_bonus).max(0) as u32;
+        encounter.log(format!(
+            "  {} cuts the web on {} (d20 {} {:+} = {} vs AC {}).",
+            name, victim, roll, to_hit, total, profile.ac
+        ));
+        vec![Box::new(crate::engine::side_effects::DamageWebOn {
+            actor_id: target_id,
+            amount,
+            damage_type: swing.damage_type,
+        })]
+    }
+}
+
+pub static CUT_FREE: LazyLock<CutFree> = LazyLock::new(|| CutFree {});
+
 /// **First Aid** — the other half of SRD 5.2's *Knocking Out a
 /// Creature*.
 ///
@@ -2685,6 +2827,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*WIPE_ACID,
             &*DROP_AND_ROLL,
             &*SUNDER,
+            &*CUT_FREE,
             &*FIRST_AID,
             &*BURROW,
             &*SURFACE,

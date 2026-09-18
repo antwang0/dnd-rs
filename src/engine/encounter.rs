@@ -2285,6 +2285,26 @@ pub struct EncounterInstance {
     ///
     /// Read by `within_free_deck_draws`, raised by `in_free_deck_draws`.
     free_deck_draw_depth: u32,
+    /// Hit points left in the web wrapped around each webbed creature —
+    /// SRD 5.2's Giant Spider, *"until the web is destroyed (AC 10;
+    /// HP 5; …)"*.
+    ///
+    /// A map on the board rather than a field on the sheet, because a
+    /// web is an *object* and the sheet is a creature. `ActorInstance`
+    /// already carries a dozen little ledgers and each of them is
+    /// something the creature is or has done; hit points belonging to a
+    /// thing stuck to the outside of it are neither, and putting them
+    /// there is how the next object that sticks to a creature ends up
+    /// with a second field beside this one.
+    ///
+    /// Keyed by victim rather than by spider, which is RAW's own shape:
+    /// the web is the restraint on one creature, and a spider that dies
+    /// leaves its web exactly where it was.
+    ///
+    /// Never read directly — `web_on` reads it through
+    /// `Condition::Webbed`, so an entry that outlives its condition
+    /// counts for nothing. See there.
+    webs: std::collections::HashMap<usize, u32>,
     /// The seed both RNGs were built from — the one passed in, or the
     /// one `empty` drew when none was. Read-only after construction and
     /// surfaced by `seed()`; see `empty` for why an unseeded encounter
@@ -10053,6 +10073,99 @@ impl EncounterInstance {
             .find_map(|p| p.slot_of(coord).and_then(|i| p.hp.get(i).copied()))
     }
 
+    /// Hit points left in the web wrapped around `actor_id`, or `None`
+    /// if there is no web on them.
+    ///
+    /// SRD 5.2's Giant Spider: *"The target has the Restrained condition
+    /// until the web is destroyed (AC 10; HP 5; …)"*. The first object
+    /// in the engine that is stuck to a creature rather than standing on
+    /// a tile, and so the first that [`Self::breakable_at`] cannot find
+    /// — that helper walks conjured terrain, and a web is not terrain.
+    ///
+    /// **Read through the condition rather than off the map alone**, so
+    /// the ledger cannot outlive the thing it counts. Anything that
+    /// takes `Condition::Webbed` off a creature — Freedom of Movement,
+    /// a Greater Restoration, a condition sweep at the end of a fight —
+    /// leaves a number in `webs` that no longer describes anything, and
+    /// a getter that trusted the map would then report five hit points
+    /// of web on somebody standing free. The condition is the truth and
+    /// the number is bookkeeping.
+    pub fn web_on(&self, actor_id: usize) -> Option<u32> {
+        let wrapped = self
+            .actors
+            .get(&actor_id)
+            .is_some_and(|a| a.has_condition(Condition::Webbed));
+        if !wrapped {
+            return None;
+        }
+        self.webs.get(&actor_id).copied()
+    }
+
+    /// Wrap `actor_id` in a fresh web — the install side of the clause
+    /// above. The caller owns the conditions; this owns the hit points.
+    ///
+    /// A **set** rather than an addition, so a second web from a second
+    /// spider is one web at full strength rather than ten hit points of
+    /// silk. RAW prints one web per failed save and says nothing about
+    /// stacking, and the alternative reading makes a pair of spiders
+    /// into a lockdown nothing short of a Fireball can answer.
+    pub fn spin_web_on(&mut self, actor_id: usize) {
+        self.webs.insert(
+            actor_id,
+            crate::engine::objects::SPIDER_WEB_PROFILE.hp_per_tile,
+        );
+    }
+
+    /// SRD 5.2 **Breaking Objects**, applied to the web on `actor_id`:
+    /// land `amount` of `damage_type` on it and cut the creature loose
+    /// if that was the last of it.
+    ///
+    /// The creature-shaped sibling of [`Self::damage_object_at`], and it
+    /// is a separate function rather than an arm of that one because
+    /// everything either of them does is a lookup, and the two lookups
+    /// have nothing in common: one finds a patch of conjured terrain by
+    /// coordinate and the other finds a number in a map by actor id.
+    /// What they share is [`ObjectProfile::effective_damage`], which is
+    /// the only part that is about the rule rather than about the
+    /// bookkeeping — so the web's Fire vulnerability and the wall's are
+    /// the same line of code.
+    ///
+    /// **Both conditions come off together**, which is the half of this
+    /// that would be a bug if it were split: RAW installs `Restrained`
+    /// and the engine adds `Webbed` beside it as the marker that says
+    /// *which* hold this is, exactly as `ArrowPinned` rides beside the
+    /// Energy Bow's Restrained. A destruction that dropped the marker
+    /// and left the restraint would leave a creature pinned by nothing,
+    /// with no way out and nothing in the log to explain it.
+    pub fn damage_web_on(
+        &mut self,
+        actor_id: usize,
+        amount: u32,
+        damage_type: DamageType,
+    ) -> ObjectDamageOutcome {
+        let Some(left) = self.web_on(actor_id) else {
+            return ObjectDamageOutcome::NothingThere;
+        };
+        let scaled = crate::engine::objects::SPIDER_WEB_PROFILE
+            .effective_damage(amount, damage_type);
+        if scaled == 0 {
+            return ObjectDamageOutcome::Shrugged;
+        }
+        let remaining = left.saturating_sub(scaled);
+        if remaining > 0 {
+            self.webs.insert(actor_id, remaining);
+            return ObjectDamageOutcome::Damaged { remaining };
+        }
+        self.webs.remove(&actor_id);
+        let name = self.actor_name(actor_id);
+        if let Some(actor) = self.actors.get_mut(&actor_id) {
+            actor.remove_condition(Condition::Webbed);
+            actor.remove_condition(Condition::Restrained);
+        }
+        self.log(format!("  the web tears apart and {} is free.", name));
+        ObjectDamageOutcome::Breached
+    }
+
     /// SRD 5.2 **Breaking Objects**: land `amount` of `damage_type` on
     /// whatever breakable thing is standing on `coord`, and hand the
     /// tile back to the floor if that was the last of it.
@@ -15793,6 +15906,7 @@ impl EncounterInstance {
             critical_depth: 0,
             subduing_depth: 0,
             free_deck_draw_depth: 0,
+            webs: std::collections::HashMap::new(),
             initialized: false,
             surprise_resolved: false,
             width: terrain_params.width,
