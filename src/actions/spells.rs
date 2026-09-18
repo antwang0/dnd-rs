@@ -34913,6 +34913,17 @@ pub static SEE_INVISIBILITY: LazyLock<SeeInvisibility> = LazyLock::new(|| SeeInv
 /// [`Condition::MindReading`], which argues it: the spell's second half
 /// is a conversation, and there is no surface in a fight for what a
 /// creature knows.
+///
+/// The AI is not taught to reach for this one, nor for `LOCATE_CREATURE`
+/// or `NONDETECTION` below, and that is the honest state rather than an
+/// omission. Every picker in `ai::simple` that could is **name-keyed**
+/// — a hand-ordered list of spell names — so a new spell is invisible
+/// to it until somebody adds the row. The row worth adding here is a
+/// real one ("I cannot see the thing that is hitting me") and the AI has
+/// no rung to hang it on: nothing in the picker asks whether the
+/// creature it wants to attack can be found. Until it does, these three
+/// are on the caster's list for a player to type — the same standing
+/// `GASEOUS_FORM` is on and for the same reason.
 pub struct DetectThoughts {}
 
 impl Action for DetectThoughts {
