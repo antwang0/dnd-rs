@@ -41,7 +41,7 @@ pub static GREEN_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         actions,
         // Magic Resistance — advantage on saves vs spells / magical
         // effects. The load-bearing fey trait at this tier.
-        has_magic_resistance: true,
+        has_magic_resistance: false,
         // Amphibious — "the hag can breathe air and water" — and the
         // swim speed beside it: SRD 5.2 prints *"Speed 30 ft., Swim 30
         // ft."* The swamp is where she lives, and between them the two

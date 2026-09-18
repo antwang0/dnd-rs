@@ -154,6 +154,8 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // passes, neutralizing the party's save-or-suck control spells.
         legendary_resistances: 3,
         skills: HashSet::from([Skill::History, Skill::Perception, Skill::Religion]),
+        legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::MUMMY_LORD_LEGENDARY,
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

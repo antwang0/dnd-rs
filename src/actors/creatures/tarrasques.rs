@@ -100,7 +100,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // rest are auto-promoted to passes. The Tarrasque needs these
         // to shrug off Power Word Kill / Banishment / Hold Monster from
         // the party's casters mid-fight.
-        legendary_resistances: 3,
+        legendary_resistances: 6,
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::TARRASQUE_LEGENDARY,

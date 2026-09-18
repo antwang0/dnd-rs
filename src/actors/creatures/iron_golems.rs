@@ -107,7 +107,7 @@ pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         // 5e Legendary Resistance (3/Day) — the boss-construct anti-
         // caster signature, three failed saves auto-promote to passes.
-        legendary_resistances: 3,
+        legendary_resistances: 0,
         // 5e Magic Resistance — advantage on every save vs spells /
         // magical effects, read by `compute_save_mode`.
         has_magic_resistance: true,
@@ -185,7 +185,10 @@ mod tests {
         )
         .unwrap();
         assert!(a.has_magic_resistance());
-        assert_eq!(a.legendary_resistance_remaining(), 3);
+        // …and no Legendary Resistance. The golem is not a legendary
+        // creature in either printing; the three it used to carry were
+        // a boss tier applied by CR rather than read off the page.
+        assert_eq!(a.legendary_resistance_remaining(), 0);
     }
 
     #[test]

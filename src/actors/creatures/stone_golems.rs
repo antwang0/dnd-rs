@@ -81,7 +81,7 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Legendary Resistance (3/Day) — the golem's anti-caster
         // signature. Three failed saves per long rest are auto-promoted
         // to passes, neutralizing the party's save-or-suck control spells.
-        legendary_resistances: 3,
+        legendary_resistances: 0,
         has_magic_resistance: true,
         has_extra_attack: true,
         // 5e **Magic Weapons**: "the golem's weapon attacks are magical."
@@ -114,13 +114,19 @@ mod tests {
         EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap()
     }
 
-    /// The golem template carries 3 LR charges and the full magic-immunity
-    /// envelope (poison + psychic damage immunity, construct condition
-    /// immunities). Spot-check the load-bearing fields.
+    /// The golem template carries the full magic-immunity envelope
+    /// (poison + psychic damage immunity, construct condition
+    /// immunities) and **no** Legendary Resistance. Spot-check the
+    /// load-bearing fields.
+    ///
+    /// The three charges this used to assert were a boss tier applied
+    /// by CR: SRD 5.2 prints the golem Magic Resistance and no
+    /// Legendary Resistance, in either printing, and it is not a
+    /// legendary creature at all.
     #[test]
     fn stone_golem_template_shape() {
         let t = &*STONE_GOLEM_TEMPLATE;
-        assert_eq!(t.legendary_resistances, 3);
+        assert_eq!(t.legendary_resistances, 0);
         assert!(matches!(
             t.damage_modifiers.get(&DamageType::Poison),
             Some(DamageModifier::Immunity)
@@ -133,69 +139,5 @@ mod tests {
         assert!(t.condition_immunities.contains(&Condition::Frightened));
         assert!(t.condition_immunities.contains(&Condition::Paralyzed));
         assert!(t.condition_immunities.contains(&Condition::Exhausted));
-    }
-
-    /// Failing a save with LR available promotes the fail to a pass and
-    /// decrements the charge count. Three failed saves burn the pool;
-    /// the fourth fail lands.
-    #[test]
-    fn stone_golem_burns_legendary_resistance_on_fail() {
-        let mut e = make_test_encounter();
-        let id = e
-            .instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        // Force a fail by using an unreachable DC.
-        let initial = e
-            .actors
-            .get(&id)
-            .unwrap()
-            .legendary_resistance_remaining();
-        assert_eq!(initial, 3);
-        for i in 0..3 {
-            let save = e.roll_save(id, AbilityScoreType::Charisma, 40);
-            assert!(
-                save.passed(),
-                "LR should auto-promote fail #{} to pass",
-                i + 1
-            );
-            assert_eq!(
-                e.actors
-                    .get(&id)
-                    .unwrap()
-                    .legendary_resistance_remaining(),
-                3 - (i as u32 + 1)
-            );
-        }
-        // Pool exhausted — next fail lands.
-        let save = e.roll_save(id, AbilityScoreType::Charisma, 40);
-        assert!(!save.passed(), "exhausted LR pool means the fail sticks");
-    }
-
-    /// Long rest refreshes the LR pool back to the template max.
-    #[test]
-    fn stone_golem_long_rest_restores_legendary_resistance() {
-        let mut e = make_test_encounter();
-        let id = e
-            .instantiate_creature(&STONE_GOLEM_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-            .unwrap();
-        // Burn all 3 charges.
-        for _ in 0..3 {
-            let _ = e.roll_save(id, AbilityScoreType::Charisma, 40);
-        }
-        assert_eq!(
-            e.actors
-                .get(&id)
-                .unwrap()
-                .legendary_resistance_remaining(),
-            0
-        );
-        e.actors.get_mut(&id).unwrap().long_rest();
-        assert_eq!(
-            e.actors
-                .get(&id)
-                .unwrap()
-                .legendary_resistance_remaining(),
-            3
-        );
     }
 }

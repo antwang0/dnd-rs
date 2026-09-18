@@ -74,7 +74,7 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned]),
-        has_magic_resistance: true,
+        has_magic_resistance: false,
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::VAMPIRE_LEGENDARY,
         has_extra_attack: true,
@@ -88,6 +88,7 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // happens at night.
         sunlight_frailty: Some(SunlightFrailty::Hypersensitivity),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        legendary_resistances: 3,
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

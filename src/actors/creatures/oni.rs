@@ -72,7 +72,7 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         regen_per_round: 10,
         // 5e Magic Resistance — advantage on every save vs spells /
         // magical effects. Read by `compute_save_mode`.
-        has_magic_resistance: true,
+        has_magic_resistance: false,
         // SRD 5.2: *"Resistances Cold"*.
         damage_modifiers: damage_modifiers_from([(
             DamageType::Cold,
@@ -91,7 +91,7 @@ mod tests {
     use crate::engine::types::Coordinate;
 
     #[test]
-    fn oni_has_magic_resistance_and_regen() {
+    fn oni_regenerates_and_has_no_magic_resistance() {
         let a = ActorInstance::from_creature_template(
             &ONI_TEMPLATE,
             Coordinate::new(0, 0),
@@ -100,7 +100,9 @@ mod tests {
             0,
         )
         .unwrap();
-        assert!(a.has_magic_resistance());
+        // SRD 5.2's oni prints Regeneration and no Magic Resistance;
+        // the second was the 2014 sheet's.
+        assert!(!a.has_magic_resistance());
         assert_eq!(a.regen_per_round(), 10);
     }
 

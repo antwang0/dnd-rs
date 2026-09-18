@@ -111,6 +111,9 @@ pub static UNICORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e **Magic Weapons**: "the unicorn's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        legendary_resistances: 3,
+        legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::UNICORN_LEGENDARY,
         ..CreatureTemplate::defaults()
     }
 });

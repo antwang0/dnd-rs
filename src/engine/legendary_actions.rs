@@ -441,6 +441,67 @@ fn legendary_drain(
     .apply(encounter);
 }
 
+/// One named creature in reach makes a save; on a failure it takes the
+/// dice, and the creature that spent the point heals for `heal`.
+///
+/// The single-target sibling of `legendary_burst_damage`, and of
+/// `legendary_drain` one lane over: `legendary_drain` is an *attack*
+/// that steals what it deals, this is a *save* that does. Both shapes
+/// are on the lists — the vampire bites and the aboleth reaches into a
+/// mind — and rolling one as the other is the difference between a
+/// creature that can be dodged and one that cannot.
+///
+/// `gate` decides whether the option is available at all against a
+/// given target; the aboleth's Psychic Drain is the first option in
+/// this file that has a precondition beyond reach ("at least one
+/// creature Charmed or Grappled"). A gate that nothing satisfies makes
+/// the option a no-op, which costs the creature its point — the same
+/// trade every reach-gated option here already makes, and the reason
+/// the dispatcher's uniform draw is documented as playing slightly
+/// below the ceiling.
+#[allow(clippy::too_many_arguments)]
+fn legendary_save_drain(
+    encounter: &mut EncounterInstance,
+    actor_id: usize,
+    name: &'static str,
+    reach: isize,
+    save: AbilityScoreType,
+    dice: Dice,
+    damage_type: DamageType,
+    policy: SaveDamagePolicy,
+    heal: Option<Dice>,
+    gate: fn(&EncounterInstance, usize) -> bool,
+) {
+    let Some(target_id) = nearest_enemy_within(encounter, actor_id, reach) else {
+        return;
+    };
+    if !gate(encounter, target_id) {
+        return;
+    }
+    let dc = legendary_dc(encounter, actor_id);
+    let outcome = encounter.roll_save_against_caster(target_id, save, dc, actor_id);
+    let rolled = encounter.roll(&dice);
+    let amount = policy.apply(rolled, outcome.passed());
+    if amount > 0 {
+        DealDamage {
+            actor_id: target_id,
+            amount,
+            damage_type,
+        }
+        .apply(encounter);
+    }
+    if let Some(heal) = heal {
+        let regained = encounter.roll(&heal);
+        crate::engine::side_effects::Heal {
+            actor_id,
+            amount: regained,
+        }
+        .apply(encounter);
+        let self_name = encounter.actor_name(actor_id);
+        encounter.log(format!("  {name}: {self_name} draws {regained} back."));
+    }
+}
+
 /// RAW's "the vampire moves up to its speed without provoking
 /// opportunity attacks."
 ///
@@ -797,23 +858,85 @@ pub const TARRASQUE_LEGENDARY: &[LegendaryAction] = &[
     },
 ];
 
-/// **Pit fiend** (MM). The engine's pit fiend carries the legendary
-/// budget its template declares; the options here are built from its
-/// own stat block — the claw it already swings, and the hellfire its
-/// whole kit is about — rather than from a printed legendary list.
-pub const PIT_FIEND_LEGENDARY: &[LegendaryAction] = &[
+/// **Aboleth** (SRD 5.2). Lash and Psychic Drain, both of the two the
+/// book prints.
+///
+/// The aboleth is the book's first legendary stat block alphabetically
+/// and had no repertoire at all: three uses a round, spent on nothing.
+///
+/// *Psychic Drain* is the one with a precondition — *"if the aboleth
+/// has at least one creature Charmed or Grappled, it uses Consume
+/// Memories and regains 5 (1d10) Hit Points"* — which is what
+/// `legendary_save_drain`'s gate is for. The Tentacle it lashes with
+/// grapples on a hit, so the aboleth sets up its own second option.
+pub const ABOLETH_LEGENDARY: &[LegendaryAction] = &[
     LegendaryAction {
-        name: "claw",
+        name: "lash",
         cost: 1,
         fire: |e, id| {
             legendary_attack(
                 e,
                 id,
                 &Swing {
-                    name: "claw",
+                    name: "lash",
                     ability: AbilityScoreType::Strength,
-                    dice: Dice::new(2, 8),
-                    damage_type: DamageType::Slashing,
+                    dice: Dice::new(2, 6),
+                    damage_type: DamageType::Bludgeoning,
+                    reach: REACH_LONG,
+                    kind: SwingKind::Melee,
+                },
+            );
+        },
+    },
+    LegendaryAction {
+        name: "psychic drain",
+        cost: 1,
+        fire: |e, id| {
+            legendary_save_drain(
+                e,
+                id,
+                "psychic drain",
+                RADIUS_CLOSE + 2,
+                AbilityScoreType::Intelligence,
+                Dice::new(3, 6),
+                DamageType::Psychic,
+                SaveDamagePolicy::HalfOnSave,
+                Some(Dice::new(1, 10)),
+                |e, target| {
+                    e.actors.get(&target).is_some_and(|a| {
+                        a.has_condition(Condition::Charmed)
+                            || a.has_condition(Condition::Grappled)
+                    })
+                },
+            )
+        },
+    },
+];
+
+/// **Mummy Lord** (SRD 5.2). Necrotic Strike and Glare — two of the
+/// three the book prints.
+///
+/// *Dread Command* is the third and is left off: it *"casts Command
+/// (level 2 version), using the same spellcasting ability as
+/// Spellcasting"*, and nothing in this file casts a spell. A legendary
+/// option is a `fn(&mut EncounterInstance, usize)` that picks its own
+/// targets, and a spell needs a slot ledger, a save school and a
+/// concentration anchor it has no frame to hold. It is the same reason
+/// the dragon's Detect is off its list: an option that resolved to
+/// nothing would still cost a point, which would make the mummy worse.
+pub const MUMMY_LORD_LEGENDARY: &[LegendaryAction] = &[
+    LegendaryAction {
+        name: "necrotic strike",
+        cost: 1,
+        fire: |e, id| {
+            legendary_attack(
+                e,
+                id,
+                &Swing {
+                    name: "necrotic strike",
+                    ability: AbilityScoreType::Strength,
+                    dice: Dice::new(3, 10),
+                    damage_type: DamageType::Necrotic,
                     reach: MELEE,
                     kind: SwingKind::Melee,
                 },
@@ -821,18 +944,79 @@ pub const PIT_FIEND_LEGENDARY: &[LegendaryAction] = &[
         },
     },
     LegendaryAction {
-        name: "hellfire",
-        cost: 2,
+        name: "glare",
+        cost: 1,
         fire: |e, id| {
-            legendary_burst_damage(
+            legendary_gaze(
                 e,
                 id,
-                RADIUS_CLOSE,
-                AbilityScoreType::Dexterity,
-                Dice::new(4, 6),
-                DamageType::Fire,
-                SaveDamagePolicy::HalfOnSave,
+                "glare",
+                RADIUS_WIDE,
+                AbilityScoreType::Wisdom,
+                Condition::Frightened,
+                ConditionTimer::Rounds(10),
             )
+        },
+    },
+];
+
+/// **Unicorn** (SRD 5.2). Charging Horn and Shimmering Shield, both of
+/// the two the book prints — and the first legendary list in this file
+/// that belongs to something the party might be on the same side as.
+///
+/// *Charging Horn* is *"the unicorn moves up to half its Speed without
+/// provoking Opportunity Attacks, and it makes one Radiant Horn
+/// attack"* — the stride helper and the attack helper back to back,
+/// which is the only option on any list that is two clauses.
+///
+/// *Shimmering Shield* gives *"10 (3d6) Temporary Hit Points, and its
+/// AC increases by 2 until the end of the unicorn's next turn."* Both
+/// halves land: the temp hit points through `GainTempHp` and the armour
+/// through `Condition::ShieldOfFaith`, which is the engine's +2 AC and
+/// is read by `armor_class` exactly as the clause asks. It is spent on
+/// the unicorn itself rather than on an ally, because a legendary
+/// option picks its own target off the board and the ally-choosing
+/// question is a second AI this layer deliberately does not have.
+pub const UNICORN_LEGENDARY: &[LegendaryAction] = &[
+    LegendaryAction {
+        name: "charging horn",
+        cost: 1,
+        fire: |e, id| {
+            let half = e
+                .actors
+                .get(&id)
+                .map(|a| (a.speed() / 2.0 / crate::engine::util::TILE_FEET) as usize)
+                .unwrap_or(0);
+            legendary_stride(e, id, half);
+            legendary_attack(
+                e,
+                id,
+                &Swing {
+                    name: "radiant horn",
+                    ability: AbilityScoreType::Strength,
+                    dice: Dice::new(1, 8),
+                    damage_type: DamageType::Radiant,
+                    reach: MELEE,
+                    kind: SwingKind::Melee,
+                },
+            );
+        },
+    },
+    LegendaryAction {
+        name: "shimmering shield",
+        cost: 1,
+        fire: |e, id| {
+            let rolled = e.roll(&Dice::new(3, 6));
+            crate::engine::side_effects::GainTempHp {
+                actor_id: id,
+                amount: rolled,
+            }
+            .apply(e);
+            if let Some(a) = e.actors.get_mut(&id) {
+                a.add_condition(Condition::ShieldOfFaith, ConditionTimer::Rounds(2));
+            }
+            let name = e.actor_name(id);
+            e.log(format!("  shimmering shield: {name}'s hide hardens."));
         },
     },
 ];
@@ -1059,6 +1243,7 @@ pub const DEATH_KNIGHT_LEGENDARY: &[LegendaryAction] = &[
 mod tests {
     use super::*;
     use crate::actors::actor_template::CreatureTemplate;
+    use crate::actors::creatures::aboleths::ABOLETH_TEMPLATE;
     use crate::actors::creatures::androsphinxes::ANDROSPHINX_TEMPLATE;
     use crate::actors::creatures::beholders::BEHOLDER_TEMPLATE;
     use crate::actors::creatures::death_knights::DEATH_KNIGHT_TEMPLATE;
@@ -1068,10 +1253,11 @@ mod tests {
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
     use crate::actors::creatures::krakens::KRAKEN_TEMPLATE;
     use crate::actors::creatures::liches::LICH_TEMPLATE;
-    use crate::actors::creatures::pit_fiends::PIT_FIEND_TEMPLATE;
+    use crate::actors::creatures::mummy_lords::MUMMY_LORD_TEMPLATE;
     use crate::actors::creatures::solars::SOLAR_TEMPLATE;
     use crate::actors::creatures::sphinxes_of_lore::SPHINX_OF_LORE_TEMPLATE;
     use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
+    use crate::actors::creatures::unicorns::UNICORN_TEMPLATE;
     use crate::actors::creatures::vampires::VAMPIRE_TEMPLATE;
     use crate::engine::actor_gen::ActorGenParams;
     use crate::engine::terrain_gen::TerrainGenParams;
@@ -1091,11 +1277,13 @@ mod tests {
             (KRAKEN_LEGENDARY, &KRAKEN_TEMPLATE),
             (VAMPIRE_LEGENDARY, &VAMPIRE_TEMPLATE),
             (TARRASQUE_LEGENDARY, &TARRASQUE_TEMPLATE),
-            (PIT_FIEND_LEGENDARY, &PIT_FIEND_TEMPLATE),
             (SOLAR_LEGENDARY, &SOLAR_TEMPLATE),
             (ANDROSPHINX_LEGENDARY, &ANDROSPHINX_TEMPLATE),
             (SPHINX_OF_LORE_LEGENDARY, &SPHINX_OF_LORE_TEMPLATE),
             (DEATH_KNIGHT_LEGENDARY, &DEATH_KNIGHT_TEMPLATE),
+            (ABOLETH_LEGENDARY, &ABOLETH_TEMPLATE),
+            (MUMMY_LORD_LEGENDARY, &MUMMY_LORD_TEMPLATE),
+            (UNICORN_LEGENDARY, &UNICORN_TEMPLATE),
         ]
     }
 
@@ -1157,8 +1345,23 @@ mod tests {
     /// of these options are bursts centred on the creature itself, and
     /// a dragon that knocks its own hobgoblins prone with its wings is
     /// the bug this pins.
+    ///
+    /// **Buffs are exempt, and only on the creature's own side.** The
+    /// unicorn's Shimmering Shield is the first beneficial option on
+    /// any of these lists, and it works by putting a condition on the
+    /// unicorn — so a flat "no new conditions on yourself" would make
+    /// the one option that is supposed to land on the caster
+    /// unwritable. `Condition::is_dispellable_buff` is the line
+    /// between the two, and it is the same line Dispel Magic reads.
     #[test]
     fn a_legendary_action_never_catches_its_own_side() {
+        fn debuffs(e: &EncounterInstance, id: usize) -> usize {
+            e.actors[&id]
+                .conditions()
+                .iter()
+                .filter(|c| !c.0.is_dispellable_buff())
+                .count()
+        }
         for (repertoire, template) in repertoires() {
             for entry in repertoire {
                 let mut e = arena();
@@ -1171,8 +1374,8 @@ mod tests {
                 let _ = e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(11, 7), 1, 1);
                 let boss_hp = e.actors[&boss].hitpoints();
                 let ally_hp = e.actors[&ally].hitpoints();
-                let boss_conditions = e.actors[&boss].conditions().len();
-                let ally_conditions = e.actors[&ally].conditions().len();
+                let boss_debuffs = debuffs(&e, boss);
+                let ally_debuffs = debuffs(&e, ally);
                 (entry.fire)(&mut e, boss);
                 assert!(
                     e.actors[&boss].hitpoints() >= boss_hp,
@@ -1181,9 +1384,9 @@ mod tests {
                     entry.name
                 );
                 assert_eq!(
-                    e.actors[&boss].conditions().len(),
-                    boss_conditions,
-                    "{}: {} landed a condition on itself",
+                    debuffs(&e, boss),
+                    boss_debuffs,
+                    "{}: {} landed a debuff on itself",
                     template.name,
                     entry.name
                 );
@@ -1195,9 +1398,9 @@ mod tests {
                     entry.name
                 );
                 assert_eq!(
-                    e.actors[&ally].conditions().len(),
-                    ally_conditions,
-                    "{}: {} landed a condition on its own ally",
+                    debuffs(&e, ally),
+                    ally_debuffs,
+                    "{}: {} landed a debuff on its own ally",
                     template.name,
                     entry.name
                 );

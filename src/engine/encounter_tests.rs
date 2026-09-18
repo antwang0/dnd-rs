@@ -36636,6 +36636,12 @@ fn conjure_woodland_beings_spawns_a_cohort_of_four_satyrs() {
 /// edit that swapped the template for something with a bigger hit die
 /// would pass every other test in this file and quietly turn the
 /// cleric's apex summon into a worse Conjure Elemental.
+///
+/// One of the three used to be Magic Resistance, which SRD 5.2 does not
+/// give the couatl. The immunities are the real answer and they are
+/// asserted below: Psychic and Radiant damage immunity, and immunity to
+/// Charmed and Frightened — the couatl cannot be talked off the board,
+/// which is the clause that matters for a summon.
 #[test]
 fn conjure_celestial_summons_a_couatl_that_is_hard_to_remove() {
     use crate::actions::spells::CONJURE_CELESTIAL;
@@ -36660,8 +36666,9 @@ fn conjure_celestial_summons_a_couatl_that_is_hard_to_remove() {
     assert_eq!(e.actors[&couatl].team(), e.actors[&cleric].team());
     assert!(e.actors[&couatl].has_condition(Condition::Conjured));
     assert!(
-        e.actors[&couatl].has_magic_resistance(),
-        "magic resistance is half of why this template and not a bigger one"
+        !e.actors[&couatl].has_magic_resistance(),
+        "SRD 5.2 prints the couatl no Magic Resistance; what makes it hard \
+         to remove is the immunity list below"
     );
     assert_eq!(
         e.actors[&couatl].damage_modifier(DamageType::Psychic),
@@ -37821,9 +37828,15 @@ fn holding_your_nerve_against_a_ghost_is_permanent() {
     }
 }
 
-/// Tarrasque carries 3 Legendary Resistance charges. Forcing 3 failing
-/// saves should auto-promote all 3 to passes; the 4th lands on fail.
+/// Tarrasque carries 6 Legendary Resistance charges. Forcing 6 failing
+/// saves should auto-promote all 6 to passes; the 7th lands on fail.
 /// Verifies the `roll_save` LR gate fires across the boss template.
+///
+/// Six is what SRD 5.2 prints — *"Legendary Resistance (6/Day)"* — and
+/// it is the highest figure in the book by two. This test asserted
+/// three, which is the number every other legendary creature in the
+/// engine was carrying: a tier applied by CR rather than a stat line
+/// read off the page.
 #[test]
 fn tarrasque_legendary_resistance_promotes_fails() {
     use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
@@ -37834,16 +37847,16 @@ fn tarrasque_legendary_resistance_promotes_fails() {
         .unwrap();
     assert_eq!(
         e.actors[&t].legendary_resistance_remaining(),
-        3,
-        "tarrasque template seeds 3 LR charges"
+        6,
+        "tarrasque template seeds 6 LR charges"
     );
     // DC 40 is unreachable — every save is a fail before LR.
-    for i in 0..3 {
+    for i in 0..6 {
         let save = e.roll_save(t, AbilityScoreType::Charisma, 40);
         assert!(save.passed(), "LR should auto-promote fail #{}", i + 1);
     }
     assert_eq!(e.actors[&t].legendary_resistance_remaining(), 0);
-    // 4th save burns no charge — falls through to actual fail.
+    // 7th save burns no charge — falls through to actual fail.
     let save = e.roll_save(t, AbilityScoreType::Charisma, 40);
     assert!(!save.passed(), "exhausted LR pool means the fail sticks");
 }
@@ -59928,17 +59941,20 @@ fn earth_elemental_retains_thunder_vulnerability_after_refactor() {
     assert!(actor.resists_nonmagical(DamageType::Bludgeoning));
 }
 
-/// Green Hag carries the Magic Resistance flag — advantage on every
-/// save vs spells / magical effects. Regression guard for the new
-/// fey template's flag plumbing.
+/// Green Hag does **not** carry the Magic Resistance flag.
+///
+/// It did, and the trait is not on SRD 5.2's sheet: the hag's Traits
+/// block is Amphibious and Mimicry, and nothing else. Advantage on
+/// every save against magic is the 2014 fey convention, and on a CR 3
+/// creature it is most of what a party's whole spell list can do.
 #[test]
-fn green_hag_has_magic_resistance() {
+fn green_hag_has_no_magic_resistance() {
     use crate::actors::creatures::green_hags::GREEN_HAG_TEMPLATE;
     let mut e = ei_with_terrain(20, 20, &[]);
     let hag = e
         .instantiate_creature(&GREEN_HAG_TEMPLATE, Coordinate::new(5, 5), 0, 0)
         .unwrap();
-    assert!(e.actors[&hag].has_magic_resistance());
+    assert!(!e.actors[&hag].has_magic_resistance());
 }
 
 /// Both hyena templates carry the Pack Tactics flag, which is the
@@ -125185,6 +125201,437 @@ fn every_regeneration_trait_is_one_the_book_prints() {
         wrong.is_empty(),
         "these stat blocks disagree with SRD 5.2 about healing:\n  {}",
         wrong.join("\n  ")
+    );
+}
+
+/// Every stat block's **Legendary Resistance**, **Magic Resistance**
+/// and **Legendary Action Uses**, against what the bestiary declares.
+///
+/// The eleventh book-conformance sweep, over the three rows that decide
+/// whether a boss is a boss. All three are save-lane arithmetic and all
+/// three are invisible from inside a fight: nothing is logged when a
+/// creature has one fewer Legendary Resistance than it should, only a
+/// spell landing a round earlier than it would have.
+///
+/// Twenty-two rows disagreed, and they pulled in both directions:
+///
+///   - **Legendary Resistance.** The kraken, lich, pit fiend and solar
+///     each had three where 5.2 prints four, and the tarrasque three
+///     where it prints six — the 2014 ceiling applied uniformly, as
+///     though the number were a tier rather than a stat line. Three
+///     legendary creatures had none at all: the **aboleth**, which made
+///     it the only legendary stat block in the book a single Hold
+///     Monster could end; the **unicorn**; and the **vampire**. Two
+///     creatures had three the book gives none: the iron and stone
+///     golems, which are not legendary creatures in any printing.
+///   - **Magic Resistance.** Six carried it that 5.2 does not print —
+///     the couatl, green hag, kraken, lich, oni and Sphinx of Valor.
+///     That is the 2024 design in one line: advantage on every save
+///     against magic was the old way to make a monster hard to spell
+///     down, and Legendary Resistance replaced it on the creatures that
+///     got one. Carrying both is the monster from neither edition. The
+///     **flesh golem** is the row that went the other way, printed with
+///     it and not carrying it.
+///   - **Legendary Action Uses.** The aboleth, mummy lord and unicorn
+///     each print three and had none — nine wasted points a round,
+///     spent on nothing. Each now has a repertoire; see
+///     `ABOLETH_LEGENDARY`, `MUMMY_LORD_LEGENDARY` and
+///     `UNICORN_LEGENDARY`, and see there for the one option of the
+///     seven left off. The **pit fiend** is the opposite: it had three
+///     uses and a repertoire, and SRD 5.2 prints it no Legendary
+///     Actions section at all. What it prints instead is a fourth
+///     Legendary Resistance and a fourth attack, both of which it now
+///     has.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its ten
+/// siblings.
+#[test]
+fn every_stat_blocks_boss_lines_match_the_book() {
+    /// `(name, Legendary Resistances per day, Magic Resistance,
+    /// Legendary Action Uses)` — SRD 5.2, one row per stat block. The
+    /// "or N/Day in Lair" half of a Legendary Resistance line is not
+    /// stored: the engine has lairs but no per-lair resistance pool,
+    /// and the base figure is the one it spends.
+    const SRD_BOSS_LINES: &[(&str, u32, bool, u32)] = &[
+    ("Aboleth", 3, false, 3),
+    ("Adult Black Dragon", 3, false, 3),
+    ("Adult Blue Dragon", 3, false, 3),
+    ("Adult Brass Dragon", 3, false, 3),
+    ("Adult Bronze Dragon", 3, false, 3),
+    ("Adult Copper Dragon", 3, false, 3),
+    ("Adult Gold Dragon", 3, false, 3),
+    ("Adult Green Dragon", 3, false, 3),
+    ("Adult Red Dragon", 3, false, 3),
+    ("Adult Silver Dragon", 3, false, 3),
+    ("Adult White Dragon", 3, false, 3),
+    ("Air Elemental", 0, false, 0),
+    ("Allosaurus", 0, false, 0),
+    ("Ancient Black Dragon", 4, false, 3),
+    ("Ancient Blue Dragon", 4, false, 3),
+    ("Ancient Brass Dragon", 4, false, 3),
+    ("Ancient Bronze Dragon", 4, false, 3),
+    ("Ancient Copper Dragon", 4, false, 3),
+    ("Ancient Gold Dragon", 4, false, 3),
+    ("Ancient Green Dragon", 4, false, 3),
+    ("Ancient Red Dragon", 4, false, 3),
+    ("Ancient Silver Dragon", 4, false, 3),
+    ("Ancient White Dragon", 4, false, 3),
+    ("Animated Armor", 0, false, 0),
+    ("Animated Flying Sword", 0, false, 0),
+    ("Animated Rug of Smothering", 0, false, 0),
+    ("Ankheg", 0, false, 0),
+    ("Ankylosaurus", 0, false, 0),
+    ("Ape", 0, false, 0),
+    ("Archelon", 0, false, 0),
+    ("Archmage", 0, true, 0),
+    ("Assassin", 0, false, 0),
+    ("Avatar of Death", 0, false, 0),
+    ("Awakened Shrub", 0, false, 0),
+    ("Awakened Tree", 0, false, 0),
+    ("Axe Beak", 0, false, 0),
+    ("Azer Sentinel", 0, false, 0),
+    ("Baboon", 0, false, 0),
+    ("Badger", 0, false, 0),
+    ("Balor", 3, true, 0),
+    ("Bandit", 0, false, 0),
+    ("Bandit Captain", 0, false, 0),
+    ("Barbed Devil", 0, true, 0),
+    ("Basilisk", 0, false, 0),
+    ("Bat", 0, false, 0),
+    ("Bearded Devil", 0, true, 0),
+    ("Behir", 0, false, 0),
+    ("Berserker", 0, false, 0),
+    ("Black Bear", 0, false, 0),
+    ("Black Dragon Wyrmling", 0, false, 0),
+    ("Black Pudding", 0, false, 0),
+    ("Blink Dog", 0, false, 0),
+    ("Blood Hawk", 0, false, 0),
+    ("Blue Dragon Wyrmling", 0, false, 0),
+    ("Boar", 0, false, 0),
+    ("Bone Devil", 0, true, 0),
+    ("Brass Dragon Wyrmling", 0, false, 0),
+    ("Bronze Dragon Wyrmling", 0, false, 0),
+    ("Brown Bear", 0, false, 0),
+    ("Bugbear Stalker", 0, false, 0),
+    ("Bugbear Warrior", 0, false, 0),
+    ("Bulette", 0, false, 0),
+    ("Camel", 0, false, 0),
+    ("Cat", 0, false, 0),
+    ("Centaur Trooper", 0, false, 0),
+    ("Chain Devil", 0, true, 0),
+    ("Chimera", 0, false, 0),
+    ("Chuul", 0, false, 0),
+    ("Clay Golem", 0, true, 0),
+    ("Cloaker", 0, false, 0),
+    ("Cloud Giant", 0, false, 0),
+    ("Cockatrice", 0, false, 0),
+    ("Commoner", 0, false, 0),
+    ("Constrictor Snake", 0, false, 0),
+    ("Copper Dragon Wyrmling", 0, false, 0),
+    ("Couatl", 0, false, 0),
+    ("Crab", 0, false, 0),
+    ("Crocodile", 0, false, 0),
+    ("Cultist", 0, false, 0),
+    ("Cultist Fanatic", 0, false, 0),
+    ("Darkmantle", 0, false, 0),
+    ("Death Dog", 0, false, 0),
+    ("Deer", 0, false, 0),
+    ("Deva", 0, true, 0),
+    ("Dire Wolf", 0, false, 0),
+    ("Djinni", 0, true, 0),
+    ("Doppelganger", 0, false, 0),
+    ("Draconic Spirit", 0, false, 0),
+    ("Draft Horse", 0, false, 0),
+    ("Dragon Turtle", 0, false, 0),
+    ("Dretch", 0, false, 0),
+    ("Drider", 0, false, 0),
+    ("Dryad", 0, true, 0),
+    ("Dust Mephit", 0, false, 0),
+    ("Eagle", 0, false, 0),
+    ("Earth Elemental", 0, false, 0),
+    ("Efreeti", 0, true, 0),
+    ("Elephant", 0, false, 0),
+    ("Elk", 0, false, 0),
+    ("Erinyes", 0, true, 0),
+    ("Ettercap", 0, false, 0),
+    ("Ettin", 0, false, 0),
+    ("Fire Elemental", 0, false, 0),
+    ("Fire Giant", 0, false, 0),
+    ("Flesh Golem", 0, true, 0),
+    ("Flying Snake", 0, false, 0),
+    ("Frog", 0, false, 0),
+    ("Frost Giant", 0, false, 0),
+    ("Gargoyle", 0, false, 0),
+    ("Gelatinous Cube", 0, false, 0),
+    ("Ghast", 0, false, 0),
+    ("Ghost", 0, false, 0),
+    ("Ghoul", 0, false, 0),
+    ("Giant Ape", 0, false, 0),
+    ("Giant Badger", 0, false, 0),
+    ("Giant Bat", 0, false, 0),
+    ("Giant Boar", 0, false, 0),
+    ("Giant Centipede", 0, false, 0),
+    ("Giant Constrictor Snake", 0, false, 0),
+    ("Giant Crab", 0, false, 0),
+    ("Giant Crocodile", 0, false, 0),
+    ("Giant Eagle", 0, false, 0),
+    ("Giant Elk", 0, false, 0),
+    ("Giant Fire Beetle", 0, false, 0),
+    ("Giant Fly", 0, false, 0),
+    ("Giant Frog", 0, false, 0),
+    ("Giant Goat", 0, false, 0),
+    ("Giant Hyena", 0, false, 0),
+    ("Giant Insect", 0, false, 0),
+    ("Giant Lizard", 0, false, 0),
+    ("Giant Octopus", 0, false, 0),
+    ("Giant Owl", 0, false, 0),
+    ("Giant Rat", 0, false, 0),
+    ("Giant Scorpion", 0, false, 0),
+    ("Giant Seahorse", 0, false, 0),
+    ("Giant Shark", 0, false, 0),
+    ("Giant Spider", 0, false, 0),
+    ("Giant Toad", 0, false, 0),
+    ("Giant Venomous Snake", 0, false, 0),
+    ("Giant Vulture", 0, false, 0),
+    ("Giant Wasp", 0, false, 0),
+    ("Giant Weasel", 0, false, 0),
+    ("Giant Wolf Spider", 0, false, 0),
+    ("Gibbering Mouther", 0, false, 0),
+    ("Glabrezu", 0, true, 0),
+    ("Gladiator", 0, false, 0),
+    ("Gnoll Warrior", 0, false, 0),
+    ("Goat", 0, false, 0),
+    ("Goblin Boss", 0, false, 0),
+    ("Goblin Minion", 0, false, 0),
+    ("Goblin Warrior", 0, false, 0),
+    ("Gold Dragon Wyrmling", 0, false, 0),
+    ("Gorgon", 0, false, 0),
+    ("Gray Ooze", 0, false, 0),
+    ("Green Dragon Wyrmling", 0, false, 0),
+    ("Green Hag", 0, false, 0),
+    ("Grick", 0, false, 0),
+    ("Griffon", 0, false, 0),
+    ("Grimlock", 0, false, 0),
+    ("Guard", 0, false, 0),
+    ("Guard Captain", 0, false, 0),
+    ("Guardian Naga", 0, false, 0),
+    ("Harpy", 0, false, 0),
+    ("Hawk", 0, false, 0),
+    ("Hell Hound", 0, false, 0),
+    ("Hezrou", 0, true, 0),
+    ("Hill Giant", 0, false, 0),
+    ("Hippogriff", 0, false, 0),
+    ("Hippopotamus", 0, false, 0),
+    ("Hobgoblin Captain", 0, false, 0),
+    ("Hobgoblin Warrior", 0, false, 0),
+    ("Homunculus", 0, false, 0),
+    ("Horned Devil", 0, true, 0),
+    ("Hunter Shark", 0, false, 0),
+    ("Hydra", 0, false, 0),
+    ("Hyena", 0, false, 0),
+    ("Ice Devil", 0, true, 0),
+    ("Ice Mephit", 0, false, 0),
+    ("Imp", 0, true, 0),
+    ("Incubus", 0, false, 0),
+    ("Invisible Stalker", 0, false, 0),
+    ("Iron Golem", 0, true, 0),
+    ("Jackal", 0, false, 0),
+    ("Killer Whale", 0, false, 0),
+    ("Knight", 0, false, 0),
+    ("Kobold Warrior", 0, false, 0),
+    ("Kraken", 4, false, 3),
+    ("Lamia", 0, false, 0),
+    ("Lemure", 0, false, 0),
+    ("Lich", 4, false, 3),
+    ("Lion", 0, false, 0),
+    ("Lizard", 0, false, 0),
+    ("Mage", 0, false, 0),
+    ("Magma Mephit", 0, false, 0),
+    ("Magmin", 0, false, 0),
+    ("Mammoth", 0, false, 0),
+    ("Manticore", 0, false, 0),
+    ("Marilith", 0, true, 0),
+    ("Mastiff", 0, false, 0),
+    ("Medusa", 0, false, 0),
+    ("Merfolk Skirmisher", 0, false, 0),
+    ("Merrow", 0, false, 0),
+    ("Mimic", 0, false, 0),
+    ("Minotaur Skeleton", 0, false, 0),
+    ("Minotaur of Baphomet", 0, false, 0),
+    ("Mule", 0, false, 0),
+    ("Mummy", 0, false, 0),
+    ("Mummy Lord", 3, true, 3),
+    ("Nalfeshnee", 0, true, 0),
+    ("Night Hag", 0, true, 0),
+    ("Nightmare", 0, false, 0),
+    ("Noble", 0, false, 0),
+    ("Ochre Jelly", 0, false, 0),
+    ("Octopus", 0, false, 0),
+    ("Ogre", 0, false, 0),
+    ("Ogre Zombie", 0, false, 0),
+    ("Oni", 0, false, 0),
+    ("Otyugh", 0, false, 0),
+    ("Owl", 0, false, 0),
+    ("Owlbear", 0, false, 0),
+    ("Panther", 0, false, 0),
+    ("Pegasus", 0, false, 0),
+    ("Phase Spider", 0, false, 0),
+    ("Piranha", 0, false, 0),
+    ("Pirate", 0, false, 0),
+    ("Pirate Captain", 0, false, 0),
+    ("Pit Fiend", 4, true, 0),
+    ("Planetar", 0, true, 0),
+    ("Plesiosaurus", 0, false, 0),
+    ("Polar Bear", 0, false, 0),
+    ("Pony", 0, false, 0),
+    ("Priest", 0, false, 0),
+    ("Priest Acolyte", 0, false, 0),
+    ("Pseudodragon", 0, true, 0),
+    ("Pteranodon", 0, false, 0),
+    ("Purple Worm", 0, false, 0),
+    ("Quasit", 0, true, 0),
+    ("Rakshasa", 0, true, 0),
+    ("Rat", 0, false, 0),
+    ("Raven", 0, false, 0),
+    ("Red Dragon Wyrmling", 0, false, 0),
+    ("Reef Shark", 0, false, 0),
+    ("Remorhaz", 0, false, 0),
+    ("Rhinoceros", 0, false, 0),
+    ("Riding Horse", 0, false, 0),
+    ("Roc", 0, false, 0),
+    ("Roper", 0, false, 0),
+    ("Rust Monster", 0, false, 0),
+    ("Saber-Toothed Tiger", 0, false, 0),
+    ("Sahuagin Warrior", 0, false, 0),
+    ("Salamander", 0, false, 0),
+    ("Satyr", 0, true, 0),
+    ("Scorpion", 0, false, 0),
+    ("Scout", 0, false, 0),
+    ("Sea Hag", 0, false, 0),
+    ("Seahorse", 0, false, 0),
+    ("Shadow", 0, false, 0),
+    ("Shambling Mound", 0, false, 0),
+    ("Shield Guardian", 0, false, 0),
+    ("Shrieker Fungus", 0, false, 0),
+    ("Silver Dragon Wyrmling", 0, false, 0),
+    ("Skeleton", 0, false, 0),
+    ("Solar", 4, true, 3),
+    ("Specter", 0, false, 0),
+    ("Sphinx of Lore", 3, false, 3),
+    ("Sphinx of Valor", 3, false, 3),
+    ("Sphinx of Wonder", 0, true, 0),
+    ("Spider", 0, false, 0),
+    ("Spirit Naga", 0, false, 0),
+    ("Sprite", 0, false, 0),
+    ("Spy", 0, false, 0),
+    ("Steam Mephit", 0, false, 0),
+    ("Stirge", 0, false, 0),
+    ("Stone Giant", 0, false, 0),
+    ("Stone Golem", 0, true, 0),
+    ("Storm Giant", 0, false, 0),
+    ("Succubus", 0, false, 0),
+    ("Tarrasque", 6, true, 3),
+    ("Tiger", 0, false, 0),
+    ("Tough", 0, false, 0),
+    ("Tough Boss", 0, false, 0),
+    ("Treant", 0, false, 0),
+    ("Triceratops", 0, false, 0),
+    ("Troll", 0, false, 0),
+    ("Troll Limb", 0, false, 0),
+    ("Tyrannosaurus Rex", 0, false, 0),
+    ("Unicorn", 3, true, 3),
+    ("Vampire", 3, false, 3),
+    ("Vampire Familiar", 0, false, 0),
+    ("Vampire Spawn", 0, false, 0),
+    ("Venomous Snake", 0, false, 0),
+    ("Violet Fungus", 0, false, 0),
+    ("Vrock", 0, true, 0),
+    ("Vulture", 0, false, 0),
+    ("Warhorse", 0, false, 0),
+    ("Warhorse Skeleton", 0, false, 0),
+    ("Warrior Infantry", 0, false, 0),
+    ("Warrior Veteran", 0, false, 0),
+    ("Water Elemental", 0, false, 0),
+    ("Weasel", 0, false, 0),
+    ("Werebear", 0, false, 0),
+    ("Wereboar", 0, false, 0),
+    ("Wererat", 0, false, 0),
+    ("Weretiger", 0, false, 0),
+    ("Werewolf", 0, false, 0),
+    ("White Dragon Wyrmling", 0, false, 0),
+    ("Wight", 0, false, 0),
+    ("Will-o’-Wisp", 0, false, 0),
+    ("Winter Wolf", 0, false, 0),
+    ("Wolf", 0, false, 0),
+    ("Worg", 0, false, 0),
+    ("Wraith", 0, false, 0),
+    ("Wyvern", 0, false, 0),
+    ("Xorn", 0, false, 0),
+    ("Young Black Dragon", 0, false, 0),
+    ("Young Blue Dragon", 0, false, 0),
+    ("Young Brass Dragon", 0, false, 0),
+    ("Young Bronze Dragon", 0, false, 0),
+    ("Young Copper Dragon", 0, false, 0),
+    ("Young Gold Dragon", 0, false, 0),
+    ("Young Green Dragon", 0, false, 0),
+    ("Young Red Dragon", 0, false, 0),
+    ("Young Silver Dragon", 0, false, 0),
+    ("Young White Dragon", 0, false, 0),
+    ("Zombie", 0, false, 0),
+    ];
+
+    let found = bestiary_by_name();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, resistances, magic, uses) in SRD_BOSS_LINES {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        checked += 1;
+        if t.legendary_resistances != *resistances {
+            wrong.push(format!(
+                "{name}: the book prints {resistances} Legendary Resistances and it carries {}",
+                t.legendary_resistances
+            ));
+        }
+        if t.has_magic_resistance != *magic {
+            wrong.push(format!(
+                "{name}: the book {} Magic Resistance and it {}",
+                if *magic { "prints" } else { "does not print" },
+                if t.has_magic_resistance { "has it" } else { "does not" }
+            ));
+        }
+        if t.legendary_actions_per_round != *uses {
+            wrong.push(format!(
+                "{name}: the book prints {uses} Legendary Action Uses and it has {}",
+                t.legendary_actions_per_round
+            ));
+        }
+        // A budget with nothing to spend it on, or a repertoire with no
+        // budget, is a row that reads right and does nothing. Neither
+        // is a fact about the book, which is why it is checked here
+        // rather than stored in the table.
+        if (t.legendary_actions_per_round == 0) != t.legendary_actions.is_empty() {
+            wrong.push(format!(
+                "{name}: {} uses and {} options — one of the two is unread",
+                t.legendary_actions_per_round,
+                t.legendary_actions.len()
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's boss lines:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count — see the sibling sweeps for why a match
+    // that silently stops matching is the failure this guards.
+    assert!(
+        checked > 320,
+        "only {checked} of the book's {} stat blocks were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_BOSS_LINES.len()
     );
 }
 

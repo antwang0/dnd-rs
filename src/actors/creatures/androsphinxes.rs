@@ -126,7 +126,7 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // anti-caster envelope shared with Ancient Red Dragon / Lich /
         // Pit Fiend at the boss tier.
         legendary_resistances: 3,
-        has_magic_resistance: true,
+        has_magic_resistance: false,
         // No recharge. SRD 5.2 rations the Roar at 3/Day and makes
         // each of the three a *different* roar, which a recharge pool
         // cannot say — see `ROAR_TAG`, whose count is the sequence.
@@ -163,8 +163,27 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 mod tests {
     use super::*;
     use crate::actors::actor_template::ActorInstance;
+    use crate::engine::actor_gen::ActorGenParams;
     use crate::engine::dice::FastRandRoller;
-    use crate::engine::types::{Coordinate, DamageModifier, DamageType};
+    use crate::engine::encounter::EncounterInstance;
+    use crate::engine::terrain_gen::TerrainGenParams;
+    use crate::engine::types::{AbilityScoreType, Coordinate, DamageModifier, DamageType};
+
+    fn make_test_encounter() -> EncounterInstance {
+        let tp = TerrainGenParams {
+            width: 12,
+            height: 12,
+            branch_depth: 0,
+            branch_prob: 0.0,
+        };
+        let ap = ActorGenParams {
+            cr_target: 0.0,
+            n_teams: 0,
+            pc_template: None,
+            start_team: 0,
+        };
+        EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap()
+    }
 
     #[test]
     fn androsphinx_has_multi_and_roar() {
@@ -211,10 +230,84 @@ mod tests {
         // Guardian envelope: immune to charm + frighten.
         assert!(a.effectively_immune_to_condition(Condition::Charmed));
         assert!(a.effectively_immune_to_condition(Condition::Frightened));
-        // Boss anti-caster: 3 LR + Magic Resistance.
+        // Boss anti-caster: 3 Legendary Resistances, and no Magic
+        // Resistance beside them. SRD 5.2 gives the sphinx one or the
+        // other and it gives it this one; the pair was the 2014 sheet.
         assert_eq!(a.legendary_resistance_remaining(), 3);
-        assert!(a.has_magic_resistance());
+        assert!(!a.has_magic_resistance());
         // 3 legendary actions per round.
         assert_eq!(a.legendary_actions_per_round(), 3);
+    }
+
+    /// Failing a save with a Legendary Resistance in hand promotes the
+    /// fail to a pass and spends the charge. Three failed saves burn the
+    /// pool; the fourth fail lands.
+    ///
+    /// Flown by the Sphinx of Valor, which prints three. These two
+    /// tests are about the *mechanic* rather than the creature, and
+    /// they used to be flown by the stone golem — which SRD 5.2 gives
+    /// no Legendary Resistance at all, in either printing. They moved
+    /// here rather than being deleted when the golem's three went, and
+    /// the arithmetic is unchanged because the sphinx has the same
+    /// three the golem was pretending to.
+    #[test]
+    fn legendary_resistance_promotes_three_fails_and_then_stops() {
+        let mut e = make_test_encounter();
+        let id = e
+            .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Force a fail by using an unreachable DC.
+        let initial = e
+            .actors
+            .get(&id)
+            .unwrap()
+            .legendary_resistance_remaining();
+        assert_eq!(initial, 3);
+        for i in 0..3 {
+            let save = e.roll_save(id, AbilityScoreType::Charisma, 40);
+            assert!(
+                save.passed(),
+                "LR should auto-promote fail #{} to pass",
+                i + 1
+            );
+            assert_eq!(
+                e.actors
+                    .get(&id)
+                    .unwrap()
+                    .legendary_resistance_remaining(),
+                3 - (i as u32 + 1)
+            );
+        }
+        // Pool exhausted — next fail lands.
+        let save = e.roll_save(id, AbilityScoreType::Charisma, 40);
+        assert!(!save.passed(), "exhausted LR pool means the fail sticks");
+    }
+
+    /// Long rest refreshes the LR pool back to the template max.
+    #[test]
+    fn a_long_rest_restores_the_legendary_resistance_pool() {
+        let mut e = make_test_encounter();
+        let id = e
+            .instantiate_creature(&ANDROSPHINX_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        // Burn all 3 charges.
+        for _ in 0..3 {
+            let _ = e.roll_save(id, AbilityScoreType::Charisma, 40);
+        }
+        assert_eq!(
+            e.actors
+                .get(&id)
+                .unwrap()
+                .legendary_resistance_remaining(),
+            0
+        );
+        e.actors.get_mut(&id).unwrap().long_rest();
+        assert_eq!(
+            e.actors
+                .get(&id)
+                .unwrap()
+                .legendary_resistance_remaining(),
+            3
+        );
     }
 }

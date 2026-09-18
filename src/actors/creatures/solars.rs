@@ -92,7 +92,7 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Legendary Resistance (3/Day) — RAW per MM. The Solar's
         // signature anti-save defense rounding out the celestial boss
         // envelope (Holy Aura + Foresight + Mass Heal).
-        legendary_resistances: 3,
+        legendary_resistances: 4,
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::SOLAR_LEGENDARY,

@@ -78,12 +78,19 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // rows up is what keeps a pair of pit fiends from cowing each
         // other on the rare board where they end up on opposite sides.
         emanations: std::slice::from_ref(&PIT_FIEND_FEAR_AURA),
-        // 5e Legendary Resistance (3/Day) — RAW per MM. Routine for
-        // a CR-20 archdevil boss.
-        legendary_resistances: 3,
+        // SRD 5.2: *"Legendary Resistance (4/Day)."* Four, not the
+        // three every legendary creature in the engine was carrying.
+        legendary_resistances: 4,
         has_magic_resistance: true,
-        legendary_actions_per_round: 3,
-        legendary_actions: crate::engine::legendary_actions::PIT_FIEND_LEGENDARY,
+        // …and **no Legendary Actions**. SRD 5.2's pit fiend has no
+        // Legendary Actions section at all: what it spends between
+        // turns is a Reaction, and what it gets instead of the extra
+        // turns is the fourth Legendary Resistance above and a fourth
+        // attack in its routine. The repertoire written for it — a claw
+        // and a hellfire burst, neither of which appears on the page —
+        // is deleted rather than orphaned.
+        legendary_actions_per_round: 0,
+        legendary_actions: &[],
         has_extra_attack: true,
         // 5e **Devil's Sight** — "magical darkness doesn't impede this
         // devil's darkvision." Carried by every devil in the bestiary,

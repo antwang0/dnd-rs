@@ -117,6 +117,7 @@ pub static FLESH_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Petrified,
             Condition::Poisoned,
         ]),
+        has_magic_resistance: true,
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });
@@ -176,8 +177,11 @@ mod tests {
         assert!(a.effectively_immune_to_condition(Condition::Paralyzed));
         assert!(a.effectively_immune_to_condition(Condition::Petrified));
         assert!(a.effectively_immune_to_condition(Condition::Poisoned));
-        // Crucially — flesh golem does NOT have Magic Resistance (RAW
-        // reserves it for stone + iron golems further up the ladder).
-        assert!(!a.has_magic_resistance());
+        // SRD 5.2 prints **Magic Resistance** on all three golems, the
+        // flesh one included. This used to assert the opposite, on the
+        // reasoning that RAW "reserves it for stone + iron golems
+        // further up the ladder" — which is true of neither printing:
+        // the 2014 flesh golem has it too.
+        assert!(a.has_magic_resistance());
     }
 }

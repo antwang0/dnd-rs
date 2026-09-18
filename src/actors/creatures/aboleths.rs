@@ -57,6 +57,12 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         skills: HashSet::from([Skill::History, Skill::Perception]),
+        // SRD 5.2: *"Legendary Resistance (3/Day, or 4/Day in Lair)."*
+        // The aboleth had none, which made it the only legendary stat
+        // block in the book a single Hold Monster could end.
+        legendary_resistances: 3,
+        legendary_actions_per_round: 3,
+        legendary_actions: crate::engine::legendary_actions::ABOLETH_LEGENDARY,
         ..CreatureTemplate::defaults()
     }
 });

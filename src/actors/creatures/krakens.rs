@@ -148,12 +148,12 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // magical effects. Read by `compute_save_mode`. Combined with the
         // 3 Legendary Resistances, the kraken is a hard nut for party
         // casters to crack mid-fight.
-        has_magic_resistance: true,
+        has_magic_resistance: false,
         // 5e Legendary Resistance (3/Day): three failed saves per long
         // rest are auto-promoted to passes. Critical for surviving
         // Banishment / Hold Monster / Power Word Kill from party
         // casters mid-encounter.
-        legendary_resistances: 3,
+        legendary_resistances: 4,
         // 5e Recharge 5-6 on the Lightning Storm via the shared
         // `"breath_weapon"` pool — same chassis the dragons / gorgons /
         // iron golem share.
@@ -231,8 +231,11 @@ mod tests {
             0,
         )
         .unwrap();
-        assert!(a.has_magic_resistance());
-        assert_eq!(a.legendary_resistance_remaining(), 3);
+        // Four Legendary Resistances, and no Magic Resistance: SRD
+        // 5.2's kraken trades the 2014 blanket advantage for one more
+        // use of the thing that actually stops a spell.
+        assert!(!a.has_magic_resistance());
+        assert_eq!(a.legendary_resistance_remaining(), 4);
     }
 
     #[test]

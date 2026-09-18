@@ -130,8 +130,8 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Legendary Resistance (3/Day) — RAW per MM. The lich's
         // signature defense against the party's save-or-die / save-or-
         // suck spells (Hold Monster, Banishment, Power Word Stun).
-        legendary_resistances: 3,
-        has_magic_resistance: true,
+        legendary_resistances: 4,
+        has_magic_resistance: false,
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::LICH_LEGENDARY,
         // 5e lair actions — the phylactery's home answers to it once
