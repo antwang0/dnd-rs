@@ -2550,6 +2550,22 @@ pub enum Condition {
     /// does not make its bearer harder to *see*. A creature under
     /// Nondetection walks down the corridor in plain sight; what it is
     /// hidden from is magic that looks for it.
+    ///
+    /// **"Any Divination spell" is wider than it sounds**, and the
+    /// consequence is named here rather than left to surprise somebody.
+    /// Seven of the engine's divinations name a creature, and four of
+    /// them are things nobody thinks of as scrying: a ranger's
+    /// **Hunter's Mark**, a **Mind Spike**, a **True Strike**, a
+    /// **Guidance**. A warded creature is off the table for all of
+    /// them, in both directions — the party can spend a level-3 slot to
+    /// make its scout un-markable by the enemy ranger, and an enemy
+    /// caster can do the same to the thing the party's ranger wanted to
+    /// hunt.
+    ///
+    /// That is the book's own sentence and not a reading of it: RAW
+    /// names the *school*, and the school is where Hunter's Mark is
+    /// filed. It is also the clause that makes the spell worth a slot
+    /// in a fight rather than only between them.
     Undetectable,
     /// **Detecting magic** — SRD 5.2 *Detect Magic*, level-1 divination,
     /// Concentration.

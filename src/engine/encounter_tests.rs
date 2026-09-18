@@ -127952,3 +127952,103 @@ fn a_contagion_rider_queues_an_exposure_and_no_damage() {
     assert_eq!(from_plain, 0);
     assert!(effects.is_empty(), "a commoner carries nothing");
 }
+
+/// SRD 5.2 **Detect Thoughts**: *"The spell is blocked by 1 foot of
+/// stone, dirt, or wood; 1 inch of metal; or a thin sheet of lead."*
+///
+/// Claimed by the spell's docstring to need no code — the sight gate
+/// asks Total Cover and the line-of-sight walk before the sense lane is
+/// consulted at all, so a wall stops it for free. A claim that costs
+/// nothing is a claim worth checking: it is the difference between a
+/// level-2 slot that finds the drow in the dark and one that reads the
+/// whole dungeon through the floor.
+#[test]
+fn detect_thoughts_does_not_reach_through_a_wall() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // A wall two tiles thick down the middle of the room, so neither
+    // the Bresenham walk nor a diagonal slips past it.
+    let walls: Vec<(isize, isize)> = (0..20).flat_map(|y| [(8, y), (9, y)]).collect();
+    let mut e = ei_with_terrain(20, 20, &walls);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(12, 5), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&wizard)
+        .unwrap()
+        .add_condition(Condition::MindReading, ConditionTimer::Rounds(10));
+
+    assert!(
+        !e.viewer_can_see(wizard, goblin),
+        "a foot of stone is a wall, and the sense lane never gets asked"
+    );
+
+    // …and the same goblin, same distance, with the wall out of the way.
+    e.place_actor_at(goblin, Coordinate::new(5, 12)).unwrap();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    assert!(
+        e.viewer_can_see(wizard, goblin),
+        "the fixture's own premise: in the open, the spell finds it"
+    );
+}
+
+/// RAW's *"any Divination spell"* is wider than the word *scrying*
+/// suggests, and the width is the point: a ranger's **Hunter's Mark** is
+/// filed under Divination, so a level-3 Nondetection on the party's
+/// scout takes it off the enemy ranger's list entirely.
+///
+/// Pinned because it is the clause most likely to be narrowed by
+/// somebody who reads "hidden from Divination spells" as "hidden from
+/// scrying" — and because it is what makes the spell worth a slot
+/// during a fight rather than only between them.
+#[test]
+fn a_warded_creature_cannot_be_hunters_marked() {
+    use crate::actions::spells::{HUNTERS_MARK, NONDETECTION};
+    use crate::actors::creatures::rangers::RANGER_TEMPLATE;
+    use crate::actors::creatures::rogues::SCOUT_ROGUE_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let ranger = e
+        .instantiate_creature(&RANGER_TEMPLATE, Coordinate::new(3, 3), 1, 0)
+        .unwrap();
+    let scout = e
+        .instantiate_creature(&SCOUT_ROGUE_TEMPLATE, Coordinate::new(6, 3), 0, 0)
+        .unwrap();
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(7, 3), 0, 1)
+        .unwrap();
+
+    assert_eq!(
+        HUNTERS_MARK.school(),
+        Some(SpellSchool::Divination),
+        "the fixture's own premise, and the whole of the interaction"
+    );
+    assert!(
+        HUNTERS_MARK.validate_input(&e, ranger, Some(&vec![scout]), None, None),
+        "an unwarded scout is a legal mark"
+    );
+
+    let warded = vec![scout];
+    for ef in NONDETECTION.side_effects(&mut e, wizard, Some(&warded), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.actors[&scout].has_condition(Condition::Undetectable));
+    assert!(
+        !HUNTERS_MARK.validate_input(&e, ranger, Some(&vec![scout]), None, None),
+        "RAW: the target can't be targeted by any Divination spell"
+    );
+    // …and the ranger can still simply shoot them, which is the line
+    // the ward does not cross.
+    assert!(
+        e.viewer_can_see(ranger, scout),
+        "a warded creature is not a hidden one"
+    );
+}
