@@ -1703,6 +1703,25 @@ const CLASS_BLINDSIGHT_TILES: isize = 4;
 ///   - **Blind Fighting** (Tasha Fighting Style) — the same envelope
 ///     with no hearing gate (RAW "even if you're blinded or in
 ///     darkness" carries no hearing clause).
+///   - **Detect Thoughts** (`Condition::MindReading`) — thirty feet,
+///     and the only source with a gate on *what the subject is*: RAW's
+///     "creatures that know languages or are telepathic", read through
+///     `ActorInstance::knows_a_language`. It finds the drow patrol in
+///     the dark and not the wolves with them, which is the whole of
+///     what a level-2 slot buys here.
+///   - **Locate Creature** (`Condition::Located`) — the one source
+///     with **no radius at all**, which is why it short-circuits above
+///     the envelope rather than raising it. RAW's thousand feet is four
+///     hundred tiles and no board is that wide, so the spell reads as
+///     "this one named creature, anywhere". It is also the only source
+///     that is a *link* rather than a sense, which is the reason this
+///     helper takes the subject's id.
+///
+/// The last two are **magic looking for somebody**, and SRD 5.2's
+/// Nondetection says so in as many words — *"or perceived through
+/// magical scrying sensors"* — so `Condition::Undetectable` closes
+/// those two and leaves the four above it alone. A warded creature is
+/// still perfectly findable by a bat's echolocation.
 ///
 /// Distance is footprint-Chebyshev so a Large / Huge subject's *edge*
 /// counts: a Huge creature 6 ft away is in a 10-ft envelope even
@@ -1711,7 +1730,10 @@ const CLASS_BLINDSIGHT_TILES: isize = 4;
 /// Unbounded piercers — Truesight, Ranger Feral Senses — deliberately
 /// aren't here. They have no radius to compare, so their callers
 /// short-circuit before the distance read rather than passing an
-/// `isize::MAX` through it.
+/// `isize::MAX` through it. Locate Creature is the exception that
+/// proves the shape: it is unbounded too, and it is here rather than at
+/// its callers because there are three of them and it would have been
+/// three copies of one `if`.
 fn nonvisual_sense_reaches(
     viewer: &ActorInstance,
     subject: &ActorInstance,
