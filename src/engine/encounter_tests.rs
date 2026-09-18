@@ -63505,6 +63505,78 @@ fn a_fight_where_nobody_lands_anything_is_eventually_called_a_draw() {
     );
 }
 
+
+/// Every creature template anything in the engine can put on a board,
+/// walked once so that more than one sweep can have it.
+///
+/// Six roads, and the list of them *is* the interesting content: the
+/// encounter generator's pool, the class picker's families, the summon
+/// spells, the summon items, the handful reachable only through a class
+/// feature's own action, and the one card of the Mysterious Deck that
+/// deals a stat block. A template on none of them is a stat block
+/// nobody will ever see, which is what
+/// `every_creature_template_in_the_bestiary_is_reachable` asserts by
+/// counting what this returns against what the tree declares.
+///
+/// Extracted from that test when a second sweep wanted the same walk —
+/// `every_stat_blocks_defences_match_the_book` reads the AC and hit
+/// points off each of these — and the sharing is the point rather than
+/// a convenience: two enumerations of the same six registries would
+/// drift, and the one that drifted would be the one nobody was reading.
+///
+/// Returns duplicates where a template is on two roads (a summon that
+/// is also in the pool), which every caller either de-duplicates by
+/// pointer or does not care about.
+fn every_reachable_creature_template() -> Vec<&'static CreatureTemplate> {
+    use crate::actors::creatures::pc_template_families;
+
+    let mut out: Vec<&'static CreatureTemplate> = Vec::new();
+    out.extend(EncounterInstance::template_pool());
+    for (_family, templates) in pc_template_families() {
+        out.extend(templates);
+    }
+    for spell in crate::actions::spells::all_summon_spells() {
+        out.push(spell.template);
+    }
+    // The item lane, which is a fifth road onto the board and was
+    // missing from the reachability sweep for as long as every body an
+    // item could summon happened to also be in `template_pool`. The
+    // Ebony Fly's Giant Fly is the first that is not: SRD 5.2 prints
+    // its stat block inside the Figurine of Wondrous Power entry rather
+    // than in the monster chapter, and it has no attack, so it has no
+    // business in the hostile encounter generator.
+    for item in crate::actions::item_actions::ALL_SUMMON_ITEMS {
+        out.push(item.template);
+    }
+    // Reachable only through a class feature's own action — a Beast
+    // Master's companion, an Artillerist's cannon, a Shepherd Druid's
+    // totem. Each is summoned by a bespoke action rather than by a
+    // `SummonSpell`, so no registry lists them. They are named here
+    // rather than exempted by pattern, so that a *genuinely* stranded
+    // template cannot hide behind a rule like "anything ending in
+    // _COMPANION".
+    out.extend([
+        &*crate::actors::creatures::spirit_totems::BEAR_SPIRIT_TOTEM_TEMPLATE,
+        &*crate::actors::creatures::spirit_totems::UNICORN_SPIRIT_TOTEM_TEMPLATE,
+        &*crate::actors::creatures::drakes::DRAKE_COMPANION_TEMPLATE,
+        &*crate::actors::creatures::wolves::RANGERS_COMPANION_TEMPLATE,
+        &*crate::actors::creatures::steel_defenders::STEEL_DEFENDER_TEMPLATE,
+        &*crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE,
+        &*crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
+        &*crate::actors::creatures::eldritch_cannons::FLAMETHROWER_CANNON_TEMPLATE,
+        &*crate::actors::creatures::eldritch_cannons::FORCE_BALLISTA_CANNON_TEMPLATE,
+        &*crate::actors::creatures::eldritch_cannons::PROTECTOR_CANNON_TEMPLATE,
+        &*crate::actors::creatures::tiny_animated_objects::TINY_ANIMATED_OBJECT_TEMPLATE,
+    ]);
+    // The sixth road, and it is one card wide: SRD 5.2's Mysterious
+    // Deck deals a Skull, and a Skull is an Avatar of Death. Named by
+    // hand because there is no registry to walk — `CardEffect::Avatar`
+    // carries no template pointer, since the avatar is the only stat
+    // block it could ever name.
+    out.push(&crate::actors::creatures::avatars_of_death::AVATAR_OF_DEATH_TEMPLATE);
+    out
+}
+
 /// Every creature template written in the bestiary is reachable in
 /// play — by the encounter generator, by a player picking a class, by
 /// a summoning spell, or by a class feature.
@@ -63540,69 +63612,12 @@ fn a_fight_where_nobody_lands_anything_is_eventually_called_a_draw() {
 /// and so are named here.
 #[test]
 fn every_creature_template_in_the_bestiary_is_reachable() {
-    use crate::actors::creatures::pc_template_families;
-    use crate::actors::actor_template::CreatureTemplate;
     use std::collections::HashSet;
 
-    // Reachable only through a class feature's own action — a Beast
-    // Master's companion, an Artillerist's cannon, a Shepherd Druid's
-    // totem. Each is summoned by a bespoke action rather than by a
-    // `SummonSpell`, so no registry lists them and the sweep would
-    // otherwise call them unreachable. They are named here rather than
-    // exempted by pattern, so that a *genuinely* stranded template
-    // cannot hide behind a rule like "anything ending in _COMPANION".
-    let by_class_feature: &[&'static CreatureTemplate] = &[
-        &crate::actors::creatures::spirit_totems::BEAR_SPIRIT_TOTEM_TEMPLATE,
-        &crate::actors::creatures::spirit_totems::UNICORN_SPIRIT_TOTEM_TEMPLATE,
-        &crate::actors::creatures::drakes::DRAKE_COMPANION_TEMPLATE,
-        &crate::actors::creatures::wolves::RANGERS_COMPANION_TEMPLATE,
-        &crate::actors::creatures::steel_defenders::STEEL_DEFENDER_TEMPLATE,
-        &crate::actors::creatures::wildfire_spirits::WILDFIRE_SPIRIT_TEMPLATE,
-        &crate::actors::creatures::deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
-        &crate::actors::creatures::eldritch_cannons::FLAMETHROWER_CANNON_TEMPLATE,
-        &crate::actors::creatures::eldritch_cannons::FORCE_BALLISTA_CANNON_TEMPLATE,
-        &crate::actors::creatures::eldritch_cannons::PROTECTOR_CANNON_TEMPLATE,
-        &crate::actors::creatures::tiny_animated_objects::TINY_ANIMATED_OBJECT_TEMPLATE,
-    ];
-
     let mut reachable: HashSet<usize> = HashSet::new();
-    let mut note = |t: &'static CreatureTemplate| {
+    for t in every_reachable_creature_template() {
         reachable.insert(std::ptr::from_ref(t) as usize);
-    };
-    for t in EncounterInstance::template_pool() {
-        note(t);
     }
-    for (_family, templates) in pc_template_families() {
-        for t in templates {
-            note(t);
-        }
-    }
-    for spell in crate::actions::spells::all_summon_spells() {
-        note(spell.template);
-    }
-    // The item lane, which is a fifth road onto the board and was
-    // missing from this sweep for as long as every body an item could
-    // summon happened to also be in `template_pool`. The Ebony Fly's
-    // Giant Fly is the first that is not: SRD 5.2 prints its stat block
-    // inside the Figurine of Wondrous Power entry rather than in the
-    // monster chapter, and it has no attack, so it has no business in
-    // the hostile encounter generator. Without this loop the only way
-    // to make the sweep green would have been to put a creature that
-    // cannot fight into the pool of things that fight the party.
-    for item in crate::actions::item_actions::ALL_SUMMON_ITEMS {
-        note(item.template);
-    }
-    for t in by_class_feature {
-        note(t);
-    }
-    // The sixth road onto the board, and it is one card wide: SRD 5.2's
-    // Mysterious Deck deals a Skull, and a Skull is an Avatar of Death.
-    // Noted by hand rather than walked out of a registry because there
-    // is no registry to walk — `CardEffect::Avatar` carries no template
-    // pointer, since the avatar is the only stat block it could ever
-    // name, and a pointer field on that enum would exist to be read by
-    // this one loop.
-    note(&crate::actors::creatures::avatars_of_death::AVATAR_OF_DEATH_TEMPLATE);
 
     // Cargo runs tests with the working directory set to the package
     // root, which is what makes reading the tree here work at all.
@@ -122045,17 +122060,20 @@ fn the_two_breaths_that_never_fired_now_do() {
 /// `the_skull_deals_an_avatar_cut_to_the_drawers_measure` and the Find
 /// Steed block below.
 ///
-/// **Whatever the scan can parse.** Sixty-odd of the book's stat blocks
-/// are built here by a chassis function rather than by a struct literal
-/// — every dragon, the goliaths, the goblinoid warriors — so no `ac:`
-/// or `hitpoints:` line names them and the sweep steps past. That is a
-/// gap and is worth closing the day those chassis take their numbers as
-/// arguments; until then the floor assertion at the end is what stops
-/// the gap from quietly widening to everything.
+/// **Every template the engine can put on a board**, read off the
+/// static rather than out of the source, so a creature built by a
+/// chassis function counts exactly like one written as a struct
+/// literal. That matters more than it sounds: an earlier draft of this
+/// sweep read the `ac:` and `hitpoints:` lines out of the bestiary
+/// files, and sixty-odd of the book's stat blocks — every dragon, the
+/// goliaths, the goblinoid warriors — have no such line to read and
+/// were silently skipped. They are the ones a mistake is likeliest to
+/// hide in, because they are the ones nobody writes out by hand.
+///
+/// The one lane held out is `pc_template_families`; see the comment at
+/// the exclusion for the collision that forces it.
 #[test]
-fn every_flat_stat_block_carries_the_books_armour_class_and_hit_points() {
-    use std::path::Path;
-
+fn every_stat_blocks_defences_match_the_book() {
     /// `(name, armour class, hit points)` — SRD 5.2, one row per stat
     /// block whose AC and HP lines are both plain numbers.
     const SRD_DEFENCES: &[(&str, u32, u32)] = &[
@@ -122385,56 +122403,94 @@ fn every_flat_stat_block_carries_the_books_armour_class_and_hit_points() {
     ("Zombie", 8, 15),
     ];
 
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actors/creatures");
-    // `name:` and then the first `ac:` and `hitpoints:` lines beneath
-    // it, which is the shape every struct literal in the bestiary has.
-    // Read line-wise rather than by one regex over the whole file
-    // because the blocks are hundreds of lines long and a greedy match
-    // across two of them would pair one creature's name with the next
-    // one's armour.
-    let mut found: std::collections::BTreeMap<String, (u32, f32)> =
+    // Every template the engine can put on a board, by pointer, so a
+    // creature built by a chassis function counts exactly like one
+    // written as a struct literal — see
+    // `every_reachable_creature_template`. The sweep used to read the
+    // `ac:` and `hitpoints:` lines out of the source instead, which
+    // meant that sixty-odd of the book's stat blocks (every dragon, the
+    // goliaths, the goblinoid warriors) had no line to read and were
+    // silently skipped. They are the ones a mistake is most likely to
+    // hide in, because they are the ones nobody writes out by hand.
+    //
+    // **The player-character chassis are excluded**, and one of them is
+    // why: the engine's `Druid` is a level-scaled PC with a subclass and
+    // a spell list, and SRD 5.2's *Druid* is a CR 2 NPC with AC 13 and
+    // 44 hit points. They share a name and nothing else, and a sweep
+    // that compared them would be reporting a collision as a bug. The
+    // rest of `pc_template_families` is the same kind of object, so the
+    // whole lane goes rather than the one row.
+    let pcs: std::collections::HashSet<usize> =
+        crate::actors::creatures::pc_template_families()
+            .into_iter()
+            .flat_map(|(_, templates)| templates)
+            .map(|t| std::ptr::from_ref(t) as usize)
+            .collect();
+    let mut found: std::collections::BTreeMap<&str, (u32, f32)> =
         std::collections::BTreeMap::new();
-    for entry in std::fs::read_dir(&dir).expect("the bestiary directory is readable") {
-        let path = entry.expect("a readable directory entry").path();
-        if path.extension().is_none_or(|e| e != "rs") {
+    for t in every_reachable_creature_template() {
+        if pcs.contains(&(std::ptr::from_ref(t) as usize)) {
             continue;
         }
-        let text = std::fs::read_to_string(&path).expect("a readable bestiary file");
-        let lines: Vec<&str> = text.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            let Some(name) = between(line.trim(), "name: \"", "\",") else {
-                continue;
-            };
-            let mut ac: Option<u32> = None;
-            let mut hp: Option<f32> = None;
-            for probe in lines.iter().skip(i + 1).take(40) {
-                let t = probe.trim();
-                if ac.is_none()
-                    && let Some(rest) = t.strip_prefix("ac: ")
-                    && let Some(n) = rest.strip_suffix(',')
-                {
-                    ac = n.parse().ok();
-                }
-                if hp.is_none()
-                    && let Some(expr) = between(t, "hitpoints: \"", "\".parse()")
-                    && let Ok(dice) = expr.parse::<crate::engine::dice::DiceExpr>()
-                {
-                    hp = Some(dice.average_roll());
-                }
-                if ac.is_some() && hp.is_some() {
-                    break;
-                }
-            }
-            if let (Some(ac), Some(hp)) = (ac, hp) {
-                found.insert(name.to_string(), (ac, hp));
-            }
-        }
+        found.insert(t.name, (t.ac, t.hitpoints.average_roll()));
     }
+
+    // SRD 5.2 renamed seventeen stat blocks the engine still carries
+    // under their 2014 headings, and the book's Bestiary is where a
+    // reader of this sweep would otherwise have to go to find that out.
+    // Each row is `(what the book calls it, what the engine calls it)`.
+    //
+    // They are aliased rather than renamed because a creature's name is
+    // read by the prompt, by the panel, by the encounter generator's
+    // logs and by a few hundred test fixtures, and moving seventeen of
+    // them is a change worth making on purpose rather than as a side
+    // effect of a conformance sweep. What the aliases buy is the
+    // nineteen rows the sweep was silently skipping — and with them
+    // every dragon-tier NPC in the book, since the Sphinx of Valor and
+    // the Warrior Veteran are among them.
+    //
+    // `Priest Acolyte` is the one that is *not* a rename and is the
+    // reason the list is written as pairs rather than guessed at: SRD
+    // 5.2 prints both a `Priest` (CR 2, 38 hit points) and a `Priest
+    // Acolyte` (CR 1/4, 11), and the engine carries both as `Priest`
+    // and `Acolyte`. Pairing the book's `Priest Acolyte` with the
+    // engine's `Priest` — the obvious guess — reports a creature that
+    // is right as though it were wrong by twenty-seven hit points.
+    const RENAMED: &[(&str, &str)] = &[
+        ("Animated Rug of Smothering", "Rug of Smothering"),
+        ("Azer Sentinel", "Azer"),
+        ("Bugbear Warrior", "Bugbear"),
+        ("Centaur Trooper", "Centaur"),
+        ("Cultist Fanatic", "Cult Fanatic"),
+        ("Gnoll Warrior", "Gnoll"),
+        ("Goblin Warrior", "Goblin"),
+        ("Hobgoblin Warrior", "Hobgoblin"),
+        ("Kobold Warrior", "Kobold"),
+        ("Merfolk Skirmisher", "Merfolk"),
+        ("Minotaur of Baphomet", "Minotaur"),
+        ("Priest Acolyte", "Acolyte"),
+        ("Sahuagin Warrior", "Sahuagin"),
+        ("Sphinx of Valor", "Androsphinx"),
+        ("Tough", "Thug"),
+        ("Warrior Veteran", "Veteran"),
+        ("Will-o\u{2019}-Wisp", "Will-o'-Wisp"),
+    ];
+    // `Half-Dragon` is deliberately absent from that list and from the
+    // sweep. SRD 5.2 prints one stat block with a Draconic Origin trait
+    // that picks the damage type; the engine ships the five it resolves
+    // to — Acid, Cold, Fire, Lightning and Poison Half-Dragon — so
+    // there is no single template to pair the book's row with, and all
+    // five carry the same defences anyway.
 
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (name, book_ac, book_hp) in SRD_DEFENCES {
-        let Some((ac, hp)) = found.get(*name) else {
+        let engine_name = RENAMED
+            .iter()
+            .find(|(book, _)| book == name)
+            .map(|(_, engine)| *engine)
+            .unwrap_or(name);
+        let Some((ac, hp)) = found.get(engine_name) else {
             continue;
         };
         checked += 1;
@@ -122458,21 +122514,15 @@ fn every_flat_stat_block_carries_the_books_armour_class_and_hit_points() {
         "these stat blocks disagree with SRD 5.2's own defences:\n  {}",
         wrong.join("\n  ")
     );
-    // A floor, not a count. What it guards is the scan: a parser that
-    // stopped matching the declarations would pass every row vacuously,
-    // which is the one way a sweep like this fails without saying so.
+    // A floor, not a count. What it guards is the match: a rename on
+    // either side drops a row out of the sweep silently, and a sweep
+    // that checks nothing passes.
     assert!(
-        checked > 250,
+        checked > 320,
         "only {checked} of the book's {} flat stat blocks were matched to a \
-         declaration — the source scan has stopped working rather than the \
-         bestiary having shrunk",
+         template — a rename has dropped rows out of the sweep rather than \
+         the bestiary having shrunk",
         SRD_DEFENCES.len()
     );
 }
 
-/// The substring between two markers, or `None` if either is missing.
-/// Small enough to inline and named because two sweeps want it.
-fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
-    let rest = haystack.split_once(open)?.1;
-    rest.split_once(close).map(|(inner, _)| inner)
-}
