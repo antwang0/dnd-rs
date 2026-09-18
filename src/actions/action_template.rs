@@ -808,7 +808,7 @@ pub fn actor_lacks_condition(
 /// Centralizes the recurring three-line pattern that every recharge-gated
 /// action (`AndrosphinxRoar`, `BreathWeapon`, `Whelm`, `EttercapWeb`,
 /// `BlinkDogTeleport`, `WaterJet`, `StoneSnare`, `MammothTramplingCharge`,
-/// `HorrorNimbus`, `DretchFetidCloud`, `UnicornHealingTouch`):
+/// `HorrorNimbus`, `DretchFetidCloud`, `RechargingAllyHeal`):
 ///
 /// ```ignore
 /// encounter
@@ -1079,6 +1079,9 @@ pub fn weapon_expected_damage(
         "",
         dice,
         damage_ability,
+        // No chassis reaching this wrapper prints a flat term that is not
+        // an ability modifier; the one that does knows its own name.
+        0,
         cost_resource,
         extra_swings,
         // Every chassis that reaches this wrapper swings a natural
@@ -1110,6 +1113,14 @@ pub fn weapon_expected_damage_named(
     weapon_name: &str,
     dice: crate::engine::dice::Dice,
     damage_ability: Option<AbilityScoreType>,
+    // The Hit line's flat term that is nobody's ability modifier — see
+    // `SimpleWeapon::flat_damage_bonus`. Counted *per swing*, beside the
+    // ability modifier, because that is where it lands: a chassis that
+    // added it once outside the multiplier would under-rank a weapon
+    // whose Extra Attack chains a second hit. Every chassis but
+    // `SimpleWeapon` passes 0, which is what every Hit line in the
+    // bestiary prints.
+    flat_bonus: i32,
     cost_resource: Resource,
     extra_swings: u32,
     reloads: bool,
@@ -1131,6 +1142,7 @@ pub fn weapon_expected_damage_named(
         .unwrap_or(0.0);
     let per_swing = dice.average_roll()
         + charge_bonus
+        + flat_bonus as f32
         + damage_ability
             .map(|a| caster.ability_modifier(a) as f32)
             .unwrap_or(0.0);
@@ -2867,6 +2879,18 @@ pub trait Action {
             target_ids,
         );
         side_effects.append(&mut post_cast_effects);
+        // SRD 5.2 **Life Bond** — a conjured steed takes a copy of every
+        // hit point a level-1+ spell restores to the creature that
+        // conjured it, if the two are standing together.
+        //
+        // Here, on the finished list, because the rule needs *"the same
+        // number of Hit Points"* — a number that exists only inside the
+        // payload the spell built, and only until it lands. Swept after
+        // the post-cast triggers rather than before, so a trigger that
+        // heals (a future one; none does today) is mirrored too, and
+        // over `side_effects` alone, so the mirror cannot mirror itself.
+        let mut bonded = encounter.mirror_heals_onto_life_bonds(spell_level, &side_effects);
+        side_effects.append(&mut bonded);
         // SRD 5.2 **Boon of Dimensional Travel**, *Blink Steps*:
         // "immediately after you take the Attack action or the Magic
         // action, you can teleport up to 30 feet."

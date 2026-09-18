@@ -65,6 +65,30 @@ pub trait ApplicableSideEffect {
         false
     }
 
+    /// If this side-effect restores hit points, hand back who to and how
+    /// many — `damage_payload`'s mirror on the other side of the ledger.
+    ///
+    /// The engine could read a cast's damage before it landed and could
+    /// not read its healing, which was invisible for as long as nothing
+    /// keyed off a heal. SRD 5.2's Otherworldly Steed is the first thing
+    /// that does: *"When you regain Hit Points from a level 1+ spell,
+    /// the steed regains the same number of Hit Points if you're within
+    /// 5 feet of it."* "The same number" is a number somebody has to be
+    /// able to see, and the only place it exists before the heal lands
+    /// is inside the payload the spell built.
+    ///
+    /// Read by `EncounterInstance::mirror_heals_onto_life_bonds`, which
+    /// sweeps a finished cast's effects exactly as the Transmuted Spell
+    /// and Elemental Adept sweeps do, one lane over.
+    ///
+    /// Default `None` — a side-effect that isn't a heal. Deliberately
+    /// **not** implemented by `GainTempHp`: RAW's temporary hit points
+    /// are not hit points regained, and every rule written about
+    /// regaining them says so.
+    fn heal_payload(&self) -> Option<(usize, u32)> {
+        None
+    }
+
     /// If this side-effect starts a concentration, hand back the caster
     /// it belongs to together with the per-target payload it will clean
     /// up on drop. Default `None` — every side-effect that isn't a
@@ -1720,6 +1744,10 @@ pub struct Heal {
 }
 
 impl ApplicableSideEffect for Heal {
+    fn heal_payload(&self) -> Option<(usize, u32)> {
+        Some((self.actor_id, self.amount))
+    }
+
     fn apply(&self, ei: &mut EncounterInstance) {
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
@@ -2942,6 +2970,15 @@ pub const LINKED_CONDITIONS: &[crate::conditions::Condition] = &[
     // A flag with no link is the bow's unsworn state and reads as no
     // clause at all, which is what makes the two-step legal here.
     crate::conditions::Condition::Oathbound,
+    // SRD 5.2 **Life Bond** (Otherworldly Steed): "When *you* regain Hit
+    // Points from a level 1+ spell, the steed regains the same number of
+    // Hit Points if *you're* within 5 feet of it." The link is that
+    // "you" — the caster who conjured this steed — and without it the
+    // clause would read as "any ally standing nearby", which would make
+    // a paladin's Cure Wounds top up somebody else's horse. See
+    // `EncounterInstance::mirror_heals_onto_life_bonds`, the only
+    // reader.
+    crate::conditions::Condition::LifeBonded,
 ];
 
 /// Record who applied a back-linked condition to the target. Paired with

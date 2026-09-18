@@ -3877,6 +3877,30 @@ pub enum Condition {
     /// shrieker dies" needs no wiring, since a dead actor is not
     /// combat-active and the dispatcher never reaches it.
     Shrieking,
+    /// **Life Bond** — the Otherworldly Steed's trait, and the link back
+    /// to whoever conjured it: *"When you regain Hit Points from a level
+    /// 1+ spell, the steed regains the same number of Hit Points if
+    /// you're within 5 feet of it."*
+    ///
+    /// A marker on the **steed**, not on the summoner, because the steed
+    /// is what the sentence is about — it is the thing that gains the hit
+    /// points, and the thing a second cast of Find Steed replaces. The
+    /// summoner is reached through the condition's *link*
+    /// (`ActorInstance::linked_by`), which is what makes "you" in
+    /// RAW's sentence a specific creature rather than "any ally
+    /// standing nearby": a paladin who heals a wounded fighter next to
+    /// somebody else's steed heals no steed at all.
+    ///
+    /// `Permanent`, for the reason the steed itself is: SRD 5.2's Find
+    /// Steed holds no concentration and has an Instantaneous duration,
+    /// so nothing is counting down. The bond ends when the steed does.
+    ///
+    /// Read only at `EncounterInstance::mirror_heals_onto_life_bonds`,
+    /// which sweeps a finished cast's heal payloads. It changes no
+    /// stat, blocks no action and is invisible to every other rule in
+    /// the engine — which is why it can be permanent without doing
+    /// anything on a turn nobody heals.
+    LifeBonded,
     /// **Staff of Striking**, charged — SRD 5.2's *"When you hit with a
     /// melee attack using the staff, you can expend up to 3 of its
     /// charges. For each charge you expend, the target takes an extra 1d6
@@ -4345,6 +4369,45 @@ impl Condition {
             Condition::MissileAttracting => "cursed to attract missiles",
             Condition::Wounded => "wounded, and unable to close it",
             Condition::Shrieking => "shrieking",
+            Condition::LifeBonded => "life-bonded to its summoner",
+        }
+    }
+
+    /// The three log lines a single-target *save-or-this* effect prints:
+    /// `(the target was immune, the target saved, the target failed)`.
+    ///
+    /// Read by [`crate::actions::monster_attacks::save_or_condition_from_caster`],
+    /// the chassis behind every stat block whose whole payload is one
+    /// saving throw and one back-linked condition — the vampire's
+    /// Charming Gaze, the dryad's Fey Charm, the Otherworldly Steed's
+    /// Fell Glare.
+    ///
+    /// Here rather than in that helper because the sentences are facts
+    /// about the *condition*, not about the chassis. The helper spent
+    /// its whole life knowing only `Charmed` and had the charm's three
+    /// sentences written into its body; the first effect that installed
+    /// something else would have reported a Frightened creature as
+    /// "enthralled" — a log line saying the opposite of what happened,
+    /// in the one place a player looks to find out what happened.
+    ///
+    /// The fallback is deliberately flat rather than clever: a
+    /// condition with no bespoke phrasing gets its own
+    /// [`Self::name`] in a plain sentence, which is always true and
+    /// never misleading. Only the conditions a stat block actually
+    /// installs this way carry prose of their own.
+    pub fn save_or_install_prose(&self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Condition::Charmed => (
+                "target's mind is shielded",
+                "target resists the enchantment",
+                "target is enthralled",
+            ),
+            Condition::Frightened => (
+                "target is beyond fear",
+                "target holds its nerve",
+                "target is gripped by fear",
+            ),
+            _ => ("target is immune", "target resists", "target is affected"),
         }
     }
 

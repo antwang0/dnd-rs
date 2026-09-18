@@ -1657,6 +1657,26 @@ pub struct SummonScaling {
     /// what keeps the widened id band from colliding with the next
     /// summon along.
     pub count_per_level: usize,
+    /// The slot level at which the stat block's Speed line switches a
+    /// flying speed on, and how fast, or `None` for a summon that flies
+    /// from the first rung or not at all.
+    ///
+    /// The fourth line RAW scales, and the only one that is a
+    /// *threshold* rather than a ladder: SRD 5.2's Find Steed prints
+    /// *"Speed 60 ft., Fly 60 ft. (requires level 4+ spell)"*, and the
+    /// steed flies exactly as fast at level 9 as at level 4. So this is
+    /// a `(level, feet)` pair read once at spawn rather than a
+    /// per-level increment, and it lands through
+    /// `ActorInstance::grant_fly_speed`, whose `max` keeps a second cast
+    /// from stacking anything.
+    ///
+    /// This is the field `SummonScaling`'s own docstring invited: *"a
+    /// future stat block that scales a fourth line adds a fourth field
+    /// here rather than a second mechanism."* It is what the 2014 book
+    /// sold as a whole second spell — Find Greater Steed existed
+    /// because the level-2 steed could not be made to fly — folded back
+    /// into the upcast clause SRD 5.2 replaced it with.
+    pub fly_from_level: Option<(u32, u32)>,
 }
 
 impl SummonScaling {
@@ -1669,6 +1689,7 @@ impl SummonScaling {
         ac_per_level: 0,
         hp_per_level: 0,
         count_per_level: 0,
+        fly_from_level: None,
     };
 
     /// The pair SRD 5.2 prints most often: +1 AC and +10 hit points per
@@ -1677,6 +1698,7 @@ impl SummonScaling {
         ac_per_level: 1,
         hp_per_level: 10,
         count_per_level: 0,
+        fly_from_level: None,
     };
 
     /// The other kind of upcast: `n` more bodies per slot level above
@@ -1692,6 +1714,22 @@ impl SummonScaling {
             ac_per_level: 0,
             hp_per_level: 0,
             count_per_level: n,
+            fly_from_level: None,
+        }
+    }
+
+    /// Builder tail for the Speed line's threshold clause —
+    /// `SummonScaling::STANDARD.flying_from(4, 60)` is SRD 5.2's
+    /// Otherworldly Steed.
+    ///
+    /// A builder rather than a fifth constant because the clause is
+    /// orthogonal to the three shapes above it: a count-scaling summon
+    /// could in principle print it too, and pairing the two would mean
+    /// a constant per combination.
+    pub const fn flying_from(self, level: u32, feet: u32) -> Self {
+        Self {
+            fly_from_level: Some((level, feet)),
+            ..self
         }
     }
 }
@@ -1722,12 +1760,33 @@ fn scale_summons_to_slot(
     scaling: SummonScaling,
     base_level: u32,
 ) {
-    if (scaling.ac_per_level == 0 && scaling.hp_per_level == 0) || spawned.is_empty() {
+    let scales_defences = scaling.ac_per_level != 0 || scaling.hp_per_level != 0;
+    if (!scales_defences && scaling.fly_from_level.is_none()) || spawned.is_empty() {
         return;
     }
     let level = encounter.current_cast().map(|c| c.level).unwrap_or(0);
+    // The Speed line's threshold clause is asked about the *absolute*
+    // slot rather than about the steps above the spell's own level, and
+    // it fires on a base-level cast of a spell written at the threshold.
+    // So it is resolved before the `steps == 0` early return, not after
+    // it — see `SummonScaling::fly_from_level`.
+    let wings = scaling
+        .fly_from_level
+        .filter(|(from, _)| level >= *from)
+        .map(|(_, feet)| feet);
+    if let Some(feet) = wings {
+        for &id in spawned {
+            if let Some(actor) = encounter.actors.get_mut(&id) {
+                actor.grant_fly_speed(feet as f32);
+            }
+        }
+        encounter.log(format!(
+            "  the slot is deep enough to lift it ({}ft fly speed).",
+            feet
+        ));
+    }
     let steps = level.saturating_sub(base_level) as i32;
-    if steps == 0 {
+    if steps == 0 || !scales_defences {
         return;
     }
     let (ac, hp) = (steps * scaling.ac_per_level, steps * scaling.hp_per_level);
@@ -16713,6 +16772,7 @@ pub static ANIMATE_DEAD: SummonSpell = SummonSpell {
     base_instance_id: 150,
     concentration: None,
     scaling: SummonScaling::bodies(2),
+    life_bond: false,
 };
 
 /// Create Undead — 5e level-6 necromancy (cleric, warlock, wizard),
@@ -16772,6 +16832,7 @@ pub static CREATE_UNDEAD: SummonSpell = SummonSpell {
     base_instance_id: 170,
     concentration: None,
     scaling: SummonScaling::bodies(1),
+    life_bond: false,
 };
 
 /// Confusion — 5e level-4 enchantment, concentration, action. Targets a
@@ -18443,6 +18504,23 @@ pub struct SummonSpell {
     /// — see `SummonScaling`. `SummonScaling::NONE` for the summons RAW
     /// gives no upcast clause at all.
     pub scaling: SummonScaling,
+    /// Whether the body this spell puts down carries SRD 5.2's **Life
+    /// Bond** back to whoever conjured it — *"When you regain Hit Points
+    /// from a level 1+ spell, the steed regains the same number of Hit
+    /// Points if you're within 5 feet of it."*
+    ///
+    /// One carrier, the three branches of Find Steed, and a field
+    /// rather than a check against the template because the bond is a
+    /// property of the *spell*: it is the cast that decides whose steed
+    /// this is, and a Celestial Steed that wandered onto the board some
+    /// other way is bonded to nobody.
+    ///
+    /// Installs `Condition::LifeBonded` on each spawned body,
+    /// back-linked to the caster through
+    /// `install_condition_with_link` — the same machinery a charm uses
+    /// to remember who charmed you. `EncounterInstance::mirror_heals_onto_life_bonds`
+    /// is the only reader.
+    pub life_bond: bool,
 }
 
 /// The highest slot any caster in the engine can spend, and the ceiling
@@ -18599,12 +18677,26 @@ impl Action for SummonSpell {
         // the caster's concentration: anchoring an empty cohort would
         // drop whatever they were already holding in exchange for
         // nothing.
-        match self.concentration {
+        let mut effects = match self.concentration {
             Some(anchor) if !spawned.is_empty() => {
                 conjured_summon_concentration_effects(caster_id, &spawned, anchor)
             }
             _ => Vec::new(),
+        };
+        // SRD 5.2 **Life Bond**, and the only thing in the summon lane
+        // that points *back* at the caster rather than merely being
+        // owned by them — see `SummonSpell::life_bond`.
+        if self.life_bond {
+            for id in &spawned {
+                effects.extend(crate::engine::side_effects::install_condition_with_link(
+                    crate::conditions::Condition::LifeBonded,
+                    *id,
+                    caster_id,
+                    ConditionTimer::Permanent,
+                ));
+            }
         }
+        effects
     }
 }
 
@@ -18630,6 +18722,7 @@ pub static CONJURE_ANIMALS: SummonSpell = SummonSpell {
     base_instance_id: 90,
     concentration: Some("Conjure Animals"),
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Conjure Elemental — 5e level-5 conjuration, concentration, action.
@@ -18660,6 +18753,7 @@ pub static CONJURE_ELEMENTAL: SummonSpell = SummonSpell {
     base_instance_id: 80,
     concentration: Some("Conjure Elemental"),
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 // ---------------------------------------------------------------------
@@ -18723,6 +18817,7 @@ pub static SUMMON_BEAST: SummonSpell = SummonSpell {
     base_instance_id: 100,
     concentration: Some("Summon Beast"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Fey — 5e level-3 conjuration (TCE), concentration, action.
@@ -18745,6 +18840,7 @@ pub static SUMMON_FEY: SummonSpell = SummonSpell {
     base_instance_id: 102,
     concentration: Some("Summon Fey"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Undead — 5e level-3 necromancy (TCE), concentration, action.
@@ -18767,6 +18863,7 @@ pub static SUMMON_UNDEAD: SummonSpell = SummonSpell {
     base_instance_id: 104,
     concentration: Some("Summon Undead"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Aberration — 5e level-4 conjuration (TCE), concentration,
@@ -18789,6 +18886,7 @@ pub static SUMMON_ABERRATION: SummonSpell = SummonSpell {
     base_instance_id: 106,
     concentration: Some("Summon Aberration"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Elemental — 5e level-4 conjuration (TCE), concentration,
@@ -18813,6 +18911,7 @@ pub static SUMMON_ELEMENTAL: SummonSpell = SummonSpell {
     base_instance_id: 108,
     concentration: Some("Summon Elemental"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Celestial — 5e level-5 conjuration (TCE), concentration,
@@ -18836,6 +18935,7 @@ pub static SUMMON_CELESTIAL: SummonSpell = SummonSpell {
     base_instance_id: 110,
     concentration: Some("Summon Celestial"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Draconic Spirit — 5e level-5 conjuration (FTD),
@@ -18859,6 +18959,7 @@ pub static SUMMON_DRACONIC_SPIRIT: SummonSpell = SummonSpell {
     base_instance_id: 112,
     concentration: Some("Summon Draconic Spirit"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// Summon Fiend — 5e level-6 conjuration (TCE), concentration, action.
@@ -18882,6 +18983,7 @@ pub static SUMMON_FIEND: SummonSpell = SummonSpell {
     base_instance_id: 114,
     concentration: Some("Summon Fiend"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
 /// **Giant Insect** — SRD 5.2 level-4 conjuration (Druid), action, 60
@@ -18929,83 +19031,133 @@ pub static GIANT_INSECT: SummonSpell = SummonSpell {
     base_instance_id: 116,
     concentration: Some("Giant Insect"),
     scaling: SummonScaling::STANDARD,
+    life_bond: false,
 };
 
-/// Find Steed — 5e level-2 conjuration, action, no concentration. The
-/// paladin's spell, and the one that makes 5e's mounted-combat rules
-/// something a party can actually use rather than something the DM has
-/// to hand them.
+/// Everything a bigger slot buys an Otherworldly Steed, in one place
+/// the three branches share.
 ///
-/// RAW summons "a spirit that takes the form of a loyal steed" —
-/// warhorse, pony, camel, elk or mastiff by the caster's choice, with
-/// the stat block of the animal and an Intelligence of at least 6. We
-/// ship the warhorse branch, on the same grounds the rest of the summon
-/// family collapses its option tables (see `SummonSpell::template`): it
-/// is the branch the spell is taken for, and the other four are the same
-/// declaration pointing at a different template.
+/// `STANDARD` is the `+1 AC / +10 HP` pair SRD 5.2 prints on every
+/// conjured stat block; `flying_from` is the Speed line's own threshold
+/// clause, and the half of this that used to be a separate spell. Named
+/// once rather than spelled three times because three copies of an
+/// upcast clause are three places for it to drift, and the branch that
+/// drifted would be the one nobody casts.
+const STEED_SCALING: SummonScaling = SummonScaling::STANDARD.flying_from(
+    crate::actors::creatures::otherworldly_steeds::STEED_FLY_FROM_LEVEL,
+    crate::actors::creatures::otherworldly_steeds::STEED_FLY_SPEED,
+);
+
+/// **Find Steed** — SRD 5.2 level-2 conjuration (Paladin), Action, no
+/// concentration, Instantaneous. The paladin's own summon, and the
+/// party's route into `engine::mounts`.
 ///
-/// **No concentration**, which is unusual for this chassis and is RAW —
-/// the steed "vanishes if it drops to 0 hit points" and otherwise stays
-/// for the fight. It shares that with Animate Dead and with nothing
-/// else here, and the reason is the same in both cases: nothing about
-/// the creature depends on its summoner still thinking about it. It
-/// matters more here than it does for a skeleton, because a paladin who
-/// had to hold concentration on their horse could never cast a smite
-/// from its back.
+/// Three declarations rather than one, because RAW's branch table is
+/// this spell: *"Whenever you cast the spell, choose the steed's
+/// creature type — Celestial, Fey, or Fiend — which determines certain
+/// traits in the stat block."* What it determines is the slam's damage
+/// type and a whole Bonus Action, which is not the kind of option table
+/// `SummonSpell::template` collapses. See
+/// `actors::creatures::otherworldly_steeds` for the three bodies and
+/// what separates them.
 ///
-/// The spell does *not* seat the caster. RAW doesn't either — the steed
-/// appears next to you and you get on it with the ordinary Mount action,
-/// for the ordinary half-your-speed. Which is the whole reason to ship
-/// this next to `engine::mounts` rather than as a bespoke feature: one
-/// slot buys a Large body with 19 hit points and a 60-ft gallop, and
+/// **This replaces the 2014 printing**, which summoned a warhorse — a
+/// creature the world contains, with no clause of its own — and needed
+/// a second spell at level 4 to make it fly. SRD 5.2 folds both into
+/// one entry with a stat block written as expressions in the slot:
+///
+///   - `AC 10 + 1 per spell level` and `HP 5 + 10 per spell level` are
+///     `SummonScaling::STANDARD`, the same pair the book prints on
+///     every other conjured stat block;
+///   - `Fly 60 ft. (requires level 4+ spell)` is
+///     `SummonScaling::flying_from`, the field that clause needed and
+///     the reason Find Greater Steed is gone rather than kept: a
+///     level-4 slot buys the flying steed directly now, which is what
+///     that spell was.
+///
+/// **No concentration**, which is RAW and unusual on this chassis — the
+/// steed *"disappears if it drops to 0 Hit Points or if you die"* and
+/// otherwise stays for the fight. It matters more here than for a
+/// skeleton, because a paladin holding concentration on their horse
+/// could never cast a smite from its back.
+///
+/// **The spell does not seat the caster.** RAW doesn't either: the
+/// steed appears in a space you choose within 30 feet and you get on it
+/// with the ordinary Mount action, for the ordinary half-your-speed.
+/// Which is the whole reason to ship this next to `engine::mounts`
+/// rather than as a bespoke feature — one slot buys a Large body, and
 /// what to do with it is the player's problem.
+///
+/// **`life_bond`**, which is the one thing the three share that no
+/// other summon in the engine has: a link back to the caster, so a
+/// Cure Wounds cast beside the steed heals it too.
+///
+/// Two RAW clauses are dropped rather than approximated. *"If you
+/// already have a steed from this spell, the steed is replaced by the
+/// new one"* needs a per-caster register of outstanding steeds that
+/// nothing else in the engine would read, and a paladin with two
+/// level-2 slots and a dead horse is the only case it changes.
+/// *"It leaves behind anything it was wearing or carrying"* is a
+/// clause about a creature that carries things, and this one does not.
 pub static FIND_STEED: SummonSpell = SummonSpell {
     display_name: "find steed",
-    aliases: &["steed", "findsteed"],
+    aliases: &["steed", "findsteed", "celestial steed"],
     school: SpellSchool::Conjuration,
-    slot_level: 2,
-    template: &crate::actors::creatures::warhorses::WARHORSE_TEMPLATE,
+    slot_level: crate::actors::creatures::otherworldly_steeds::FIND_STEED_BASE_LEVEL,
+    template: &crate::actors::creatures::otherworldly_steeds::CELESTIAL_STEED_TEMPLATE,
     size: crate::engine::types::Size::Large,
     count: 1,
-    // RAW puts the steed "in an unoccupied space within 30 feet". The
-    // radius is widened past the 12 tiles that would be, to 4, for the
-    // reason every Large summon here carries a wider one: the anchor
-    // search walks rings outward and a 4-tile footprint needs room the
-    // first ring rarely has.
+    // RAW puts the steed "in an unoccupied space of your choice within
+    // range", and the range is 30 feet. The radius is widened past the
+    // 12 tiles that would be, to 4, for the reason every Large summon
+    // here carries a wider one: the anchor search walks rings outward
+    // and a 4-tile footprint needs room the first ring rarely has.
     search_radius: 4,
     base_instance_id: 120,
     concentration: None,
-    scaling: SummonScaling::NONE,
+    scaling: STEED_SCALING,
+    life_bond: true,
 };
 
-/// Find Greater Steed — 5e level-4 conjuration, action, no
-/// concentration. Find Steed's upgrade, and the reason the lower one is
-/// worth keeping around rather than scaling: RAW's greater steed is a
-/// different *animal*, not a bigger horse. It flies.
-///
-/// RAW's list is griffon, pegasus, peryton, dire wolf, rhinoceros or
-/// saber-toothed tiger; we ship the griffon, which is the branch the
-/// spell is famous for and the one whose stat block already sat in the
-/// bestiary. Every other branch is this declaration with the template
-/// swapped — see `SummonSpell::template` for why the option table
-/// collapses rather than scales.
-///
-/// The griffon is also the case that makes the size clause in
-/// `EncounterInstance::can_mount` earn its keep: it is Large, like the
-/// warhorse, so a Medium paladin rides either and a Large one rides
-/// neither.
-pub static FIND_GREATER_STEED: SummonSpell = SummonSpell {
-    display_name: "find greater steed",
-    aliases: &["greater steed", "findgreatersteed"],
+/// **Find Steed**, the Fey branch — psychic slam, and a sixty-foot
+/// blink that takes its rider with it. See [`FIND_STEED`] for
+/// everything the three share.
+pub static FIND_STEED_FEY: SummonSpell = SummonSpell {
+    display_name: "find steed (fey)",
+    aliases: &["fey steed", "findsteedfey"],
     school: SpellSchool::Conjuration,
-    slot_level: 4,
-    template: &crate::actors::creatures::griffons::GRIFFON_TEMPLATE,
+    slot_level: crate::actors::creatures::otherworldly_steeds::FIND_STEED_BASE_LEVEL,
+    template: &crate::actors::creatures::otherworldly_steeds::FEY_STEED_TEMPLATE,
     size: crate::engine::types::Size::Large,
     count: 1,
     search_radius: 4,
+    // The band Find Greater Steed vacated.
     base_instance_id: 121,
     concentration: None,
-    scaling: SummonScaling::NONE,
+    scaling: STEED_SCALING,
+    life_bond: true,
+};
+
+/// **Find Steed**, the Fiend branch — necrotic slam, and a glare that
+/// frightens one creature at sixty feet. See [`FIND_STEED`] for
+/// everything the three share.
+pub static FIND_STEED_FIEND: SummonSpell = SummonSpell {
+    display_name: "find steed (fiend)",
+    aliases: &["fiend steed", "findsteedfiend"],
+    school: SpellSchool::Conjuration,
+    slot_level: crate::actors::creatures::otherworldly_steeds::FIND_STEED_BASE_LEVEL,
+    template: &crate::actors::creatures::otherworldly_steeds::FIEND_STEED_TEMPLATE,
+    size: crate::engine::types::Size::Large,
+    count: 1,
+    search_radius: 4,
+    // 122 is the Phantom Steed's and has been since before any of
+    // this; moving the whole family down one to close a gap would
+    // rename every steed in every log the engine has printed, for
+    // nothing.
+    base_instance_id: 123,
+    concentration: None,
+    scaling: STEED_SCALING,
+    life_bond: true,
 };
 
 /// Phantom Steed — 5e level-3 illusion (wizard), action, no
@@ -19064,6 +19216,7 @@ pub static PHANTOM_STEED: SummonSpell = SummonSpell {
     base_instance_id: 122,
     concentration: None,
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 // ---------------------------------------------------------------------
@@ -19123,6 +19276,7 @@ pub static CONJURE_WOODLAND_BEINGS: SummonSpell = SummonSpell {
     base_instance_id: 130,
     concentration: Some("Conjure Woodland Beings"),
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Conjure Minor Elementals — 5e level-4 conjuration (druid / wizard),
@@ -19152,6 +19306,7 @@ pub static CONJURE_MINOR_ELEMENTALS: SummonSpell = SummonSpell {
     base_instance_id: 134,
     concentration: Some("Conjure Minor Elementals"),
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Conjure Fey — 5e level-6 conjuration (druid / warlock),
@@ -19182,6 +19337,7 @@ pub static CONJURE_FEY: SummonSpell = SummonSpell {
     base_instance_id: 138,
     concentration: Some("Conjure Fey"),
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Conjure Celestial — 5e level-7 conjuration (cleric), concentration,
@@ -19218,6 +19374,7 @@ pub static CONJURE_CELESTIAL: SummonSpell = SummonSpell {
     base_instance_id: 139,
     concentration: Some("Conjure Celestial"),
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Faithful Hound — SRD 5.2 level-4 conjuration (wizard), action, **no
@@ -19260,6 +19417,7 @@ pub static FAITHFUL_HOUND: SummonSpell = SummonSpell {
     base_instance_id: 140,
     concentration: None,
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Find Familiar — SRD 5.2 level-1 conjuration (wizard), **no
@@ -19317,6 +19475,7 @@ pub static FIND_FAMILIAR: SummonSpell = SummonSpell {
     base_instance_id: 180,
     concentration: None,
     scaling: SummonScaling::NONE,
+    life_bond: false,
 };
 
 /// Every spell in the Tasha's summon family, in ascending slot order.
@@ -19380,7 +19539,8 @@ pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
         &ANIMATE_DEAD,
         &CREATE_UNDEAD,
         &FIND_STEED,
-        &FIND_GREATER_STEED,
+        &FIND_STEED_FEY,
+        &FIND_STEED_FIEND,
         &PHANTOM_STEED,
         &CONJURE_WOODLAND_BEINGS,
         &CONJURE_MINOR_ELEMENTALS,

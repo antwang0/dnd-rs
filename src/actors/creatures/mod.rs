@@ -1,4 +1,5 @@
 pub mod aboleths;
+pub mod otherworldly_steeds;
 pub mod gray_oozes;
 pub mod ice_devils;
 pub mod planetars;

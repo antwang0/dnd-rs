@@ -58,7 +58,7 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&DEVA_MACE);
     actions.push(&*DEVA_MULTI);
-    actions.push(&*DEVA_HEALING_TOUCH);
+    actions.push(&DEVA_HEALING_TOUCH);
     CreatureTemplate {
         name: "Deva",
         // '✦' (four-pointed star, U+2726) — the angelic-radiance

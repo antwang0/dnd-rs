@@ -57,7 +57,7 @@ pub static UNICORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*UNICORN_MULTI);
     actions.push(&UNICORN_HOOVES);
     actions.push(&UNICORN_HORN);
-    actions.push(&*UNICORN_HEALING_TOUCH);
+    actions.push(&UNICORN_HEALING_TOUCH);
     CreatureTemplate {
         name: "Unicorn",
         // 'U' (uppercase) — distinct from 'u' (Umber Hulk uses 'U' too,

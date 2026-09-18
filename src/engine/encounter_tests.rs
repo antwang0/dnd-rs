@@ -20417,7 +20417,7 @@ fn harpy_luring_song_charms_in_radius() {
 #[test]
 fn lamia_intoxicating_touch_charms_with_charmer_link() {
     // The lamia's intoxicating touch resolves through the shared
-    // `save_or_charmed_by_caster` helper — on a failed WIS save it
+    // `save_or_condition_from_caster` helper — on a failed WIS save it
     // should both install Charmed AND set the `Charmed` back-link so
     // the cursed PC can't take hostile actions back against the
     // lamia (gated by `Action::validate_input`).
@@ -20435,7 +20435,7 @@ fn lamia_intoxicating_touch_charms_with_charmer_link() {
     // Loop until a save fails — DC 13 vs fighter WIS will sometimes
     // pass, sometimes fail. We assert both the Charmed install AND
     // the SetConditionLink(Charmed) link (the load-bearing contract of the
-    // shared `save_or_charmed_by_caster` helper).
+    // shared `save_or_condition_from_caster` helper).
     let mut linked = false;
     for _ in 0..50 {
         let effects = LAMIA_INTOXICATING_TOUCH.side_effects(
@@ -119948,5 +119948,371 @@ fn every_natural_weapon_matches_the_books_hit_line() {
         found.len() > 250,
         "only {} weapon declarations parsed — the source scan has stopped working",
         found.len()
+    );
+}
+
+// ---------------------------------------------------------------------
+// Find Steed — SRD 5.2's Otherworldly Steed, and the four clauses that
+// make it a different spell from the 2014 warhorse it replaced.
+//
+// One test per clause, because each is carried by a different piece of
+// machinery and a regression in any one of them would be silent: the
+// body would still appear, still be rideable, and still be wrong.
+// ---------------------------------------------------------------------
+
+/// A paladin casting Find Steed gets a mount, keeps their
+/// concentration, and can get on it.
+///
+/// The concentration half is the clause with teeth, exactly as it is
+/// for the Phantom Steed one lane over: RAW's Find Steed is
+/// Instantaneous, and a steed that ate the paladin's concentration
+/// would cost them every smite they were going to cast from its back.
+#[test]
+fn find_steed_puts_a_rideable_otherworldly_steed_beside_the_paladin() {
+    use crate::actions::spells::FIND_STEED;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::engine::types::CreatureType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+        .unwrap();
+    let before = e.actors.len();
+    for x in FIND_STEED.execute(&mut e, paladin, None, None, None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(e.actors.len(), before + 1);
+    let steed = *e
+        .actors
+        .keys()
+        .find(|id| **id != paladin)
+        .expect("the steed is on the board");
+    assert_eq!(e.actors[&steed].creature_type(), CreatureType::Celestial);
+    assert_eq!(e.actors[&steed].team(), e.actors[&paladin].team());
+    assert_eq!(
+        e.actors[&steed].armor_class(),
+        12,
+        "AC 10 + 1 per spell level, at the spell's own level"
+    );
+    assert!(
+        !e.actors[&paladin].is_concentrating(),
+        "RAW's Find Steed is Instantaneous — a paladin holding it could never smite"
+    );
+    assert!(e.can_mount(paladin, steed).is_ok());
+    assert!(e.mount(paladin, steed).is_ok());
+    assert!(e.is_mounted(paladin));
+}
+
+/// The clause that used to be a whole second spell.
+///
+/// SRD 5.2 folded Find Greater Steed into Find Steed's Speed line —
+/// *"Fly 60 ft. (requires level 4+ spell)"* — and that threshold is
+/// `SummonScaling::fly_from_level`, the fourth line the scaling struct
+/// learned to move. A level-2 steed walks; the same spell out of a
+/// level-4 slot flies, and is tougher for the two clauses that were
+/// already there.
+#[test]
+fn a_find_steed_cast_from_a_deeper_slot_flies_and_is_harder_to_kill() {
+    use crate::actions::spells::FIND_STEED;
+    use crate::actors::creatures::otherworldly_steeds::STEED_FLY_SPEED;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let summon_at = |level: Option<u32>| {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let paladin = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+            .unwrap();
+        let up = level
+            .map(|l| std::collections::HashSet::from([ActionOverride::CastLevel(l)]));
+        for x in FIND_STEED.execute(&mut e, paladin, None, None, up.as_ref()) {
+            x.apply(&mut e);
+        }
+        let steed = *e
+            .actors
+            .keys()
+            .find(|id| **id != paladin)
+            .expect("the steed is on the board");
+        (e, steed)
+    };
+
+    let (base, walker) = summon_at(None);
+    assert!(
+        !base.actors[&walker].has_innate_flight(),
+        "a level-2 slot buys a horse"
+    );
+
+    let (deep, flier) = summon_at(Some(4));
+    assert!(
+        deep.actors[&flier].has_innate_flight(),
+        "a level-4 slot is what Find Greater Steed used to be"
+    );
+    assert_eq!(deep.actors[&flier].base_fly_speed(), STEED_FLY_SPEED as f32);
+    assert_eq!(
+        deep.actors[&flier].armor_class(),
+        base.actors[&walker].armor_class() + 2,
+        "+1 AC per slot level above the spell's own"
+    );
+    assert!(
+        deep.actors[&flier].max_hitpoints() > base.actors[&walker].max_hitpoints(),
+        "+10 HP per slot level above the spell's own"
+    );
+}
+
+/// SRD 5.2 **Life Bond**: *"When you regain Hit Points from a level 1+
+/// spell, the steed regains the same number of Hit Points if you're
+/// within 5 feet of it."*
+///
+/// Three things have to line up for the copy to land and each is its
+/// own sentence in RAW, so the test walks all three: the steed has to
+/// be the *caster's* (the bond is a back-link, not a proximity rule),
+/// the two have to be standing together, and the healing has to come
+/// from a spell rather than from a pool of Lay on Hands points.
+#[test]
+fn a_life_bonded_steed_takes_a_copy_of_the_healing_its_summoner_gets() {
+    use crate::actions::spells::{FIND_STEED, HEALING_WORD};
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+        .unwrap();
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(15, 15), 0, 0)
+        .unwrap();
+    for x in FIND_STEED.execute(&mut e, paladin, None, None, None) {
+        x.apply(&mut e);
+    }
+    let steed = *e
+        .actors
+        .keys()
+        .find(|id| **id != paladin && **id != cleric)
+        .expect("the steed is on the board");
+    assert_eq!(
+        e.actors[&steed].linked_by(Condition::LifeBonded),
+        Some(paladin),
+        "the bond names a creature, and it is the one that cast the spell"
+    );
+
+    // Wound both, so either can visibly gain.
+    e.actors.get_mut(&paladin).unwrap().take_damage(20);
+    e.actors.get_mut(&steed).unwrap().take_damage(10);
+    let (p_before, s_before) = (
+        e.actors[&paladin].hitpoints(),
+        e.actors[&steed].hitpoints(),
+    );
+
+    // The cleric heals the paladin, who is standing next to their own
+    // steed. `execute` rather than `side_effects`, because the mirror
+    // hangs off the finished cast — see `Action::execute`'s tail.
+    // Healing Word rather than Cure Wounds so the cleric can stand
+    // clear of the 2×2 body this test is about.
+    for x in HEALING_WORD.execute(&mut e, cleric, Some(&vec![paladin]), None, None) {
+        x.apply(&mut e);
+    }
+    let healed = e.actors[&paladin].hitpoints() - p_before;
+    assert!(healed > 0, "the cure should have landed");
+    assert_eq!(
+        e.actors[&steed].hitpoints() - s_before,
+        healed,
+        "RAW is \"the same number of Hit Points\""
+    );
+}
+
+/// The two gates the bond is mostly made of: distance, and whose steed
+/// it is.
+///
+/// Both failures would be invisible in play — a steed quietly gaining
+/// hit points it should not, or quietly not gaining ones it should —
+/// so they are pinned from the negative side, where the bug would be.
+#[test]
+fn a_life_bond_reaches_five_feet_and_only_its_own_summoner() {
+    use crate::actions::spells::{FIND_STEED, HEALING_WORD};
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+
+    /// A paladin with their steed, a cleric who can reach both, and
+    /// the three ids. A fresh board per scenario rather than two casts
+    /// on one, because Healing Word costs a Bonus Action and a slot —
+    /// a second cast on the same cleric would be refused at the gate,
+    /// which reads from outside exactly like the mirror not firing.
+    fn board() -> (EncounterInstance, usize, usize, usize) {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let paladin = e
+            .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(9, 9), 0, 0)
+            .unwrap();
+        for x in FIND_STEED.execute(&mut e, paladin, None, None, None) {
+            x.apply(&mut e);
+        }
+        let steed = *e
+            .actors
+            .keys()
+            .find(|id| **id != paladin)
+            .expect("the steed is on the board");
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(14, 14), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&steed).unwrap().take_damage(10);
+        (e, paladin, steed, cleric)
+    }
+
+    // The steed is the paladin's, and the cleric heals themself while
+    // standing right beside it.
+    let (mut e, _paladin, steed, cleric) = board();
+    let steed_loc = e.actors[&steed].location();
+    e.place_actor_at(cleric, Coordinate::new(steed_loc.x, steed_loc.y + 2))
+        .unwrap();
+    e.actors.get_mut(&cleric).unwrap().take_damage(5);
+    let s_before = e.actors[&steed].hitpoints();
+    for x in HEALING_WORD.execute(&mut e, cleric, Some(&vec![cleric]), None, None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&steed].hitpoints(),
+        s_before,
+        "somebody else's healing is not this steed's"
+    );
+
+    // Now the right creature, in the wrong place. A scratch rather
+    // than a wound: a paladin at 0 hit points is a different test.
+    let (mut e, paladin, steed, cleric) = board();
+    e.actors.get_mut(&paladin).unwrap().take_damage(5);
+    e.place_actor_at(paladin, Coordinate::new(2, 2)).unwrap();
+    let s_before = e.actors[&steed].hitpoints();
+    let p_before = e.actors[&paladin].hitpoints();
+    for x in HEALING_WORD.execute(&mut e, cleric, Some(&vec![paladin]), None, None) {
+        x.apply(&mut e);
+    }
+    assert!(
+        e.actors[&paladin].hitpoints() > p_before,
+        "the word should still have landed on the paladin"
+    );
+    assert_eq!(
+        e.actors[&steed].hitpoints(),
+        s_before,
+        "RAW's bond reaches five feet and no further"
+    );
+}
+
+/// A Fey Steed's blink takes its rider with it — RAW's *"the steed
+/// teleports, along with its rider"*.
+///
+/// The clause costs the action nothing, which is the point of the
+/// test: a rider's footprint *is* the mount's, so
+/// `EncounterInstance::relocate_actor` carries the passenger without
+/// `FeyStep` knowing that mounts exist. A refactor that gave the
+/// teleport its own relocation would drop the paladin on the floor,
+/// and the log would not say so.
+#[test]
+fn a_fey_steeds_blink_carries_whoever_is_in_the_saddle() {
+    use crate::actions::spells::FIND_STEED_FEY;
+    use crate::actors::creatures::otherworldly_steeds::FEY_STEP;
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    for x in FIND_STEED_FEY.execute(&mut e, paladin, None, None, None) {
+        x.apply(&mut e);
+    }
+    let steed = *e
+        .actors
+        .keys()
+        .find(|id| **id != paladin)
+        .expect("the steed is on the board");
+    assert!(e.mount(paladin, steed).is_ok());
+
+    let dest = Coordinate::new(20, 20);
+    for x in FEY_STEP.execute(&mut e, steed, None, Some(&vec![dest]), None) {
+        x.apply(&mut e);
+    }
+    assert_eq!(e.actors[&steed].location(), dest);
+    assert_eq!(
+        e.actors[&paladin].location(),
+        dest,
+        "RAW: \"along with its rider\""
+    );
+    assert!(e.is_mounted(paladin), "a blink is not a dismount");
+    assert!(
+        !e.actors[&steed].is_recharge_available(
+            crate::actors::creatures::otherworldly_steeds::FEY_STEP_KEY
+        ),
+        "the step is spent"
+    );
+}
+
+/// A Fiend Steed's glare frightens rather than charms, and does not
+/// come back inside the fight.
+///
+/// The first half is the `SaveOrCondition` chassis' newest field doing
+/// its job: five of the six printings on that chassis install
+/// `Charmed`, and for as long as the condition was written into the
+/// helper's body this sentence could not be said at all. The second is
+/// `NEVER_RECHARGES` — a `Recharge 5–6` clause would hand the steed a
+/// second glare most fights.
+#[test]
+fn a_fiend_steeds_glare_frightens_once_a_day() {
+    use crate::actions::spells::FIND_STEED_FIEND;
+    use crate::actors::creatures::otherworldly_steeds::{FELL_GLARE, FELL_GLARE_KEY};
+    use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let paladin = e
+        .instantiate_creature(&PALADIN_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    for x in FIND_STEED_FIEND.execute(&mut e, paladin, None, None, None) {
+        x.apply(&mut e);
+    }
+    let steed = *e
+        .actors
+        .keys()
+        .find(|id| **id != paladin)
+        .expect("the steed is on the board");
+    // A zombie has a Wisdom of 6 and is not immune to fear, so the save
+    // is one the glare can beat; the assertion below is about the
+    // *condition*, so the test re-rolls until the save fails rather
+    // than pinning a seed.
+    let mut frightened = false;
+    for _ in 0..40 {
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&steed)
+            .unwrap()
+            .set_recharge_available(FELL_GLARE_KEY, true);
+        for x in FELL_GLARE.execute(&mut e, steed, Some(&vec![zombie]), None, None) {
+            x.apply(&mut e);
+        }
+        if e.actors[&zombie].has_condition(Condition::Frightened) {
+            assert_eq!(
+                e.actors[&zombie].linked_by(Condition::Frightened),
+                Some(steed),
+                "a fright with nobody behind it is a fright nothing can end"
+            );
+            assert!(!e.actors[&zombie].has_condition(Condition::Charmed));
+            frightened = true;
+        }
+        e.despawn_actor(zombie, "steps aside");
+        if frightened {
+            break;
+        }
+    }
+    assert!(frightened, "forty glares and not one landed");
+
+    // And the pool stays empty for the rest of the fight, however many
+    // turns the steed takes.
+    assert!(!e.actors[&steed].is_recharge_available(FELL_GLARE_KEY));
+    for _ in 0..12 {
+        e.skip_turn();
+    }
+    assert!(
+        !e.actors[&steed].is_recharge_available(FELL_GLARE_KEY),
+        "\"Recharges after a Long Rest\" is not \"Recharge 5-6\""
     );
 }

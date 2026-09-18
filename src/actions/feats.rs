@@ -832,6 +832,8 @@ impl crate::actions::action_template::Action for PoleStrike {
             self.display_name,
             POLE_STRIKE_DICE,
             Some(self.attack_ability),
+            // RAW's Hit line here prints only the ability modifier.
+            0,
             crate::engine::side_effects::Resource::BonusAction,
             0,
             // A shaft is not a crossbow.

@@ -17292,12 +17292,24 @@ impl EncounterInstance {
         // 5e Recharge: at the start of each turn, roll a d6 for each
         // spent recharge ability. If the roll >= the ability's threshold,
         // the ability becomes available again.
+        //
+        // Entries whose threshold no face of a d6 can reach are the
+        // book's *"Recharges after a Long Rest"* clause and are filtered
+        // out here rather than rolled and discarded — see
+        // `actors::actor_template::NEVER_RECHARGES`. Rolling for them
+        // would be free only if the dice were free, and they are not:
+        // the whole engine draws from one seeded stream, so a die nobody
+        // reads still moves every die after it, and a stat block gaining
+        // a once-a-day ability would silently reshuffle every fight it
+        // appears in.
         if let Some(a) = self.actors.get(&actor_id) {
             let actor_name = a.name().to_string();
             let recharge_checks: Vec<(&'static str, u32, bool)> = a
                 .recharge_entries()
                 .iter()
-                .filter(|(_, _, avail)| !avail)
+                .filter(|(_, min_roll, avail)| {
+                    !avail && *min_roll < crate::actors::actor_template::NEVER_RECHARGES
+                })
                 .cloned()
                 .collect();
             for (ability_name, min_roll, _) in recharge_checks {
@@ -19509,6 +19521,106 @@ impl EncounterInstance {
                 notes.join(", ")
             ));
         }
+    }
+
+    /// The reach of a Life Bond, in tile gaps. RAW's *"within 5 feet of
+    /// it"*, which on the 2.5 ft grid is one tile between the two
+    /// footprints — the same `1` `MELEE_REACH` and the Divine
+    /// Allegiance row of `DAMAGE_INTERPOSERS` spell the same sentence.
+    const LIFE_BOND_REACH: isize = crate::actions::action_template::MELEE_REACH;
+
+    /// SRD 5.2 **Life Bond** (Otherworldly Steed): *"When you regain Hit
+    /// Points from a level 1+ spell, the steed regains the same number
+    /// of Hit Points if you're within 5 feet of it."*
+    ///
+    /// Returns the mirrored heals to append to the cast that caused
+    /// them. A sweep over a finished cast's payloads, exactly like
+    /// `apply_elemental_adept` and the Transmuted Spell remap next to
+    /// it, and for the same reason those two are sweeps: the number the
+    /// rule needs — *"the same number of Hit Points"* — exists only
+    /// inside the payload the spell built, and only between the moment
+    /// it is built and the moment it lands.
+    ///
+    /// Four gates, each of them RAW:
+    ///
+    ///   - **A level-1+ spell.** `spell_level` is `Action::execute`'s
+    ///     resolved cast level, so a cantrip answers 0, a Lay on Hands
+    ///     answers 0, and a potion answers 0. Only the middle one of
+    ///     those is a near miss — a paladin's Lay on Hands is the
+    ///     healing they will most often have in hand, and RAW is
+    ///     specific that the bond does not answer it.
+    ///   - **Hit points regained**, which is what `heal_payload` reports
+    ///     and what temporary hit points are not.
+    ///   - **The bond's own summoner.** The steed carries
+    ///     `Condition::LifeBonded` linked back to whoever conjured it,
+    ///     and the mirror fires only when the creature being healed *is*
+    ///     that link. A second paladin's steed standing in the same
+    ///     doorway gains nothing.
+    ///   - **Within 5 feet.** Measured between footprints, so a Large
+    ///     steed reaches from any of its four tiles.
+    ///
+    /// The mirror is not itself a heal *from a spell* for the purposes
+    /// of this rule, which matters only in the impossible case of two
+    /// steeds bonded to each other; the sweep runs once per cast over
+    /// the cast's own payloads and never over what it produces, so there
+    /// is nothing to recurse into.
+    pub fn mirror_heals_onto_life_bonds(
+        &mut self,
+        spell_level: u32,
+        side_effects: &[Box<dyn crate::engine::side_effects::ApplicableSideEffect>],
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        let mut mirrored: Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> =
+            Vec::new();
+        if spell_level == 0 {
+            return mirrored;
+        }
+        // Collected before the walk so the borrow of `self.actors` ends
+        // before the log lines below need `&mut self`.
+        let bonds: Vec<(usize, usize)> = self
+            .actors
+            .iter()
+            .filter(|(_, a)| a.is_combat_active())
+            .filter_map(|(id, a)| Some((*id, a.linked_by(Condition::LifeBonded)?)))
+            .collect();
+        if bonds.is_empty() {
+            return mirrored;
+        }
+        let mut notes: Vec<(String, String, u32)> = Vec::new();
+        for effect in side_effects {
+            let Some((healed_id, amount)) = effect.heal_payload() else {
+                continue;
+            };
+            if amount == 0 {
+                continue;
+            }
+            for &(steed_id, summoner_id) in &bonds {
+                if summoner_id != healed_id || steed_id == healed_id {
+                    continue;
+                }
+                if self
+                    .footprint_distance(steed_id, healed_id)
+                    .is_none_or(|gap| gap > Self::LIFE_BOND_REACH)
+                {
+                    continue;
+                }
+                notes.push((
+                    self.actor_name(steed_id),
+                    self.actor_name(healed_id),
+                    amount,
+                ));
+                mirrored.push(Box::new(crate::engine::side_effects::Heal {
+                    actor_id: steed_id,
+                    amount,
+                }));
+            }
+        }
+        for (steed, summoner, amount) in notes {
+            self.log(format!(
+                "  life bond: {} shares {}'s {} HP.",
+                steed, summoner, amount
+            ));
+        }
+        mirrored
     }
 
     /// Pick the best damage type for a Transmuted Spell remap given a

@@ -1488,7 +1488,7 @@ const FLAG_DRIVEN_SAVE_ADVANTAGES: &[FlagDrivenSaveAdvantage] = &[
 /// where they are for now: moving them onto this axis would be
 /// RAW-exact at the tagged sites and a silent *loss* of protection at
 /// every site still untagged. The tagged set is the shared chokepoints
-/// — `save_or_condition_rider`, `save_or_charmed_by_caster`,
+/// — `save_or_condition_rider`, `save_or_condition_from_caster`,
 /// `install_condition_on_failed_saves`, and the two spell-side
 /// condition installers — which is most content and not yet all of it.
 struct ConditionSaveAdvantage {
@@ -3337,6 +3337,32 @@ impl ConcentrationData {
     }
 }
 
+/// The `min_roll` that means *"this does not come back during the
+/// fight"* — SRD 5.2's **"Recharges after a Long Rest"**.
+///
+/// The book prints two refresh clauses on limited abilities and the
+/// engine had a home for only one of them. *"Recharge 5–6"* is a d6 at
+/// the top of each turn, which `CreatureTemplate::recharge_abilities`
+/// models exactly. *"Recharges after a Long Rest"* — the Otherworldly
+/// Steed's three branch abilities, the book's `1/Day` entries — is the
+/// same ledger with the die taken out: spent once, gone for the rest of
+/// the encounter, restored by `ActorInstance::long_rest` along with
+/// every other recharge entry.
+///
+/// Seven rather than a second `Option`-shaped field, because the whole
+/// difference between the two clauses is *which faces of the d6 bring
+/// it back*, and a threshold no face can reach is the honest way to say
+/// "none of them". `EncounterInstance::start_turn_for` reads the
+/// constant by name and skips the roll entirely rather than rolling a
+/// die whose outcome is settled — which matters beyond tidiness: every
+/// roll in this engine comes off one seeded stream, so a die nobody
+/// needs is a die that shifts every roll after it.
+///
+/// A creature whose ability should come back *between* encounters and
+/// not during one wants this; a creature whose ability should never
+/// come back at all wants a spent flag, which is not this.
+pub const NEVER_RECHARGES: u32 = 7;
+
 #[derive(Clone)]
 pub struct CreatureTemplate {
     pub name: &'static str,
@@ -3871,6 +3897,9 @@ pub struct CreatureTemplate {
     /// recharges if the d6 shows 5 or 6). Each entry is (action_name,
     /// min_roll) — the action becomes available again when the d6 >=
     /// min_roll. Empty for creatures without recharge abilities.
+    ///
+    /// A `min_roll` of [`NEVER_RECHARGES`] is the book's *other* refresh
+    /// clause — see that constant.
     pub recharge_abilities: Vec<(&'static str, u32)>,
     /// 5e Legendary Actions — number of legendary action points refreshed
     /// at the start of each of the creature's turns. Dragons get 3,
@@ -11554,6 +11583,30 @@ impl ActorInstance {
     /// itself.
     pub fn bump_base_ac(&mut self, delta: i32) {
         self.base_ac = (self.base_ac as i32 + delta).max(0) as u32;
+    }
+
+    /// Hand this actor a flying speed it was not built with, in feet.
+    ///
+    /// The third member of the `bump_base_ac` / `bump_max_hp` cohort,
+    /// and there for the same reason they are: SRD 5.2's conjured stat
+    /// blocks print lines that are expressions in the spell's level
+    /// rather than numbers, and the Otherworldly Steed's Speed line —
+    /// *"Speed 60 ft., Fly 60 ft. (requires level 4+ spell)"* — is a
+    /// movement mode that the slot either buys or does not.
+    ///
+    /// A **set** rather than a bump, unlike its two siblings, because
+    /// the clause is a threshold rather than a ladder: RAW hands the
+    /// steed the same 60 feet of flight at level 4 and at level 9, so
+    /// there is nothing to accumulate and a second cast at a higher
+    /// slot should not stack. `max` rather than plain assignment so a
+    /// creature that already flies faster is never *slowed* by being
+    /// granted wings.
+    ///
+    /// Touches `base_fly_speed` only. Whether those wings work right now
+    /// is still `can_fly`'s question — a granted flier that picks up
+    /// `Earthbound` is grounded exactly like a born one.
+    pub fn grant_fly_speed(&mut self, feet: f32) {
+        self.base_fly_speed = self.base_fly_speed.max(feet);
     }
 
     /// Permanently bump the actor's max HP by `delta`. Current HP rises

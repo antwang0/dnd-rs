@@ -24300,9 +24300,12 @@ mod tests {
             ("create undead", false),
             // Find Steed is the second `None` on the chassis, and for
             // the same reason: a paladin who had to concentrate on their
-            // horse could never smite from its back.
+            // horse could never smite from its back. Three rows because
+            // SRD 5.2's branch table is three mounts — see
+            // `spells::FIND_STEED`.
             ("find steed", false),
-            ("find greater steed", false),
+            ("find steed (fey)", false),
+            ("find steed (fiend)", false),
             // The third and last `None` on the chassis, and the same
             // sentence one class over: a wizard who had to concentrate
             // on their own horse could not concentrate on anything

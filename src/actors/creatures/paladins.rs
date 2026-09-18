@@ -46,13 +46,21 @@ pub static PALADIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*SHIELD_OF_FAITH);
     actions.push(&*LESSER_RESTORATION);
     actions.push(&*COMPELLED_DUEL);
-    // 5e Find Steed (lv2 conjuration) — the paladin's own summon, and
-    // the party's route into `engine::mounts`. No concentration, so it
-    // costs the paladin nothing they were going to spend on a smite.
+    // SRD 5.2 Find Steed (lv2 conjuration) — the paladin's own summon,
+    // and the party's route into `engine::mounts`. No concentration, so
+    // it costs the paladin nothing they were going to spend on a smite.
+    //
+    // Three rows because RAW's *"choose the steed's creature type"* is
+    // three different mounts: a healer, a blink and a glare, each with
+    // its own damage type on the slam. The paladin carries all three and
+    // picks one per cast, which is exactly what the sentence says.
+    // There is no level-4 upgrade any more, and does not need to be —
+    // SRD 5.2 folded Find Greater Steed's flight into this spell's own
+    // upcast clause, so a paladin who wants a flying steed casts the
+    // same spell with a bigger slot.
     actions.push(&crate::actions::spells::FIND_STEED);
-    // …and its level-4 upgrade, which is a different animal rather than
-    // a bigger horse: the griffon flies.
-    actions.push(&crate::actions::spells::FIND_GREATER_STEED);
+    actions.push(&crate::actions::spells::FIND_STEED_FEY);
+    actions.push(&crate::actions::spells::FIND_STEED_FIEND);
     // Smite spells — bonus-action concentration primes that lay extra
     // rider damage (and a follow-up effect for Wrathful / Branding /
     // Blinding) on the paladin's next melee hit. Slot-cost varies per

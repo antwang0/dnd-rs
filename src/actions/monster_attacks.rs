@@ -310,65 +310,90 @@ pub fn save_or_condition_rider(
     save
 }
 
-/// Resolve a single-target "save-or-charmed-by-caster" install. Returns
-/// the side-effects produced (empty when the target is charm-immune or
-/// saves). Pre-checks `effectively_immune_to_condition(Charmed)` so the
-/// charm-immune log fires before the save roll (matches the canonical
-/// short-circuit shared by Vampire Charming Gaze / Dryad Fey Charm).
-/// On a failed save, pushes both an `ApplyCondition(Charmed)` and a
-/// `SetConditionLink(Charmed ← caster)` so the engine's "can't act hostile against
-/// your charmer" gate is wired up correctly.
+/// Resolve a single-target "save-or-`condition`-from-caster" install.
+/// Returns the side-effects produced (empty when the target is immune
+/// to `condition` or saves). Pre-checks
+/// `effectively_immune_to_condition` so the immune log fires before the
+/// save roll (matches the canonical short-circuit shared by Vampire
+/// Charming Gaze / Dryad Fey Charm). On a failed save, pushes both an
+/// `ApplyCondition` and a `SetConditionLink(condition ← caster)` so the
+/// engine's back-linked gates — "can't act hostile against your
+/// charmer", "can't willingly move closer to what you fear" — are wired
+/// up correctly.
 ///
-/// Centralizes the "immunity-check + save + Charmed install + SetConditionLink(Charmed)"
-/// loop shared by every single-target charm action — keeps the log
-/// shape uniform ("{rider}: target's mind is shielded" / "target resists"
-/// / "target is enthralled") and the charm-link bookkeeping in one place
-/// so a future charm-pipeline tweak (e.g. honoring a "save with advantage
-/// while wearing a Charm Amulet" prime) lands once instead of being
-/// re-implemented across the three current call sites.
-pub fn save_or_charmed_by_caster(
+/// Centralizes the "immunity-check + save + install + SetConditionLink"
+/// loop shared by every single-target save-or-condition action — keeps
+/// the log shape uniform ("{rider}: target's mind is shielded" /
+/// "target resists" / "target is enthralled") and the link bookkeeping
+/// in one place so a future charm-pipeline tweak (e.g. honoring a "save
+/// with advantage while wearing a Charm Amulet" prime) lands once
+/// instead of being re-implemented across the call sites.
+///
+/// **The condition is a parameter and the prose is not.** Every phrase
+/// the log prints is drawn from [`Condition::save_or_install_prose`],
+/// which lives beside the condition rather than here: a Frightened
+/// install that reported "target is enthralled" would be the chassis
+/// describing the only condition it used to know about.
+#[allow(clippy::too_many_arguments)]
+pub fn save_or_condition_from_caster(
     encounter: &mut EncounterInstance,
     caster_id: usize,
     target_id: usize,
+    condition: Condition,
     save_ability: AbilityScoreType,
     dc: i32,
     timer: ConditionTimer,
     rider_name: &str,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     use crate::engine::side_effects::install_condition_with_link;
+    let (shielded, resisted, installed) = condition.save_or_install_prose();
     let Some(target) = encounter.actors.get(&target_id) else {
         return Vec::new();
     };
-    if target.effectively_immune_to_condition(Condition::Charmed) {
-        encounter.log(format!("  {}: target's mind is shielded", rider_name));
+    if target.effectively_immune_to_condition(condition) {
+        encounter.log(format!("  {}: {}", rider_name, shielded));
         return Vec::new();
     }
-    let save = encounter.roll_save_vs_condition(target_id, save_ability, dc, Condition::Charmed);
+    let save = encounter.roll_save_vs_condition(target_id, save_ability, dc, condition);
     if save.passed() {
-        encounter.log(format!("  {}: target resists the enchantment", rider_name));
+        encounter.log(format!("  {}: {}", rider_name, resisted));
         return Vec::new();
     }
-    encounter.log(format!("  {}: target is enthralled", rider_name));
-    install_condition_with_link(Condition::Charmed, target_id, caster_id, timer)
+    encounter.log(format!("  {}: {}", rider_name, installed));
+    install_condition_with_link(condition, target_id, caster_id, timer)
 }
 
-/// The chassis for a single-target save-or-charm — a whole action whose
-/// entire payload is one saving throw and, on a failure, the `Charmed`
+/// The chassis for a single-target save-or-condition — a whole action
+/// whose entire payload is one saving throw and, on a failure, one
 /// condition pointing back at whoever cast it.
 ///
-/// Five stat blocks print this and the only things that differ between
-/// them are the name, the range, the DC and how long it lasts. The
-/// vampire's Charming Gaze, the dryad's Fey Charm and the lamia's
-/// Intoxicating Touch each used to be forty lines of trait impl around
-/// one call to `save_or_charmed_by_caster`, and the pirates' two are
-/// what made that indefensible: the same forty lines a fourth and a
-/// fifth time would have been most of what those stat blocks are.
+/// Six stat blocks print this and the only things that differ between
+/// them are the name, the range, the DC, how long it lasts and *which
+/// condition lands*. The vampire's Charming Gaze, the dryad's Fey Charm
+/// and the lamia's Intoxicating Touch each used to be forty lines of
+/// trait impl around one call to the shared helper, and the pirates'
+/// two are what made that indefensible: the same forty lines a fourth
+/// and a fifth time would have been most of what those stat blocks are.
+///
+/// `condition` is the newest field and the one the chassis was missing.
+/// Five of the six printings install `Charmed`, which is why the type
+/// spent its life called `SaveOrCharm` with the condition written into
+/// its body — and why the Otherworldly Steed's **Fell Glare**, *"one
+/// creature within 60 feet the steed can see. Failure: The target has
+/// the Frightened condition"*, could not use it. That is the same
+/// sentence with one noun changed, and a chassis that could not change
+/// the noun was a chassis that described one monster rather than a
+/// shape. `Charmed` stays the [`Self::action`] default, so the five
+/// existing declarations read exactly as they did.
 ///
 /// `bonus_action` is the one field that is about tempo rather than
 /// flavour, and it earns its place: the Pirate Captain's Captain's
 /// Charm is printed under **Bonus Actions**, which means the captain
 /// charms *and* takes three swings in the same turn, and a charm that
 /// cost it the Action would be a different and much weaker creature.
+/// Fell Glare is printed there too, for the same reason at the other
+/// end of the board — the steed is a mount, and a glare that cost it
+/// the Action would cost its rider the charge.
 ///
 /// No to-hit roll, by RAW and by choice — every printing of this in the
 /// book is "Wisdom Saving Throw: DC N, one creature the {monster} can
@@ -376,12 +401,14 @@ pub fn save_or_charmed_by_caster(
 /// printings (the lamia) are the same clause with a smaller number, not
 /// a melee attack; giving them an attack roll would double-gate a
 /// single-payload effect.
-pub struct SaveOrCharm {
+pub struct SaveOrCondition {
     pub display_name: &'static str,
     pub aliases: &'static [&'static str],
     /// Range in tiles. RAW's "within 30 feet" is 12 of them; a touch
     /// printing passes `MELEE_REACH`.
     pub reach: isize,
+    /// What lands on a failed save, back-linked to the caster.
+    pub condition: Condition,
     pub save_ability: AbilityScoreType,
     pub save_dc: i32,
     pub timer: ConditionTimer,
@@ -391,8 +418,9 @@ pub struct SaveOrCharm {
     pub bonus_action: bool,
 }
 
-impl SaveOrCharm {
-    /// The common shape: an Action, a Wisdom save, a range in tiles.
+impl SaveOrCondition {
+    /// The common shape: an Action, a Wisdom save, a range in tiles,
+    /// and the `Charmed` condition five of the six printings install.
     pub const fn action(
         display_name: &'static str,
         aliases: &'static [&'static str],
@@ -405,12 +433,20 @@ impl SaveOrCharm {
             display_name,
             aliases,
             reach,
+            condition: Condition::Charmed,
             save_ability: AbilityScoreType::Wisdom,
             save_dc,
             timer,
             rider_name,
             bonus_action: false,
         }
+    }
+
+    /// Builder tail for the printings that install something other than
+    /// a charm — the steed's Fell Glare, and whatever the book prints
+    /// next in the same sentence with a different noun.
+    pub const fn installing(self, condition: Condition) -> Self {
+        Self { condition, ..self }
     }
 
     /// Builder tail for the printings filed under **Bonus Actions**.
@@ -422,12 +458,21 @@ impl SaveOrCharm {
     }
 }
 
-impl Action for SaveOrCharm {
+impl Action for SaveOrCondition {
     fn name(&self) -> &str {
         self.display_name
     }
     fn aliases(&self) -> Vec<&str> {
         self.aliases.to_vec()
+    }
+    fn installs_condition(&self) -> Option<Condition> {
+        // The whole of the payload, declared so the AI's "they already
+        // have it" gate can see it — see `Action::installs_condition`.
+        // The chassis went without this for its whole charm-only life
+        // and the cost was invisible in exactly the way that gate
+        // exists to prevent: a vampire spending its Action to re-charm
+        // somebody it had already charmed.
+        Some(self.condition)
     }
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
@@ -475,15 +520,217 @@ impl Action for SaveOrCharm {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        save_or_charmed_by_caster(
+        save_or_condition_from_caster(
             encounter,
             caster_id,
             target_id,
+            self.condition,
             self.save_ability,
             self.save_dc,
             self.timer,
             self.rider_name,
         )
+    }
+}
+
+/// The chassis for a limited-use **ally heal** — a whole action whose
+/// entire payload is "touch one creature, restore some hit points",
+/// spent out of a named recharge pool.
+///
+/// Three stat blocks print this and the only things that differ between
+/// them are the name, the reach, the dice, whether the monster's own
+/// Charisma joins the roll, and what the pool is called:
+///
+///   - the **unicorn**'s Healing Touch, `3d8 + CHA`, RAW `3/Day`;
+///   - the **deva**'s, `4d8`, RAW `1/Day`;
+///   - the **Otherworldly Steed**'s, `2d8 + the spell's level`, a
+///     Bonus Action that *"Recharges after a Long Rest"*.
+///
+/// The first two were ninety lines of `impl Action` apiece around one
+/// `Heal`, and they had already drifted: the unicorn's rejects hostile
+/// targets in `custom_validate_input` under a comment explaining why
+/// the AI needs that, and the deva's — the same sentence in the same
+/// book — did not, so a deva could be offered the option of healing
+/// the thing it was fighting. That is the failure mode a shared
+/// chassis exists to prevent, and a third copy would have been most of
+/// what the steed's stat block is.
+///
+/// The recharge pool is the only model the engine has for a per-day
+/// count, and it is an approximation on two of the three rows: RAW's
+/// `3/Day` and `1/Day` become a d6 at the top of each turn. The steed's
+/// row is not an approximation, because
+/// [`crate::actors::actor_template::NEVER_RECHARGES`] says exactly what
+/// *"Recharges after a Long Rest"* says.
+///
+/// `bonus_action` is the field that is about tempo rather than flavour,
+/// and it earns its place for the same reason it does on
+/// [`SaveOrCondition`]: the steed's touch is printed under **Bonus
+/// Actions**, and a heal that cost it the Action would cost its rider
+/// the charge.
+pub struct RechargingAllyHeal {
+    pub display_name: &'static str,
+    pub aliases: &'static [&'static str],
+    /// Reach in tiles. All three printings are touch — `MELEE_REACH` —
+    /// but the field is here rather than pinned because nothing about
+    /// the shape requires it and the book prints ranged heals too.
+    pub reach: isize,
+    pub dice: Dice,
+    /// An ability modifier the Hit line adds, or `None` for the
+    /// printings that roll dice alone. The unicorn's Charisma is the
+    /// only carrier.
+    pub bonus_ability: Option<AbilityScoreType>,
+    /// A flat term that is nobody's ability modifier — the steed's
+    /// *"plus the spell's level"*, at the spell's base level. Same
+    /// clause, same caveat, as `SimpleWeapon::flat_damage_bonus`.
+    pub flat_bonus: i32,
+    /// The `recharge_abilities` key this action spends. Shared keys are
+    /// deliberate where a stat block prints one pool feeding several
+    /// options; these three each own theirs.
+    pub recharge_key: &'static str,
+    pub bonus_action: bool,
+}
+
+impl RechargingAllyHeal {
+    /// The common shape: an Action, at touch reach, out of a named pool.
+    pub const fn touch(
+        display_name: &'static str,
+        aliases: &'static [&'static str],
+        dice: Dice,
+        recharge_key: &'static str,
+    ) -> Self {
+        Self {
+            display_name,
+            aliases,
+            reach: MELEE_REACH,
+            dice,
+            bonus_ability: None,
+            flat_bonus: 0,
+            recharge_key,
+            bonus_action: false,
+        }
+    }
+
+    /// Builder tail for the printing whose roll carries the healer's own
+    /// Charisma — the unicorn's, and nothing else in the book.
+    pub const fn plus_ability(self, ability: AbilityScoreType) -> Self {
+        Self {
+            bonus_ability: Some(ability),
+            ..self
+        }
+    }
+
+    /// Builder tail for a flat term that is not an ability modifier.
+    pub const fn plus_flat(self, bonus: i32) -> Self {
+        Self {
+            flat_bonus: bonus,
+            ..self
+        }
+    }
+
+    /// Builder tail for the printings filed under **Bonus Actions**.
+    pub const fn as_bonus_action(self) -> Self {
+        Self {
+            bonus_action: true,
+            ..self
+        }
+    }
+}
+
+impl Action for RechargingAllyHeal {
+    fn name(&self) -> &str {
+        self.display_name
+    }
+    fn aliases(&self) -> Vec<&str> {
+        self.aliases.to_vec()
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn is_heal(&self) -> bool {
+        true
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn damage_types(&self) -> Vec<DamageType> {
+        Vec::new()
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        if self.bonus_action {
+            crate::actions::action_template::bonus_action_only()
+        } else {
+            crate::actions::action_template::action_only()
+        }
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(caster) = encounter.actors.get(&caster_id) else {
+            return false;
+        };
+        if !caster.is_recharge_available(self.recharge_key) {
+            return false;
+        }
+        // Reject hostile targets — the touch only restores allies. The
+        // ally check lives here (not just at `side_effects`) so the AI's
+        // picker doesn't surface enemies as legal targets. The deva's
+        // hand-written copy of this action was missing this half.
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        encounter.actors_allied(caster_id, target_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::side_effects::Heal;
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let modifier = self
+            .bonus_ability
+            .and_then(|a| encounter.actors.get(&caster_id).map(|c| c.ability_modifier(a)))
+            .unwrap_or(0)
+            + self.flat_bonus;
+        let raw = encounter.roll(&self.dice) as i32;
+        // A heal that restores nothing is a spent pool for no gain, so
+        // the floor is 1 — the same floor the unicorn's hand-written
+        // version carried.
+        let amount = (raw + modifier).max(1) as u32;
+        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
+            caster.spend_recharge(self.recharge_key);
+        }
+        encounter.log(format!(
+            "  {}: {}({}){:+} = {} HP",
+            self.display_name, self.dice, raw, modifier, amount
+        ));
+        vec![Box::new(Heal {
+            actor_id: target_id,
+            amount,
+        })]
     }
 }
 
@@ -915,10 +1162,16 @@ fn simple_weapon_swing(
     // other weapon this is the declared ability and nothing has changed.
     let swing_ability = weapon.swing_ability(caster);
     let attack_bonus = caster.spell_attack_modifier(swing_ability);
+    // The ability half of the Hit line's modifier, plus the flat half
+    // that is nobody's ability — see `SimpleWeapon::flat_damage_bonus`.
+    // Summed here, at the one site that builds `damage_bonus`, so the
+    // conjured stat blocks' `+ the spell's level` rides every path an
+    // ordinary modifier already rides.
     let damage_bonus = weapon
         .swing_damage_ability(caster)
         .map(|a| caster.ability_modifier(a))
-        .unwrap_or(0);
+        .unwrap_or(0)
+        + weapon.flat_damage_bonus;
     // SRD 5.2's "or N (XdY + mod) damage if the target is Bloodied"
     // clause — a die *swap*, not a rider, so the bigger die replaces
     // the smaller one rather than joining it. Read here rather than at
@@ -1630,6 +1883,40 @@ pub struct SimpleWeapon {
     /// skeleton and a warlock deciding the swing is resisted and
     /// walking away.
     pub damage_type_menu: Option<&'static [DamageType]>,
+    /// A flat damage term that is **not** an ability modifier, added to
+    /// every hit on top of whatever [`Self::damage_ability`] contributes.
+    ///
+    /// SRD 5.2's Hit lines are almost always `N (XdY + MOD)`, where MOD
+    /// is a score off the stat block — and [`Self::damage_ability`]
+    /// already says which, or says `None` for the handful that print no
+    /// modifier at all. The exception is the conjured stat blocks, whose
+    /// numbers are written as expressions in the spell's own level: the
+    /// Otherworldly Steed's slam is *"1d8 plus the spell's level"* and
+    /// the Draconic Spirit's rend is *"1d6 + 4 + the spell's level"*.
+    /// Neither of those trailing terms is anybody's Strength, and before
+    /// this field there was no way to say so: the choice was between a
+    /// swing that dropped the term and a swing that borrowed an ability
+    /// modifier of roughly the right size and called it the same thing.
+    ///
+    /// Summed into `damage_bonus` at the one site that builds it,
+    /// `simple_weapon_swing`, so it rides every path a modifier already
+    /// rides — the crit doubling (which doubles dice, not flat terms),
+    /// the resistance halving, the log line.
+    ///
+    /// **Fixed at the spell's base level.** `SummonScaling` grows a
+    /// summon's AC and hit points to the slot it was cast with, by
+    /// bumping the *actor*; an attack is a `&'static` shared by every
+    /// copy of the creature, so there is nowhere for a per-body damage
+    /// term to live. A steed conjured with a level-5 slot therefore
+    /// hits for the level-2 printing. That is the same class of
+    /// omission `SummonScaling`'s own docstring names for the lines RAW
+    /// does not scale, one field over, and it is named here rather than
+    /// left for a reader to discover from the arithmetic.
+    ///
+    /// `i32` rather than `u32` because the summed `damage_bonus` is
+    /// signed and a future negative printing (a cursed weapon, a
+    /// weakened form) should not have to invent a second field.
+    pub flat_damage_bonus: i32,
 }
 
 impl SimpleWeapon {
@@ -1701,6 +1988,7 @@ impl SimpleWeapon {
             is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
+            flat_damage_bonus: 0,
         }
     }
 
@@ -1751,6 +2039,7 @@ impl SimpleWeapon {
             is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
+            flat_damage_bonus: 0,
         }
     }
 
@@ -1798,6 +2087,7 @@ impl SimpleWeapon {
             is_loading: false,
             bloodied_dice: None,
             damage_type_menu: None,
+            flat_damage_bonus: 0,
         }
     }
 
@@ -2051,6 +2341,25 @@ impl SimpleWeapon {
         }
     }
 
+    /// Const builder for the trailing flat term a conjured stat block's
+    /// Hit line prints and nobody's ability score explains —
+    /// `SimpleWeapon::flat_melee(...).plus_flat(2)` for the
+    /// Otherworldly Steed's *"1d8 plus the spell's level"* at its
+    /// printed level.
+    ///
+    /// A builder rather than a fifth constructor for the reason
+    /// `light()` is one: the term is orthogonal to all four shapes
+    /// above, and pairing it with each would be four more
+    /// near-identical constructors to keep in step. See
+    /// [`Self::flat_damage_bonus`] for what the term is and what it
+    /// deliberately does not do.
+    pub const fn plus_flat(self, bonus: i32) -> Self {
+        Self {
+            flat_damage_bonus: bonus,
+            ..self
+        }
+    }
+
     /// Const builder that turns a melee weapon into its **thrown**
     /// twin — `SimpleWeapon::melee(...).thrown("thrown dagger",
     /// &["td"], 8, 24)`.
@@ -2250,6 +2559,7 @@ impl Action for SimpleWeapon {
             self.display_name,
             self.damage_dice,
             damage_ability,
+            self.flat_damage_bonus,
             self.cost_resource,
             0,
             self.is_loading,
@@ -4637,6 +4947,7 @@ pub static SCIMITAR_OF_SPEED_SWING: SimpleWeapon = SimpleWeapon {
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
+    flat_damage_bonus: 0,
 };
 
 /// **Energy Bow** (Weapon, Longbow or Shortbow; Very Rare) — the shot
@@ -4722,6 +5033,7 @@ pub static SHORTBOW: SimpleWeapon = SimpleWeapon {
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
+    flat_damage_bonus: 0,
 }
 .two_handed();
 
@@ -7772,6 +8084,8 @@ impl Action for MinotaurGore {
             self.name(),
             Dice::new(2, 8),
             Some(AbilityScoreType::Strength),
+            // RAW's Hit line here prints only the ability modifier.
+            0,
             Resource::Action,
             0,
             false,
@@ -9224,7 +9538,7 @@ pub static FROST_GIANT_ROCK: SimpleWeapon = SimpleWeapon::ranged(
 /// of AoE. RAW gives a "no save again until damaged" clause; we honor
 /// it via the 10-round duration and let damage / dispel break the
 /// condition naturally.
-pub static VAMPIRE_CHARMING_GAZE: SaveOrCharm = SaveOrCharm::action(
+pub static VAMPIRE_CHARMING_GAZE: SaveOrCondition = SaveOrCondition::action(
     "charming gaze",
     &["cg", "gaze"],
     // 30 ft RAW = 12 tiles.
@@ -14498,7 +14812,7 @@ pub static DRYAD_CLUB: SimpleWeapon = SimpleWeapon::melee(
 /// against the dryad. Charm-immune creatures (constructs / undead /
 /// fey themselves per RAW) shrug it off via the standard add_condition
 /// gate.
-pub static DRYAD_FEY_CHARM: SaveOrCharm = SaveOrCharm::action(
+pub static DRYAD_FEY_CHARM: SaveOrCondition = SaveOrCondition::action(
     "fey charm",
     &["fc", "charm"],
     // 30 ft RAW = 12 tiles.
@@ -15479,6 +15793,8 @@ impl Action for ClayGolemSlam {
             "clay slam",
             Dice::new(1, 10),
             Some(AbilityScoreType::Strength),
+            // RAW's Hit line here prints only the ability modifier.
+            0,
             Resource::Action,
             0,
             false,
@@ -16556,102 +16872,23 @@ pub static UNICORN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAt
     parts: vec![(&UNICORN_HOOVES, 1), (&UNICORN_HORN, 1)],
 });
 
-/// Unicorn Healing Touch — single-target ally heal. The unicorn touches
-/// one creature within melee reach and restores 3d8+CHA HP, cures every
-/// condition the holder has, and breaks any charm / curse on them. We
-/// model the load-bearing half (the HP heal) — the cure-conditions
-/// half rides through the existing recharge chassis to limit
-/// over-use. RAW is "3/day" — the engine doesn't track per-day pools,
-/// so we approximate via the `"healing_touch"` recharge key (recharge
-/// 5-6 on a d6 at start-of-turn). One ally target only; the unicorn
-/// chooses based on AI heuristics (heal a wounded teammate).
-pub struct UnicornHealingTouch {}
-
-impl Action for UnicornHealingTouch {
-    fn name(&self) -> &str {
-        "healing touch"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["ht", "touch"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn is_heal(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        Vec::new()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        if !caster.is_recharge_available("healing_touch") {
-            return false;
-        }
-        // Reject hostile targets — the touch only restores allies. The
-        // ally check lives here (not just at side_effects) so the AI's
-        // picker doesn't surface enemies as legal targets.
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        encounter.actors_allied(caster_id, target_id)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::Heal;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return Vec::new();
-        };
-        let cha_mod = caster.ability_modifier(AbilityScoreType::Charisma);
-        let dice = Dice::new(3, 8);
-        let raw = encounter.roll(&dice) as i32;
-        let amount = (raw + cha_mod).max(1) as u32;
-        // Burn the recharge so the touch can't fire again until the d6
-        // refresher lands a 5-6 at start-of-turn. Mirrors the breath-
-        // weapon recharge chassis used by Androsphinx Roar / dragons.
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("healing_touch");
-        }
-        encounter.log(format!(
-            "  healing touch: {}({}){:+} = {} HP",
-            dice, raw, cha_mod, amount
-        ));
-        vec![Box::new(Heal {
-            actor_id: target_id,
-            amount,
-        })]
-    }
-}
-
-pub static UNICORN_HEALING_TOUCH: LazyLock<UnicornHealingTouch> =
-    LazyLock::new(|| UnicornHealingTouch {});
+/// Unicorn Healing Touch — single-target ally heal on the shared
+/// [`RechargingAllyHeal`] chassis. The unicorn touches one creature
+/// within melee reach and restores `3d8 + CHA` hit points.
+///
+/// RAW's touch also cures every condition the holder has and breaks any
+/// charm or curse on them; the engine models the load-bearing half, the
+/// hit points. RAW's count is `3/Day`, which the engine has no ledger
+/// for, so the pool is the `"healing_touch"` recharge key at 5–6 on a
+/// d6 at start of turn.
+pub static UNICORN_HEALING_TOUCH: RechargingAllyHeal =
+    RechargingAllyHeal::touch(
+        "healing touch",
+        &["ht", "touch"],
+        Dice::new(3, 8),
+        "healing_touch",
+    )
+    .plus_ability(AbilityScoreType::Charisma);
 
 // ─── Drider ──────────────────────────────────────────────────────────
 
@@ -17488,7 +17725,7 @@ pub static LAMIA_CLAWS: SimpleWeapon = SimpleWeapon::melee(
 /// would double-gate the curse install for what's essentially a single-
 /// payload effect; one roll keeps the per-Action tempo legible and the
 /// curse-vs-claws lane distinction cleaner.
-pub static LAMIA_INTOXICATING_TOUCH: SaveOrCharm = SaveOrCharm::action(
+pub static LAMIA_INTOXICATING_TOUCH: SaveOrCondition = SaveOrCondition::action(
     "intoxicating touch",
     &["it", "touch", "lamia-touch"],
     MELEE_REACH,
@@ -19649,98 +19886,24 @@ pub static DEVA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     count: 2,
 });
 
-/// Deva Healing Touch — single-target ally heal, 4d8 HP restored, plus
-/// cures any disease / poison the holder has. Gated on the
-/// `"healing_touch"` recharge key (recharge 4-6 on a d6 at start of
-/// turn) so it can't fire every round. RAW is "1/day" — the engine
-/// doesn't track per-day pools, so the recharge envelope is the
-/// closest approximation. Same chassis as the unicorn's healing touch
-/// but the deva's 4d8 envelope is one step heavier (RAW: "The angel
-/// touches another creature. The target magically regains 20 (4d8)
-/// hit points") and the recharge threshold is one notch lower (4-6
-/// vs the unicorn's 5-6) to reflect the deva's higher CR / role as a
-/// dedicated celestial healer.
-pub struct DevaHealingTouch {}
-
-impl Action for DevaHealingTouch {
-    fn name(&self) -> &str {
-        "deva healing touch"
-    }
-    fn aliases(&self) -> Vec<&str> {
-        vec!["deva-ht", "deva-touch"]
-    }
-    fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::SingleActor
-    }
-    fn reach_tiles(&self) -> Option<isize> {
-        Some(MELEE_REACH)
-    }
-    fn is_harmful(&self) -> bool {
-        false
-    }
-    fn is_heal(&self) -> bool {
-        true
-    }
-    fn deals_damage(&self) -> bool {
-        false
-    }
-    fn damage_types(&self) -> Vec<DamageType> {
-        Vec::new()
-    }
-    fn custom_validate_input(
-        &self,
-        encounter: &EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _tl: Option<&Vec<Coordinate>>,
-        _o: Option<&HashSet<ActionOverride>>,
-    ) -> bool {
-        let Some(caster) = encounter.actors.get(&caster_id) else {
-            return false;
-        };
-        if !caster.is_recharge_available("healing_touch") {
-            return false;
-        }
-        // Reject hostile targets — the touch only restores allies. The
-        // ally check lives here (not just at side_effects) so the AI's
-        // picker doesn't surface enemies as legal targets.
-        let Some(target_id) = first_target_id(target_ids) else {
-            return false;
-        };
-        encounter.actors_allied(caster_id, target_id)
-    }
-    fn side_effects(
-        &self,
-        encounter: &mut EncounterInstance,
-        caster_id: usize,
-        target_ids: Option<&Vec<usize>>,
-        _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
-    ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::Heal;
-        let Some(target_id) = first_target_id(target_ids) else {
-            return Vec::new();
-        };
-        let dice = Dice::new(4, 8);
-        let raw = encounter.roll(&dice);
-        // Burn the recharge so the touch can't fire again until the d6
-        // refresher lands a 4-6 at start-of-turn.
-        if let Some(caster) = encounter.actors.get_mut(&caster_id) {
-            caster.spend_recharge("healing_touch");
-        }
-        encounter.log(format!(
-            "  deva healing touch: {}({}) = {} HP",
-            dice, raw, raw
-        ));
-        vec![Box::new(Heal {
-            actor_id: target_id,
-            amount: raw,
-        })]
-    }
-}
-
-pub static DEVA_HEALING_TOUCH: LazyLock<DevaHealingTouch> =
-    LazyLock::new(|| DevaHealingTouch {});
+/// Deva Healing Touch — single-target ally heal on the shared
+/// [`RechargingAllyHeal`] chassis. RAW: *"The angel touches another
+/// creature. The target magically regains 20 (4d8) hit points"*, plus
+/// a cure of any disease or poison on them, which is the half the
+/// engine does not model.
+///
+/// One step heavier than the unicorn's `3d8`, and its pool refreshes
+/// one notch more easily (4–6 against the unicorn's 5–6) to reflect the
+/// deva's higher CR and its role as a dedicated celestial healer. RAW's
+/// count is `1/Day`; the recharge envelope is the closest approximation
+/// the engine has.
+pub static DEVA_HEALING_TOUCH: RechargingAllyHeal =
+    RechargingAllyHeal::touch(
+        "deva healing touch",
+        &["deva-ht", "deva-touch"],
+        Dice::new(4, 8),
+        "healing_touch",
+    );
 
 // ─── Quaggoth ────────────────────────────────────────────────────────
 
@@ -21415,6 +21578,7 @@ pub static STONE_GOLEM_FORCE_BOLT: SimpleWeapon = SimpleWeapon {
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
+    flat_damage_bonus: 0,
 };
 
 /// **Djinni Storm Bolt** — SRD 5.2: *"Ranged Attack Roll: +9, range 120
@@ -21830,6 +21994,7 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
+    flat_damage_bonus: 0,
 };
 
 /// Violet Fungus Multiattack — 3 rotting touches per Action. RAW: "The
@@ -23300,6 +23465,7 @@ static ELEPHANT_TRAMPLE_STOMP: SimpleWeapon = SimpleWeapon {
     is_loading: false,
     bloodied_dice: None,
     damage_type_menu: None,
+    flat_damage_bonus: 0,
 };
 
 /// The elephant's trample as the elephant has it: the stomp above,
@@ -24000,7 +24166,7 @@ pub static PIRATE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
 /// rather than a lockout, which is what a CR-1 charm should be, and it
 /// is why the pirate would rather spend the panache on the party's
 /// heaviest hitter than on whoever is closest.
-pub static ENTHRALLING_PANACHE: SaveOrCharm = SaveOrCharm::action(
+pub static ENTHRALLING_PANACHE: SaveOrCondition = SaveOrCondition::action(
     "enthralling panache",
     &["ep", "panache"],
     // RAW 30 ft = 12 tiles.
@@ -24081,7 +24247,7 @@ pub static PIRATE_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multia
 /// charm costs it nothing it was going to spend, so there is never a
 /// turn where charming is the wrong call. That is a genuinely nastier
 /// stat block than one with a stronger charm that cost an Action.
-pub static CAPTAINS_CHARM: SaveOrCharm = SaveOrCharm::action(
+pub static CAPTAINS_CHARM: SaveOrCondition = SaveOrCondition::action(
     "captain's charm",
     &["cc", "captains-charm"],
     // RAW 30 ft = 12 tiles.

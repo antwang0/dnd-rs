@@ -276,6 +276,8 @@ impl Action for OffHandAttack {
             self.display_name,
             self.damage_dice,
             offhand_damage_ability(caster, self.attack_ability),
+            // RAW's Hit line here prints only the ability modifier.
+            0,
             Resource::BonusAction,
             0,
             // RAW's Light property names melee weapons, so nothing on
