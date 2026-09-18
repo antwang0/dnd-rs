@@ -120580,3 +120580,259 @@ fn a_breach_leaves_the_rest_of_the_wall_standing() {
         "and the rest of the wall is handed back when the spell ends"
     );
 }
+
+
+// ---------------------------------------------------------------------
+// Knocking Out a Creature — SRD 5.2's one clause that lets a fight end
+// with somebody still breathing.
+//
+// > When you would reduce a creature to 0 Hit Points with a melee
+// > attack, you can instead reduce the creature to 1 Hit Point. The
+// > creature then has the Unconscious condition. … The creature remains
+// > Unconscious until it regains any Hit Points or until someone uses an
+// > action to administer first aid to it, which requires a successful
+// > DC 10 Wisdom (Medicine) check.
+//
+// Every test here drives the *declaration* — the override a player types
+// — rather than calling the clamp directly, because the interesting half
+// is that an intent survives a damage pipeline that has forgotten there
+// was an attacker.
+// ---------------------------------------------------------------------
+
+/// A fighter, a goblin on its last legs, and the word that decides
+/// which of the two the fight ends with.
+fn duel_at_deaths_door(hp: u32) -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+        .unwrap();
+    let full = e.actors[&goblin].hitpoints();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .take_damage(full.saturating_sub(hp));
+    (e, fighter, goblin)
+}
+
+/// Swing the fighter's scimitar until the goblin stops being upright,
+/// with or without the word, and report what happened to it.
+fn swing_until_down(e: &mut EncounterInstance, fighter: usize, goblin: usize, pulled: bool) {
+    use crate::engine::action_overrides::ActionOverride;
+    let overrides = pulled.then(|| std::collections::HashSet::from([ActionOverride::Nonlethal]));
+    let weapon = e.actors[&fighter]
+        .find_action("scimitar")
+        .expect("a fighter's scimitar");
+    for _ in 0..40 {
+        if !e.actors[&goblin].is_combat_active() || e.actors[&goblin].hitpoints() == 1 {
+            break;
+        }
+        for x in weapon.side_effects(e, fighter, Some(&vec![goblin]), None, overrides.as_ref()) {
+            x.apply(e);
+        }
+        e.actors.get_mut(&fighter).unwrap().reset_for_new_round();
+    }
+}
+
+/// The word, and what it costs the goblin.
+///
+/// Both halves matter and they are the same fight run twice: without
+/// the declaration the goblin ends at 0 hit points and Dying, and with
+/// it the goblin ends at 1 and merely Unconscious. A rule that only
+/// ever produced the second answer would be a rule that had quietly
+/// turned every blow in the engine into a pulled one.
+#[test]
+fn a_declared_pulled_punch_leaves_the_goblin_alive_at_one_hit_point() {
+    use crate::conditions::Condition;
+
+    let (mut e, fighter, goblin) = duel_at_deaths_door(6);
+    swing_until_down(&mut e, fighter, goblin, false);
+    assert_eq!(
+        e.actors[&goblin].hitpoints(),
+        0,
+        "an ordinary swing puts it on the floor"
+    );
+    assert!(
+        e.actors[&goblin].is_dying() || !e.actors[&goblin].is_combat_active(),
+        "it is down, one way or the other"
+    );
+
+    let (mut e, fighter, goblin) = duel_at_deaths_door(6);
+    swing_until_down(&mut e, fighter, goblin, true);
+    assert_eq!(
+        e.actors[&goblin].hitpoints(),
+        1,
+        "RAW: \"you can instead reduce the creature to 1 Hit Point\""
+    );
+    assert!(!e.actors[&goblin].is_dying(), "and it is not dying");
+    assert!(e.actors[&goblin].has_condition(Condition::Unconscious));
+    assert!(e.actors[&goblin].has_condition(Condition::Prone));
+}
+
+/// A pulled punch does not spend the things a lethal one would have.
+///
+/// RAW's clause fires at the same instant Death Ward's does — *"when
+/// you would reduce a creature to 0 Hit Points"* — and the choice is
+/// the attacker's. A knockout that burned the ward the cleric was
+/// saving would be the engine charging somebody for a blow that was
+/// never going to land.
+#[test]
+fn a_pulled_punch_does_not_burn_the_wards_that_would_have_caught_it() {
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let (mut e, fighter, goblin) = duel_at_deaths_door(5);
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::DeathWarded, ConditionTimer::Rounds(10));
+    swing_until_down(&mut e, fighter, goblin, true);
+    assert_eq!(e.actors[&goblin].hitpoints(), 1);
+    assert!(
+        e.actors[&goblin].has_condition(Condition::DeathWarded),
+        "the ward should still be up — the blow was pulled, not caught"
+    );
+    assert!(e.actors[&goblin].has_condition(Condition::Unconscious));
+}
+
+/// The word is a *melee* word.
+///
+/// RAW says "with a melee attack", and the engine applies the qualifier
+/// at the swing rather than at the declaration — so an archer who says
+/// it gets an arrow that behaves like an arrow. The failure this pins
+/// is the silent one: a bow that accepted the word would end fights
+/// with a row of unconscious enemies nobody meant to spare.
+#[test]
+fn an_arrow_cannot_be_pulled() {
+    use crate::actors::creatures::fighters::ARCANE_ARCHER_FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::engine::action_overrides::ActionOverride;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let archer = e
+        .instantiate_creature(&ARCANE_ARCHER_FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 5), 1, 0)
+        .unwrap();
+    let full = e.actors[&goblin].hitpoints();
+    e.actors.get_mut(&goblin).unwrap().take_damage(full - 2);
+    let bow = e.actors[&archer]
+        .find_action("longbow")
+        .expect("an archer's longbow");
+    let overrides = std::collections::HashSet::from([ActionOverride::Nonlethal]);
+    for _ in 0..40 {
+        if !e.actors[&goblin].is_combat_active() {
+            break;
+        }
+        for x in bow.side_effects(&mut e, archer, Some(&vec![goblin]), None, Some(&overrides)) {
+            x.apply(&mut e);
+        }
+        e.actors.get_mut(&archer).unwrap().reset_for_new_round();
+    }
+    assert_eq!(e.actors[&goblin].hitpoints(), 0, "an arrow is an arrow");
+    assert!(!e.actors[&goblin].has_condition(Condition::Unconscious) || e.actors[&goblin].is_dying());
+}
+
+/// The mark does not outlive the hit that set it.
+///
+/// `pending_subdual` is a field on the *victim's* sheet, written by
+/// every payload and consumed by the one that drops them. The failure
+/// it is shaped to prevent is a goblin that survives a pulled punch,
+/// keeps the mark, and is then knocked out by the wizard's Fire Bolt
+/// three rounds later.
+#[test]
+fn a_pulled_punch_that_lands_short_leaves_no_mark_behind() {
+    use crate::conditions::Condition;
+    use crate::engine::action_overrides::ActionOverride;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    // Enough hit points that one swing cannot finish it.
+    let (mut e, fighter, goblin) = duel_at_deaths_door(60);
+    let before = e.actors[&goblin].hitpoints();
+    let weapon = e.actors[&fighter].find_action("scimitar").unwrap();
+    let overrides = std::collections::HashSet::from([ActionOverride::Nonlethal]);
+    for x in weapon.side_effects(&mut e, fighter, Some(&vec![goblin]), None, Some(&overrides)) {
+        x.apply(&mut e);
+    }
+    assert!(
+        e.actors[&goblin].hitpoints() < before,
+        "the swing should have landed"
+    );
+    // Now something that is not a pulled punch at all.
+    DealDamage {
+        actor_id: goblin,
+        amount: 500,
+        damage_type: DamageType::Fire,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors
+            .get(&goblin)
+            .is_some_and(|g| g.hitpoints() == 1 && g.has_condition(Condition::Unconscious)),
+        "a mark left on the sheet would knock this goblin out instead of killing it"
+    );
+}
+
+/// The other sentence: waking somebody up.
+///
+/// Two things are pinned and the second is the interesting one. First
+/// aid hands back consciousness and *no hit points*, so whoever gets up
+/// gets up on the one point the pulled punch left them — and the check
+/// is a real DC 10, so it can fail.
+#[test]
+fn first_aid_wakes_a_knocked_out_creature_and_heals_nothing() {
+    use crate::actions::default_actions::FIRST_AID;
+    use crate::actors::creatures::acolytes::ACOLYTE_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let (mut e, fighter, goblin) = duel_at_deaths_door(6);
+    swing_until_down(&mut e, fighter, goblin, true);
+    assert!(e.actors[&goblin].has_condition(Condition::Unconscious));
+
+    // An acolyte, who is proficient in Medicine, standing over them.
+    let goblin_at = e.actors[&goblin].location();
+    let medic = e
+        .instantiate_creature(
+            &ACOLYTE_TEMPLATE,
+            Coordinate::new(goblin_at.x, goblin_at.y + 2),
+            1,
+            0,
+        )
+        .unwrap();
+    assert!(
+        ActionExecutionInfo::new(&*FIRST_AID, medic, Some(vec![goblin]), None, None)
+            .validate(&e),
+        "an unconscious creature at 1 HP is exactly what first aid is for"
+    );
+    // A check that can fail is a check worth rolling, so try until it
+    // lands rather than pinning a seed.
+    for _ in 0..40 {
+        if !e.actors[&goblin].has_condition(Condition::Unconscious) {
+            break;
+        }
+        for x in FIRST_AID.side_effects(&mut e, medic, Some(&vec![goblin]), None, None) {
+            x.apply(&mut e);
+        }
+    }
+    assert!(
+        !e.actors[&goblin].has_condition(Condition::Unconscious),
+        "forty tries at a DC 10 check should have landed one"
+    );
+    assert_eq!(
+        e.actors[&goblin].hitpoints(),
+        1,
+        "RAW hands back consciousness and nothing else"
+    );
+    // And it has nothing to offer anybody upright.
+    assert!(
+        !ActionExecutionInfo::new(&*FIRST_AID, medic, Some(vec![goblin]), None, None)
+            .validate(&e)
+    );
+}

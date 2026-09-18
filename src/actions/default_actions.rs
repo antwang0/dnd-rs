@@ -2516,6 +2516,140 @@ impl Action for Sunder {
 
 pub static SUNDER: LazyLock<Sunder> = LazyLock::new(|| Sunder {});
 
+/// **First Aid** — the other half of SRD 5.2's *Knocking Out a
+/// Creature*.
+///
+/// > The creature remains Unconscious until it regains any Hit Points
+/// > or until someone uses an action to administer first aid to it,
+/// > which requires a successful DC 10 Wisdom (Medicine) check.
+///
+/// The knockout is a choice somebody made about a creature they could
+/// have killed, and this is the sentence that makes it a *choice* — a
+/// captive who cannot be woken is a corpse that takes up a tile. It
+/// also gives the party's medic something to do with a turn on the
+/// round after a fight has been decided, which nothing else in the
+/// engine does.
+///
+/// **Not a heal**, which is the difference from every other lane that
+/// touches an Unconscious creature. RAW hands back consciousness and no
+/// hit points: whoever is woken this way stands up on the one hit point
+/// the pulled punch left them, which is a real decision for whoever is
+/// waking them.
+///
+/// **Not `stabilize` either.** The engine's `ActorInstance::stabilize`
+/// is the *Dying* lane's — a creature at 0 hit points that stops
+/// rolling death saves — and a knocked-out creature is neither at 0 nor
+/// dying. Two sentences in the book, two lanes here.
+///
+/// `WIS` and `Skill::Medicine`, which is RAW and is why the cleric's
+/// acolyte and the priest carry the proficiency: a chassis that trained
+/// for this rolls it better.
+pub struct FirstAid {}
+
+impl FirstAid {
+    /// RAW's DC, flat. Nothing scales it and nobody sets it — the same
+    /// shape as the slippery-ice save, and named here for the same
+    /// reason: a number quoted in a docstring and compared against in a
+    /// body is a number that drifts.
+    pub const DC: i32 = 10;
+}
+
+impl Action for FirstAid {
+    fn name(&self) -> &str {
+        "first aid"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["aid", "wake", "revive"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SingleActor
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        crate::actions::action_template::action_only()
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(target_id) = first_target_id(target_ids) else {
+            return false;
+        };
+        if target_id == caster_id {
+            return false;
+        }
+        let Some(target) = encounter.actors.get(&target_id) else {
+            return false;
+        };
+        // Unconscious *and still standing on its own hit points*, which
+        // is the state a pulled punch leaves and the state RAW's
+        // sentence is about. A creature at 0 is Dying, and what that one
+        // wants is a heal or a stabilize — two different sentences, two
+        // different lanes.
+        target.has_condition(crate::conditions::Condition::Unconscious)
+            && target.hitpoints() > 0
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        use crate::engine::types::{AbilityScoreType, Skill};
+        let Some(target_id) = first_target_id(target_ids) else {
+            return Vec::new();
+        };
+        let total = encounter.roll_ability_check(
+            caster_id,
+            AbilityScoreType::Wisdom,
+            Some(Skill::Medicine),
+        );
+        let (medic, patient) = (encounter.actor_name(caster_id), encounter.actor_name(target_id));
+        if total < Self::DC {
+            encounter.log(format!(
+                "  first aid: {} cannot rouse {} ({} vs DC {}).",
+                medic, patient, total, Self::DC
+            ));
+            return Vec::new();
+        }
+        encounter.log(format!(
+            "  first aid: {} brings {} round ({} vs DC {}).",
+            medic, patient, total, Self::DC
+        ));
+        // Consciousness and nothing else — RAW hands back no hit points.
+        // The Prone that came with the knockout stays, because standing
+        // up is the patient's own action and the book never says
+        // otherwise.
+        vec![Box::new(crate::engine::side_effects::RemoveCondition {
+            actor_id: target_id,
+            condition: crate::conditions::Condition::Unconscious,
+        })]
+    }
+}
+
+pub static FIRST_AID: LazyLock<FirstAid> = LazyLock::new(|| FirstAid {});
+
 pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> = LazyLock::new(
     || {
         vec![
@@ -2540,6 +2674,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*WIPE_ACID,
             &*DROP_AND_ROLL,
             &*SUNDER,
+            &*FIRST_AID,
             &*BURROW,
             &*SURFACE,
         ]

@@ -277,6 +277,8 @@ fn legendary_attack(
             // Every legendary option on the lists is a blow. None of
             // them is one of RAW's "instead of dealing damage" attacks.
             deals_no_damage: false,
+            // Nothing with a legendary action list is taking prisoners.
+            nonlethal: false,
         },
     );
     let landed = !effects.is_empty();

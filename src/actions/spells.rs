@@ -637,6 +637,9 @@ fn spell_attack_outcome_exploding(
                 damage_type,
             },
             is_crit,
+            // A spell attack is not a melee weapon attack, and RAW's
+            // knockout clause names one. See `AttackParams::nonlethal`.
+            false,
         )];
     // Caster-side on-hit riders whose RAW trigger is "hit a creature
     // with an attack" rather than "with a weapon attack". The shared

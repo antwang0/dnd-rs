@@ -1272,6 +1272,7 @@ impl ApplicableSideEffect for DealDamage {
             return;
         }
 
+        let pulled_punch = ei.in_subduing_blow();
         let Some(actor) = ei.get_actor(self.actor_id) else {
             return;
         };
@@ -1283,6 +1284,13 @@ impl ApplicableSideEffect for DealDamage {
         // damage" applies to whatever the bonded ally actually absorbs.
         let warding_partner = actor.linked_by(Condition::WardingBonded);
         let ward_before = actor.arcane_ward();
+        // SRD 5.2 **Knocking Out a Creature**, carried the last few
+        // inches. The guard is the encounter's and the clause fires
+        // inside `take_damage`, which has never seen an encounter — see
+        // `ActorInstance::pending_subdual`. Written on *every* payload,
+        // pulled or not, so a mark can never outlive the hit that set
+        // it.
+        actor.set_pending_subdual(pulled_punch);
         let (outcome, landed) = actor.take_typed_damage(raw_amount, self.damage_type);
         // Regenerator suppression: flag the actor if this damage type is
         // on their suppressor list (troll vs acid/fire). The flag is
@@ -1680,19 +1688,90 @@ impl ApplicableSideEffect for CriticalDamage {
     }
 }
 
+/// A swing whose thrower is **pulling it** — SRD 5.2's *Knocking Out a
+/// Creature*, wrapped around whatever the swing's payload turned out to
+/// be.
+///
+/// `CriticalDamage`'s sibling in every respect, including why it is a
+/// newtype and not a field: the bit belongs to the *attacker* and is
+/// needed at the far end of a damage pipeline that has forgotten there
+/// was one. See `EncounterInstance::subduing_depth`.
+///
+/// It wraps a `Box` rather than a `DealDamage` because a pulled punch
+/// can still crit, so the thing inside it is sometimes a
+/// `CriticalDamage` already — RAW puts no restriction on the two, and
+/// the arithmetic is the same either way: the doubled dice still take
+/// the creature to the floor, and the clause still catches it at one
+/// hit point.
+///
+/// **Every other trait method forwards**, for the reason
+/// `CriticalDamage`'s does: a pulled punch is still a damage payload
+/// for the nonmagical-resistance scaler and still everything else it
+/// was, and a wrapper that quietly opted its swing out of those would
+/// be a worse bug than the one it implements.
+pub struct SubduingDamage(pub Box<dyn ApplicableSideEffect>);
+
+impl ApplicableSideEffect for SubduingDamage {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.within_subduing_blow(|e| self.0.apply(e));
+    }
+
+    fn extend_duration(&mut self) -> bool {
+        self.0.extend_duration()
+    }
+
+    fn remap_damage_type(&mut self, new_type: DamageType) -> bool {
+        self.0.remap_damage_type(new_type)
+    }
+
+    fn elemental_damage_target(&self) -> Option<(usize, DamageType)> {
+        self.0.elemental_damage_target()
+    }
+
+    fn damage_payload(&self) -> Option<(usize, DamageType, u32)> {
+        self.0.damage_payload()
+    }
+
+    fn set_damage_amount(&mut self, amount: u32) -> bool {
+        self.0.set_damage_amount(amount)
+    }
+
+    fn heal_payload(&self) -> Option<(usize, u32)> {
+        self.0.heal_payload()
+    }
+
+    fn concentration_payload(&self) -> Option<ConcentrationPayload<'_>> {
+        self.0.concentration_payload()
+    }
+
+    fn absorb_concentration_payload(&mut self, extra: &ConcentrationPayload<'_>) -> bool {
+        self.0.absorb_concentration_payload(extra)
+    }
+}
+
 /// Wrap a swing's damage payload in [`CriticalDamage`] when the swing
-/// crit, and leave it alone when it did not.
+/// crit and in [`SubduingDamage`] when its thrower is pulling it, and
+/// leave it alone when neither.
 ///
 /// The one-line form both attack resolvers use, so neither has to
-/// spell out the conditional box.
+/// spell out the conditional boxes. The two nest in this order because
+/// the crit is a fact about the *roll* and the pulled punch is a fact
+/// about the *intent*: the doubled dice are rolled either way, and what
+/// the intent decides is only what happens when they land.
 pub fn damage_from_swing(
     payload: DealDamage,
     is_crit: bool,
+    pulled: bool,
 ) -> Box<dyn ApplicableSideEffect> {
-    if is_crit {
+    let inner: Box<dyn ApplicableSideEffect> = if is_crit {
         Box::new(CriticalDamage(payload))
     } else {
         Box::new(payload)
+    };
+    if pulled {
+        Box::new(SubduingDamage(inner))
+    } else {
+        inner
     }
 }
 

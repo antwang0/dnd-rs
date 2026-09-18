@@ -267,7 +267,20 @@ impl Prompt {
 
         let rest: Vec<&str> = tokens[consumed..].to_vec();
         let mut at = 0usize;
+        let mut nonlethal = false;
         while at < rest.len() {
+            // SRD 5.2 **Knocking Out a Creature** — `sword goblin ko`.
+            // A bare word rather than a `key:value` like the cast level
+            // beside it, because it carries no value: the whole of the
+            // clause is the decision to make it. Refused on nothing, so
+            // a player who says it of a bow gets an arrow that behaves
+            // like an arrow — see `AttackParams::nonlethal` for why the
+            // melee qualifier is enforced at the swing rather than here.
+            if matches!(rest[at], "ko" | "nonlethal" | "subdue") {
+                nonlethal = true;
+                at += 1;
+                continue;
+            }
             if let Some(parsed) = Self::parse_cast_level(rest[at], base_level.unwrap_or(0)) {
                 let Ok(level) = parsed else {
                     return Err(ParseError::with_input(
@@ -322,7 +335,21 @@ impl Prompt {
             } else {
                 Some(target_locations)
             },
-            cast_level.map(|lvl| HashSet::from([ActionOverride::CastLevel(lvl)])),
+            {
+                // One set out of the two independent tokens, because
+                // `ActionExecutionInfo` takes one — and `None` rather
+                // than an empty set when neither was typed, which is
+                // what every other caller passes and what the shape
+                // gate on `TargetingSchema::NoArgs` is written against.
+                let mut overrides: HashSet<ActionOverride> = HashSet::new();
+                if let Some(lvl) = cast_level {
+                    overrides.insert(ActionOverride::CastLevel(lvl));
+                }
+                if nonlethal {
+                    overrides.insert(ActionOverride::Nonlethal);
+                }
+                (!overrides.is_empty()).then_some(overrides)
+            },
         );
 
         if !aei.validate(encounter_instance) {
@@ -954,8 +981,59 @@ mod tests {
         assert!(plain.overrides().is_none());
     }
 
+    /// A player can say they are taking the goblin alive.
+    ///
+    /// SRD 5.2's *Knocking Out a Creature* is a decision, and until this
+    /// syntax there was no way for a player to make one:
+    /// `ActionOverride::Nonlethal` would have been an enum variant
+    /// nothing could produce, and the clause in `take_damage` a branch
+    /// nothing could reach. Three spellings because the word people
+    /// reach for differs — "ko" is what a table says.
+    #[test]
+    fn a_player_can_say_they_are_taking_it_alive() {
+        use super::Prompt;
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::engine::action_overrides::ActionOverride;
+        use crate::engine::types::Coordinate;
+
+        let mut e = ei();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 5), 1, 0)
+            .unwrap();
+        let prompt = Prompt::new(fighter, e.actors[&fighter].available_actions());
+        let target = format!("id:{goblin}");
+
+        for word in ["ko", "nonlethal", "subdue"] {
+            let aei = prompt
+                .process_input(&format!("scimitar {target} {word}"), &e)
+                .unwrap_or_else(|err| panic!("{word}: {}", err.message()));
+            assert!(
+                aei.overrides()
+                    .is_some_and(|o| o.contains(&ActionOverride::Nonlethal)),
+                "{word} should reach the swing"
+            );
+        }
+
+        // Either side of the target, like the cast level beside it.
+        assert!(
+            prompt
+                .process_input(&format!("scimitar ko {target}"), &e)
+                .is_ok()
+        );
+        // And an ordinary swing carries no override at all, so nothing
+        // in the engine has to ask.
+        let plain = prompt
+            .process_input(&format!("scimitar {target}"), &e)
+            .unwrap();
+        assert!(plain.overrides().is_none());
+    }
+
     /// The three ways of asking wrongly, each refused with its own
-    /// reason rather than falling through to "could not parse argument".
+    /// reason rather than falling through to "could not parse argument".""
     #[test]
     fn a_malformed_cast_level_is_refused_on_its_own_terms() {
         use super::Prompt;

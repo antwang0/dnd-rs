@@ -173,6 +173,21 @@ pub struct AttackParams<'a> {
     /// attack that forgets to say so deals its damage, which is what
     /// every attack in the game does.
     pub deals_no_damage: bool,
+    /// SRD 5.2 **Knocking Out a Creature**: *"When you would reduce a
+    /// creature to 0 Hit Points with a melee attack, you can instead
+    /// reduce the creature to 1 Hit Point."*
+    ///
+    /// The swinger's declared intent, carried from the picker through
+    /// `ActionOverride::Nonlethal`. `false` for every attack that does
+    /// not say otherwise, which is every attack a monster makes and
+    /// every attack a player makes without asking for it.
+    ///
+    /// **Read only on a melee swing**, which is RAW's own qualifier and
+    /// is enforced at the one site that wraps the payload rather than
+    /// here — a declaration is a declaration, and an archer who typed
+    /// the word should see the arrow behave like an arrow rather than
+    /// have the word silently dropped upstream.
+    pub nonlethal: bool,
 }
 
 impl AttackParams<'_> {
@@ -217,6 +232,7 @@ impl AttackParams<'_> {
         versatile: false,
         heavy: false,
         deals_no_damage: false,
+        nonlethal: false,
     };
 
     /// SRD 5.2 **Great Weapon Fighting**'s weapon clause — *"the weapon
@@ -4084,6 +4100,11 @@ pub fn resolve_attack_outcome_with_rider(
                 damage_type: p.damage_type,
             },
             is_crit,
+            // RAW's *"with a melee attack"*. The qualifier is applied
+            // here rather than at the declaration for the reason
+            // `AttackParams::nonlethal` gives: a bow that quietly
+            // accepted the word would be a bow that lied about it.
+            p.nonlethal && p.is_melee,
         )];
     if encounter.is_hex_target(p.caster_id, p.target_id) {
         push_die_rider(

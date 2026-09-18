@@ -1150,6 +1150,9 @@ fn simple_weapon_swing(
     caster_id: usize,
     target_ids: Option<&Vec<usize>>,
     weapon: &SimpleWeapon,
+    // SRD 5.2's *Knocking Out a Creature*, declared by the swinger —
+    // see `AttackParams::nonlethal`.
+    pulled: bool,
 ) -> Vec<Box<dyn ApplicableSideEffect>> {
     let Some(target_id) = first_target_id(target_ids) else {
         return Vec::new();
@@ -1224,6 +1227,7 @@ fn simple_weapon_swing(
             // deliberately off its own column — see
             // `AttackParams::heavy`.
             heavy: weapon.is_heavy,
+            nonlethal: pulled,
             ..AttackParams::DEFAULTS
         },
         // The reach the rider needs is Cleave's "within your reach",
@@ -2590,15 +2594,21 @@ impl Action for SimpleWeapon {
         caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
-        _overrides: Option<&HashSet<ActionOverride>>,
+        overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        // SRD 5.2 **Knocking Out a Creature** — the swinger's declared
+        // intent, read once and carried into every swing this Action
+        // chains. Both swings of an Extra Attack are the same decision:
+        // a fighter who said they were taking the goblin alive did not
+        // change their mind between the first blow and the second.
+        let pulled = crate::engine::action_overrides::pulls_the_punch(overrides);
         // Folds the "one swing + optional Extra-Attack second swing"
         // chain into a single closure so the eight `self.*` arguments
         // don't have to be enumerated twice. The Extra Attack rider
         // only fires on Action-cost swings: bonus-action bow shots and
         // reaction strikes don't get the second hit per RAW.
         let swing = |e: &mut EncounterInstance| {
-            simple_weapon_swing(e, caster_id, target_ids, self)
+            simple_weapon_swing(e, caster_id, target_ids, self, pulled)
         };
         let mut effects = swing(encounter);
         // Extra Attack chain — only on Action-cost swings (bonus-action

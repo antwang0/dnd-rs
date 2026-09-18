@@ -2243,6 +2243,25 @@ pub struct EncounterInstance {
     /// crit, which is right — it is the same swing landing on somebody
     /// else.
     critical_depth: u32,
+    /// How deep inside a **pulled punch** the damage pipeline currently
+    /// is — SRD 5.2's *Knocking Out a Creature*: *"When you would reduce
+    /// a creature to 0 Hit Points with a melee attack, you can instead
+    /// reduce the creature to 1 Hit Point."*
+    ///
+    /// Here for exactly the reason `critical_depth` above it is here,
+    /// and it is the second rule to want the same thing: the choice
+    /// belongs to the *attacker* and the consequence lands in
+    /// `ActorInstance::take_damage`, with three hundred construction
+    /// sites and a whole damage pipeline in between. A depth for the
+    /// same reason too — `DealDamage::apply` re-issues itself at a new
+    /// target when a paladin or a rider takes the blow, and a pulled
+    /// punch stays pulled when somebody else steps into it.
+    ///
+    /// Read once per payload, by `DealDamage::apply`, which stamps it
+    /// onto the creature about to be hit — see
+    /// `ActorInstance::pending_subdual` for why the last few inches of
+    /// this need a field on the sheet rather than one on the board.
+    subduing_depth: u32,
     /// The seed both RNGs were built from — the one passed in, or the
     /// one `empty` drew when none was. Read-only after construction and
     /// surfaced by `seed()`; see `empty` for why an unseeded encounter
@@ -14263,6 +14282,27 @@ impl EncounterInstance {
     /// inside that call, not from the attack resolver that queued the
     /// effect, so a guard set at the attack site would have come down
     /// long before it mattered.
+    /// Whether the damage instance currently resolving is a punch its
+    /// thrower is pulling — SRD 5.2's *Knocking Out a Creature*. The
+    /// read side of `within_subduing_blow`; see `subduing_depth`.
+    pub(crate) fn in_subduing_blow(&self) -> bool {
+        self.subduing_depth > 0
+    }
+
+    /// Run `body` with the pulled-punch guard up.
+    ///
+    /// The scope is exactly one `DealDamage::apply`, for the reason
+    /// `within_critical_hit` gives at more length: the clause fires
+    /// from inside that call, at the moment the hit points would have
+    /// reached zero, and a guard set at the attack site would have come
+    /// down long before.
+    pub fn within_subduing_blow<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
+        self.subduing_depth += 1;
+        let out = body(self);
+        self.subduing_depth -= 1;
+        out
+    }
+
     pub fn within_critical_hit<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
         self.critical_depth += 1;
         let out = body(self);
@@ -15535,6 +15575,7 @@ impl EncounterInstance {
             seed,
             redirect_depth: 0,
             critical_depth: 0,
+            subduing_depth: 0,
             initialized: false,
             surprise_resolved: false,
             width: terrain_params.width,

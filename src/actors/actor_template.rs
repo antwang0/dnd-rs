@@ -6025,6 +6025,23 @@ pub struct ActorInstance {
     /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
     /// long rest along with the feature pool.
     indomitable_pending: bool,
+    /// SRD 5.2 **Knocking Out a Creature** — the one-blow marker that
+    /// says the punch currently landing is being pulled.
+    ///
+    /// Stamped by `DealDamage::apply` from `EncounterInstance::
+    /// in_subduing_blow` in the statement before the damage lands, and
+    /// consumed by `take_damage` at the instant the hit points would
+    /// have reached zero. Two fields for one rule, on two different
+    /// objects, and each is doing a job the other cannot: the guard on
+    /// the encounter is what carries the *attacker's* choice through a
+    /// damage pipeline that has forgotten there was an attacker, and
+    /// this is what carries it the last few inches into a method that
+    /// has never seen the encounter.
+    ///
+    /// Taken with `mem::take` rather than read, because a blow that
+    /// does not drop anybody must not leave the mark on the sheet for
+    /// the next one to find — the rule is about *this* hit.
+    pending_subdual: bool,
     /// 5e Legendary Resistance — remaining auto-pass charges on failed
     /// saves this long rest. Refreshed to `legendary_resistance_max` on
     /// long rest. See `EncounterInstance::roll_save` for the trigger site.
@@ -6454,6 +6471,7 @@ impl ActorInstance {
             breath_rounds: 0,
             suffocation_exhaustion: 0,
             indomitable_pending: false,
+            pending_subdual: false,
             legendary_resistance_remaining: ct.legendary_resistances,
             legendary_resistance_max: ct.legendary_resistances,
             has_evasion: ct.has_evasion,
@@ -7730,6 +7748,15 @@ impl ActorInstance {
                 entry.2 = false;
             }
         }
+    }
+
+    /// Mark (or clear) the blow about to land as one its thrower is
+    /// pulling — SRD 5.2's *Knocking Out a Creature*. See
+    /// [`Self::pending_subdual`]; `DealDamage::apply` is the only
+    /// caller, and it writes on every payload rather than only on the
+    /// pulled ones, so a mark can never outlive the hit that set it.
+    pub fn set_pending_subdual(&mut self, pulled: bool) {
+        self.pending_subdual = pulled;
     }
 
     /// Raw recharge entries for inspection by the encounter engine.
@@ -13550,6 +13577,29 @@ impl ActorInstance {
                 let hp_before = self.hitpoints;
                 self.hitpoints = self.hitpoints.saturating_sub(after_temp);
                 if self.hitpoints == 0 {
+                    // SRD 5.2 **Knocking Out a Creature**: *"When you
+                    // would reduce a creature to 0 Hit Points with a
+                    // melee attack, you can instead reduce the creature
+                    // to 1 Hit Point. The creature then has the
+                    // Unconscious condition."*
+                    //
+                    // First of everything in this branch, and ahead of
+                    // the two clauses that would otherwise fire for the
+                    // holder's benefit, because it is the only one whose
+                    // trigger the *attacker* controls: a blow somebody
+                    // is deliberately pulling should not burn a Death
+                    // Ward the caster was saving, spend a Relentless
+                    // Endurance, or pulp a creature under the massive
+                    // damage rule. See `Self::pending_subdual`.
+                    if std::mem::take(&mut self.pending_subdual) {
+                        self.hitpoints = 1;
+                        self.add_condition(
+                            Condition::Unconscious,
+                            ConditionTimer::Permanent,
+                        );
+                        self.add_condition(Condition::Prone, ConditionTimer::Permanent);
+                        return DamageOutcome::Reduced;
+                    }
                     // 5e Massive Damage (PHB p.197): if remaining damage
                     // after hitting 0 HP equals or exceeds the creature's
                     // max HP, it dies instantly — no death saves.
