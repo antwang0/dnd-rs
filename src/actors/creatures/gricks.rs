@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{GRICK_TENTACLES_WEAPON, GRICK_BEAK};
+use crate::actions::monster_attacks::{GRICK_BEAK, GRICK_MULTI, GRICK_TENTACLES_WEAPON};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -12,6 +12,7 @@ use std::sync::LazyLock;
 /// (12d8). Darkvision 60ft.
 pub static GRICK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*GRICK_MULTI);
     actions.push(&GRICK_TENTACLES_WEAPON);
     actions.push(&*GRICK_BEAK);
     CreatureTemplate {

@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{TRICERATOPS_GORE, TRICERATOPS_STOMP};
+use crate::actions::monster_attacks::{TRICERATOPS_GORE, TRICERATOPS_MULTI, TRICERATOPS_STOMP};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size};
 use std::sync::LazyLock;
@@ -13,6 +13,7 @@ use std::sync::LazyLock;
 /// melee pool — the dinosaur option without breath or rider effects.
 pub static TRICERATOPS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*TRICERATOPS_MULTI);
     actions.push(&TRICERATOPS_GORE);
     actions.push(&TRICERATOPS_STOMP);
     CreatureTemplate {

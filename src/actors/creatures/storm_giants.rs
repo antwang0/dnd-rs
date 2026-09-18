@@ -1,7 +1,8 @@
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
-    STORM_GIANT_GREATSWORD, STORM_GIANT_LIGHTNING_STRIKE, STORM_GIANT_ROCK,
+    STORM_GIANT_GREATSWORD, STORM_GIANT_LIGHTNING_STRIKE, STORM_GIANT_MELEE_MULTI,
+    STORM_GIANT_ROCK, STORM_GIANT_ROCK_MULTI,
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
@@ -22,6 +23,8 @@ use std::sync::LazyLock;
 /// kin who don't smash first and ask questions never.
 pub static STORM_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*STORM_GIANT_MELEE_MULTI);
+    actions.push(&*STORM_GIANT_ROCK_MULTI);
     actions.push(&STORM_GIANT_GREATSWORD);
     actions.push(&STORM_GIANT_ROCK);
     actions.push(&STORM_GIANT_LIGHTNING_STRIKE);

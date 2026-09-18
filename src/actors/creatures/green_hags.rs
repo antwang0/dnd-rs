@@ -1,6 +1,6 @@
 use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GREEN_HAG_CLAWS;
+use crate::actions::monster_attacks::{GREEN_HAG_CLAWS, GREEN_HAG_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 /// that punishes spell-heavy parties.
 pub static GREEN_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*GREEN_HAG_MULTI);
     actions.push(&GREEN_HAG_CLAWS);
     CreatureTemplate {
         name: "Green Hag",

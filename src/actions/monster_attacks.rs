@@ -6158,6 +6158,10 @@ impl Action for Multiattack {
         true
     }
 
+    fn printed_attack_count(&self) -> Option<u32> {
+        Some(self.count)
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["multi", "ma"]
     }
@@ -6497,6 +6501,12 @@ impl Action for CompoundAttack {
         true
     }
 
+    /// The sum over the parts — one routine of three swings, not three
+    /// routines. The same total `side_effects` budgets against.
+    fn printed_attack_count(&self) -> Option<u32> {
+        Some(self.parts.iter().map(|(_, n)| *n).sum())
+    }
+
     fn aliases(&self) -> Vec<&str> {
         vec!["multi", "ma"]
     }
@@ -6729,22 +6739,27 @@ pub static GOBLIN_BOSS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiatta
 /// Bandit Captain multiattack — RAW: "The captain makes three melee
 /// attacks: two with its scimitar and one with its dagger."
 ///
-/// It used to be three scimitars, on the reasoning that the captain is
-/// "a tougher version of the goblin boss's pattern". Three swings is
-/// the right count and one of them was the wrong weapon, which is not
-/// a rounding error where it lands: the dagger is *piercing* and the
-/// scimitar is *slashing*, and the bestiary is full of creatures that
-/// resist one and not the other. A skeleton takes half from every
-/// slashing swing and full from a piercing one — so against the
-/// captain's own routine the engine was quietly deleting a third of
-/// its damage against some targets and inventing it against others.
+/// SRD 5.2: *"The bandit makes two attacks, using Scimitar and Pistol
+/// in any combination."* Two swings, and the book's offhand is a
+/// firearm rather than a blade.
 ///
-/// A `CompoundAttack` rather than a `Multiattack` for exactly that
-/// reason: the two are the same shape until the swings differ, and
-/// these differ. Same pairing the bullywug and the merrow already use.
-pub static BANDIT_CAPTAIN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+/// It has been three all along, on two different readings. First three
+/// scimitars, on the reasoning that the captain is "a tougher version
+/// of the goblin boss's pattern"; then two scimitars and a dagger, on
+/// the 2014 stat block's *"two with its scimitar and one with its
+/// dagger"*. 5.2 prints neither: the routine is two, and the dagger is
+/// gone from the sheet entirely.
+///
+/// Back to a plain `Multiattack`, because there is nothing left to
+/// compound — the engine has no pistol, so the captain's second
+/// printed weapon has no attack to be, and *"in any combination"*
+/// collapses to two scimitars. The `HEAVY_CROSSBOW` the template also
+/// pushes is the stand-in for the ranged half, and stays a single shot
+/// of its own.
+pub static BANDIT_CAPTAIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "scimitar flurry",
-    parts: vec![(&SCIMITAR, 2), (&DAGGER, 1)],
+    sub_attack: &SCIMITAR,
+    count: 2,
 });
 
 /// Thug multiattack — 2 mace swings per Action (RAW: "The thug makes
@@ -9933,16 +9948,48 @@ pub static PIT_FIEND_CLAW: SimpleWeapon = SimpleWeapon::reach_melee(
     2,
 );
 
-/// Pit Fiend Multiattack — Action: 1 bite + 2 devil-claw swings,
-/// expressed as a single heterogeneous CompoundAttack so the boss's
-/// signature mixed-limb burst lands in one action pick (rather than
-/// the AI alternating between separate bite / claw multis). RAW
-/// gives the pit fiend four attacks; we trim to three to keep the
-/// per-turn ceiling tense rather than TPK-machine against level-3
-/// PCs.
+/// **Pit Fiend Fiery Mace** — SRD 5.2: *"Melee Attack Roll: +14, reach
+/// 10 ft. Hit: 22 (4d6 + 8) Force damage plus 21 (6d6) Fire damage."*
+///
+/// The fourth attack in the pit fiend's routine, and the one the engine
+/// had no swing for. Force plus fire is the hardest damage pairing in
+/// the bestiary to answer: nothing in SRD 5.2 resists Force, and the
+/// things that resist Fire are mostly the pit fiend's own kind.
+pub static PIT_FIEND_MACE: WeaponWithRider = WeaponWithRider::reach_melee(
+    "fiery mace",
+    &["pf-mace", "fiery-mace"],
+    AbilityScoreType::Strength,
+    Dice::new(4, 6),
+    DamageType::Force,
+    2,
+    Dice::new(6, 6),
+    DamageType::Fire,
+    "hellfire",
+);
+
+/// Pit Fiend Multiattack — SRD 5.2: *"The pit fiend makes one Bite
+/// attack, two Devilish Claw attacks, and one Fiery Mace attack."*
+///
+/// Expressed as a single heterogeneous `CompoundAttack` so the boss's
+/// signature mixed-limb burst lands in one action pick, rather than the
+/// AI alternating between separate bite / claw / mace multis.
+///
+/// **Four swings, not three.** The routine shipped trimmed, with a
+/// comment saying so: *"RAW gives the pit fiend four attacks; we trim
+/// to three to keep the per-turn ceiling tense rather than TPK-machine
+/// against level-3 PCs."* That is a balance argument about an encounter
+/// nobody should be running — the pit fiend is CR 20 — and the cost of
+/// it was the whole Fiery Mace, an attack with damage types no other
+/// swing in the bestiary pairs. The tuning knob for "too hard" is which
+/// creature the generator puts on the board, not how much of its stat
+/// block it is allowed to use.
 pub static PIT_FIEND_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
     display_name: "pit fiend multiattack",
-    parts: vec![(&PIT_FIEND_BITE, 1), (&PIT_FIEND_CLAW, 2)],
+    parts: vec![
+        (&PIT_FIEND_BITE, 1),
+        (&PIT_FIEND_CLAW, 2),
+        (&PIT_FIEND_MACE, 1),
+    ],
 });
 
 
@@ -12244,12 +12291,18 @@ pub static VROCK_BEAK: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Piercing,
 );
 
-/// Vrock Multiattack — 2 talons + 1 beak per Action via `CompoundAttack`.
-/// The vrock's standard volley: three swings at reach 1 against one
-/// target. Mid-CR damage envelope (CR 6).
-pub static VROCK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+/// Vrock Multiattack — SRD 5.2: *"The vrock makes two Shred attacks."*
+///
+/// Two, and one attack rather than two. The routine used to be a
+/// `CompoundAttack` of two talons and a beak — the 2014 vrock, which
+/// printed both limbs and three swings. 5.2 folds them into one Shred
+/// line and prints two of it, so the wrapper is a plain doubling of the
+/// talons; the beak stays a declared action of its own, which is what
+/// the vrock template already pushes it as.
+pub static VROCK_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "vrock multiattack",
-    parts: vec![(&VROCK_TALONS, 2), (&VROCK_BEAK, 1)],
+    sub_attack: &VROCK_TALONS,
+    count: 2,
 });
 
 /// Vrock Stunning Screech — action that emits a piercing scream. Every
@@ -12372,14 +12425,17 @@ pub static SHAMBLING_MOUND_SLAM: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
-/// Shambling Mound multiattack — 2 slams per Action via the standard
-/// Multiattack wrapper. Single-target heavy melee burst with no
-/// engulf rider; the engulf attack is its own action lane (a separate
-/// pick the mound can take when a grappled victim is the goal).
+/// Shambling Mound multiattack — SRD 5.2: *"The shambling mound makes
+/// three Charged Tendril attacks."* Three, not two.
+///
+/// Single-target heavy melee burst with no engulf rider; the engulf
+/// attack is its own action lane, which is also how the book prints it
+/// — *"It can replace one attack with a use of Engulf"* is a
+/// substitution the picker makes by choosing the other action.
 pub static SHAMBLING_MOUND_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "shambling mound multiattack",
     sub_attack: &SHAMBLING_MOUND_SLAM,
-    count: 2,
+    count: 3,
 });
 
 /// Shambling Mound engulf — a special melee attack that wraps the
@@ -16307,15 +16363,17 @@ pub static RAKSHASA_CLAW: WeaponWithRider = WeaponWithRider::melee(
     "rakshasa claw",
 );
 
-/// Rakshasa Multiattack — 2 claws per Action. Vanilla single-sub-attack
-/// shape (same as Doppelganger Multi / Zombie Multislam); each claw rolls
-/// its core slashing hit plus the necrotic rider independently, so a single
-/// multi-action against a stationary target can land up to two slashing +
-/// two necrotic packets.
+/// Rakshasa Multiattack — SRD 5.2: *"The rakshasa makes three Cursed
+/// Touch attacks."* Three, not the 2014 block's two.
+///
+/// Vanilla single-sub-attack shape (same as Doppelganger Multi / Zombie
+/// Multislam); each claw rolls its core slashing hit plus the necrotic
+/// rider independently, so one routine against a stationary target can
+/// land three slashing and three necrotic packets.
 pub static RAKSHASA_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "rakshasa multiattack",
     sub_attack: &RAKSHASA_CLAW,
-    count: 2,
+    count: 3,
 });
 
 // ─── Hook Horror ─────────────────────────────────────────────────────
@@ -19244,15 +19302,18 @@ pub static EFREETI_SCIMITAR: WeaponWithRider = WeaponWithRider::melee(
     "burning blade",
 );
 
-/// Efreeti Multiattack — 2 scimitar swings per Action via the homogeneous
-/// `Multiattack` chassis. Fewer swings than the djinni's triple, but each
-/// swing carries the 2d6 fire rider — ~26 average per-Action damage
-/// (clean 2-hit) before factoring in the fire rider, which crushes any
-/// non-fire-resistant target.
+/// Efreeti Multiattack — SRD 5.2: *"The efreeti makes three attacks,
+/// using Heated Blade or Hurl Flame in any combination."*
+///
+/// Three, not the two it used to be; the old docstring called it "fewer
+/// swings than the djinni's triple", and the book gives both genies the
+/// same count. Each swing carries the 2d6 fire rider, so the correction
+/// is worth about thirteen average damage a turn against anything that
+/// does not resist fire.
 pub static EFREETI_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "efreeti multiattack",
     sub_attack: &EFREETI_SCIMITAR,
-    count: 2,
+    count: 3,
 });
 
 /// Efreeti Hurl Flame — ranged spell-attack-style fire bolt at 120 ft range
@@ -19866,13 +19927,17 @@ pub static INVISIBLE_STALKER_SLAM: SimpleWeapon = SimpleWeapon::melee(
     DamageType::Bludgeoning,
 );
 
-/// Invisible Stalker Multiattack — 2 slams per Action. Mirrors the air
-/// elemental wrapper exactly; the stalker's per-turn output is two
-/// invisible slams to whichever target it's been bound to hunt down.
+/// Invisible Stalker Multiattack — SRD 5.2: *"The stalker makes three
+/// Wind Swipe attacks."*
+///
+/// Three rather than the air elemental's two. The old wrapper "mirrored
+/// the air elemental exactly", which is where the wrong count came
+/// from: the two creatures are the same shape and the book does not
+/// give them the same routine.
 pub static INVISIBLE_STALKER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "invisible stalker multiattack",
     sub_attack: &INVISIBLE_STALKER_SLAM,
-    count: 2,
+    count: 3,
 });
 
 // ─── Mammoth ─────────────────────────────────────────────────────────
@@ -21676,12 +21741,23 @@ pub static ASSASSIN_LIGHT_CROSSBOW: WeaponWithSaveDamage = WeaponWithSaveDamage:
 )
 .loading();
 
-/// Assassin Multiattack — 2 shortswords per Action. RAW: "The assassin
-/// makes two shortsword attacks."
+/// Assassin Multiattack — SRD 5.2: *"The assassin makes three attacks,
+/// using Shortsword or Light Crossbow in any combination."*
+///
+/// Three, not the two it used to be — the 2014 assassin's count, and
+/// the docstring quoted it.
+///
+/// Only the melee lane gets a wrapper, where the scout and the giants
+/// get two. The crossbow half cannot have one: `ASSASSIN_LIGHT_CROSSBOW`
+/// is `.loading()`, and RAW's Loading property is *"you can fire only
+/// one piece of ammunition from it when you use an action"* — a
+/// three-shot routine would be the one thing the property forbids. "In
+/// any combination" therefore means, for this creature, three blades or
+/// one bolt.
 pub static ASSASSIN_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "assassin multiattack",
     sub_attack: &ASSASSIN_SHORTSWORD,
-    count: 2,
+    count: 3,
 });
 
 // ─── Mage ───────────────────────────────────────────────────────────
@@ -22199,18 +22275,17 @@ pub static VIOLET_FUNGUS_ROTTING_TOUCH: SimpleWeapon = SimpleWeapon {
     flat_damage_bonus: 0,
 };
 
-/// Violet Fungus Multiattack — 3 rotting touches per Action. RAW: "The
-/// fungus makes 1d4 Rotting Touch attacks."
+/// Violet Fungus Multiattack — SRD 5.2: *"The fungus makes two Rotting
+/// Touch attacks."*
 ///
-/// Three rather than a fresh 1d4 each turn. The engine's multiattack
-/// chassis takes a fixed count, and a variable one would have to be a
-/// bespoke action whose only difference from this is that the number of
-/// swings is itself a die roll — three is the round average of 1d4 and
-/// the fungus is a CR ¼ hazard, not a stat block anybody plans around.
+/// Two, flat. The count here was three, standing in for the 2014
+/// block's *"1d4 Rotting Touch attacks"* — a variable routine the
+/// engine's fixed-count chassis could not express, rounded to the die's
+/// average. 5.2 prints a fixed two, so there is nothing left to round.
 pub static VIOLET_FUNGUS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
     display_name: "violet fungus multiattack",
     sub_attack: &VIOLET_FUNGUS_ROTTING_TOUCH,
-    count: 3,
+    count: 2,
 });
 
 // ─── Warhorse Skeleton ──────────────────────────────────────────────
@@ -24862,3 +24937,210 @@ const NIGHTMARE_HP_THRESHOLD: u32 = 20;
 const NIGHTMARE_DC: i32 = 15;
 
 pub static INCUBUS_NIGHTMARE: LazyLock<IncubusNightmare> = LazyLock::new(|| IncubusNightmare {});
+
+// ─── The Multiattack lines the bestiary had never transcribed ────────
+//
+// Sixteen stat blocks that SRD 5.2 prints a Multiattack for and that
+// this engine gave one swing a turn. Every routine below is the book's
+// own sentence, built out of the attacks the creature already carries;
+// see `every_stat_blocks_attack_routine_matches_the_book` for the sweep
+// that found them and for the handful still held out.
+
+/// **Animated Armor** — SRD 5.2: *"The armor makes two Slam attacks."*
+pub static ANIMATED_ARMOR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double slam",
+    sub_attack: &ANIMATED_ARMOR_SLAM,
+    count: 2,
+});
+
+/// **Fire Elemental** — SRD 5.2: *"The elemental makes two Burn
+/// attacks."*
+pub static FIRE_ELEMENTAL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double burn",
+    sub_attack: &*FIRE_ELEMENTAL_TOUCH,
+    count: 2,
+});
+
+/// **Ghost** — SRD 5.2: *"The ghost makes two Withering Touch
+/// attacks."*
+pub static GHOST_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double withering touch",
+    sub_attack: &*GHOST_WITHERING_TOUCH,
+    count: 2,
+});
+
+/// **Giant Scorpion** — SRD 5.2: *"The scorpion makes two Claw attacks
+/// and one Sting attack."* Three swings, and the reason the scorpion is
+/// a compound rather than a plain doubling: the claws grapple and the
+/// sting poisons, so the routine is two shapes rather than one repeated.
+pub static GIANT_SCORPION_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "claws + sting",
+    parts: vec![(&GIANT_SCORPION_CLAW, 2), (&*GIANT_SCORPION_STING, 1)],
+});
+
+/// **Giant Shark** — SRD 5.2: *"The shark makes two Bite attacks."*
+pub static GIANT_SHARK_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double bite",
+    sub_attack: &GIANT_SHARK_BITE,
+    count: 2,
+});
+
+/// **Green Hag** — SRD 5.2: *"The hag makes two Claw attacks."*
+pub static GREEN_HAG_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double claws",
+    sub_attack: &GREEN_HAG_CLAWS,
+    count: 2,
+});
+
+/// **Grick** — SRD 5.2: *"The grick makes one Beak attack and one
+/// Tentacles attack."*
+pub static GRICK_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "tentacles + beak",
+    parts: vec![(&GRICK_TENTACLES_WEAPON, 1), (&*GRICK_BEAK, 1)],
+});
+
+/// **Hell Hound** — SRD 5.2: *"The hound makes two Bite attacks."*
+pub static HELL_HOUND_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double bite",
+    sub_attack: &*HELL_HOUND_BITE,
+    count: 2,
+});
+
+/// **Mammoth** — SRD 5.2: *"The mammoth makes two Gore attacks."* The
+/// Stomp stays a separate action, as the book prints it: a stomp is
+/// what the mammoth does to something already Prone, not part of the
+/// charge.
+pub static MAMMOTH_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double gore",
+    sub_attack: &MAMMOTH_GORE,
+    count: 2,
+});
+
+/// **Phase Spider** — SRD 5.2: *"The spider makes two Bite attacks."*
+pub static PHASE_SPIDER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double bite",
+    sub_attack: &PHASE_SPIDER_BITE,
+    count: 2,
+});
+
+/// **Pseudodragon** — SRD 5.2: *"The pseudodragon makes two Bite
+/// attacks."*
+pub static PSEUDODRAGON_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double bite",
+    sub_attack: &PSEUDODRAGON_BITE,
+    count: 2,
+});
+
+/// **Triceratops** — SRD 5.2: *"The triceratops makes two Gore
+/// attacks."* The Stomp is a separate action for the mammoth's reason.
+pub static TRICERATOPS_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double gore",
+    sub_attack: &TRICERATOPS_GORE,
+    count: 2,
+});
+
+/// **Troll Rend** — SRD 5.2: *"Rend. Melee Attack Roll: +7, reach 10
+/// ft. Hit: 11 (2d6 + 4) Slashing damage."*
+///
+/// One attack, three times a turn, and it replaces the generic `SLAM`
+/// and `BITE` the troll was borrowing. The two stand-ins were the wrong
+/// shape in three ways at once: bludgeoning and piercing rather than
+/// slashing, `1d6` on the bite rather than `2d6`, and reach 1 rather
+/// than the ten feet a troll's arms cover. The slashing matters beyond
+/// the resistance table — RAW's **Loathsome Limbs** severs an arm on
+/// 15+ Slashing in a turn, which is a clause a troll fighting another
+/// troll could never have triggered.
+pub static TROLL_REND: SimpleWeapon = SimpleWeapon::reach_melee(
+    "rend",
+    &["trend", "troll-rend"],
+    AbilityScoreType::Strength,
+    Dice::new(2, 6),
+    DamageType::Slashing,
+    2,
+);
+
+/// **Troll** — SRD 5.2: *"The troll makes three Rend attacks."*
+///
+/// The troll's own docstring has claimed a multiattack wrapper since it
+/// was written; there was none, and the troll swung once a turn at a
+/// third of the damage the book gives it.
+pub static TROLL_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "triple rend",
+    sub_attack: &TROLL_REND,
+    count: 3,
+});
+
+/// **Wyvern** — SRD 5.2: *"The wyvern makes one Bite attack and one
+/// Sting attack."*
+pub static WYVERN_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAttack {
+    display_name: "bite + sting",
+    parts: vec![(&WYVERN_BITE, 1), (&*WYVERN_STINGER, 1)],
+});
+
+// The four giants whose Multiattack reads *"makes two attacks, using
+// <melee> or <thrown> in any combination"*. One routine per lane, which
+// is the shape `SCOUT_MELEE_MULTI` / `SCOUT_RANGED_MULTI` already uses
+// for the same sentence: the engine's picker chooses the lane that
+// matches the range, and "in any combination" is the one thing the two
+// cannot say between them.
+
+/// **Fire Giant** — SRD 5.2: *"two attacks, using Flame Sword or Hammer
+/// Throw in any combination."* The melee lane.
+pub static FIRE_GIANT_MELEE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double fire greatsword",
+    sub_attack: &FIRE_GIANT_GREATSWORD,
+    count: 2,
+});
+
+/// The thrown lane of [`FIRE_GIANT_MELEE_MULTI`].
+pub static FIRE_GIANT_ROCK_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double fire rock",
+    sub_attack: &FIRE_GIANT_ROCK,
+    count: 2,
+});
+
+/// **Frost Giant** — SRD 5.2: *"two attacks, using Frost Axe or Great
+/// Bow in any combination."* The melee lane.
+pub static FROST_GIANT_MELEE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double frost greataxe",
+    sub_attack: &FROST_GIANT_GREATAXE,
+    count: 2,
+});
+
+/// The ranged lane of [`FROST_GIANT_MELEE_MULTI`].
+pub static FROST_GIANT_ROCK_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double frost rock",
+    sub_attack: &FROST_GIANT_ROCK,
+    count: 2,
+});
+
+/// **Hill Giant** — SRD 5.2: *"two attacks, using Tree Club or Trash
+/// Lob in any combination."* The melee lane.
+pub static HILL_GIANT_MELEE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double greatclub",
+    sub_attack: &HILL_GIANT_GREATCLUB,
+    count: 2,
+});
+
+/// The thrown lane of [`HILL_GIANT_MELEE_MULTI`].
+pub static HILL_GIANT_BOULDER_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double boulder",
+    sub_attack: &HILL_GIANT_BOULDER,
+    count: 2,
+});
+
+/// **Storm Giant** — SRD 5.2: *"two attacks, using Storm Sword or
+/// Thunderbolt in any combination."* The melee lane. The Lightning
+/// Strike stays its own action, as the book prints it.
+pub static STORM_GIANT_MELEE_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double storm greatsword",
+    sub_attack: &STORM_GIANT_GREATSWORD,
+    count: 2,
+});
+
+/// The thrown lane of [`STORM_GIANT_MELEE_MULTI`].
+pub static STORM_GIANT_ROCK_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiattack {
+    display_name: "double storm rock",
+    sub_attack: &STORM_GIANT_ROCK,
+    count: 2,
+});

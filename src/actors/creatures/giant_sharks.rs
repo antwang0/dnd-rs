@@ -2,7 +2,7 @@ use crate::actions::class_features::{
     AQUATIC_ONLY_TAG, BLOOD_FRENZY_TAG, SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG,
 };
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::GIANT_SHARK_BITE;
+use crate::actions::monster_attacks::{GIANT_SHARK_BITE, GIANT_SHARK_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -51,6 +51,7 @@ use std::sync::LazyLock;
 /// XP: 1800 per RAW.
 pub static GIANT_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*GIANT_SHARK_MULTI);
     actions.push(&GIANT_SHARK_BITE);
     CreatureTemplate {
         name: "Giant Shark",

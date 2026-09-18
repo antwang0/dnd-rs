@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{WYVERN_BITE, WYVERN_STINGER};
+use crate::actions::monster_attacks::{WYVERN_BITE, WYVERN_MULTI, WYVERN_STINGER};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 /// immunities — wyverns are mortal, just very angry.
 pub static WYVERN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*WYVERN_MULTI);
     actions.push(&WYVERN_BITE);
     actions.push(&*WYVERN_STINGER);
     CreatureTemplate {

@@ -1,5 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{HILL_GIANT_BOULDER, HILL_GIANT_GREATCLUB};
+use crate::actions::monster_attacks::{
+    HILL_GIANT_BOULDER, HILL_GIANT_BOULDER_MULTI, HILL_GIANT_GREATCLUB, HILL_GIANT_MELEE_MULTI,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, Language, Size, Skill};
@@ -17,6 +19,8 @@ use std::sync::LazyLock;
 /// large brutes; keeping the immunity for engine simplicity).
 pub static HILL_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*HILL_GIANT_MELEE_MULTI);
+    actions.push(&*HILL_GIANT_BOULDER_MULTI);
     actions.push(&HILL_GIANT_GREATCLUB);
     actions.push(&HILL_GIANT_BOULDER);
     CreatureTemplate {

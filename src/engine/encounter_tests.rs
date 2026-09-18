@@ -20153,17 +20153,19 @@ fn vampire_spawn_resists_necrotic() {
     assert_eq!(before - after, 5);
 }
 
-/// RAW: "The captain makes three melee attacks: two with its scimitar
-/// and one with its dagger."
+/// SRD 5.2: *"The bandit makes two attacks, using Scimitar and Pistol
+/// in any combination."*
 ///
-/// Both halves are asserted, and the second is the one that was wrong:
-/// the routine used to be three scimitars. The count was right and one
-/// of the weapons was not, which matters because the two weapons deal
-/// different damage types — a target that resists slashing and not
-/// piercing takes a materially different beating from the RAW routine
-/// than from the one the engine was running.
+/// This test has twice pinned a routine the book does not print. It
+/// began as "three scimitars", was corrected to "two scimitars and a
+/// dagger" on the 2014 stat block's wording, and is two scimitars now:
+/// 5.2 drops the dagger from the sheet entirely and prints a count of
+/// two. The weapon half of the older assertion was right to care — the
+/// dagger is piercing and the scimitar slashing, and a skeleton halves
+/// one and not the other — which is why the correction is the whole
+/// routine rather than the number on its own.
 #[test]
-fn bandit_captain_multiattack_is_two_scimitars_and_a_dagger() {
+fn bandit_captain_multiattack_is_two_scimitars() {
     use crate::actions::monster_attacks::BANDIT_CAPTAIN_MULTI;
     use crate::actors::creatures::bandit_captains::BANDIT_CAPTAIN_TEMPLATE;
     let mut e = ei_with_terrain(10, 10, &[]);
@@ -20177,16 +20179,11 @@ fn bandit_captain_multiattack_is_two_scimitars_and_a_dagger() {
             .any(|a| a.name() == BANDIT_CAPTAIN_MULTI.name()),
         "bandit captain should carry its multiattack"
     );
-    let routine: Vec<(&str, u32)> = BANDIT_CAPTAIN_MULTI
-        .parts
-        .iter()
-        .map(|(a, n)| (a.name(), *n))
-        .collect();
-    assert_eq!(routine, vec![("scimitar", 2), ("dagger", 1)]);
+    assert_eq!(BANDIT_CAPTAIN_MULTI.sub_attack.name(), "scimitar");
     assert_eq!(
-        routine.iter().map(|(_, n)| n).sum::<u32>(),
-        3,
-        "three melee attacks, whatever they are made with"
+        BANDIT_CAPTAIN_MULTI.printed_attack_count(),
+        Some(2),
+        "two attacks, whatever they are made with"
     );
 }
 
@@ -124725,6 +124722,327 @@ fn every_stat_blocks_other_speeds_match_the_book() {
         "only {checked} of the book's {} stat blocks were matched to a \
          template — a rename has dropped rows out of the sweep",
         SRD_SPEEDS.len()
+    );
+}
+
+/// Every stat block's **Multiattack** line — how many swings the
+/// routine makes — against what the bestiary declares.
+///
+/// The ninth book-conformance sweep, and the one that moves damage
+/// per round, which is the number every other number on a stat block
+/// exists to support. A troll that swings once where the book swings
+/// three is a third of a troll, and nothing in the engine could have
+/// said so: the count lives on a `Multiattack` literal in
+/// `monster_attacks`, three files away from the template that pushes
+/// it, and a creature with no wrapper at all looks exactly like a
+/// creature the book gives no routine.
+///
+/// ## What it compares
+///
+/// `Action::printed_attack_count`, which the two routine wrappers
+/// declare and everything else answers `None` to, against the number of
+/// attacks the book's Multiattack sentence makes. Every routine on the
+/// template is checked, not just the first: the four giants and the
+/// scout each carry two — a melee lane and a thrown one — because the
+/// book's *"two attacks, using X or Y in any combination"* is one
+/// sentence the engine needs two action entries to offer, and both have
+/// to be the same length.
+///
+/// **Printed, not spent.** A slowed creature swings once and a hydra
+/// swings once per head; that is
+/// `EncounterInstance::attack_routine_swings`, and it is deliberately
+/// not what this reads.
+///
+/// ## What it found
+///
+/// Twenty-five stat blocks had no routine at all where the book prints
+/// one, and nine had the wrong count.
+///
+///   - **Sixteen of the twenty-five now have one**: the animated armor,
+///     fire elemental, ghost, giant scorpion, giant shark, green hag,
+///     grick, hell hound, mammoth, phase spider, pseudodragon,
+///     triceratops, troll and wyvern, plus the fire, frost, hill and
+///     storm giants. Several were hiding behind a docstring that
+///     claimed one — the troll's has said "two attacks per turn via the
+///     multiattack wrapper" since it was written, and the troll had no
+///     wrapper and one attack, a borrowed generic `SLAM` that was
+///     bludgeoning at reach 1 where the book prints slashing at ten
+///     feet. (Which is a rule and not only a number: RAW's **Loathsome
+///     Limbs** severs an arm on 15+ Slashing damage in a turn, and a
+///     troll whose own attack dealt no slashing could never trigger it.)
+///   - **The nine wrong counts** were all the 2014 printing's: the
+///     assassin, efreeti, invisible stalker, rakshasa and shambling
+///     mound each swung one time too few, the bandit captain, violet
+///     fungus and vrock one too many, and the pit fiend was three
+///     swings of a printed four — the missing one being a Fiery Mace
+///     the engine had no attack for at all, trimmed on purpose with a
+///     comment about not wanting a "TPK-machine against level-3 PCs".
+///     A CR 20 devil is not an encounter for level 3, and the tuning
+///     knob for that is which creature the generator puts on the board
+///     rather than how much of its stat block it may use. It has its
+///     mace back.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its eight
+/// siblings; see there for the rename and the player-character
+/// exclusion. The Druid falls out through that exclusion (the book's
+/// CR 2 NPC and the playable Druid share a name and nothing else) and
+/// the Half-Dragon through the rename (the engine files five of them,
+/// one per Draconic Origin).
+#[test]
+fn every_stat_blocks_attack_routine_matches_the_book() {
+    /// `(name, attacks)` — the number of attacks SRD 5.2's Multiattack
+    /// sentence makes, one row per stat block that prints one whose
+    /// count is a plain number.
+    ///
+    /// Routines that mix in a named non-attack use — *"makes two
+    /// Tentacle attacks and uses Consume Memories"* — are absent, and
+    /// so are the four whose count is an expression (the hydra's head
+    /// count, the Avatar of Death's and the two summons' scaling off a
+    /// caster). Both kinds are a judgement about what the engine chose
+    /// to fold into the routine rather than a fact about the page, and
+    /// a row for either would be asserting the choice.
+    const SRD_ROUTINES: &[(&str, u32)] = &[
+    ("Adult Black Dragon", 3),
+    ("Adult Blue Dragon", 3),
+    ("Adult Brass Dragon", 3),
+    ("Adult Bronze Dragon", 3),
+    ("Adult Copper Dragon", 3),
+    ("Adult Gold Dragon", 3),
+    ("Adult Green Dragon", 3),
+    ("Adult Red Dragon", 3),
+    ("Adult Silver Dragon", 3),
+    ("Adult White Dragon", 3),
+    ("Air Elemental", 2),
+    ("Ancient Black Dragon", 3),
+    ("Ancient Blue Dragon", 3),
+    ("Ancient Brass Dragon", 3),
+    ("Ancient Bronze Dragon", 3),
+    ("Ancient Copper Dragon", 3),
+    ("Ancient Gold Dragon", 3),
+    ("Ancient Green Dragon", 3),
+    ("Ancient Red Dragon", 3),
+    ("Ancient Silver Dragon", 3),
+    ("Ancient White Dragon", 3),
+    ("Animated Armor", 2),
+    ("Ankylosaurus", 2),
+    ("Ape", 2),
+    ("Archelon", 2),
+    ("Archmage", 4),
+    ("Assassin", 3),
+    ("Balor", 2),
+    ("Bandit Captain", 2),
+    ("Bearded Devil", 2),
+    ("Black Bear", 2),
+    ("Black Dragon Wyrmling", 2),
+    ("Blue Dragon Wyrmling", 2),
+    ("Bone Devil", 3),
+    ("Bronze Dragon Wyrmling", 2),
+    ("Brown Bear", 2),
+    ("Bugbear Stalker", 2),
+    ("Bulette", 2),
+    ("Centaur Trooper", 2),
+    ("Chimera", 3),
+    ("Cloaker", 3),
+    ("Cloud Giant", 2),
+    ("Death Dog", 2),
+    ("Deva", 2),
+    ("Djinni", 3),
+    ("Dragon Turtle", 3),
+    ("Drider", 3),
+    ("Druid", 2),
+    ("Earth Elemental", 2),
+    ("Efreeti", 3),
+    ("Elephant", 2),
+    ("Ettercap", 2),
+    ("Ettin", 2),
+    ("Fire Elemental", 2),
+    ("Fire Giant", 2),
+    ("Flesh Golem", 2),
+    ("Frost Giant", 2),
+    ("Gargoyle", 2),
+    ("Ghost", 2),
+    ("Ghoul", 2),
+    ("Giant Ape", 2),
+    ("Giant Crocodile", 2),
+    ("Giant Eagle", 2),
+    ("Giant Scorpion", 3),
+    ("Giant Shark", 2),
+    ("Gladiator", 3),
+    ("Goblin Boss", 2),
+    ("Gold Dragon Wyrmling", 2),
+    ("Green Dragon Wyrmling", 2),
+    ("Green Hag", 2),
+    ("Grick", 2),
+    ("Griffon", 2),
+    ("Guard Captain", 2),
+    ("Guardian Naga", 2),
+    ("Half-Dragon", 2),
+    ("Hell Hound", 2),
+    ("Hezrou", 3),
+    ("Hill Giant", 2),
+    ("Hippogriff", 2),
+    ("Hippopotamus", 2),
+    ("Hobgoblin Captain", 2),
+    ("Horned Devil", 3),
+    ("Ice Devil", 3),
+    ("Incubus", 2),
+    ("Invisible Stalker", 3),
+    ("Iron Golem", 2),
+    ("Knight", 2),
+    ("Lamia", 2),
+    ("Lich", 3),
+    ("Lion", 2),
+    ("Mage", 3),
+    ("Mammoth", 2),
+    ("Manticore", 3),
+    ("Merrow", 2),
+    ("Nalfeshnee", 3),
+    ("Night Hag", 2),
+    ("Oni", 2),
+    ("Otyugh", 3),
+    ("Owlbear", 2),
+    ("Phase Spider", 2),
+    ("Pirate", 2),
+    ("Pirate Captain", 3),
+    ("Pit Fiend", 4),
+    ("Polar Bear", 2),
+    ("Priest", 2),
+    ("Pseudodragon", 2),
+    ("Purple Worm", 2),
+    ("Rakshasa", 3),
+    ("Red Dragon Wyrmling", 2),
+    ("Roc", 2),
+    ("Saber-Toothed Tiger", 2),
+    ("Sahuagin Warrior", 2),
+    ("Salamander", 2),
+    ("Scout", 2),
+    ("Shambling Mound", 3),
+    ("Shield Guardian", 2),
+    ("Silver Dragon Wyrmling", 2),
+    ("Solar", 2),
+    ("Sphinx of Lore", 3),
+    ("Spirit Naga", 3),
+    ("Stone Giant", 2),
+    ("Stone Golem", 2),
+    ("Storm Giant", 2),
+    ("Tarrasque", 4),
+    ("Tough Boss", 2),
+    ("Treant", 2),
+    ("Triceratops", 2),
+    ("Troll", 3),
+    ("Tyrannosaurus Rex", 2),
+    ("Unicorn", 2),
+    ("Vampire Familiar", 2),
+    ("Violet Fungus", 2),
+    ("Vrock", 2),
+    ("Warrior Veteran", 2),
+    ("Water Elemental", 2),
+    ("Werebear", 2),
+    ("Wereboar", 2),
+    ("Wererat", 2),
+    ("Weretiger", 2),
+    ("Werewolf", 2),
+    ("White Dragon Wyrmling", 2),
+    ("Wight", 2),
+    ("Wyvern", 2),
+    ("Xorn", 4),
+    ("Young Black Dragon", 3),
+    ("Young Blue Dragon", 3),
+    ("Young Brass Dragon", 3),
+    ("Young Bronze Dragon", 3),
+    ("Young Copper Dragon", 3),
+    ("Young Gold Dragon", 3),
+    ("Young Green Dragon", 3),
+    ("Young Red Dragon", 3),
+    ("Young Silver Dragon", 3),
+    ("Young White Dragon", 3),
+    ];
+
+    /// The stat blocks whose routine is the book's and whose *parts*
+    /// are not, with the reason. Each is a creature whose Multiattack
+    /// is built out of attacks SRD 5.2 invented for the 2024 printing
+    /// and this engine models as something else.
+    ///
+    /// All five are spellcasters whose 2024 sheet replaced "casts a
+    /// spell" with an at-will attack — the archmage's Arcane Burst, the
+    /// lich's Eldritch Burst, the priest's Radiant Flame, the spirit
+    /// naga's Necrotic Ray, the wight's Necrotic Sword and Bow. The
+    /// engine builds all five out of the spell list instead, which is
+    /// the 2014 shape and a different creature to play; giving them
+    /// routines would mean giving them the attacks first, and that is a
+    /// rebuild of five stat blocks rather than a count.
+    ///
+    /// Held out by name rather than skipped silently, and asserted in
+    /// the other direction below, so an entry that stops being needed
+    /// is a failure rather than a row nothing checks.
+    const NO_ROUTINE_YET: &[(&str, &str)] = &[
+        ("Archmage", "its four attacks are Arcane Bursts, which the engine casts as spells"),
+        ("Lich", "its three attacks are Eldritch Bursts, which the engine casts as spells"),
+        ("Priest", "its second attack is Radiant Flame, which the engine casts as a spell"),
+        ("Spirit Naga", "its three attacks are Necrotic Rays, which the engine casts as spells"),
+        ("Wight", "its two attacks are a Necrotic Sword and Bow the engine has no swings for"),
+    ];
+
+    let found = bestiary_by_name();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, attacks) in SRD_ROUTINES {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        let counts: Vec<u32> = t
+            .actions
+            .iter()
+            .filter_map(|a| a.printed_attack_count())
+            .collect();
+        let held_out = NO_ROUTINE_YET.iter().find(|(n, _)| n == name);
+        if counts.is_empty() {
+            match held_out {
+                Some(_) => continue,
+                None => {
+                    wrong.push(format!(
+                        "{name}: the book prints a routine of {attacks} and it has none"
+                    ));
+                    continue;
+                }
+            }
+        }
+        checked += 1;
+        if let Some((_, why)) = held_out {
+            wrong.push(format!(
+                "{name}: held out of the sweep ({why}) but it has a routine now; drop the row"
+            ));
+            continue;
+        }
+        for got in counts {
+            if got != *attacks {
+                wrong.push(format!(
+                    "{name}: the book prints {attacks} attacks and a routine makes {got}"
+                ));
+            }
+        }
+    }
+    for (name, why) in NO_ROUTINE_YET {
+        assert!(
+            SRD_ROUTINES.iter().any(|(n, _)| n == name),
+            "{name} is held out ({why}) but the book prints it no routine at all"
+        );
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's Multiattack line:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count — see the sibling sweeps for why a match
+    // that silently stops matching is the failure this guards. Lower
+    // than theirs because this table is the stat blocks that print a
+    // Multiattack rather than the whole roster.
+    assert!(
+        checked > 140,
+        "only {checked} of the book's {} printed routines were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_ROUTINES.len()
     );
 }
 

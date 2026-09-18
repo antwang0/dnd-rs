@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::FIRE_ELEMENTAL_TOUCH;
+use crate::actions::monster_attacks::{FIRE_ELEMENTAL_MULTI, FIRE_ELEMENTAL_TOUCH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
@@ -139,6 +139,7 @@ pub fn elemental_body_defaults(
 /// Poisoned, Asleep, Prone) — close to the 5e MM line.
 pub static FIRE_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*FIRE_ELEMENTAL_MULTI);
     actions.push(&*FIRE_ELEMENTAL_TOUCH);
     CreatureTemplate {
         name: "Fire Elemental",

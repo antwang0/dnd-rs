@@ -1821,6 +1821,29 @@ pub trait Action {
         false
     }
 
+    /// How many attacks this routine **prints** — the number on the
+    /// stat block's Multiattack line — or `None` for anything that is
+    /// not an attack routine.
+    ///
+    /// The companion of `chains_multiple_attacks` one step finer: that
+    /// one answers "is this a routine", this one "how big". Both are
+    /// declared by the two wrappers rather than sniffed, for the same
+    /// reason — a wrapper is the only thing that knows how many swings
+    /// it contains, and `CompoundAttack`'s answer is a sum over parts
+    /// that nothing outside it can see.
+    ///
+    /// **Printed, not spent.** What a resolution actually swings is
+    /// `EncounterInstance::attack_routine_swings`, which reads the
+    /// *creature* — a slowed monster gets one, a hydra gets one per
+    /// head it still has, an Avatar of Death gets half its summoner's
+    /// proficiency bonus. This is the stat block's own number, before
+    /// any of that, which is why it needs no encounter to answer and
+    /// why it is the number a book-conformance sweep can compare
+    /// against a page.
+    fn printed_attack_count(&self) -> Option<u32> {
+        None
+    }
+
     /// Whether **Haste**'s extra Action may be spent on this.
     ///
     /// SRD 5.2: *"it gains an additional action on each of its turns.

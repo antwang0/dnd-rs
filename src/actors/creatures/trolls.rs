@@ -1,14 +1,20 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{BITE, SLAM, TROLL_LIMB_REND};
+use crate::actions::monster_attacks::{TROLL_LIMB_REND, TROLL_MULTI, TROLL_REND};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, DamageType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
-/// Troll — large regenerating brute (CR 5). High HP and two attacks
-/// (claw + bite) per turn via the multiattack wrapper. Mechanically the
-/// troll exercises the Large footprint and reach-2 adjacency the same
-/// way the Ogre does, but with more staying power.
+/// Troll — large regenerating brute (CR 5). High HP and, per SRD 5.2's
+/// *"The troll makes three Rend attacks"*, three swings a turn.
+/// Mechanically the troll exercises the Large footprint and reach-2
+/// adjacency the same way the Ogre does, but with more staying power.
+///
+/// The three-swing routine is new. This docstring claimed a multiattack
+/// wrapper from the day it was written and the template never carried
+/// one, so the troll took a single swing a turn — and the swing was a
+/// borrowed generic `SLAM`, bludgeoning at reach 1, where the book
+/// prints a slashing `2d6 + 4` at reach 10 feet.
 ///
 /// Regeneration: 3 HP at end-of-round while combat-active, suppressed
 /// for one round whenever the troll takes acid or fire damage. The
@@ -17,9 +23,8 @@ use std::sync::LazyLock;
 /// suppressor type lands.
 pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
-    // Claws (slam) + Bite — two attacks per action, matching 5e multiattack.
-    actions.push(&SLAM);
-    actions.push(&BITE);
+    actions.push(&*TROLL_MULTI);
+    actions.push(&TROLL_REND);
     CreatureTemplate {
         name: "Troll",
         glyph: 'T',

@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{PSEUDODRAGON_BITE, PSEUDODRAGON_STING};
+use crate::actions::monster_attacks::{PSEUDODRAGON_BITE, PSEUDODRAGON_MULTI, PSEUDODRAGON_STING};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
@@ -16,6 +16,7 @@ use std::sync::LazyLock;
 /// other true-dragon family.
 pub static PSEUDODRAGON_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*PSEUDODRAGON_MULTI);
     actions.push(&PSEUDODRAGON_BITE);
     actions.push(&*PSEUDODRAGON_STING);
     CreatureTemplate {

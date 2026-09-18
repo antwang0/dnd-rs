@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{MAMMOTH_CHARGE, MAMMOTH_GORE, MAMMOTH_STOMP};
+use crate::actions::monster_attacks::{MAMMOTH_CHARGE, MAMMOTH_GORE, MAMMOTH_MULTI, MAMMOTH_STOMP};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{AbilityScoreType, CreatureType, Size};
 use std::collections::HashSet;
@@ -46,6 +46,7 @@ use std::sync::LazyLock;
 /// (mammoths have no darkvision RAW). Languages: none. Size Huge. CR 6.
 pub static MAMMOTH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*MAMMOTH_MULTI);
     actions.push(&MAMMOTH_GORE);
     actions.push(&*MAMMOTH_STOMP);
     CreatureTemplate {

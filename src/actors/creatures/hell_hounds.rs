@@ -1,5 +1,5 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{HELL_HOUND_BITE, HELL_HOUND_FIRE_BREATH};
+use crate::actions::monster_attacks::{HELL_HOUND_BITE, HELL_HOUND_FIRE_BREATH, HELL_HOUND_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
@@ -17,6 +17,7 @@ use std::sync::LazyLock;
 /// fully drive gameplay yet.
 pub static HELL_HOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*HELL_HOUND_MULTI);
     actions.push(&*HELL_HOUND_BITE);
     actions.push(&*HELL_HOUND_FIRE_BREATH);
     CreatureTemplate {

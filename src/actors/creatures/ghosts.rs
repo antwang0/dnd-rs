@@ -1,6 +1,6 @@
 use crate::actions::class_features::INCORPOREAL_MOVEMENT_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{GHOST_HORRIFYING_VISAGE, GHOST_WITHERING_TOUCH};
+use crate::actions::monster_attacks::{GHOST_HORRIFYING_VISAGE, GHOST_MULTI, GHOST_WITHERING_TOUCH};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
@@ -24,6 +24,7 @@ use std::sync::LazyLock;
 /// standard incorporeal lockdown.
 pub static GHOST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*GHOST_MULTI);
     actions.push(&*GHOST_WITHERING_TOUCH);
     actions.push(&*GHOST_HORRIFYING_VISAGE);
     CreatureTemplate {

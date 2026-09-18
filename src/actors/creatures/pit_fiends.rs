@@ -1,5 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{PIT_FIEND_BITE, PIT_FIEND_CLAW, PIT_FIEND_MULTI};
+use crate::actions::monster_attacks::{
+    PIT_FIEND_BITE, PIT_FIEND_CLAW, PIT_FIEND_MACE, PIT_FIEND_MULTI,
+};
 use crate::engine::emanations::PIT_FIEND_FEAR_AURA;
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
@@ -27,6 +29,7 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&PIT_FIEND_BITE);
     actions.push(&PIT_FIEND_CLAW);
+    actions.push(&PIT_FIEND_MACE);
     actions.push(&*PIT_FIEND_MULTI);
     CreatureTemplate {
         name: "Pit Fiend",

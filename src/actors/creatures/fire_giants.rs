@@ -1,5 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{FIRE_GIANT_GREATSWORD, FIRE_GIANT_ROCK};
+use crate::actions::monster_attacks::{
+    FIRE_GIANT_GREATSWORD, FIRE_GIANT_MELEE_MULTI, FIRE_GIANT_ROCK, FIRE_GIANT_ROCK_MULTI,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
@@ -18,6 +20,8 @@ use std::sync::LazyLock;
 /// (cold / fire / cloud) at the upper-mid CR tier.
 pub static FIRE_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*FIRE_GIANT_MELEE_MULTI);
+    actions.push(&*FIRE_GIANT_ROCK_MULTI);
     actions.push(&FIRE_GIANT_GREATSWORD);
     actions.push(&FIRE_GIANT_ROCK);
     CreatureTemplate {

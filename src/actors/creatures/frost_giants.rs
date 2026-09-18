@@ -1,5 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
-use crate::actions::monster_attacks::{FROST_GIANT_GREATAXE, FROST_GIANT_ROCK};
+use crate::actions::monster_attacks::{
+    FROST_GIANT_GREATAXE, FROST_GIANT_MELEE_MULTI, FROST_GIANT_ROCK, FROST_GIANT_ROCK_MULTI,
+};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::types::{
     AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
@@ -15,6 +17,8 @@ use std::sync::LazyLock;
 /// giant, mirroring the Fire Elemental's fire immunity).
 pub static FROST_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
+    actions.push(&*FROST_GIANT_MELEE_MULTI);
+    actions.push(&*FROST_GIANT_ROCK_MULTI);
     actions.push(&FROST_GIANT_GREATAXE);
     actions.push(&FROST_GIANT_ROCK);
     CreatureTemplate {
