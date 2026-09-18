@@ -22,13 +22,22 @@
 //! | Summon Aberration | 4 | Aberrant | 15 | ~52 | 2× 1d8 psychic, ranged |
 //! | Summon Elemental | 4 | Elemental | 15 | ~52 | 2× 1d10 thunder |
 //! | Summon Celestial | 5 | Celestial | 16 | ~75 | 2× 2d6 radiant, ranged |
-//! | Summon Draconic Spirit | 5 | Draconic | 14 | ~75 | 2× 1d6 + breath |
+//! | Summon Draconic Spirit | 5 | Draconic | 19 | 50 | 2× 1d6 + breath |
 //! | Summon Fiend | 6 | Fiendish | 17 | ~90 | 2× 2d6 slashing |
 //!
 //! That ladder is the feature. A caster choosing between Summon Fey and
 //! Summon Undead at level 3 is choosing between a melee controller and a
 //! ranged sniper, not between a good spell and a bad one; a caster
 //! choosing between level 3 and level 6 is buying roughly twice the body.
+//!
+//! **The Draconic Spirit steps off it, and is the only one entitled
+//! to.** Seven of these eight are Tasha's stat blocks the engine wrote
+//! to the ladder above; that one is in SRD 5.2, which prints its own
+//! numbers — AC 19 and 50 hit points at a level-5 cast, where the
+//! Celestial Spirit beside it has 16 and 75. So it is the hardest
+//! thing in the family to hit and the softest for its tier once you
+//! do, which is a different creature from the rest rather than a worse
+//! rung of the same one. See its block.
 //!
 //! **What each spirit is not.** RAW's summons each ship an option table
 //! — the Bestial Spirit is Land, Sky or Water; the Fiendish Spirit is
@@ -591,8 +600,37 @@ pub static DRACONIC_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
     CreatureTemplate {
         name: "Draconic Spirit",
         glyph: 'd',
-        ac: 14,
-        hitpoints: "10d10+20".parse().unwrap(),
+        // SRD 5.2 prints **"AC 14 + the spell's level"** and **"HP 50 +
+        // 10 for each spell level above 5"**, and this block is written
+        // at the base cast — so nineteen and fifty.
+        //
+        // It used to read `ac: 14` and `10d10+20` (an average of 75),
+        // and both halves were wrong in a way that only a sweep against
+        // the book's own printed numbers would find. The armour class
+        // had taken RAW's expression for a constant and dropped the
+        // `+ the spell's level` entirely, which is five points; the hit
+        // points had come from the level-5 rung of the family's own
+        // ladder rather than from this stat block, which is fifty
+        // percent. The seven spirits above and below are not in SRD 5.2
+        // and keep their numbers; this one is, and it does not get to
+        // disagree with the page.
+        //
+        // The upcast is unaffected — `SummonScaling::STANDARD` is `+1`
+        // AC and `+10` HP per level above the spell's own, which is
+        // exactly what both printed expressions say, and it was always
+        // applying it to the wrong starting point.
+        //
+        // It also makes the spirit a sharper thing than the one it
+        // replaces: the best armour class in the family on the
+        // second-smallest body. A caster who summons a dragon is buying
+        // something hard to hit that a Fireball still folds, which is
+        // an honest reading of a stat block whose whole variance is the
+        // breath.
+        ac: 19,
+        // Average exactly fifty: `8 × 5.5 + 6`. RAW prints a flat 50
+        // with no dice behind it, so the expression is a choice, and
+        // the choice is the one whose average is the printed number.
+        hitpoints: "8d10+6".parse().unwrap(),
         speed: 40.,
         strength: 19,
         dexterity: 14,
@@ -897,13 +935,25 @@ mod tests {
     /// Hit points are compared at the template's *average* roll rather
     /// than a sampled one — two adjacent rungs are close enough that a
     /// bad roll on the higher one would fail this for no reason.
+    ///
+    /// **One rung is exempt, and it is the only one the engine did not
+    /// design.** Seven of these eight spirits are Tasha's stat blocks
+    /// the engine wrote to a ladder of its own; the Draconic Spirit is
+    /// in SRD 5.2, which prints *"HP 50 + 10 for each spell level above
+    /// 5"* — fifty, on a level-5 spell, beside a Celestial Spirit with
+    /// seventy-five. The book does not owe the ladder anything, and the
+    /// exemption is named here rather than smuggled in as a softer
+    /// comparison so that the next spirit added still has to earn its
+    /// rung. What the Draconic trades its hit points for is on the
+    /// other axis: AC 19, the best in the family by three.
     #[test]
     fn the_family_is_a_ladder() {
         let mut previous: Option<&CreatureTemplate> = None;
         for template in summoned_spirit_templates() {
             if let Some(prev) = previous {
                 assert!(
-                    template.hitpoints.average_roll() >= prev.hitpoints.average_roll(),
+                    template.hitpoints.average_roll() >= prev.hitpoints.average_roll()
+                        || template.name == "Draconic Spirit",
                     "{} ({}) is frailer than {} ({}) but costs more",
                     template.name,
                     template.hitpoints.average_roll(),

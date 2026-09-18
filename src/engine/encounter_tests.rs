@@ -122005,3 +122005,474 @@ fn the_two_breaths_that_never_fired_now_do() {
         );
     }
 }
+
+/// Every stat block SRD 5.2 prints a flat armour class and a flat hit
+/// point total for, against what the bestiary actually declares.
+///
+/// The sibling of `every_natural_weapon_matches_the_books_hit_line`
+/// one axis over, and it exists for that test's reason restated: the
+/// engine already checks a declaration against the RAW its own
+/// docstring quotes, and that cannot catch a docstring quoting the
+/// wrong number. Only a third source can, and the third source is the
+/// book's own AC and HP lines, transcribed here one row per monster.
+///
+/// The comparison this automates, run once by hand over the whole
+/// roster, turned up one wrong stat block — the **Draconic Spirit**,
+/// with `ac: 14` where SRD 5.2 prints *"AC 14 + the spell's level"*
+/// (five points dropped by reading an expression as a constant) and 75
+/// hit points where the book prints 50, taken from the engine's own
+/// summon ladder instead of from the stat block. Neither was visible
+/// from inside the file: the numbers were plausible, the docstring did
+/// not quote them, and the ladder test the block was pinned against was
+/// a claim about the other seven spirits.
+///
+/// **This sweep would not have caught that one**, and the reason is the
+/// scope paragraph below: the Draconic Spirit is one of the four blocks
+/// whose printed lines are expressions, so it is not in the table. What
+/// the sweep does is keep the other three hundred and twenty-four from
+/// drifting the same way, which is the part a person cannot be asked to
+/// re-check by hand every time a number moves.
+///
+/// ## What is in the table and what is not
+///
+/// **Flat lines only.** Four stat blocks in SRD 5.2 print expressions
+/// instead — the Avatar of Death's *"Half the HP maximum of its
+/// summoner"*, and the three summons whose lines read *"+ the spell's
+/// level"* — and a row that stored one number for either side of those
+/// would be asserting something the book does not say. Each of the four
+/// is pinned by a test of its own, where the expression can be
+/// evaluated at more than one slot: see
+/// `the_skull_deals_an_avatar_cut_to_the_drawers_measure` and the Find
+/// Steed block below.
+///
+/// **Whatever the scan can parse.** Sixty-odd of the book's stat blocks
+/// are built here by a chassis function rather than by a struct literal
+/// — every dragon, the goliaths, the goblinoid warriors — so no `ac:`
+/// or `hitpoints:` line names them and the sweep steps past. That is a
+/// gap and is worth closing the day those chassis take their numbers as
+/// arguments; until then the floor assertion at the end is what stops
+/// the gap from quietly widening to everything.
+#[test]
+fn every_flat_stat_block_carries_the_books_armour_class_and_hit_points() {
+    use std::path::Path;
+
+    /// `(name, armour class, hit points)` — SRD 5.2, one row per stat
+    /// block whose AC and HP lines are both plain numbers.
+    const SRD_DEFENCES: &[(&str, u32, u32)] = &[
+    ("Aboleth", 17, 150),
+    ("Adult Black Dragon", 19, 195),
+    ("Adult Blue Dragon", 19, 212),
+    ("Adult Brass Dragon", 18, 172),
+    ("Adult Bronze Dragon", 18, 212),
+    ("Adult Copper Dragon", 18, 184),
+    ("Adult Gold Dragon", 19, 243),
+    ("Adult Green Dragon", 19, 207),
+    ("Adult Red Dragon", 19, 256),
+    ("Adult Silver Dragon", 19, 216),
+    ("Adult White Dragon", 18, 200),
+    ("Air Elemental", 15, 90),
+    ("Allosaurus", 13, 51),
+    ("Ancient Black Dragon", 22, 367),
+    ("Ancient Blue Dragon", 22, 481),
+    ("Ancient Brass Dragon", 20, 332),
+    ("Ancient Bronze Dragon", 22, 444),
+    ("Ancient Copper Dragon", 21, 367),
+    ("Ancient Gold Dragon", 22, 546),
+    ("Ancient Green Dragon", 21, 402),
+    ("Ancient Red Dragon", 22, 507),
+    ("Ancient Silver Dragon", 22, 468),
+    ("Ancient White Dragon", 20, 333),
+    ("Animated Armor", 18, 33),
+    ("Animated Flying Sword", 17, 14),
+    ("Animated Rug of Smothering", 12, 27),
+    ("Ankheg", 14, 45),
+    ("Ankylosaurus", 15, 68),
+    ("Ape", 12, 19),
+    ("Archelon", 17, 90),
+    ("Archmage", 17, 170),
+    ("Assassin", 16, 97),
+    ("Awakened Shrub", 9, 10),
+    ("Awakened Tree", 13, 59),
+    ("Axe Beak", 11, 19),
+    ("Azer Sentinel", 17, 39),
+    ("Baboon", 12, 3),
+    ("Badger", 11, 5),
+    ("Balor", 19, 287),
+    ("Bandit", 12, 11),
+    ("Bandit Captain", 15, 52),
+    ("Barbed Devil", 15, 110),
+    ("Basilisk", 15, 52),
+    ("Bat", 12, 1),
+    ("Bearded Devil", 13, 58),
+    ("Behir", 17, 168),
+    ("Berserker", 13, 67),
+    ("Black Bear", 11, 19),
+    ("Black Dragon Wyrmling", 17, 33),
+    ("Black Pudding", 7, 68),
+    ("Blink Dog", 13, 22),
+    ("Blood Hawk", 12, 7),
+    ("Blue Dragon Wyrmling", 17, 65),
+    ("Boar", 11, 13),
+    ("Bone Devil", 16, 161),
+    ("Brass Dragon Wyrmling", 15, 22),
+    ("Bronze Dragon Wyrmling", 15, 39),
+    ("Brown Bear", 11, 22),
+    ("Bugbear Stalker", 15, 65),
+    ("Bugbear Warrior", 14, 33),
+    ("Bulette", 17, 94),
+    ("Camel", 10, 17),
+    ("Cat", 12, 2),
+    ("Centaur Trooper", 16, 45),
+    ("Chain Devil", 15, 85),
+    ("Chimera", 14, 114),
+    ("Chuul", 16, 76),
+    ("Clay Golem", 14, 123),
+    ("Cloaker", 14, 91),
+    ("Cloud Giant", 14, 200),
+    ("Cockatrice", 11, 22),
+    ("Commoner", 10, 4),
+    ("Constrictor Snake", 13, 13),
+    ("Copper Dragon Wyrmling", 16, 22),
+    ("Couatl", 19, 60),
+    ("Crab", 11, 3),
+    ("Crocodile", 12, 13),
+    ("Cultist", 12, 9),
+    ("Cultist Fanatic", 13, 44),
+    ("Darkmantle", 11, 22),
+    ("Death Dog", 12, 39),
+    ("Deer", 13, 4),
+    ("Deva", 17, 229),
+    ("Dire Wolf", 14, 22),
+    ("Djinni", 17, 218),
+    ("Doppelganger", 14, 52),
+    ("Draft Horse", 10, 15),
+    ("Dragon Turtle", 20, 356),
+    ("Dretch", 11, 18),
+    ("Drider", 19, 123),
+    ("Druid", 13, 44),
+    ("Dryad", 16, 22),
+    ("Dust Mephit", 12, 17),
+    ("Eagle", 12, 4),
+    ("Earth Elemental", 17, 147),
+    ("Efreeti", 17, 212),
+    ("Elephant", 12, 76),
+    ("Elk", 10, 11),
+    ("Erinyes", 18, 178),
+    ("Ettercap", 13, 44),
+    ("Ettin", 12, 85),
+    ("Fire Elemental", 13, 93),
+    ("Fire Giant", 18, 162),
+    ("Flesh Golem", 9, 127),
+    ("Flying Snake", 14, 5),
+    ("Frog", 11, 1),
+    ("Frost Giant", 15, 149),
+    ("Gargoyle", 15, 67),
+    ("Gelatinous Cube", 6, 63),
+    ("Ghast", 13, 36),
+    ("Ghost", 11, 45),
+    ("Ghoul", 12, 22),
+    ("Giant Ape", 12, 168),
+    ("Giant Badger", 13, 15),
+    ("Giant Bat", 13, 22),
+    ("Giant Boar", 13, 42),
+    ("Giant Centipede", 14, 9),
+    ("Giant Constrictor Snake", 12, 60),
+    ("Giant Crab", 15, 13),
+    ("Giant Crocodile", 14, 85),
+    ("Giant Eagle", 13, 26),
+    ("Giant Elk", 14, 42),
+    ("Giant Fire Beetle", 13, 4),
+    ("Giant Fly", 11, 19),
+    ("Giant Frog", 11, 18),
+    ("Giant Goat", 11, 19),
+    ("Giant Hyena", 12, 45),
+    ("Giant Lizard", 12, 19),
+    ("Giant Octopus", 11, 45),
+    ("Giant Owl", 12, 19),
+    ("Giant Rat", 13, 7),
+    ("Giant Scorpion", 15, 52),
+    ("Giant Seahorse", 14, 16),
+    ("Giant Shark", 13, 92),
+    ("Giant Spider", 14, 26),
+    ("Giant Toad", 11, 39),
+    ("Giant Venomous Snake", 14, 11),
+    ("Giant Vulture", 10, 25),
+    ("Giant Wasp", 13, 22),
+    ("Giant Weasel", 13, 9),
+    ("Giant Wolf Spider", 13, 11),
+    ("Gibbering Mouther", 9, 52),
+    ("Glabrezu", 17, 189),
+    ("Gladiator", 16, 112),
+    ("Gnoll Warrior", 15, 27),
+    ("Goat", 10, 4),
+    ("Goblin Boss", 17, 21),
+    ("Goblin Minion", 12, 7),
+    ("Goblin Warrior", 15, 10),
+    ("Gold Dragon Wyrmling", 17, 60),
+    ("Gorgon", 19, 114),
+    ("Gray Ooze", 9, 22),
+    ("Green Dragon Wyrmling", 17, 38),
+    ("Green Hag", 17, 82),
+    ("Grick", 14, 54),
+    ("Griffon", 12, 59),
+    ("Grimlock", 11, 11),
+    ("Guard", 16, 11),
+    ("Guard Captain", 18, 75),
+    ("Guardian Naga", 18, 136),
+    ("Half-Dragon", 18, 105),
+    ("Harpy", 11, 38),
+    ("Hawk", 13, 1),
+    ("Hell Hound", 15, 58),
+    ("Hezrou", 18, 157),
+    ("Hill Giant", 13, 105),
+    ("Hippogriff", 11, 26),
+    ("Hippopotamus", 14, 82),
+    ("Hobgoblin Captain", 17, 58),
+    ("Hobgoblin Warrior", 18, 11),
+    ("Homunculus", 13, 4),
+    ("Horned Devil", 18, 199),
+    ("Hunter Shark", 12, 45),
+    ("Hydra", 15, 184),
+    ("Hyena", 11, 5),
+    ("Ice Devil", 18, 228),
+    ("Ice Mephit", 11, 21),
+    ("Imp", 13, 21),
+    ("Incubus", 15, 66),
+    ("Invisible Stalker", 14, 97),
+    ("Iron Golem", 20, 252),
+    ("Jackal", 12, 3),
+    ("Killer Whale", 12, 90),
+    ("Knight", 18, 52),
+    ("Kobold Warrior", 14, 7),
+    ("Kraken", 18, 481),
+    ("Lamia", 13, 97),
+    ("Lemure", 9, 9),
+    ("Lich", 20, 315),
+    ("Lion", 12, 22),
+    ("Lizard", 10, 2),
+    ("Mage", 15, 81),
+    ("Magma Mephit", 11, 18),
+    ("Magmin", 14, 13),
+    ("Mammoth", 13, 126),
+    ("Manticore", 14, 68),
+    ("Marilith", 16, 220),
+    ("Mastiff", 12, 5),
+    ("Medusa", 15, 127),
+    ("Merfolk Skirmisher", 11, 11),
+    ("Merrow", 13, 45),
+    ("Mimic", 12, 58),
+    ("Minotaur Skeleton", 12, 45),
+    ("Minotaur of Baphomet", 14, 85),
+    ("Mule", 10, 11),
+    ("Mummy", 11, 58),
+    ("Mummy Lord", 17, 187),
+    ("Nalfeshnee", 18, 184),
+    ("Night Hag", 17, 112),
+    ("Nightmare", 13, 68),
+    ("Noble", 15, 9),
+    ("Ochre Jelly", 8, 52),
+    ("Octopus", 12, 3),
+    ("Ogre", 11, 68),
+    ("Ogre Zombie", 8, 85),
+    ("Oni", 17, 119),
+    ("Otyugh", 14, 104),
+    ("Owl", 11, 1),
+    ("Owlbear", 13, 59),
+    ("Panther", 13, 13),
+    ("Pegasus", 12, 59),
+    ("Phase Spider", 14, 45),
+    ("Piranha", 13, 1),
+    ("Pirate", 14, 33),
+    ("Pirate Captain", 17, 84),
+    ("Pit Fiend", 21, 337),
+    ("Planetar", 19, 262),
+    ("Plesiosaurus", 13, 68),
+    ("Polar Bear", 12, 42),
+    ("Pony", 10, 11),
+    ("Priest", 13, 38),
+    ("Priest Acolyte", 13, 11),
+    ("Pseudodragon", 14, 10),
+    ("Pteranodon", 13, 13),
+    ("Purple Worm", 18, 247),
+    ("Quasit", 13, 25),
+    ("Rakshasa", 17, 221),
+    ("Rat", 10, 1),
+    ("Raven", 12, 2),
+    ("Red Dragon Wyrmling", 17, 75),
+    ("Reef Shark", 12, 22),
+    ("Remorhaz", 17, 195),
+    ("Rhinoceros", 13, 45),
+    ("Riding Horse", 11, 13),
+    ("Roc", 15, 248),
+    ("Roper", 20, 93),
+    ("Rust Monster", 14, 33),
+    ("Saber-Toothed Tiger", 13, 52),
+    ("Sahuagin Warrior", 12, 22),
+    ("Salamander", 15, 90),
+    ("Satyr", 13, 31),
+    ("Scorpion", 11, 1),
+    ("Scout", 13, 16),
+    ("Sea Hag", 14, 52),
+    ("Seahorse", 12, 1),
+    ("Shadow", 12, 27),
+    ("Shambling Mound", 15, 110),
+    ("Shield Guardian", 17, 142),
+    ("Shrieker Fungus", 5, 13),
+    ("Silver Dragon Wyrmling", 17, 45),
+    ("Skeleton", 14, 13),
+    ("Solar", 21, 297),
+    ("Specter", 12, 22),
+    ("Sphinx of Lore", 17, 170),
+    ("Sphinx of Valor", 17, 199),
+    ("Sphinx of Wonder", 13, 24),
+    ("Spider", 12, 1),
+    ("Spirit Naga", 17, 135),
+    ("Sprite", 15, 10),
+    ("Spy", 12, 27),
+    ("Steam Mephit", 10, 17),
+    ("Stirge", 13, 5),
+    ("Stone Giant", 17, 126),
+    ("Stone Golem", 18, 220),
+    ("Storm Giant", 16, 230),
+    ("Succubus", 15, 71),
+    ("Tarrasque", 25, 697),
+    ("Tiger", 13, 30),
+    ("Tough", 12, 32),
+    ("Tough Boss", 16, 82),
+    ("Treant", 16, 138),
+    ("Triceratops", 14, 114),
+    ("Troll", 15, 94),
+    ("Troll Limb", 13, 14),
+    ("Tyrannosaurus Rex", 13, 136),
+    ("Unicorn", 12, 97),
+    ("Vampire", 16, 195),
+    ("Vampire Familiar", 15, 65),
+    ("Vampire Spawn", 16, 90),
+    ("Venomous Snake", 12, 5),
+    ("Violet Fungus", 5, 18),
+    ("Vrock", 15, 152),
+    ("Vulture", 10, 5),
+    ("Warhorse", 11, 19),
+    ("Warhorse Skeleton", 13, 22),
+    ("Warrior Infantry", 13, 9),
+    ("Warrior Veteran", 17, 65),
+    ("Water Elemental", 14, 114),
+    ("Weasel", 13, 1),
+    ("Werebear", 15, 135),
+    ("Wereboar", 15, 97),
+    ("Wererat", 13, 60),
+    ("Weretiger", 12, 120),
+    ("Werewolf", 15, 71),
+    ("White Dragon Wyrmling", 16, 32),
+    ("Wight", 14, 82),
+    ("Will-o’-Wisp", 19, 27),
+    ("Winter Wolf", 13, 75),
+    ("Wolf", 12, 11),
+    ("Worg", 13, 26),
+    ("Wraith", 13, 67),
+    ("Wyvern", 14, 127),
+    ("Xorn", 19, 84),
+    ("Young Black Dragon", 18, 127),
+    ("Young Blue Dragon", 18, 152),
+    ("Young Brass Dragon", 17, 110),
+    ("Young Bronze Dragon", 17, 142),
+    ("Young Copper Dragon", 17, 119),
+    ("Young Gold Dragon", 18, 178),
+    ("Young Green Dragon", 18, 136),
+    ("Young Red Dragon", 18, 178),
+    ("Young Silver Dragon", 18, 168),
+    ("Young White Dragon", 17, 123),
+    ("Zombie", 8, 15),
+    ];
+
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actors/creatures");
+    // `name:` and then the first `ac:` and `hitpoints:` lines beneath
+    // it, which is the shape every struct literal in the bestiary has.
+    // Read line-wise rather than by one regex over the whole file
+    // because the blocks are hundreds of lines long and a greedy match
+    // across two of them would pair one creature's name with the next
+    // one's armour.
+    let mut found: std::collections::BTreeMap<String, (u32, f32)> =
+        std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(&dir).expect("the bestiary directory is readable") {
+        let path = entry.expect("a readable directory entry").path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("a readable bestiary file");
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let Some(name) = between(line.trim(), "name: \"", "\",") else {
+                continue;
+            };
+            let mut ac: Option<u32> = None;
+            let mut hp: Option<f32> = None;
+            for probe in lines.iter().skip(i + 1).take(40) {
+                let t = probe.trim();
+                if ac.is_none()
+                    && let Some(rest) = t.strip_prefix("ac: ")
+                    && let Some(n) = rest.strip_suffix(',')
+                {
+                    ac = n.parse().ok();
+                }
+                if hp.is_none()
+                    && let Some(expr) = between(t, "hitpoints: \"", "\".parse()")
+                    && let Ok(dice) = expr.parse::<crate::engine::dice::DiceExpr>()
+                {
+                    hp = Some(dice.average_roll());
+                }
+                if ac.is_some() && hp.is_some() {
+                    break;
+                }
+            }
+            if let (Some(ac), Some(hp)) = (ac, hp) {
+                found.insert(name.to_string(), (ac, hp));
+            }
+        }
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, book_ac, book_hp) in SRD_DEFENCES {
+        let Some((ac, hp)) = found.get(*name) else {
+            continue;
+        };
+        checked += 1;
+        if ac != book_ac {
+            wrong.push(format!(
+                "{name}: the book prints AC {book_ac} and it wears {ac}"
+            ));
+        }
+        // Half a point of slack, and no more: the book's own figure is
+        // the average of the dice it prints, so an expression that
+        // rounds the other way is a different creature by a hit point
+        // rather than a rounding of the same one.
+        if (hp - *book_hp as f32).abs() > 0.5 {
+            wrong.push(format!(
+                "{name}: the book prints {book_hp} hit points and it rolls an average of {hp}"
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's own defences:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count. What it guards is the scan: a parser that
+    // stopped matching the declarations would pass every row vacuously,
+    // which is the one way a sweep like this fails without saying so.
+    assert!(
+        checked > 250,
+        "only {checked} of the book's {} flat stat blocks were matched to a \
+         declaration — the source scan has stopped working rather than the \
+         bestiary having shrunk",
+        SRD_DEFENCES.len()
+    );
+}
+
+/// The substring between two markers, or `None` if either is missing.
+/// Small enough to inline and named because two sweeps want it.
+fn between<'a>(haystack: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let rest = haystack.split_once(open)?.1;
+    rest.split_once(close).map(|(inner, _)| inner)
+}
