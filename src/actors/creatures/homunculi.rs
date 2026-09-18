@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::HOMUNCULUS_BITE;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -69,6 +71,7 @@ pub static HOMUNCULUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Petrified,
             Condition::Poisoned,
         ]),
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         ..CreatureTemplate::defaults()
     }
 });

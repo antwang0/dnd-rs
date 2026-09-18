@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MAMMOTH_CHARGE, MAMMOTH_GORE, MAMMOTH_STOMP};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Mammoth — CR 6 huge beast. The ice-age elephant — a tusked,
@@ -82,6 +83,10 @@ pub static MAMMOTH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // trample, which is a thing it can only do from range and only
         // once before it is standing on top of you.
         charge: Some(MAMMOTH_CHARGE),
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Constitution,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

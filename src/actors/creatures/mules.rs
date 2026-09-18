@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MULE_HOOVES;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Mule — CR ⅛ medium beast. The patient pack animal: a single
@@ -65,6 +66,7 @@ pub static MULE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Beast,
         actions,
+        proficient_saves: HashSet::from([AbilityScoreType::Strength]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -62,6 +62,7 @@ pub static GLADIATOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Strength,
             AbilityScoreType::Dexterity,
             AbilityScoreType::Constitution,
+            AbilityScoreType::Wisdom,
         ]),
         has_brave: true,
         // SRD 5.2 **Parry** (Reaction): *"the gladiator adds 3 to its AC

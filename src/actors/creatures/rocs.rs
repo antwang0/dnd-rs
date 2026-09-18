@@ -48,13 +48,10 @@ pub static ROC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,
         actions,
-        // 5e Roc proficient saves: STR / DEX / CON / WIS per MM.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Strength,
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-        ]),
+        // SRD 5.2: *"Dex +4 … Wis +4"*. The STR and CON proficiencies
+        // beside them are the 2014 roc's — and on a creature with STR
+        // 28 the first was worth a great deal.
+        proficient_saves: HashSet::from([AbilityScoreType::Dexterity, AbilityScoreType::Wisdom]),
         // Rocs are too vast / brain-stunted to be charmed by mortal
         // magic; mirrors the Hill / Fire Giant Charmed immunity.
         condition_immunities: HashSet::from([Condition::Charmed]),

@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_RAT_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -67,6 +67,7 @@ pub static GIANT_RAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Pack Tactics — advantage when an ally is adjacent to the
         // target. The load-bearing trait at the giant rat's CR tier.
         has_pack_tactics: true,
+        proficient_saves: HashSet::from([AbilityScoreType::Dexterity]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -58,12 +58,10 @@ pub static PIT_FIEND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
         ]),
-        // MM Pit Fiend proficient saves: DEX / CON / WIS.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-        ]),
+        // SRD 5.2: *"Dex +8 … Wis +8"*. The CON proficiency beside
+        // them was the 2014 stat block's, and it was the pit fiend's
+        // best score.
+        proficient_saves: HashSet::from([AbilityScoreType::Dexterity, AbilityScoreType::Wisdom]),
         // Devil condition immunity envelope: can't be poisoned, charmed,
         // or frightened — the latter pairing with the fear-aura is the
         // marquee "you can't fight back" interaction.

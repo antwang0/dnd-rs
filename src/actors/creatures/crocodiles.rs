@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
     CROCODILE_BITE, GIANT_CROCODILE_BITE, GIANT_CROCODILE_MULTI, GIANT_CROCODILE_TAIL,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -59,6 +59,7 @@ pub static CROCODILE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution]),
         ..CreatureTemplate::defaults()
     }
 });

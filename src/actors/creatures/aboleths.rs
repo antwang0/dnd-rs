@@ -40,8 +40,12 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Aberration,
         actions,
-        // Aboleth proficient saves: CON, INT, WIS.
+        // SRD 5.2: *"Dex +3 … Con +6 … Int +8 … Wis +6"* — four, not
+        // the three this carried. The missing one was DEX, on a
+        // creature whose Dexterity is its worst score and whose save
+        // therefore reads as a bonus rather than a penalty.
         proficient_saves: HashSet::from([
+            AbilityScoreType::Dexterity,
             AbilityScoreType::Constitution,
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,

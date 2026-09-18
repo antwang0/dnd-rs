@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_BOAR_TUSKS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Giant Boar — CR 2 large beast. The "thunder-tusk" upgrade tier of
@@ -68,6 +69,7 @@ pub static GIANT_BOAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 2d6 slashing and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::GIANT_BOAR_CHARGE),
+        proficient_saves: HashSet::from([AbilityScoreType::Strength]),
         ..CreatureTemplate::defaults()
     }
 });

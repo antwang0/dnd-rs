@@ -68,12 +68,12 @@ pub static HEZROU_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Fiend,
         actions,
-        // Hezrou proficient saves: STR, CON, WIS, CHA per MM.
+        // SRD 5.2: *"Str +7 … Con +6 … Wis +3"*. The CHA proficiency
+        // beside them was the 2014 hezrou's.
         proficient_saves: HashSet::from([
             AbilityScoreType::Strength,
             AbilityScoreType::Constitution,
             AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
         ]),
         // Demon damage envelope: non-magical BPS resistance + cold / fire
         // / lightning resistance + poison immunity. Mirrors the Vrock /

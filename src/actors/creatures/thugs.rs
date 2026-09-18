@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
     TOUGH_BOSS_WARHAMMER,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -137,6 +137,11 @@ pub static TOUGH_BOSS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // feet of the creature." The engine's shared flag, the same one
         // the wolves and the giant rats read.
         has_pack_tactics: true,
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Charisma,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

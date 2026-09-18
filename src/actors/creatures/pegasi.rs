@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::PEGASUS_HOOVES;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, Skill};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -45,6 +45,12 @@ pub static PEGASUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Celestial,
         actions,
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

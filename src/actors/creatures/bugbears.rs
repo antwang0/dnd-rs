@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
     BUGBEAR_STALKER_MULTI,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -104,6 +104,7 @@ pub static BUGBEAR_STALKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         creature_type: CreatureType::Fey,
         actions,
         skills: HashSet::from([Skill::Stealth, Skill::Survival]),
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });

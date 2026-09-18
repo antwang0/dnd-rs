@@ -5,7 +5,7 @@ use crate::actions::monster_attacks::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -118,6 +118,12 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
             // 5e **Magic Weapons**: "the devil's weapon attacks
             // are magical."
             crate::actions::class_features::MAGICAL_ATTACKS_TAG,
+        ]),
+        proficient_saves: HashSet::from([
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

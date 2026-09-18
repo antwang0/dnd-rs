@@ -72,14 +72,10 @@ pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        // Djinni proficient saves: DEX, WIS, CHA per MM. The agile +
-        // willful + force-of-personality saves befitting an air genie's
-        // signature traits.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // SRD 5.2: *"Dex +8 … Wis +7"* — the agile and willful saves
+        // befitting an air genie. The CHA proficiency beside them was
+        // the 2014 stat block's.
+        proficient_saves: HashSet::from([AbilityScoreType::Dexterity, AbilityScoreType::Wisdom]),
         // Standard elemental damage envelope (poison immune + BPS
         // resistance) overlaid with thunder + lightning resistance — the
         // air genie's signature elemental affinity. Mirrors the Air

@@ -82,17 +82,27 @@ use crate::engine::types::{
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
-/// The DEX / CON / WIS / CHA save profile every dragon in this engine
-/// shares. A `LazyLock` because `HashSet` isn't `const`-constructible
-/// from a literal; all forty templates clone the same value.
-static DRAGON_LEGENDARY_SAVES: LazyLock<HashSet<AbilityScoreType>> = LazyLock::new(|| {
-    HashSet::from([
-        AbilityScoreType::Dexterity,
-        AbilityScoreType::Constitution,
-        AbilityScoreType::Wisdom,
-        AbilityScoreType::Charisma,
-    ])
-});
+/// The DEX / WIS save profile every dragon in this engine shares. A
+/// `LazyLock` because `HashSet` isn't `const`-constructible from a
+/// literal; all forty templates clone the same value.
+///
+/// **Two abilities, not four.** The name is 2014's: that printing gave
+/// every dragon DEX, CON, WIS and CHA, and the engine carried all four
+/// on all forty stat blocks. SRD 5.2 prints two — *"Dex +7 … Wis +6"*
+/// on the Adult Black, and the same pair at every age and colour — and
+/// leaves the CON and CHA columns at the bare ability modifier. The
+/// extra two were not decoration: a dragon's Constitution is its best
+/// score, so the surplus proficiency was adding a whole proficiency
+/// bonus to every Con save the party could throw at it, and on an
+/// ancient dragon that is +5 — a quarter of the die.
+///
+/// What the older profile was reaching for is real and lives
+/// elsewhere: the thing that makes a dragon hard to land a
+/// save-or-suck on is **Legendary Resistance**, which is its own field
+/// (`legendary_resistances`) and which every one of these forty
+/// templates already carries.
+static DRAGON_LEGENDARY_SAVES: LazyLock<HashSet<AbilityScoreType>> =
+    LazyLock::new(|| HashSet::from([AbilityScoreType::Dexterity, AbilityScoreType::Wisdom]));
 
 /// The colour axis. Everything a colour decides is one damage type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -83,11 +83,7 @@ pub static CHAIN_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned]),
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         has_magic_resistance: true,
         features: HashSet::from([DEVILS_SIGHT_TAG, MAGICAL_ATTACKS_TAG]),
         // SRD 5.2's Reaction, and the only one in the book that answers

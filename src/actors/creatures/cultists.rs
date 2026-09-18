@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::CULTIST_SCIMITAR;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, Skill};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -54,6 +54,7 @@ pub static CULTIST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the charm half rides a flag named after elves.
         has_fey_ancestry: true,
         has_brave: true,
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });

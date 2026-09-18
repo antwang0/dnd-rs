@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WARHORSE_HOOVES;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Warhorse — CR ½ large beast. The "trained battle mount" tier of
@@ -90,6 +91,7 @@ pub static WARHORSE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::WARHORSE_CHARGE),
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });

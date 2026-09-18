@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_GOAT_RAM;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
 use std::collections::HashSet;
 
@@ -68,6 +68,7 @@ pub static GIANT_GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::GIANT_GOAT_CHARGE),
         senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        proficient_saves: HashSet::from([AbilityScoreType::Strength]),
         ..CreatureTemplate::defaults()
     }
 });

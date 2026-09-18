@@ -1,7 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::PONY_HOOVES;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Pony — CR ⅛ medium beast. The small-rider mount tier of the
@@ -59,6 +60,7 @@ pub static PONY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Beast,
         actions,
+        proficient_saves: HashSet::from([AbilityScoreType::Strength]),
         ..CreatureTemplate::defaults()
     }
 });

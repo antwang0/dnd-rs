@@ -6,7 +6,7 @@ use crate::actions::spells::{
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
@@ -74,16 +74,15 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Radiant, DamageModifier::Immunity),
         ]),
-        // Solar proficient saves: every single one. RAW gives the solar
-        // proficiency on all six saves via its angelic Aura of Light.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Strength,
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // None. Every column of SRD 5.2's solar prints the same number
+        // twice — *"Str 26 +8 +8 … Cha 30 +10 +10"* — so the whole
+        // sheet is bare ability modifiers. The six proficiencies this
+        // used to carry were attributed to an "angelic Aura of Light"
+        // that appears on no printing of the stat block; what actually
+        // makes a solar hard to land a spell on is the +7 proficiency
+        // bonus already inside those modifiers, and Legendary
+        // Resistance.
+        proficient_saves: HashSet::new(),
         condition_immunities: HashSet::from([
             Condition::Charmed,
             Condition::Exhausted,

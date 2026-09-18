@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{MUMMY_DREADFUL_GLARE, MUMMY_ROTTING_FIST};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -54,6 +56,7 @@ pub static MUMMY_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Frightened,
             Condition::Paralyzed,
         ]),
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }
 });

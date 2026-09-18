@@ -128,13 +128,10 @@ pub static MUMMY_LORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // SRD 5.2 **Turn Resistance** — a cleric's Channel Divinity is
         // a poor answer to this one. See `TURN_RESISTANCE_TAG`.
         features: HashSet::from([TURN_RESISTANCE_TAG]),
-        // Mummy Lord proficient saves: CON, INT, WIS, CHA per MM.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // SRD 5.2: *"Int +5 … Wis +9"*. The CON and CHA proficiencies
+        // beside them were the 2014 stat block's; what keeps this
+        // thing standing now is the Turn Resistance above.
+        proficient_saves: HashSet::from([AbilityScoreType::Intelligence, AbilityScoreType::Wisdom]),
         damage_modifiers: damage_modifiers_from([
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),

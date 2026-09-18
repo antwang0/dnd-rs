@@ -54,12 +54,12 @@ pub static ERINYES_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
         ]),
-        // MM Erinyes proficient saves: DEX / CON / WIS / CHA — the
-        // devil's "untouchable" save profile.
+        // SRD 5.2: *"Dex +7 … Con +7 … Cha +8"* — the devil's
+        // "untouchable" save profile, minus the WIS proficiency that
+        // was 2014's.
         proficient_saves: HashSet::from([
             AbilityScoreType::Dexterity,
             AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),
         // Devil envelope: can't be poisoned or charmed. We add

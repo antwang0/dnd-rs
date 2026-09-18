@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{T_REX_BITE, T_REX_MULTI, T_REX_TAIL};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, Skill};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -36,6 +36,7 @@ pub static T_REX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Huge,
         creature_type: CreatureType::Beast,
         actions,
+        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });

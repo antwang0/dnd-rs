@@ -63,9 +63,13 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DamageType::Necrotic,
             DamageModifier::Resistance,
         )]),
-        // Vampire saves: prof in DEX / WIS / CHA per MM.
+        // SRD 5.2: *"Dex +9 … Con +7 … Wis +7 … Cha +9"* — four, and
+        // the CON one was missing, which is the save a vampire spends
+        // on holding concentration and on shrugging off a poison it is
+        // not immune to.
         proficient_saves: HashSet::from([
             AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,
         ]),

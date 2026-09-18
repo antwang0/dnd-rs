@@ -3,7 +3,9 @@ use crate::actions::class_features::UNDEAD_FORTITUDE_TAG;
 use crate::actions::monster_attacks::{OGRE_ZOMBIE_SLAM, TRIP, ZOMBIE_MULTISLAM};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -56,6 +58,7 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // at DC 5 + the damage, and a zombie that passes stands back up
         // at 1 HP. See `EncounterInstance::try_undead_fortitude`.
         features: HashSet::from([UNDEAD_FORTITUDE_TAG]),
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });
@@ -115,6 +118,7 @@ pub static OGRE_ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Poisoned,
         ]),
         features: HashSet::from([UNDEAD_FORTITUDE_TAG]),
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -46,11 +46,9 @@ use std::sync::LazyLock;
 /// Stat shape: AC 20 (heavy shell), ~356 average HP (23d20+115), STR 25,
 /// CON 20. Darkvision 120 ft. Languages: Aquan, Draconic. CR 17.
 ///
-/// RAW also gives the dragon turtle proficient DEX/CON/WIS saves — the
-/// standard "legendary-class" save profile minus the CHA save. We capture
-/// the load-bearing slice via the three-stat proficient_saves set. No
-/// legendary actions or resistances RAW — the dragon turtle is a heavy
-/// brute, not an anti-caster boss.
+/// RAW gives the dragon turtle proficient CON and WIS saves and nothing
+/// else. No legendary actions or resistances either — the dragon turtle
+/// is a heavy brute, not an anti-caster boss.
 pub static DRAGON_TURTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     let mut actions = DEFAULT_ACTIONS.clone();
     actions.push(&*DRAGON_TURTLE_MULTI);
@@ -79,14 +77,11 @@ pub static DRAGON_TURTLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         size: Size::Gargantuan,
         creature_type: CreatureType::Dragon,
         actions,
-        // Dragon Turtle proficient saves: DEX, CON, WIS per MM. The CHA
-        // save is conspicuously absent (the dragon turtle's wisdom-not-
-        // charisma personality contra the surface dragons).
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-        ]),
+        // SRD 5.2: *"Con +11 … Wis +7"*. The DEX proficiency beside them
+        // was the 2014 stat block's, on a creature whose Dexterity is
+        // its worst score — which is where a proficiency is worth most,
+        // because it is the save an armoured gargantuan otherwise fails.
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         // Fire resistance — the "boilermaker" lane. The steam breath's
         // own fire typing means a self-centered breath would do half
         // damage to the turtle if friendly fire were possible; the

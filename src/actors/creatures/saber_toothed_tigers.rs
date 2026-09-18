@@ -2,7 +2,7 @@ use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{SABER_TIGER_BITE, SABER_TIGER_CLAWS, SABER_TIGER_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -50,6 +50,7 @@ pub static SABER_TOOTHED_TIGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
         // a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::SABER_TIGER_POUNCE),
+        proficient_saves: HashSet::from([AbilityScoreType::Strength, AbilityScoreType::Dexterity]),
         ..CreatureTemplate::defaults()
     }
 });

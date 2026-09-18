@@ -120398,6 +120398,7 @@ fn a_fiend_steeds_glare_frightens_once_a_day() {
     use crate::actors::creatures::paladins::PALADIN_TEMPLATE;
     use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
     use crate::conditions::Condition;
+    use crate::engine::side_effects::Resource;
 
     let mut e = ei_with_terrain(20, 20, &[]);
     let paladin = e
@@ -120411,19 +120412,31 @@ fn a_fiend_steeds_glare_frightens_once_a_day() {
         .keys()
         .find(|id| **id != paladin)
         .expect("the steed is on the board");
-    // A zombie has a Wisdom of 6 and is not immune to fear, so the save
-    // is one the glare can beat; the assertion below is about the
-    // *condition*, so the test re-rolls until the save fails rather
-    // than pinning a seed.
+    // A zombie has a Wisdom of 6 and a +0 save against the steed's DC
+    // 14, so the save is one the glare can beat; the assertion below is
+    // about the *condition*, so the test re-rolls until the save fails
+    // rather than pinning a seed.
+    //
+    // Both refunds are load-bearing. Fell Glare is a Bonus Action
+    // gated on a once-a-day recharge, so a retry has to hand back
+    // *both*, and for a long time this loop handed back only the
+    // recharge: the steed spent its one bonus action on the first pass
+    // and every pass after it executed into an empty action economy
+    // and returned no side effects at all. Forty rolls were one roll,
+    // and the test passed or failed on whether that single d20 came up
+    // under 14 — which it did, until a correction to the zombie's own
+    // save bonus moved the number by two and the whole loop failed at
+    // once.
     let mut frightened = false;
     for _ in 0..40 {
         let zombie = e
             .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
             .unwrap();
-        e.actors
-            .get_mut(&steed)
-            .unwrap()
-            .set_recharge_available(FELL_GLARE_KEY, true);
+        {
+            let s = e.actors.get_mut(&steed).unwrap();
+            s.set_recharge_available(FELL_GLARE_KEY, true);
+            s.give_resource(Resource::BonusAction);
+        }
         for x in FELL_GLARE.execute(&mut e, steed, Some(&vec![zombie]), None, None) {
             x.apply(&mut e);
         }
@@ -123423,6 +123436,446 @@ fn every_stat_blocks_senses_match_the_book() {
     );
 }
 
+/// Every stat block's **saving throw proficiencies**, against the SAVE
+/// columns the bestiary prints.
+///
+/// The sixth book-conformance sweep, and the one with the widest reach
+/// into play: a save proficiency is the whole proficiency bonus, which
+/// on an ancient dragon is +5 — a quarter of the die — applied to every
+/// Hold Monster, every Fireball, every concentration check and every
+/// Banishment the party will ever throw at that creature.
+///
+/// ## The book does not print proficiencies, so the table derives them
+///
+/// SRD 5.2's ability block prints two numbers per score, MOD and SAVE,
+/// and never says the word "proficient". The proficiency is the gap:
+/// a save equal to the modifier is unproficient, and a save above it is
+/// proficient. It is only a derivation and not a guess because the gap
+/// is never anything else — across all 325 stat blocks and all 1,950
+/// columns, every SAVE is either exactly the MOD or exactly the MOD
+/// plus the creature's own proficiency bonus, with no third case. That
+/// is the same arithmetic `is_save_proficient` and `proficiency_bonus`
+/// do on this side, so the two sides are comparable on the axis the
+/// engine actually stores.
+///
+/// ## What it found
+///
+/// Ninety-four stat blocks, in four shapes:
+///
+///   - **Every dragon in the book.** All forty shared one
+///     `DRAGON_LEGENDARY_SAVES` constant holding DEX, CON, WIS and CHA
+///     — the 2014 profile. SRD 5.2 prints DEX and WIS, and leaves CON
+///     and CHA at the bare modifier. Constitution is a dragon's best
+///     score, so the surplus was landing on every concentration check
+///     and every Con save in the game. Fixed once, at the constant.
+///   - **2014 profiles on the named monsters.** The balor, cloud giant,
+///     couatl, djinni, efreeti, erinyes, hezrou, kraken, mummy lord,
+///     pit fiend, roc and chain devil each carried one or two
+///     proficiencies 2024 dropped; the solar carried all six, credited
+///     in its own comment to an "angelic Aura of Light" that appears on
+///     no printing of the stat block. The tarrasque carried six for
+///     "legendary saves on every score", which is Legendary Resistance
+///     — a different field, which it also has.
+///   - **Save rows nobody had transcribed at all.** Twenty-two stat
+///     blocks had an empty set where the book prints one or more: the
+///     bearded devil, the horned devil, the bugbear stalker, the tough
+///     boss, the gladiator's WIS, the cultist and cult fanatic, the
+///     ghast, the medusa, the mummy, the zombie and ogre zombie, the
+///     homunculus, the pegasus, the vampire spawn, the animated flying
+///     sword, and most of the animal appendix — the camel, cat,
+///     crocodile, giant boar, giant goat, giant lizard, giant owl,
+///     giant rat, goat, mammoth, mastiff, mule, pony, saber-toothed
+///     tiger, tyrannosaurus and warhorse.
+///   - **Proficiencies the book does not give.** The berserker's STR
+///     and the wight's CON, both bare modifiers in 5.2.
+///
+/// Four more were the right shape and the wrong length — the aboleth,
+/// the lich and the vampire were each missing exactly one column (DEX,
+/// DEX and CON), and the purple worm had STR where the book prints WIS.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its five
+/// siblings; see there for the rename and the player-character
+/// exclusion.
+#[test]
+fn every_stat_blocks_saving_throws_match_the_book() {
+    /// `(name, "ABILITY, ABILITY")` — SRD 5.2, one row per stat block,
+    /// the abilities whose SAVE column exceeds their MOD column, in the
+    /// order the book prints the six scores. An empty string is a stat
+    /// block that rolls every save on the bare modifier, which is most
+    /// of the bestiary.
+    const SRD_SAVES: &[(&str, &str)] = &[
+    ("Aboleth", "DEX, CON, INT, WIS"),
+    ("Adult Black Dragon", "DEX, WIS"),
+    ("Adult Blue Dragon", "DEX, WIS"),
+    ("Adult Brass Dragon", "DEX, WIS"),
+    ("Adult Bronze Dragon", "DEX, WIS"),
+    ("Adult Copper Dragon", "DEX, WIS"),
+    ("Adult Gold Dragon", "DEX, WIS"),
+    ("Adult Green Dragon", "DEX, WIS"),
+    ("Adult Red Dragon", "DEX, WIS"),
+    ("Adult Silver Dragon", "DEX, WIS"),
+    ("Adult White Dragon", "DEX, WIS"),
+    ("Air Elemental", ""),
+    ("Allosaurus", ""),
+    ("Ancient Black Dragon", "DEX, WIS"),
+    ("Ancient Blue Dragon", "DEX, WIS"),
+    ("Ancient Brass Dragon", "DEX, WIS"),
+    ("Ancient Bronze Dragon", "DEX, WIS"),
+    ("Ancient Copper Dragon", "DEX, WIS"),
+    ("Ancient Gold Dragon", "DEX, WIS"),
+    ("Ancient Green Dragon", "DEX, WIS"),
+    ("Ancient Red Dragon", "DEX, WIS"),
+    ("Ancient Silver Dragon", "DEX, WIS"),
+    ("Ancient White Dragon", "DEX, WIS"),
+    ("Animated Armor", ""),
+    ("Animated Flying Sword", "DEX"),
+    ("Animated Rug of Smothering", ""),
+    ("Ankheg", ""),
+    ("Ankylosaurus", "STR"),
+    ("Ape", ""),
+    ("Archelon", ""),
+    ("Archmage", "INT, WIS"),
+    ("Assassin", "DEX, INT"),
+    ("Avatar of Death", ""),
+    ("Awakened Shrub", ""),
+    ("Awakened Tree", ""),
+    ("Axe Beak", ""),
+    ("Azer Sentinel", "CON"),
+    ("Baboon", ""),
+    ("Badger", ""),
+    ("Balor", "CON, WIS"),
+    ("Bandit", ""),
+    ("Bandit Captain", "STR, DEX, WIS"),
+    ("Barbed Devil", "STR, CON, WIS, CHA"),
+    ("Basilisk", ""),
+    ("Bat", ""),
+    ("Bearded Devil", "STR, CON, CHA"),
+    ("Behir", ""),
+    ("Berserker", ""),
+    ("Black Bear", ""),
+    ("Black Dragon Wyrmling", "DEX, WIS"),
+    ("Black Pudding", ""),
+    ("Blink Dog", ""),
+    ("Blood Hawk", ""),
+    ("Blue Dragon Wyrmling", "DEX, WIS"),
+    ("Boar", ""),
+    ("Bone Devil", "STR, INT, WIS, CHA"),
+    ("Brass Dragon Wyrmling", "DEX, WIS"),
+    ("Bronze Dragon Wyrmling", "DEX, WIS"),
+    ("Brown Bear", ""),
+    ("Bugbear Stalker", "CON, WIS"),
+    ("Bugbear Warrior", ""),
+    ("Bulette", ""),
+    ("Camel", "CON"),
+    ("Cat", "DEX"),
+    ("Centaur Trooper", ""),
+    ("Chain Devil", "CON, WIS"),
+    ("Chimera", ""),
+    ("Chuul", ""),
+    ("Clay Golem", ""),
+    ("Cloaker", ""),
+    ("Cloud Giant", "CON, WIS"),
+    ("Cockatrice", ""),
+    ("Commoner", ""),
+    ("Constrictor Snake", ""),
+    ("Copper Dragon Wyrmling", "DEX, WIS"),
+    ("Couatl", "CON, WIS"),
+    ("Crab", ""),
+    ("Crocodile", "CON"),
+    ("Cultist", "WIS"),
+    ("Cultist Fanatic", "WIS"),
+    ("Darkmantle", ""),
+    ("Death Dog", ""),
+    ("Deer", ""),
+    ("Deva", "WIS, CHA"),
+    ("Dire Wolf", ""),
+    ("Djinni", "DEX, WIS"),
+    ("Doppelganger", ""),
+    ("Draconic Spirit", ""),
+    ("Draft Horse", ""),
+    ("Dragon Turtle", "CON, WIS"),
+    ("Dretch", ""),
+    ("Drider", ""),
+    ("Dryad", ""),
+    ("Dust Mephit", ""),
+    ("Eagle", ""),
+    ("Earth Elemental", ""),
+    ("Efreeti", "WIS, CHA"),
+    ("Elephant", ""),
+    ("Elk", ""),
+    ("Erinyes", "DEX, CON, CHA"),
+    ("Ettercap", ""),
+    ("Ettin", ""),
+    ("Fire Elemental", ""),
+    ("Fire Giant", "DEX, CON, CHA"),
+    ("Flesh Golem", ""),
+    ("Flying Snake", ""),
+    ("Frog", ""),
+    ("Frost Giant", "CON, WIS, CHA"),
+    ("Gargoyle", ""),
+    ("Gelatinous Cube", ""),
+    ("Ghast", "WIS"),
+    ("Ghost", ""),
+    ("Ghoul", ""),
+    ("Giant Ape", ""),
+    ("Giant Badger", ""),
+    ("Giant Bat", ""),
+    ("Giant Boar", "STR"),
+    ("Giant Centipede", ""),
+    ("Giant Constrictor Snake", ""),
+    ("Giant Crab", ""),
+    ("Giant Crocodile", ""),
+    ("Giant Eagle", ""),
+    ("Giant Elk", "STR, DEX"),
+    ("Giant Fire Beetle", ""),
+    ("Giant Fly", ""),
+    ("Giant Frog", ""),
+    ("Giant Goat", "STR"),
+    ("Giant Hyena", ""),
+    ("Giant Insect", ""),
+    ("Giant Lizard", "DEX"),
+    ("Giant Octopus", ""),
+    ("Giant Owl", "WIS"),
+    ("Giant Rat", "DEX"),
+    ("Giant Scorpion", ""),
+    ("Giant Seahorse", ""),
+    ("Giant Shark", ""),
+    ("Giant Spider", ""),
+    ("Giant Toad", ""),
+    ("Giant Venomous Snake", ""),
+    ("Giant Vulture", ""),
+    ("Giant Wasp", ""),
+    ("Giant Weasel", ""),
+    ("Giant Wolf Spider", ""),
+    ("Gibbering Mouther", ""),
+    ("Glabrezu", "STR, CON, WIS, CHA"),
+    ("Gladiator", "STR, DEX, CON, WIS"),
+    ("Gnoll Warrior", ""),
+    ("Goat", "STR"),
+    ("Goblin Boss", ""),
+    ("Goblin Minion", ""),
+    ("Goblin Warrior", ""),
+    ("Gold Dragon Wyrmling", "DEX, WIS"),
+    ("Gorgon", ""),
+    ("Gray Ooze", ""),
+    ("Green Dragon Wyrmling", "DEX, WIS"),
+    ("Green Hag", ""),
+    ("Grick", ""),
+    ("Griffon", ""),
+    ("Grimlock", ""),
+    ("Guard", ""),
+    ("Guard Captain", ""),
+    ("Guardian Naga", "DEX, CON, INT, WIS, CHA"),
+    ("Harpy", ""),
+    ("Hawk", ""),
+    ("Hell Hound", ""),
+    ("Hezrou", "STR, CON, WIS"),
+    ("Hill Giant", ""),
+    ("Hippogriff", ""),
+    ("Hippopotamus", "STR"),
+    ("Hobgoblin Captain", ""),
+    ("Hobgoblin Warrior", ""),
+    ("Homunculus", "WIS, CHA"),
+    ("Horned Devil", "STR, DEX, WIS, CHA"),
+    ("Hunter Shark", ""),
+    ("Hydra", ""),
+    ("Hyena", ""),
+    ("Ice Devil", "DEX, CON, WIS, CHA"),
+    ("Ice Mephit", ""),
+    ("Imp", ""),
+    ("Incubus", ""),
+    ("Invisible Stalker", ""),
+    ("Iron Golem", ""),
+    ("Jackal", ""),
+    ("Killer Whale", ""),
+    ("Knight", "CON, WIS"),
+    ("Kobold Warrior", ""),
+    ("Kraken", "STR, DEX, CON, WIS"),
+    ("Lamia", ""),
+    ("Lemure", ""),
+    ("Lich", "DEX, CON, INT, WIS"),
+    ("Lion", ""),
+    ("Lizard", ""),
+    ("Mage", "INT, WIS"),
+    ("Magma Mephit", ""),
+    ("Magmin", ""),
+    ("Mammoth", "STR, CON"),
+    ("Manticore", ""),
+    ("Marilith", "STR, CON, WIS, CHA"),
+    ("Mastiff", "WIS"),
+    ("Medusa", "WIS"),
+    ("Merfolk Skirmisher", ""),
+    ("Merrow", ""),
+    ("Mimic", ""),
+    ("Minotaur Skeleton", ""),
+    ("Minotaur of Baphomet", ""),
+    ("Mule", "STR"),
+    ("Mummy", "WIS"),
+    ("Mummy Lord", "INT, WIS"),
+    ("Nalfeshnee", "CON, INT, WIS, CHA"),
+    ("Night Hag", ""),
+    ("Nightmare", ""),
+    ("Noble", ""),
+    ("Ochre Jelly", ""),
+    ("Octopus", ""),
+    ("Ogre", ""),
+    ("Ogre Zombie", "WIS"),
+    ("Oni", "DEX, CON, WIS, CHA"),
+    ("Otyugh", "CON"),
+    ("Owl", ""),
+    ("Owlbear", ""),
+    ("Panther", ""),
+    ("Pegasus", "DEX, CON, WIS, CHA"),
+    ("Phase Spider", ""),
+    ("Piranha", ""),
+    ("Pirate", "DEX, CHA"),
+    ("Pirate Captain", "STR, DEX, WIS, CHA"),
+    ("Pit Fiend", "DEX, WIS"),
+    ("Planetar", "STR, CON, WIS, CHA"),
+    ("Plesiosaurus", ""),
+    ("Polar Bear", ""),
+    ("Pony", "STR"),
+    ("Priest", ""),
+    ("Priest Acolyte", ""),
+    ("Pseudodragon", ""),
+    ("Pteranodon", ""),
+    ("Purple Worm", "CON, WIS"),
+    ("Quasit", ""),
+    ("Rakshasa", ""),
+    ("Rat", ""),
+    ("Raven", ""),
+    ("Red Dragon Wyrmling", "DEX, WIS"),
+    ("Reef Shark", ""),
+    ("Remorhaz", ""),
+    ("Rhinoceros", ""),
+    ("Riding Horse", ""),
+    ("Roc", "DEX, WIS"),
+    ("Roper", ""),
+    ("Rust Monster", ""),
+    ("Saber-Toothed Tiger", "STR, DEX"),
+    ("Sahuagin Warrior", ""),
+    ("Salamander", ""),
+    ("Satyr", ""),
+    ("Scorpion", ""),
+    ("Scout", ""),
+    ("Sea Hag", ""),
+    ("Seahorse", ""),
+    ("Shadow", ""),
+    ("Shambling Mound", ""),
+    ("Shield Guardian", ""),
+    ("Shrieker Fungus", ""),
+    ("Silver Dragon Wyrmling", "DEX, WIS"),
+    ("Skeleton", ""),
+    ("Solar", ""),
+    ("Specter", ""),
+    ("Sphinx of Lore", ""),
+    ("Sphinx of Valor", "DEX, CON, INT, WIS"),
+    ("Sphinx of Wonder", ""),
+    ("Spider", ""),
+    ("Spirit Naga", "DEX, CON, WIS, CHA"),
+    ("Sprite", ""),
+    ("Spy", ""),
+    ("Steam Mephit", ""),
+    ("Stirge", ""),
+    ("Stone Giant", "DEX, CON, WIS"),
+    ("Stone Golem", ""),
+    ("Storm Giant", "STR, CON, WIS, CHA"),
+    ("Succubus", ""),
+    ("Tarrasque", "DEX, INT, WIS, CHA"),
+    ("Tiger", ""),
+    ("Tough", ""),
+    ("Tough Boss", "STR, CON, CHA"),
+    ("Treant", ""),
+    ("Triceratops", ""),
+    ("Troll", ""),
+    ("Troll Limb", ""),
+    ("Tyrannosaurus Rex", "STR, WIS"),
+    ("Unicorn", ""),
+    ("Vampire", "DEX, CON, WIS, CHA"),
+    ("Vampire Familiar", "DEX, WIS"),
+    ("Vampire Spawn", "DEX, WIS"),
+    ("Venomous Snake", ""),
+    ("Violet Fungus", ""),
+    ("Vrock", "DEX, WIS, CHA"),
+    ("Vulture", ""),
+    ("Warhorse", "WIS"),
+    ("Warhorse Skeleton", ""),
+    ("Warrior Infantry", ""),
+    ("Warrior Veteran", ""),
+    ("Water Elemental", ""),
+    ("Weasel", ""),
+    ("Werebear", ""),
+    ("Wereboar", ""),
+    ("Wererat", ""),
+    ("Weretiger", ""),
+    ("Werewolf", ""),
+    ("White Dragon Wyrmling", "DEX, WIS"),
+    ("Wight", ""),
+    ("Will-o’-Wisp", ""),
+    ("Winter Wolf", ""),
+    ("Wolf", ""),
+    ("Worg", ""),
+    ("Wraith", ""),
+    ("Wyvern", ""),
+    ("Xorn", ""),
+    ("Young Black Dragon", "DEX, WIS"),
+    ("Young Blue Dragon", "DEX, WIS"),
+    ("Young Brass Dragon", "DEX, WIS"),
+    ("Young Bronze Dragon", "DEX, WIS"),
+    ("Young Copper Dragon", "DEX, WIS"),
+    ("Young Gold Dragon", "DEX, WIS"),
+    ("Young Green Dragon", "DEX, WIS"),
+    ("Young Red Dragon", "DEX, WIS"),
+    ("Young Silver Dragon", "DEX, WIS"),
+    ("Young White Dragon", "DEX, WIS"),
+    ("Zombie", "WIS"),
+    ];
+
+    let found = bestiary_by_name();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, printed) in SRD_SAVES {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        checked += 1;
+        // Read off the template in the book's column order rather than
+        // sorted, so a failure message can be laid beside the page.
+        let got: Vec<String> = [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]
+        .into_iter()
+        .filter(|a| t.proficient_saves.contains(a))
+        .map(|a| a.to_string())
+        .collect();
+        if got.join(", ") != *printed {
+            wrong.push(format!(
+                "{name}: the book prints [{printed}] and it is proficient in [{}]",
+                got.join(", ")
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's SAVE columns:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count — see the sibling sweeps for why a match
+    // that silently stops matching is the failure this guards.
+    assert!(
+        checked > 320,
+        "only {checked} of the book's {} stat blocks were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_SAVES.len()
+    );
+}
+
 /// Every stat block's **Resistances**, **Immunities** and
 /// **Vulnerabilities** rows, against what the bestiary declares.
 ///
@@ -123470,7 +123923,7 @@ fn every_stat_blocks_senses_match_the_book() {
 /// the exemption loses nothing the sweep would have caught.
 #[test]
 fn every_stat_blocks_damage_lines_match_the_book() {
-    use crate::engine::types::{DamageModifier, DamageType};
+    use crate::engine::types::DamageType;
 
     /// `(name, "Type:R,Type:I,Type:V")` — SRD 5.2's Resistances,
     /// Immunities and Vulnerabilities rows, minus the physical types.

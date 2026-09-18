@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LONGBOW, WIGHT_LIFE_DRAIN};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
-use crate::engine::types::{AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -48,8 +48,9 @@ pub static WIGHT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Necrotic, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
-        // Undead proficiencies — wights have decent CON/CHA from MM.
-        proficient_saves: HashSet::from([AbilityScoreType::Constitution]),
+        // None. SRD 5.2 prints the wight's six columns as bare
+        // modifiers; the CON proficiency here was 2014's.
+        proficient_saves: HashSet::new(),
         // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — two
         // conditions, and the two the list carries. The `Charmed` and
         // `Frightened` that used to sit beside them came from the 2014

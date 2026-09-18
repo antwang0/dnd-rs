@@ -3,7 +3,9 @@ use crate::actions::monster_attacks::{GHAST_BITE, GHAST_CLAWS, GHAST_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
 use crate::engine::emanations::GHAST_STENCH;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -108,6 +110,7 @@ pub static GHAST_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Exhausted,
             Condition::Poisoned,
         ]),
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom]),
         ..CreatureTemplate::defaults()
     }
 });

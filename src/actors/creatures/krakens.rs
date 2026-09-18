@@ -116,13 +116,13 @@ pub static KRAKEN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,
         actions,
-        // Kraken proficient saves: STR, DEX, CON, INT, WIS per MM. The
-        // CHA save is conspicuously absent.
+        // SRD 5.2: *"Str +17 … Dex +8 … Con +13 … Wis +9"*. The INT
+        // proficiency beside them was the 2014 kraken's; CHA has never
+        // been on the list.
         proficient_saves: HashSet::from([
             AbilityScoreType::Strength,
             AbilityScoreType::Dexterity,
             AbilityScoreType::Constitution,
-            AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
         ]),
         // SRD 5.2 "Immunities Cold, Lightning". Lightning is the

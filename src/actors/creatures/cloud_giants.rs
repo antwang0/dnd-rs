@@ -51,13 +51,9 @@ pub static CLOUD_GIANT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Huge,
         creature_type: CreatureType::Giant,
         actions,
-        // Cloud Giant proficient saves: CON, INT, WIS, CHA per MM.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // SRD 5.2: *"Con +10 … Wis +7"*. The INT and CHA proficiencies
+        // this used to carry are the 2014 giant's.
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         has_extra_attack: true,
         ..CreatureTemplate::defaults()
     }

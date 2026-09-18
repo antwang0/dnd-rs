@@ -109,9 +109,11 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
         ]),
-        // Lich save profile: prof in CON / INT / WIS (Legendary Resistance-
-        // adjacent in 5e RAW, but we approximate with proficient saves).
+        // SRD 5.2: *"Dex +8 … Con +10 … Int +12 … Wis +9"*. Four, and
+        // the DEX one was missing. Not an approximation of Legendary
+        // Resistance, which the lich carries in its own field.
         proficient_saves: HashSet::from([
+            AbilityScoreType::Dexterity,
             AbilityScoreType::Constitution,
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,

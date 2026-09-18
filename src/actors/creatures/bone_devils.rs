@@ -58,9 +58,10 @@ pub static BONE_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Cold, DamageModifier::Resistance),
         ]),
-        // MM Bone Devil proficient saves: INT / WIS / CHA (the mental
-        // lane — bone devils are mid-tier devils with strong saves).
+        // SRD 5.2: *"Str +8 … Int +3 … Wis +5 … Cha +7"* — the mental
+        // lane, plus a STR save the 2014 stat block did not print.
         proficient_saves: HashSet::from([
+            AbilityScoreType::Strength,
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,

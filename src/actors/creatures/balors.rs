@@ -59,13 +59,10 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Lightning, DamageModifier::Resistance),
         ]),
-        // Balor proficient saves: STR / CON / WIS / CHA per MM.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Strength,
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // SRD 5.2: *"Con +9 … Wis +6"*, and the STR and CHA columns
+        // print the bare modifier. The 2014 balor was proficient in
+        // four; this one is proficient in two.
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         condition_immunities: HashSet::from([
             Condition::Poisoned,
             Condition::Frightened,

@@ -2,7 +2,9 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ANIMATED_ARMOR_SLAM, FLYING_SWORD_SLASH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -122,6 +124,7 @@ pub static FLYING_SWORD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
             Condition::Deafened,
             Condition::Asleep,
         ]),
+        proficient_saves: HashSet::from([AbilityScoreType::Dexterity]),
         ..CreatureTemplate::defaults()
     }
 });

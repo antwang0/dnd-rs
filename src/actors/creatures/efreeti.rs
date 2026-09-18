@@ -76,14 +76,11 @@ pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Elemental,
         actions,
-        // Efreeti proficient saves: INT, WIS, CHA per MM. The wise +
-        // willful + force-of-personality saves; no DEX (the efreeti is
-        // heavier and clumsier than the djinni's nimble winds).
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // SRD 5.2: *"Wis +7 … Cha +8"* — the willful and
+        // force-of-personality saves; no DEX (the efreeti is heavier
+        // and clumsier than the djinni's nimble winds) and no INT,
+        // which is the one 2024 dropped.
+        proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),
         // Standard elemental damage envelope (poison immune + BPS
         // resistance) overlaid with fire immunity — the efreeti's
         // signature elemental affinity.

@@ -67,12 +67,13 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Fire, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
-        // 5e Tarrasque has Legendary saves on every score (collapse to
-        // proficient saves across the board for our model).
+        // SRD 5.2: *"Dex +9 … Int +9 … Wis +9 … Cha +9"*. Four, not
+        // six: the STR and CON columns print the bare modifier, which
+        // on a creature with STR 30 and CON 30 is already enormous.
+        // The "legendary saves on every score" this used to claim is
+        // Legendary Resistance, and that is its own field.
         proficient_saves: HashSet::from([
-            AbilityScoreType::Strength,
             AbilityScoreType::Dexterity,
-            AbilityScoreType::Constitution,
             AbilityScoreType::Intelligence,
             AbilityScoreType::Wisdom,
             AbilityScoreType::Charisma,

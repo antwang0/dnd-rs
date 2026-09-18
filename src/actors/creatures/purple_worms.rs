@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
     SWALLOW_BONUS,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, SpecialSense};
 
 
 use std::collections::HashSet;
@@ -97,13 +97,11 @@ pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,
         actions,
-        // CR-15 RAW saves: STR + CON proficient. The worm's body shrugs
-        // off physical effects and toxin counter-effects; its DEX / INT
-        // / WIS / CHA saves remain raw ability rolls.
-        proficient_saves: HashSet::from([
-            crate::engine::types::AbilityScoreType::Strength,
-            crate::engine::types::AbilityScoreType::Constitution,
-        ]),
+        // SRD 5.2: *"Con +9 … Wis +4"*. The worm's body shrugs off
+        // toxins and its dim mind is still harder to reach than its
+        // Wisdom suggests; the STR proficiency it used to carry was
+        // the 2014 printing's, and the WIS one was simply missing.
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         swallow: Some(&crate::actions::monster_attacks::PURPLE_WORM_SWALLOW),
         ..CreatureTemplate::defaults()
     }

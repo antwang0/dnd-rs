@@ -55,12 +55,9 @@ pub static COUATL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Radiant, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
-        // MM Couatl proficient saves: CON / WIS / CHA.
-        proficient_saves: HashSet::from([
-            AbilityScoreType::Constitution,
-            AbilityScoreType::Wisdom,
-            AbilityScoreType::Charisma,
-        ]),
+        // SRD 5.2: *"Con +5 … Wis +7"*. The CHA save is the bare
+        // modifier, which is what 2024 dropped.
+        proficient_saves: HashSet::from([AbilityScoreType::Constitution, AbilityScoreType::Wisdom]),
         // Couatls can't be magically charmed or frightened.
         condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
         has_magic_resistance: true,
