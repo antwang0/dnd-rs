@@ -2839,7 +2839,7 @@ fn drink_greater_healing_potion_heals_more_than_basic() {
 #[test]
 fn item_bonuses_apply_to_ac_speed_max_hp() {
     use crate::items::item_template::{
-        AMULET_OF_HEALTH, BOOTS_OF_STRIDING, RING_OF_PROTECTION,
+        AMULET_OF_HEALTH, HORSESHOES_OF_SPEED, RING_OF_PROTECTION,
     };
 
     let mut e = ei_with_terrain(10, 10, &[]);
@@ -2853,12 +2853,16 @@ fn item_bonuses_apply_to_ac_speed_max_hp() {
 
     let actor = e.actors.get_mut(&id).unwrap();
     actor.pickup_item(&RING_OF_PROTECTION);
-    actor.pickup_item(&BOOTS_OF_STRIDING);
+    actor.pickup_item(&HORSESHOES_OF_SPEED);
     actor.pickup_item(&AMULET_OF_HEALTH);
 
     let actor = e.actors.get(&id).unwrap();
     assert_eq!(actor.armor_class(), base_ac + 1);
-    assert!((actor.speed() - (base_speed + 10.0)).abs() < f32::EPSILON);
+    // The horseshoes rather than the boots: SRD 5.2's Boots of Striding
+    // and Springing grant no speed at all — see their docstring — and
+    // the lane this test is about is `ItemBonuses::speed`, which needs
+    // an item that actually carries one.
+    assert!((actor.speed() - (base_speed + 30.0)).abs() < f32::EPSILON);
     assert_eq!(actor.max_hitpoints(), base_hp + 10);
 }
 
@@ -120834,5 +120838,271 @@ fn first_aid_wakes_a_knocked_out_creature_and_heals_nothing() {
     assert!(
         !ActionExecutionInfo::new(&*FIRST_AID, medic, Some(vec![goblin]), None, None)
             .validate(&e)
+    );
+}
+
+// ---------------------------------------------------------------------
+// Inhaled poison — the half of SRD 5.2's *Poison* section the injury
+// vials could not carry.
+//
+// > Poisonous powders and gases take effect when inhaled. Blowing the
+// > powder or releasing the gas subjects creatures in a 5-foot Cube to
+// > its effect. The resulting cloud dissipates immediately afterward.
+//
+// A cloud rather than a coating: one Action, one area, one saving
+// throw, and gone. `engine::poisons` named this as the type worth
+// having next and these are the three rows.
+// ---------------------------------------------------------------------
+
+/// A thrower with a vial and somebody standing next to them.
+fn a_dose_of(
+    vial: &'static crate::items::item_template::Item,
+) -> (EncounterInstance, usize, usize) {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let thrower = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // An ogre rather than anything undead: every poison in the book
+    // bounces off an undead's Poison immunity, so a zombie in this
+    // fixture would make all three of these tests pass vacuously. The
+    // ogre's Constitution makes a DC 15 a real coin flip and its
+    // fifty-nine hit points outlast the fumes.
+    let victim = e
+        .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+        .unwrap();
+    e.actors.get_mut(&thrower).unwrap().pickup_item(vial);
+    (e, thrower, victim)
+}
+
+/// Keep opening vials until the victim fails one, and report whether it
+/// ever happened. A save that can be made is a save worth rolling, so
+/// the tests sweep rather than pinning a seed.
+fn release_until_it_lands(
+    e: &mut EncounterInstance,
+    thrower: usize,
+    victim: usize,
+    vial: &'static crate::items::item_template::Item,
+    action: &'static (dyn crate::actions::action_template::Action + Send + Sync),
+    landed: impl Fn(&EncounterInstance) -> bool,
+) -> bool {
+    let at = e.actors[&victim].location();
+    for _ in 0..60 {
+        if landed(e) {
+            return true;
+        }
+        e.actors.get_mut(&thrower).unwrap().pickup_item(vial);
+        for x in action.side_effects(e, thrower, None, Some(&vec![at]), None) {
+            x.apply(e);
+        }
+        e.actors.get_mut(&thrower).unwrap().reset_for_new_round();
+    }
+    landed(e)
+}
+
+/// Malice blinds, and it does so without rolling a die of damage.
+///
+/// RAW: *"or have the Poisoned condition for 1 hour. The creature also
+/// has the Blinded condition while Poisoned in this way."* The pair is
+/// the item — a blinded enemy attacks at disadvantage and is attacked
+/// at advantage — and 250 gold is the cheapest answer to an archer in
+/// the book.
+#[test]
+fn a_dose_of_malice_blinds_whatever_breathes_it() {
+    use crate::actions::item_actions::RELEASE_MALICE;
+    use crate::conditions::Condition;
+    use crate::items::item_template::VIAL_OF_MALICE;
+
+    let (mut e, thrower, victim) = a_dose_of(&VIAL_OF_MALICE);
+    let hp_before = e.actors[&victim].hitpoints();
+    let blinded = release_until_it_lands(
+        &mut e,
+        thrower,
+        victim,
+        &VIAL_OF_MALICE,
+        &RELEASE_MALICE,
+        |e| e.actors[&victim].has_condition(Condition::Blinded),
+    );
+    assert!(blinded, "sixty doses of a DC 15 should have landed one");
+    assert!(e.actors[&victim].has_condition(Condition::Poisoned));
+    assert_eq!(
+        e.actors[&victim].hitpoints(),
+        hp_before,
+        "Malice rolls no damage at all"
+    );
+    // And a dose is gone the moment it is opened — RAW's cloud
+    // "dissipates immediately afterward", whatever the save said. A
+    // fresh board, because the sweep above refills the thrower's pack
+    // between attempts and so cannot answer this.
+    let (mut e, thrower, victim) = a_dose_of(&VIAL_OF_MALICE);
+    let at = e.actors[&victim].location();
+    for x in RELEASE_MALICE.side_effects(&mut e, thrower, None, Some(&vec![at]), None) {
+        x.apply(&mut e);
+    }
+    assert!(
+        !e.actors[&thrower]
+            .items()
+            .iter()
+            .any(|i| i.name == VIAL_OF_MALICE.name),
+        "the vial is spent by opening it"
+    );
+    // …and an empty-handed thrower is refused before it can be spent
+    // twice.
+    assert!(
+        !ActionExecutionInfo::new(&RELEASE_MALICE, thrower, None, Some(vec![at]), None)
+            .validate(&e)
+    );
+}
+
+/// Essence of Ether puts somebody out, and hitting them wakes them up.
+///
+/// The substitution that makes the entry's third sentence work without
+/// any wiring: `Condition::Asleep` rather than `Condition::Unconscious`,
+/// because the engine keeps the two apart for exactly this clause.
+/// Installing plain `Unconscious` would have been a sleep nothing could
+/// wake — and a party that could not wake a captive is a party that
+/// cannot take one.
+#[test]
+fn essence_of_ether_is_a_sleep_a_slap_can_end() {
+    use crate::actions::item_actions::RELEASE_ESSENCE_OF_ETHER;
+    use crate::conditions::Condition;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+    use crate::items::item_template::VIAL_OF_ESSENCE_OF_ETHER;
+
+    let (mut e, thrower, victim) = a_dose_of(&VIAL_OF_ESSENCE_OF_ETHER);
+    let asleep = release_until_it_lands(
+        &mut e,
+        thrower,
+        victim,
+        &VIAL_OF_ESSENCE_OF_ETHER,
+        &RELEASE_ESSENCE_OF_ETHER,
+        |e| e.actors[&victim].has_condition(Condition::Asleep),
+    );
+    assert!(asleep, "sixty doses of a DC 15 should have landed one");
+    assert!(e.actors[&victim].has_condition(Condition::Poisoned));
+
+    DealDamage {
+        actor_id: victim,
+        amount: 1,
+        damage_type: DamageType::Slashing,
+    }
+    .apply(&mut e);
+    assert!(
+        !e.actors[&victim].has_condition(Condition::Asleep),
+        "RAW: \"the creature wakes up if it takes damage\""
+    );
+}
+
+/// Burnt Othur Fumes keep charging for as long as the victim keeps
+/// failing, and take three made saves to be rid of.
+///
+/// Both halves are the two fields the fumes made `RepeatSave` grow, and
+/// both are most of what the 500 gold buys over Malice's 250. The claim
+/// pinned here is the ledger's, not the die's: the entry is owed, it
+/// survives a round, and it is not cleared by one made save.
+#[test]
+fn burnt_othur_fumes_keep_charging_until_three_saves_land() {
+    use crate::actions::item_actions::RELEASE_BURNT_OTHUR_FUMES;
+    use crate::conditions::Condition;
+    use crate::engine::poisons::BURNT_OTHUR_FUMES;
+    use crate::items::item_template::VIAL_OF_BURNT_OTHUR_FUMES;
+
+    let (mut e, thrower, victim) = a_dose_of(&VIAL_OF_BURNT_OTHUR_FUMES);
+    let hp_before = e.actors[&victim].hitpoints();
+    let caught = release_until_it_lands(
+        &mut e,
+        thrower,
+        victim,
+        &VIAL_OF_BURNT_OTHUR_FUMES,
+        &RELEASE_BURNT_OTHUR_FUMES,
+        |e| e.repeat_save_pending(victim, Condition::Poisoned),
+    );
+    assert!(caught, "sixty doses of a DC 13 should have landed one");
+    assert!(
+        e.actors[&victim].hitpoints() < hp_before,
+        "the opening failed save costs 3d6 — the only inhaled row that rolls any"
+    );
+    assert_eq!(
+        BURNT_OTHUR_FUMES
+            .repeat
+            .expect("the fumes carry a clause")
+            .successes_needed,
+        3
+    );
+
+    // One round of the ledger: the entry is rolled and, on anything but
+    // a third success, it is still there. Three successes on the first
+    // three rolls is a 1-in-8 run for this zombie, so the loop takes
+    // several rounds rather than asserting on one.
+    let mut rounds = 0;
+    while e.repeat_save_pending(victim, Condition::Poisoned) && rounds < 60 {
+        e.skip_turn();
+        rounds += 1;
+    }
+    assert!(
+        !e.repeat_save_pending(victim, Condition::Poisoned),
+        "it should eventually be coughed out"
+    );
+    assert!(
+        !e.actors
+            .get(&victim)
+            .is_some_and(|v| v.has_condition(Condition::Poisoned)),
+        "and the condition goes with the entry"
+    );
+}
+
+/// **Boots of Striding and Springing** — *"you can jump three times the
+/// normal distance"*.
+///
+/// The item used to grant a flat `+10` speed, which is the one thing
+/// RAW does not say about it. What it really sells is the jump, and on
+/// a board with rifts in it that is worth more: a Strength-16 fighter
+/// clears sixteen feet with a run-up and forty-eight in these, which is
+/// wider than any chasm the generator draws.
+///
+/// The Speed clause is deliberately absent and is asserted as absent —
+/// every walking speed on the PC bench is already 30, the engine has no
+/// encumbrance and no heavy-armor penalty, so the floor has nothing to
+/// lift. A regression that quietly gave the boots a speed bonus back
+/// would be invisible in play and is exactly what this line catches.
+#[test]
+fn the_striding_boots_treble_a_jump_and_change_no_speed() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::conditions::Condition;
+    use crate::items::item_template::BOOTS_OF_STRIDING;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let barefoot_speed = e.actors[&id].speed();
+    let barefoot_jump = e.actors[&id].long_jump_feet(true);
+    assert!(barefoot_jump > 0, "a fighter can jump at all");
+
+    e.actors.get_mut(&id).unwrap().pickup_item(&BOOTS_OF_STRIDING);
+    assert!(
+        e.actors[&id].has_condition(Condition::Springing),
+        "the boots work by being worn"
+    );
+    assert_eq!(
+        e.actors[&id].long_jump_feet(true),
+        barefoot_jump * 3,
+        "RAW: three times the normal distance"
+    );
+    assert_eq!(
+        e.actors[&id].speed(),
+        barefoot_speed,
+        "and RAW's Speed clause is a floor of 30 on a bench that is already 30"
+    );
+    // The standing jump halves first and trebles after, which is the
+    // order the two clauses compose in: RAW's "three times the normal
+    // distance" is a multiplier on whatever the distance turned out to
+    // be, not a replacement for it.
+    assert_eq!(
+        e.actors[&id].long_jump_feet(false),
+        e.actors[&id].long_jump_feet(true) / 2
     );
 }

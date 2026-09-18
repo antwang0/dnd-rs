@@ -79,6 +79,7 @@
 //! timer at the end, exactly as RAW says.
 
 use crate::conditions::{Condition, ConditionTimer};
+use crate::engine::dice::Dice;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::types::AbilityScoreType;
 
@@ -104,6 +105,33 @@ pub struct RepeatSave {
     /// The clause of the log line for the moment the victim breaks out
     /// — "shakes the ringing out of its head".
     pub escaped_flavor: &'static str,
+    /// What a *failed* repeat costs, for the clauses that charge for
+    /// one, or `None` for the escapes that only ever cost a turn.
+    ///
+    /// Almost every repeat in the book is a pure escape hatch — you
+    /// either shake it off or you do not — and the four rows this
+    /// ledger opened with are all of those. SRD 5.2's **Burnt Othur
+    /// Fumes** is not: *"it must repeat the save at the start of each
+    /// of its turns. On each successive failed save, the creature takes
+    /// 3 (1d6) Poison damage."* A poison that keeps hurting while you
+    /// fail to shake it is a different thing from one that merely keeps
+    /// holding you, and the difference is a field.
+    ///
+    /// The damage type is Poison for the one carrier and is fixed here
+    /// rather than carried, because a per-turn damaging repeat on
+    /// anything but a poison is not a shape the book prints. The day it
+    /// does, this becomes a `(Dice, DamageType)`.
+    pub damage_on_failure: Option<Dice>,
+    /// How many successful saves it takes to be free — RAW's *"after
+    /// three successful saves, the poison ends"*.
+    ///
+    /// One for every clause the book writes as *"ending the effect on
+    /// itself on a success"*, which is every one of them but the fumes.
+    /// A count rather than a `bool` because the two readings differ by
+    /// most of the effect's expected length: a coin-flip save ends a
+    /// one-success clause in two turns and a three-success clause in
+    /// six.
+    pub successes_needed: u32,
 }
 
 /// One escape the encounter owes a victim: which clause, from whom, at
@@ -111,6 +139,11 @@ pub struct RepeatSave {
 #[derive(Debug, Clone, Copy)]
 pub struct PendingRepeat {
     pub clause: &'static RepeatSave,
+    /// Saves made so far, against `RepeatSave::successes_needed`.
+    /// Reset by nothing: RAW's three successes are cumulative, not
+    /// consecutive — *"after three successful saves, the poison ends"*
+    /// says nothing about them being in a row.
+    pub successes: u32,
     /// Who inflicted it. Only used to route the roll through
     /// `roll_save_against_caster_vs_condition`, so the source's own
     /// save-mode riders (a Heightened Spell prime, an aura) apply to
@@ -166,6 +199,7 @@ impl EncounterInstance {
         let entries = self.repeat_saves.entry(victim_id).or_default();
         let pending = PendingRepeat {
             clause,
+            successes: 0,
             source_id,
             dc,
         };
@@ -225,6 +259,44 @@ impl EncounterInstance {
                 entry.clause.condition,
             );
             if !save.passed() {
+                // The clauses that charge for failing — SRD 5.2's Burnt
+                // Othur Fumes and nothing else yet. See
+                // `RepeatSave::damage_on_failure`.
+                if let Some(dice) = entry.clause.damage_on_failure {
+                    use crate::engine::side_effects::ApplicableSideEffect;
+                    let rolled = self.roll(&dice);
+                    self.log(format!(
+                        "  {}: {} chokes for {}({}) more.",
+                        entry.clause.name, name, dice, rolled
+                    ));
+                    crate::engine::side_effects::DealDamage {
+                        actor_id: victim_id,
+                        amount: rolled,
+                        damage_type: crate::engine::types::DamageType::Poison,
+                    }
+                    .apply(self);
+                }
+                continue;
+            }
+            // RAW's *"after three successful saves"* — see
+            // `RepeatSave::successes_needed`. Counted on the ledger
+            // rather than on the victim, because it is a fact about one
+            // dose rather than about the creature: a second lungful is
+            // a second entry and starts its own count.
+            let cleared = {
+                let Some(entries) = self.repeat_saves.get_mut(&victim_id) else {
+                    continue;
+                };
+                let Some(live) = entries
+                    .iter_mut()
+                    .find(|e| e.clause.condition == entry.clause.condition)
+                else {
+                    continue;
+                };
+                live.successes += 1;
+                live.successes >= entry.clause.successes_needed.max(1)
+            };
+            if !cleared {
                 continue;
             }
             if let Some(a) = self.actors.get_mut(&victim_id) {

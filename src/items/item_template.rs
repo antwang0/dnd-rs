@@ -1025,10 +1025,41 @@ pub static RING_OF_PROTECTION: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Boots of Striding and Springing** (Wondrous Item, Uncommon,
+/// Requires Attunement) — *"While you wear these boots, your Speed
+/// becomes 30 feet unless your Speed is higher, and your Speed isn't
+/// reduced if you are encumbered or wearing Heavy armor. In addition,
+/// you can jump three times the normal distance, though you can't jump
+/// farther than your remaining Speed."*
+///
+/// **The jump is the item**, and on a board with rifts in it that is
+/// worth a great deal: a Strength-16 fighter clears sixteen feet with a
+/// run-up and forty-eight in these, which is wider than any chasm the
+/// generator draws. See `Condition::Springing`, and
+/// `crate::engine::jumping` for the lane that turns a distance into a
+/// route.
+///
+/// **The first sentence is a no-op on this roster and is kept as
+/// citation rather than as code.** Every walking speed on the PC bench
+/// is already 30 or better — SRD 5.2 raised the small species to 30 —
+/// so the floor has nothing to lift; the engine has no encumbrance, so
+/// there is no load to be unburdened of; and no armor in the file
+/// carries a Strength requirement, so there is no heavy-armor penalty
+/// to waive. Three clauses, three absences, and each is an absence in
+/// the *engine* rather than a simplification of the item.
+///
+/// It used to grant a flat `+10` speed instead, which is the one thing
+/// RAW does not say: these are not Boots of Speed, and a wearer who
+/// outran everybody was getting an item nobody printed.
+///
+/// RAW's second jump clause — *"you can't jump farther than your
+/// remaining Speed"* — needs no wiring here: the pathfinder's jump lane
+/// prices every foot of a hop against the mover's budget, so the cap is
+/// the search's own arithmetic.
 pub static BOOTS_OF_STRIDING: Item = Item {
-    name: "Boots of Striding",
+    name: "Boots of Striding and Springing",
     glyph: 'b',
-    bonuses: ItemBonuses { speed: 10, ..ItemBonuses::ZERO },
+    passive_conditions: &[crate::conditions::Condition::Springing],
     requires_attunement: true,
     ..Item::DEFAULTS
 };
@@ -6672,6 +6703,44 @@ pub static VIAL_OF_PURPLE_WORM_POISON: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Vial of Malice** (250 GP) — one dose of SRD 5.2's cheapest inhaled
+/// poison.
+///
+/// The first of three, and the half of the poison rules the injury
+/// vials beside them could not carry: this one is not smeared on
+/// anything, it is *thrown*. One Action, one 5-foot cube of gas, and
+/// everything standing in it makes a Constitution save — see
+/// [`crate::actions::item_actions::ReleaseInhaledPoison`] for the
+/// action and [`crate::engine::poisons::MALICE`] for the numbers.
+///
+/// The same `'` the injury vials carry, because it is the same warning:
+/// a dose of poison is not something you drink.
+pub static VIAL_OF_MALICE: Item = Item {
+    name: "Vial of Malice",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::RELEASE_MALICE],
+    ..Item::DEFAULTS
+};
+
+/// **Vial of Essence of Ether** (300 GP) — the dose that takes a
+/// prisoner. See [`VIAL_OF_MALICE`].
+pub static VIAL_OF_ESSENCE_OF_ETHER: Item = Item {
+    name: "Vial of Essence of Ether",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::RELEASE_ESSENCE_OF_ETHER],
+    ..Item::DEFAULTS
+};
+
+/// **Vial of Burnt Othur Fumes** (500 GP) — the only one of the three
+/// that rolls dice, and the only poison in the file that keeps rolling
+/// them. See [`VIAL_OF_MALICE`].
+pub static VIAL_OF_BURNT_OTHUR_FUMES: Item = Item {
+    name: "Vial of Burnt Othur Fumes",
+    glyph: '\'',
+    on_use: &[&crate::actions::item_actions::RELEASE_BURNT_OTHUR_FUMES],
+    ..Item::DEFAULTS
+};
+
 /// **Adamantine Armor** (Armor, any medium or heavy except hide;
 /// Uncommon) — "While you're wearing it, any Critical Hit against you
 /// becomes a normal hit."
@@ -8878,6 +8947,13 @@ pub static LOOT_POOL: &[&Item] = &[
     &VIAL_OF_SPIDERS_STING,
     &VIAL_OF_WYVERN_POISON,
     &VIAL_OF_PURPLE_WORM_POISON,
+    // The inhaled three, at the same single-entry weight as the injury
+    // four beside them — and reachable by the half of the roster the
+    // injury vials are not, since a cloud of gas needs no edge to go
+    // on. A cleric with a mace can throw one.
+    &VIAL_OF_MALICE,
+    &VIAL_OF_ESSENCE_OF_ETHER,
+    &VIAL_OF_BURNT_OTHUR_FUMES,
     &PERIAPT_OF_WOUND_CLOSURE,
     &GAUNTLETS_OF_OGRE_POWER,
     // Premium passive trinkets — same low odds as Cloak of Protection

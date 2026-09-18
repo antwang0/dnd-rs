@@ -4062,6 +4062,30 @@ pub enum Condition {
     /// Not a magical buff and so not on the Dispel Magic list: a monk's
     /// focus is not a spell, and RAW's Dispel Magic names "a spell".
     Bounding,
+    /// **Boots of Striding and Springing**, worn — SRD 5.2's *"you can
+    /// jump three times the normal distance, though you can't jump
+    /// farther than your remaining Speed."*
+    ///
+    /// The second multiplier in the Long Jump rule, and the only one
+    /// that is an object rather than a turn: `Bounding` above is a
+    /// monk's Bonus Action and lasts for the turn; this is a pair of
+    /// boots and lasts as long as they are on. The two compose — a monk
+    /// wearing them jumps six times as far — which is what two
+    /// multipliers from two unrelated sources do, and nothing in the
+    /// book says otherwise.
+    ///
+    /// RAW's second clause, *"you can't jump farther than your
+    /// remaining Speed"*, needs no wiring: the pathfinder's jump lane
+    /// prices every foot of a hop against the mover's movement budget
+    /// already, so a forty-eight-foot leap out of thirty feet of
+    /// movement is a leap the search never finds.
+    ///
+    /// `Permanent`, and installed through `Item::passive_conditions`
+    /// rather than by any action — the same lane the Boots of the
+    /// Forest's `Longstriding` arrives down. Not on the Dispel Magic
+    /// list: RAW's Dispel Magic names *"a spell"*, and a pair of boots
+    /// is not one.
+    Springing,
 }
 
 /// The Long Jump distance the SRD 5.2 **Jump** spell grants, in feet.
@@ -4078,6 +4102,7 @@ impl Condition {
         match self {
             Condition::Leaping => "leaping",
             Condition::Bounding => "bounding",
+            Condition::Springing => "springing",
             Condition::StaffStriking => "staff of striking charged",
             Condition::StaffWithering => "staff of withering charged",
             Condition::StaffLightning => "staff lightning charged",

@@ -9997,6 +9997,10 @@ pub static SWORD_WOUND: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Wounded,
         ability: AbilityScoreType::Constitution,
         escaped_flavor: "closes the wound at last",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 /// SRD 5.2 **Rod of Lordly Might**, Paralyze: *"The target repeats the
@@ -10017,6 +10021,10 @@ pub static ROD_PARALYSIS: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Paralyzed,
         ability: AbilityScoreType::Constitution,
         escaped_flavor: "shakes the stiffness out of its limbs",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 /// Every once-per-turn ledger key `ON_HIT_RIDERS` writes through, read

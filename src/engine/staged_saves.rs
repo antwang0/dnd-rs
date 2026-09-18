@@ -230,6 +230,10 @@ pub static PARALYZING_BREATH_ESCAPE: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Paralyzed,
         ability: AbilityScoreType::Constitution,
         escaped_flavor: "forces the frost out of their limbs",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 /// A ladder the encounter is part-way through on one creature: which

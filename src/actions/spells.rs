@@ -3514,6 +3514,10 @@ pub static BLINDNESS_ESCAPE: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Blinded,
         ability: AbilityScoreType::Constitution,
         escaped_flavor: "blinks, and can see again",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 /// The Deafened arm's, which is the same clause one sense over.
@@ -3523,6 +3527,10 @@ pub static DEAFNESS_ESCAPE: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Deafened,
         ability: AbilityScoreType::Constitution,
         escaped_flavor: "shakes their head, and the silence lifts",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 impl Action for BlindnessDeafness {

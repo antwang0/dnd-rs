@@ -12067,8 +12067,10 @@ impl ActorInstance {
     ///     variant for the one place its RAW and this number part
     ///     company.
     ///
-    /// …and one multiplier on top of whichever of the three won: the
-    /// Monk's **Step of the Wind**, through [`Condition::Bounding`].
+    /// …and two multipliers on top of whichever of the three won: the
+    /// Monk's **Step of the Wind**, through [`Condition::Bounding`], and
+    /// the Boots of Striding and Springing, through
+    /// [`Condition::Springing`]. They compose.
     ///
     /// Zero for a creature that cannot leave the ground: a Speed of zero
     /// (grappled, Rooted, Restrained by a web) and the Prone condition
@@ -12089,15 +12091,28 @@ impl ActorInstance {
             0
         };
         let feet = by_strength.max(by_trait).max(by_spell);
-        // Step of the Wind's *"your jump distance is doubled"*, applied
-        // to the result rather than folded into the `max` above — the
-        // three sources above are alternative *distances* and this is a
-        // multiplier on whichever of them won.
+        // The two multipliers, applied to the result rather than folded
+        // into the `max` above — the three sources above are alternative
+        // *distances* and these scale whichever of them won.
+        //
+        //   - Step of the Wind's *"your jump distance is doubled"*, a
+        //     monk's Bonus Action, lasting the turn.
+        //   - The Boots of Striding and Springing's *"you can jump
+        //     three times the normal distance"*, a pair of boots,
+        //     lasting as long as they are worn.
+        //
+        // They compose, because they are two unrelated sources and
+        // nothing in the book says they do not: a monk in the boots
+        // clears six times what their Strength would buy. See
+        // `Condition::Springing`.
+        let mut feet = feet;
         if self.has_condition(Condition::Bounding) {
-            feet * 2
-        } else {
-            feet
+            feet *= 2;
         }
+        if self.has_condition(Condition::Springing) {
+            feet *= 3;
+        }
+        feet
     }
 
     /// This creature's own Long Jump clause, if it has one.

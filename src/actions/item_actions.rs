@@ -8348,6 +8348,194 @@ pub static APPLY_PURPLE_WORM_POISON: ApplyPoison = ApplyPoison {
     action_aliases: &["purple worm poison", "purple worm", "worm poison"],
 };
 
+/// **Release an inhaled poison** — SRD 5.2's *"blowing the powder or
+/// releasing the gas subjects creatures in a 5-foot Cube to its effect.
+/// The resulting cloud dissipates immediately afterward."*
+///
+/// The sibling of [`ApplyPoison`] above and the shape is the opposite
+/// of it in every respect worth naming. An injury poison goes onto your
+/// *blade* and waits for a swing; an inhaled one goes into the air and
+/// is resolved and gone before your turn ends. So: an Action rather
+/// than a Bonus Action (RAW puts "as a Bonus Action" in the injury
+/// clause and nowhere else), a tile rather than no target, and a saving
+/// throw right now rather than a marker condition.
+///
+/// **Aimed at a tile within arm's reach**, which is the practical
+/// reading of blowing a powder: the cloud goes where it is pointed, and
+/// a dose that caught its own thrower would be a dose nobody opens.
+/// Everything the cube touches is subjected, friend or foe — it is a
+/// cloud, and RAW says *"creatures"*.
+///
+/// Everything else is read off the row in [`crate::engine::poisons`],
+/// so a fourth inhaled poison is a row there and one static here.
+pub struct ReleaseInhaledPoison {
+    /// The poison this dose is of.
+    pub poison: &'static crate::engine::poisons::InhaledPoison,
+    /// Player-facing action name, e.g. "release malice".
+    pub action_name: &'static str,
+    /// Picker aliases.
+    pub action_aliases: &'static [&'static str],
+}
+
+impl Action for ReleaseInhaledPoison {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(crate::actions::action_template::MELEE_REACH)
+    }
+
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    fn deals_damage(&self) -> bool {
+        self.poison.damage.count > 0
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        if self.poison.damage.count > 0 {
+            vec![DamageType::Poison]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn installs_condition(&self) -> Option<Condition> {
+        // The first of the pair, which for every row is `Poisoned` —
+        // the one the AI's "they already have it" gate is about.
+        self.poison.conditions.first().copied()
+    }
+
+    fn cost(
+        &self,
+        e: &EncounterInstance,
+        c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        item_use_cost(e, c, false)
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.poison.vial_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::actions::action_template::first_target_location;
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        if !consume_caster_item(encounter, caster_id, self.poison.vial_name) {
+            return Vec::new();
+        }
+        let thrower = encounter.actor_name(caster_id);
+        encounter.log(format!(
+            "{} releases a dose of {} at {}.",
+            thrower, self.poison.name, point
+        ));
+        // RAW's 5-foot Cube, as the engine's smallest area — see
+        // `InhaledPoison` for why a radius-0 burst is the same set of
+        // bodies. Everything in it, including the thrower's own side:
+        // the entry says "creatures".
+        let caught = encounter.actors_in_burst(point, 0);
+        let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        for victim in caught {
+            let save = encounter.roll_save_vs_condition(
+                victim,
+                AbilityScoreType::Constitution,
+                self.poison.dc,
+                Condition::Poisoned,
+            );
+            let name = encounter.actor_name(victim);
+            if save.passed() {
+                encounter.log(format!("  {}: {} holds its breath.", self.poison.name, name));
+                continue;
+            }
+            if self.poison.damage.count > 0 {
+                let rolled = encounter.roll(&self.poison.damage);
+                encounter.log(format!(
+                    "  {}: {} takes {}({}) Poison.",
+                    self.poison.name, name, self.poison.damage, rolled
+                ));
+                effects.push(Box::new(DealDamage {
+                    actor_id: victim,
+                    amount: rolled,
+                    damage_type: DamageType::Poison,
+                }));
+            }
+            // The conditions, and — for the one row that has one — the
+            // escape that goes with it. `begin_repeat_save` installs
+            // the condition itself, so the first of the pair is handed
+            // to it rather than queued here; the clause and the install
+            // are one rule and splitting them would be an effect
+            // crueller than RAW wrote. See `engine::repeat_saves`.
+            for (i, condition) in self.poison.conditions.iter().enumerate() {
+                match (i, self.poison.repeat) {
+                    (0, Some(clause)) => encounter.begin_repeat_save(
+                        victim,
+                        caster_id,
+                        self.poison.dc,
+                        clause,
+                        self.poison.timer,
+                    ),
+                    _ => effects.push(Box::new(ApplyCondition {
+                        actor_id: victim,
+                        condition: *condition,
+                        timer: self.poison.timer,
+                    })),
+                }
+            }
+        }
+        effects
+    }
+}
+
+/// A blinding hour for 250 gold.
+pub static RELEASE_MALICE: ReleaseInhaledPoison = ReleaseInhaledPoison {
+    poison: &crate::engine::poisons::MALICE,
+    action_name: "release malice",
+    action_aliases: &["malice"],
+};
+
+/// The one that takes a prisoner rather than a corpse.
+pub static RELEASE_ESSENCE_OF_ETHER: ReleaseInhaledPoison = ReleaseInhaledPoison {
+    poison: &crate::engine::poisons::ESSENCE_OF_ETHER,
+    action_name: "release essence of ether",
+    action_aliases: &["essence of ether", "ether"],
+};
+
+/// The only one of the three that rolls dice.
+pub static RELEASE_BURNT_OTHUR_FUMES: ReleaseInhaledPoison = ReleaseInhaledPoison {
+    poison: &crate::engine::poisons::BURNT_OTHUR_FUMES,
+    action_name: "release burnt othur fumes",
+    action_aliases: &["burnt othur fumes", "othur", "fumes"],
+};
+
 pub static COAT_DAGGER_OF_VENOM: KindleWeapon = KindleWeapon {
     action_name: "coat dagger of venom",
     action_aliases: &["coat dagger", "venom", "poison blade", "envenom"],

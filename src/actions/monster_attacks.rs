@@ -16606,6 +16606,10 @@ pub static WEAKENING_BREATH: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Enfeebled,
         ability: AbilityScoreType::Strength,
         escaped_flavor: "finds their strength again",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 /// SRD 5.2's *"the target has the Paralyzed condition, and it repeats
@@ -16621,6 +16625,10 @@ pub static PARALYSING_ROAR: crate::engine::repeat_saves::RepeatSave =
         condition: Condition::Paralyzed,
         ability: AbilityScoreType::Wisdom,
         escaped_flavor: "shakes the ringing out of their head and moves again",
+        // A pure escape hatch: failing costs a turn and nothing
+        // else, and one made save is out.
+        damage_on_failure: None,
+        successes_needed: 1,
     };
 
 /// Which roar this is. The sphinx's charge pool counts down, so the
