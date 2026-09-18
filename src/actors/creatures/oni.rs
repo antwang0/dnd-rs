@@ -44,6 +44,8 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW speed line: Speed 30 ft., fly 30 ft.
         speed: 30.0,
         fly_speed: 30.0,
+        // SRD 5.2: *"Fly 30 ft. (hover)"*.
+        hovers: true,
         strength: 19,
         intelligence: 14,
         dexterity: 11,

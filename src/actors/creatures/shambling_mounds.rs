@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     SHAMBLING_MOUND_ENGULF, SHAMBLING_MOUND_MULTI, SHAMBLING_MOUND_SLAM,
@@ -62,6 +63,10 @@ pub static SHAMBLING_MOUND_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             Condition::Exhausted,
         ]),
         skills: HashSet::from([Skill::Stealth]),
+        // SRD 5.2: *"Speed 30 ft., Swim 20 ft."*
+        // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
+        // cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

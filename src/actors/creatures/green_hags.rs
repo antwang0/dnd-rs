@@ -1,4 +1,4 @@
-use crate::actions::class_features::UNDERWATER_BREATHING_TAG;
+use crate::actions::class_features::{SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GREEN_HAG_CLAWS;
 use crate::actors::actor_template::CreatureTemplate;
@@ -41,13 +41,14 @@ pub static GREEN_HAG_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Magic Resistance — advantage on saves vs spells / magical
         // effects. The load-bearing fey trait at this tier.
         has_magic_resistance: true,
-        // Amphibious — "the hag can breathe air and water". The swamp
-        // is where she lives, and it is the one clause of her stat
-        // block the water on this board can read. No swimming speed
-        // beside it: RAW gives the green hag lungs for the water and
-        // no particular grace in it, so a pool still charges her
-        // double to wade through.
-        features: HashSet::from([UNDERWATER_BREATHING_TAG]),
+        // Amphibious — "the hag can breathe air and water" — and the
+        // swim speed beside it: SRD 5.2 prints *"Speed 30 ft., Swim 30
+        // ft."* The swamp is where she lives, and between them the two
+        // tags are the whole of what the water on this board can read
+        // off her stat block. The swim used to be missing, under a
+        // comment that said the book withheld it — a pool charged her
+        // double to wade through her own hunting ground.
+        features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
         skills: HashSet::from([
             Skill::Arcana,
             Skill::Deception,

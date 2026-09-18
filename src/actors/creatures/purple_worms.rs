@@ -81,7 +81,10 @@ pub static PURPLE_WORM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 15d20+90 ≈ 247 average per MM (CR 15).
         hitpoints: "15d20+90".parse().unwrap(),
         speed: 50.,
-        burrow_speed: 30.,
+        // SRD 5.2: *"Speed 50 ft., Burrow 50 ft."* The worm tunnels as
+        // fast as it crawls, which is the whole of its approach — 30
+        // was the 2014 number.
+        burrow_speed: 50.,
         strength: 28,
         intelligence: 1,
         dexterity: 7,

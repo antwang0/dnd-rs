@@ -663,6 +663,7 @@ pub fn pc_template_families() -> Vec<(&'static str, Vec<&'static CreatureTemplat
 pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
     let mut aquatic: Vec<&'static CreatureTemplate> = vec![
         &aboleths::ABOLETH_TEMPLATE,
+        &black_bears::BLACK_BEAR_TEMPLATE,
         &bullywugs::BULLYWUG_TEMPLATE,
         &chuuls::CHUUL_TEMPLATE,
         &constrictor_snakes::CONSTRICTOR_SNAKE_TEMPLATE,
@@ -670,6 +671,9 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &crocodiles::CROCODILE_TEMPLATE,
         &crocodiles::GIANT_CROCODILE_TEMPLATE,
         &deep_tentacles::TENTACLE_OF_THE_DEEP_TEMPLATE,
+        &gibbering_mouthers::GIBBERING_MOUTHER_TEMPLATE,
+        &green_hags::GREEN_HAG_TEMPLATE,
+        &guardian_nagas::GUARDIAN_NAGA_TEMPLATE,
         &dragon_turtles::DRAGON_TURTLE_TEMPLATE,
         &frogs::FROG_TEMPLATE,
         &giant_crabs::GIANT_CRAB_TEMPLATE,
@@ -689,7 +693,9 @@ pub fn aquatic_templates() -> Vec<&'static CreatureTemplate> {
         &plesiosauruses::PLESIOSAURUS_TEMPLATE,
         &reef_sharks::REEF_SHARK_TEMPLATE,
         &sahuagins::SAHUAGIN_TEMPLATE,
+        &polar_bears::POLAR_BEAR_TEMPLATE,
         &sea_hags::SEA_HAG_TEMPLATE,
+        &shambling_mounds::SHAMBLING_MOUND_TEMPLATE,
         &storm_giants::STORM_GIANT_TEMPLATE,
         &swarms::SWARM_OF_PIRANHAS_TEMPLATE,
         &water_elementals::WATER_ELEMENTAL_TEMPLATE,
@@ -2343,15 +2349,31 @@ mod tests {
         }
     }
 
-    /// The two water rosters are neither the same list nor nested one
-    /// inside the other, and both disagreements are RAW.
+    /// The two water rosters are not the same list, and the difference
+    /// is RAW.
     ///
     /// Written as a test rather than left in a docstring because the
     /// tempting simplification — "aquatic creatures breathe water,
     /// derive one from the other" — is wrong in a way that reads as
     /// right, and would delete a list rather than break a build. The
-    /// two named witnesses are the cheapest possible proof that the
-    /// derivation is unavailable in either direction.
+    /// named witness is the cheapest possible proof that the derivation
+    /// is unavailable.
+    ///
+    /// **It used to name a witness in each direction**, and the second
+    /// one was a mistake in the bestiary rather than a fact about the
+    /// book. The green hag stood for "breathes, cannot swim" on the
+    /// strength of a comment saying SRD 5.2 gave her lungs and no
+    /// grace; the book prints *"Speed 30 ft., Swim 30 ft."* and she has
+    /// the swim now. With her corrected, every creature on the
+    /// breathing roster is also on the swimming one — but that is a
+    /// coincidence of which stat blocks SRD 5.2 happens to print, not a
+    /// rule, and it is deliberately **not** asserted here: a future
+    /// Amphibious creature with no Swim line is perfectly legal and
+    /// should not turn this test red.
+    ///
+    /// The direction that is a rule is the one left: a swim speed says
+    /// nothing about lungs, so the breathing roster cannot be derived
+    /// from the swimming one and has to be its own list.
     #[test]
     fn swimming_and_breathing_are_two_different_rosters() {
         let swimmers: Vec<&str> = super::aquatic_templates().iter().map(|t| t.name).collect();
@@ -2368,15 +2390,6 @@ mod tests {
         assert!(
             !breathers.contains(&white.name),
             "the white dragon swims; RAW does not let it breathe down there"
-        );
-
-        // Breathes, cannot swim. The green hag is Amphibious with no
-        // swim line at all.
-        let hag = &*super::green_hags::GREEN_HAG_TEMPLATE;
-        assert!(breathers.contains(&hag.name));
-        assert!(
-            !swimmers.contains(&hag.name),
-            "the green hag breathes water; RAW gives her no grace in it"
         );
     }
 

@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{BLACK_BEAR_MULTI, BLACK_BEAR_REND};
 use crate::actors::actor_template::CreatureTemplate;
@@ -52,6 +53,10 @@ pub static BLACK_BEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Beast,
         actions,
+        // SRD 5.2: *"Speed 30 ft., Climb 30 ft., Swim 30 ft."*
+        // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
+        // cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

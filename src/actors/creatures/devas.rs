@@ -73,6 +73,9 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW speed line: Speed 30 ft., fly 90 ft.
         speed: 30.0,
         fly_speed: 90.0,
+        // SRD 5.2: *"Fly 90 ft. (hover)"*. An angel does not fall out
+        // of the sky when something knocks it down.
+        hovers: true,
         strength: 18,
         intelligence: 17,
         dexterity: 18,

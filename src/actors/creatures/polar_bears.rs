@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{POLAR_BEAR_BITE, POLAR_BEAR_CLAWS, POLAR_BEAR_MULTI};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
@@ -43,6 +44,10 @@ pub static POLAR_BEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             DamageModifier::Resistance,
         )]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
+        // SRD 5.2: *"Speed 40 ft., Swim 40 ft."*
+        // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
+        // cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

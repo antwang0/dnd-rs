@@ -66,7 +66,9 @@ pub static REMORHAZ_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 17d12+85 ≈ 195 average per the SRD (CR 11).
         hitpoints: "17d12+85".parse().unwrap(),
         speed: 40.,
-        burrow_speed: 20.,
+        // SRD 5.2: *"Speed 40 ft., Burrow 30 ft."* — 20 was the 2014
+        // number.
+        burrow_speed: 30.,
         strength: 24,
         dexterity: 13,
         constitution: 21,

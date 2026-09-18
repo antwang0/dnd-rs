@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     GUARDIAN_NAGA_BITE, GUARDIAN_NAGA_MULTI, GUARDIAN_NAGA_SPITTLE,
@@ -106,6 +107,10 @@ pub static GUARDIAN_NAGA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // Enough of the top two rungs for RAW's 1/day-each list: Geas
         // and the level-6 versions of Cure Wounds and Flame Strike.
         spell_slots_by_level: vec![0, 0, 0, 0, 2, 2],
+        // SRD 5.2: *"Speed 40 ft., Climb 40 ft., Swim 40 ft."*
+        // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
+        // cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

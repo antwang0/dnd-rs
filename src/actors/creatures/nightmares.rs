@@ -30,6 +30,8 @@ pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // RAW speed line: Speed 60 ft., fly 90 ft.
         speed: 60.0,
         fly_speed: 90.0,
+        // SRD 5.2: *"Fly 90 ft. (hover)"*.
+        hovers: true,
         strength: 18,
         dexterity: 15,
         constitution: 16,

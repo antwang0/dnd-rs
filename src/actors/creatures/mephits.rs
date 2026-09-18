@@ -59,10 +59,13 @@ pub static ICE_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 11,
         // 6d6 ≈ 21 average per MM (CR ½).
         hitpoints: "6d6".parse().unwrap(),
-        // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
+        // SRD 5.2's speed line: *"Speed 30 ft., Fly 30 ft."* — no
+        // "(hover)" on any of the four, which is 2014's annotation and
+        // was carried on all of them. It is not decoration: a hoverer
+        // stays airborne through a knockdown or a speed-to-zero, and
+        // everything else falls. A mephit falls.
         speed: 30.0,
         fly_speed: 30.0,
-        hovers: true,
         strength: 7,
         intelligence: 9,
         dexterity: 13,
@@ -124,10 +127,13 @@ pub static STEAM_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         glyph: 's',
         ac: 10,
         hitpoints: "5d6".parse().unwrap(),
-        // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
+        // SRD 5.2's speed line: *"Speed 30 ft., Fly 30 ft."* — no
+        // "(hover)" on any of the four, which is 2014's annotation and
+        // was carried on all of them. It is not decoration: a hoverer
+        // stays airborne through a knockdown or a speed-to-zero, and
+        // everything else falls. A mephit falls.
         speed: 30.0,
         fly_speed: 30.0,
-        hovers: true,
         strength: 5,
         intelligence: 11,
         dexterity: 11,
@@ -187,10 +193,13 @@ pub static MAGMA_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         glyph: 'g',
         ac: 11,
         hitpoints: "4d6+4".parse().unwrap(),
-        // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
+        // SRD 5.2's speed line: *"Speed 30 ft., Fly 30 ft."* — no
+        // "(hover)" on any of the four, which is 2014's annotation and
+        // was carried on all of them. It is not decoration: a hoverer
+        // stays airborne through a knockdown or a speed-to-zero, and
+        // everything else falls. A mephit falls.
         speed: 30.0,
         fly_speed: 30.0,
-        hovers: true,
         strength: 8,
         intelligence: 7,
         dexterity: 12,
@@ -257,10 +266,13 @@ pub static DUST_MEPHIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ac: 12,
         // 5d6 ≈ 17 average per MM (CR ½).
         hitpoints: "5d6".parse().unwrap(),
-        // RAW speed line: Speed 30 ft., fly 30 ft. (hover)
+        // SRD 5.2's speed line: *"Speed 30 ft., Fly 30 ft."* — no
+        // "(hover)" on any of the four, which is 2014's annotation and
+        // was carried on all of them. It is not decoration: a hoverer
+        // stays airborne through a knockdown or a speed-to-zero, and
+        // everything else falls. A mephit falls.
         speed: 30.0,
         fly_speed: 30.0,
-        hovers: true,
         strength: 5,
         intelligence: 9,
         dexterity: 14,

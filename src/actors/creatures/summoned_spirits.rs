@@ -57,6 +57,7 @@
 //! fixed here at the base cast, because a `Multiattack` count and a
 //! `Dice` both live on a `&'static` literal that no cast can reach.
 
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::engine::areas::AreaShape;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
@@ -661,6 +662,10 @@ pub static DRACONIC_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         ]),
         condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
         recharge_abilities: vec![("breath_weapon", 5)],
+        // SRD 5.2: *"Speed 30 ft., Fly 60 ft., Swim 30 ft."*
+        // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
+        // cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

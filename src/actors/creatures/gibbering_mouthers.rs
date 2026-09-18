@@ -1,3 +1,4 @@
+use crate::actions::class_features::SWIM_SPEED_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     GIBBERING_MOUTHER_BITES, GIBBERING_MOUTHER_BLINDING_SPITTLE,
@@ -73,6 +74,10 @@ pub static GIBBERING_MOUTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         // start of each turn. The action's `custom_validate_input` gate
         // and `spend_recharge` consume reads from this entry.
         recharge_abilities: vec![("blinding spittle", 5)],
+        // SRD 5.2: *"Speed 20 ft., Swim 20 ft."*
+        // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
+        // cross and lifts the underwater melee penalty.
+        features: HashSet::from([SWIM_SPEED_TAG]),
         ..CreatureTemplate::defaults()
     }
 });

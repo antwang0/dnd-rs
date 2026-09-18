@@ -50,6 +50,12 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 34d20+340 = ~697 average per MM (CR 30).
         hitpoints: "34d20+340".parse().unwrap(),
         speed: 60.,
+        // SRD 5.2: *"Speed 60 ft., Burrow 40 ft., Climb 60 ft."* The
+        // burrow line had never been transcribed, which left the one
+        // creature in the book that can leave a sealed room standing
+        // in it. The climb has no axis here; see `burrow_speed` for
+        // what the engine does model.
+        burrow_speed: 40.,
         strength: 30,
         dexterity: 11,
         constitution: 30,

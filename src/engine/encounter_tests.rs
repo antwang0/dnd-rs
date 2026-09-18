@@ -124302,6 +124302,432 @@ fn every_stat_blocks_skills_match_the_book() {
     );
 }
 
+/// The **other three lines of the Speed row** — Burrow, the Fly line's
+/// `(hover)` annotation, and Swim — against what the bestiary declares.
+///
+/// The eighth book-conformance sweep, and the one that completes a row
+/// two earlier tests had each taken half of.
+/// `the_bestiary_agrees_with_the_srd_about_the_top_of_the_page` checks
+/// the walking and flying magnitudes;
+/// `the_swim_speed_tag_is_carried_by_exactly_the_aquatic_templates`
+/// checks that the swim tag and `aquatic_templates` agree with *each
+/// other*. Neither had ever compared any of it to the page, and the
+/// three clauses below were where that showed:
+///
+///   - **Twelve dragons could not dig.** SRD 5.2 gives the blue, the
+///     brass and the white a Burrow line at all four ages — 15, 20, 30
+///     and 40 feet — and `DragonRow` had no column for it. The
+///     tarrasque's 40 had never been transcribed either, which left the
+///     one creature in the book that can leave a sealed room standing
+///     in it. The purple worm dug at 30 where 5.2 prints 50, and the
+///     remorhaz at 20 where it prints 30; both were the 2014 numbers.
+///   - **Seven hover annotations were on the wrong creatures.** All
+///     four mephits carried a `(hover)` that 2024 dropped, under a
+///     comment quoting the 2014 speed line; the deva, the nightmare and
+///     the oni each print one and carried none. It is not decoration —
+///     a hoverer stays airborne through a knockdown or a
+///     speed-to-zero, and everything else falls.
+///   - **Seven swimmers could not swim.** The green hag's missing swim
+///     speed had a comment beside it saying the book withheld one, so a
+///     pool charged her double to wade through her own hunting ground;
+///     the black bear, polar bear, shambling mound, gibbering mouther,
+///     guardian naga and draconic spirit were simply never tagged. All
+///     seven join `aquatic_templates`, which the sibling sweep enforces
+///     in both directions.
+///
+/// **Climb is not here**, and not because the book is quiet about it —
+/// the tarrasque, the black bear and the guardian naga all print one.
+/// The engine has no vertical axis for a climb to mean anything on, so
+/// there is no field to compare a transcribed number against. That is
+/// the one line of the Speed row this sweep leaves alone, and it is
+/// left alone deliberately rather than forgotten.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its seven
+/// siblings; see there for the rename and the player-character
+/// exclusion.
+#[test]
+fn every_stat_blocks_other_speeds_match_the_book() {
+    /// `(name, burrow feet, hovers, swims)` — SRD 5.2's Speed row minus
+    /// the walking and flying magnitudes, which
+    /// `the_bestiary_agrees_with_the_srd_about_the_top_of_the_page`
+    /// already holds. `0` is a stat block with no Burrow line, which is
+    /// most of them.
+    const SRD_SPEEDS: &[(&str, u32, bool, bool)] = &[
+    ("Aboleth", 0, false, true),
+    ("Adult Black Dragon", 0, false, true),
+    ("Adult Blue Dragon", 30, false, false),
+    ("Adult Brass Dragon", 30, false, false),
+    ("Adult Bronze Dragon", 0, false, true),
+    ("Adult Copper Dragon", 0, false, false),
+    ("Adult Gold Dragon", 0, false, true),
+    ("Adult Green Dragon", 0, false, true),
+    ("Adult Red Dragon", 0, false, false),
+    ("Adult Silver Dragon", 0, false, false),
+    ("Adult White Dragon", 30, false, true),
+    ("Air Elemental", 0, true, false),
+    ("Allosaurus", 0, false, false),
+    ("Ancient Black Dragon", 0, false, true),
+    ("Ancient Blue Dragon", 40, false, false),
+    ("Ancient Brass Dragon", 40, false, false),
+    ("Ancient Bronze Dragon", 0, false, true),
+    ("Ancient Copper Dragon", 0, false, false),
+    ("Ancient Gold Dragon", 0, false, true),
+    ("Ancient Green Dragon", 0, false, true),
+    ("Ancient Red Dragon", 0, false, false),
+    ("Ancient Silver Dragon", 0, false, false),
+    ("Ancient White Dragon", 40, false, true),
+    ("Animated Armor", 0, false, false),
+    ("Animated Flying Sword", 0, true, false),
+    ("Animated Rug of Smothering", 0, false, false),
+    ("Ankheg", 10, false, false),
+    ("Ankylosaurus", 0, false, false),
+    ("Ape", 0, false, false),
+    ("Archelon", 0, false, true),
+    ("Archmage", 0, false, false),
+    ("Assassin", 0, false, false),
+    ("Avatar of Death", 0, true, false),
+    ("Awakened Shrub", 0, false, false),
+    ("Awakened Tree", 0, false, false),
+    ("Axe Beak", 0, false, false),
+    ("Azer Sentinel", 0, false, false),
+    ("Baboon", 0, false, false),
+    ("Badger", 5, false, false),
+    ("Balor", 0, false, false),
+    ("Bandit", 0, false, false),
+    ("Bandit Captain", 0, false, false),
+    ("Barbed Devil", 0, false, false),
+    ("Basilisk", 0, false, false),
+    ("Bat", 0, false, false),
+    ("Bearded Devil", 0, false, false),
+    ("Behir", 0, false, false),
+    ("Berserker", 0, false, false),
+    ("Black Bear", 0, false, true),
+    ("Black Dragon Wyrmling", 0, false, true),
+    ("Black Pudding", 0, false, false),
+    ("Blink Dog", 0, false, false),
+    ("Blood Hawk", 0, false, false),
+    ("Blue Dragon Wyrmling", 15, false, false),
+    ("Boar", 0, false, false),
+    ("Bone Devil", 0, false, false),
+    ("Brass Dragon Wyrmling", 15, false, false),
+    ("Bronze Dragon Wyrmling", 0, false, true),
+    ("Brown Bear", 0, false, false),
+    ("Bugbear Stalker", 0, false, false),
+    ("Bugbear Warrior", 0, false, false),
+    ("Bulette", 40, false, false),
+    ("Camel", 0, false, false),
+    ("Cat", 0, false, false),
+    ("Centaur Trooper", 0, false, false),
+    ("Chain Devil", 0, false, false),
+    ("Chimera", 0, false, false),
+    ("Chuul", 0, false, true),
+    ("Clay Golem", 0, false, false),
+    ("Cloaker", 0, false, false),
+    ("Cloud Giant", 0, true, false),
+    ("Cockatrice", 0, false, false),
+    ("Commoner", 0, false, false),
+    ("Constrictor Snake", 0, false, true),
+    ("Copper Dragon Wyrmling", 0, false, false),
+    ("Couatl", 0, false, false),
+    ("Crab", 0, false, true),
+    ("Crocodile", 0, false, true),
+    ("Cultist", 0, false, false),
+    ("Cultist Fanatic", 0, false, false),
+    ("Darkmantle", 0, false, false),
+    ("Death Dog", 0, false, false),
+    ("Deer", 0, false, false),
+    ("Deva", 0, true, false),
+    ("Dire Wolf", 0, false, false),
+    ("Djinni", 0, true, false),
+    ("Doppelganger", 0, false, false),
+    ("Draconic Spirit", 0, false, true),
+    ("Draft Horse", 0, false, false),
+    ("Dragon Turtle", 0, false, true),
+    ("Dretch", 0, false, false),
+    ("Drider", 0, false, false),
+    ("Dryad", 0, false, false),
+    ("Dust Mephit", 0, false, false),
+    ("Eagle", 0, false, false),
+    ("Earth Elemental", 30, false, false),
+    ("Efreeti", 0, true, false),
+    ("Elephant", 0, false, false),
+    ("Elk", 0, false, false),
+    ("Erinyes", 0, false, false),
+    ("Ettercap", 0, false, false),
+    ("Ettin", 0, false, false),
+    ("Fire Elemental", 0, false, false),
+    ("Fire Giant", 0, false, false),
+    ("Flesh Golem", 0, false, false),
+    ("Flying Snake", 0, false, true),
+    ("Frog", 0, false, true),
+    ("Frost Giant", 0, false, false),
+    ("Gargoyle", 0, false, false),
+    ("Gelatinous Cube", 0, false, false),
+    ("Ghast", 0, false, false),
+    ("Ghost", 0, true, false),
+    ("Ghoul", 0, false, false),
+    ("Giant Ape", 0, false, false),
+    ("Giant Badger", 10, false, false),
+    ("Giant Bat", 0, false, false),
+    ("Giant Boar", 0, false, false),
+    ("Giant Centipede", 0, false, false),
+    ("Giant Constrictor Snake", 0, false, true),
+    ("Giant Crab", 0, false, true),
+    ("Giant Crocodile", 0, false, true),
+    ("Giant Eagle", 0, false, false),
+    ("Giant Elk", 0, false, false),
+    ("Giant Fire Beetle", 0, false, false),
+    ("Giant Fly", 0, false, false),
+    ("Giant Frog", 0, false, true),
+    ("Giant Goat", 0, false, false),
+    ("Giant Hyena", 0, false, false),
+    ("Giant Insect", 0, false, false),
+    ("Giant Lizard", 0, false, false),
+    ("Giant Octopus", 0, false, true),
+    ("Giant Owl", 0, false, false),
+    ("Giant Rat", 0, false, false),
+    ("Giant Scorpion", 0, false, false),
+    ("Giant Seahorse", 0, false, true),
+    ("Giant Shark", 0, false, true),
+    ("Giant Spider", 0, false, false),
+    ("Giant Toad", 0, false, true),
+    ("Giant Venomous Snake", 0, false, true),
+    ("Giant Vulture", 0, false, false),
+    ("Giant Wasp", 0, false, false),
+    ("Giant Weasel", 0, false, false),
+    ("Giant Wolf Spider", 0, false, false),
+    ("Gibbering Mouther", 0, false, true),
+    ("Glabrezu", 0, false, false),
+    ("Gladiator", 0, false, false),
+    ("Gnoll Warrior", 0, false, false),
+    ("Goat", 0, false, false),
+    ("Goblin Boss", 0, false, false),
+    ("Goblin Minion", 0, false, false),
+    ("Goblin Warrior", 0, false, false),
+    ("Gold Dragon Wyrmling", 0, false, true),
+    ("Gorgon", 0, false, false),
+    ("Gray Ooze", 0, false, false),
+    ("Green Dragon Wyrmling", 0, false, true),
+    ("Green Hag", 0, false, true),
+    ("Grick", 0, false, false),
+    ("Griffon", 0, false, false),
+    ("Grimlock", 0, false, false),
+    ("Guard", 0, false, false),
+    ("Guard Captain", 0, false, false),
+    ("Guardian Naga", 0, false, true),
+    ("Harpy", 0, false, false),
+    ("Hawk", 0, false, false),
+    ("Hell Hound", 0, false, false),
+    ("Hezrou", 0, false, false),
+    ("Hill Giant", 0, false, false),
+    ("Hippogriff", 0, false, false),
+    ("Hippopotamus", 0, false, true),
+    ("Hobgoblin Captain", 0, false, false),
+    ("Hobgoblin Warrior", 0, false, false),
+    ("Homunculus", 0, false, false),
+    ("Horned Devil", 0, false, false),
+    ("Hunter Shark", 0, false, true),
+    ("Hydra", 0, false, true),
+    ("Hyena", 0, false, false),
+    ("Ice Devil", 0, false, false),
+    ("Ice Mephit", 0, false, false),
+    ("Imp", 0, false, false),
+    ("Incubus", 0, false, false),
+    ("Invisible Stalker", 0, true, false),
+    ("Iron Golem", 0, false, false),
+    ("Jackal", 0, false, false),
+    ("Killer Whale", 0, false, true),
+    ("Knight", 0, false, false),
+    ("Kobold Warrior", 0, false, false),
+    ("Kraken", 0, false, true),
+    ("Lamia", 0, false, false),
+    ("Lemure", 0, false, false),
+    ("Lich", 0, false, false),
+    ("Lion", 0, false, false),
+    ("Lizard", 0, false, false),
+    ("Mage", 0, false, false),
+    ("Magma Mephit", 0, false, false),
+    ("Magmin", 0, false, false),
+    ("Mammoth", 0, false, false),
+    ("Manticore", 0, false, false),
+    ("Marilith", 0, false, false),
+    ("Mastiff", 0, false, false),
+    ("Medusa", 0, false, false),
+    ("Merfolk Skirmisher", 0, false, true),
+    ("Merrow", 0, false, true),
+    ("Mimic", 0, false, false),
+    ("Minotaur Skeleton", 0, false, false),
+    ("Minotaur of Baphomet", 0, false, false),
+    ("Mule", 0, false, false),
+    ("Mummy", 0, false, false),
+    ("Mummy Lord", 0, false, false),
+    ("Nalfeshnee", 0, false, false),
+    ("Night Hag", 0, false, false),
+    ("Nightmare", 0, true, false),
+    ("Noble", 0, false, false),
+    ("Ochre Jelly", 0, false, false),
+    ("Octopus", 0, false, true),
+    ("Ogre", 0, false, false),
+    ("Ogre Zombie", 0, false, false),
+    ("Oni", 0, true, false),
+    ("Otyugh", 0, false, false),
+    ("Owl", 0, false, false),
+    ("Owlbear", 0, false, false),
+    ("Panther", 0, false, false),
+    ("Pegasus", 0, false, false),
+    ("Phase Spider", 0, false, false),
+    ("Piranha", 0, false, true),
+    ("Pirate", 0, false, false),
+    ("Pirate Captain", 0, false, false),
+    ("Pit Fiend", 0, false, false),
+    ("Planetar", 0, true, false),
+    ("Plesiosaurus", 0, false, true),
+    ("Polar Bear", 0, false, true),
+    ("Pony", 0, false, false),
+    ("Priest", 0, false, false),
+    ("Priest Acolyte", 0, false, false),
+    ("Pseudodragon", 0, false, false),
+    ("Pteranodon", 0, false, false),
+    ("Purple Worm", 50, false, false),
+    ("Quasit", 0, false, false),
+    ("Rakshasa", 0, false, false),
+    ("Rat", 0, false, false),
+    ("Raven", 0, false, false),
+    ("Red Dragon Wyrmling", 0, false, false),
+    ("Reef Shark", 0, false, true),
+    ("Remorhaz", 30, false, false),
+    ("Rhinoceros", 0, false, false),
+    ("Riding Horse", 0, false, false),
+    ("Roc", 0, false, false),
+    ("Roper", 0, false, false),
+    ("Rust Monster", 0, false, false),
+    ("Saber-Toothed Tiger", 0, false, false),
+    ("Sahuagin Warrior", 0, false, true),
+    ("Salamander", 0, false, false),
+    ("Satyr", 0, false, false),
+    ("Scorpion", 0, false, false),
+    ("Scout", 0, false, false),
+    ("Sea Hag", 0, false, true),
+    ("Seahorse", 0, false, true),
+    ("Shadow", 0, false, false),
+    ("Shambling Mound", 0, false, true),
+    ("Shield Guardian", 0, false, false),
+    ("Shrieker Fungus", 0, false, false),
+    ("Silver Dragon Wyrmling", 0, false, false),
+    ("Skeleton", 0, false, false),
+    ("Solar", 0, true, false),
+    ("Specter", 0, true, false),
+    ("Sphinx of Lore", 0, false, false),
+    ("Sphinx of Valor", 0, false, false),
+    ("Sphinx of Wonder", 0, false, false),
+    ("Spider", 0, false, false),
+    ("Spirit Naga", 0, false, false),
+    ("Sprite", 0, false, false),
+    ("Spy", 0, false, false),
+    ("Steam Mephit", 0, false, false),
+    ("Stirge", 0, false, false),
+    ("Stone Giant", 0, false, false),
+    ("Stone Golem", 0, false, false),
+    ("Storm Giant", 0, true, true),
+    ("Succubus", 0, false, false),
+    ("Tarrasque", 40, false, false),
+    ("Tiger", 0, false, false),
+    ("Tough", 0, false, false),
+    ("Tough Boss", 0, false, false),
+    ("Treant", 0, false, false),
+    ("Triceratops", 0, false, false),
+    ("Troll", 0, false, false),
+    ("Troll Limb", 0, false, false),
+    ("Tyrannosaurus Rex", 0, false, false),
+    ("Unicorn", 0, false, false),
+    ("Vampire", 0, false, false),
+    ("Vampire Familiar", 0, false, false),
+    ("Vampire Spawn", 0, false, false),
+    ("Venomous Snake", 0, false, true),
+    ("Violet Fungus", 0, false, false),
+    ("Vrock", 0, false, false),
+    ("Vulture", 0, false, false),
+    ("Warhorse", 0, false, false),
+    ("Warhorse Skeleton", 0, false, false),
+    ("Warrior Infantry", 0, false, false),
+    ("Warrior Veteran", 0, false, false),
+    ("Water Elemental", 0, false, true),
+    ("Weasel", 0, false, false),
+    ("Werebear", 0, false, false),
+    ("Wereboar", 0, false, false),
+    ("Wererat", 0, false, false),
+    ("Weretiger", 0, false, false),
+    ("Werewolf", 0, false, false),
+    ("White Dragon Wyrmling", 15, false, true),
+    ("Wight", 0, false, false),
+    ("Will-o’-Wisp", 0, true, false),
+    ("Winter Wolf", 0, false, false),
+    ("Wolf", 0, false, false),
+    ("Worg", 0, false, false),
+    ("Wraith", 0, true, false),
+    ("Wyvern", 0, false, false),
+    ("Xorn", 20, false, false),
+    ("Young Black Dragon", 0, false, true),
+    ("Young Blue Dragon", 20, false, false),
+    ("Young Brass Dragon", 20, false, false),
+    ("Young Bronze Dragon", 0, false, true),
+    ("Young Copper Dragon", 0, false, false),
+    ("Young Gold Dragon", 0, false, true),
+    ("Young Green Dragon", 0, false, true),
+    ("Young Red Dragon", 0, false, false),
+    ("Young Silver Dragon", 0, false, false),
+    ("Young White Dragon", 20, false, true),
+    ("Zombie", 0, false, false),
+    ];
+
+    let found = bestiary_by_name();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, burrow, hovers, swims) in SRD_SPEEDS {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        checked += 1;
+        if t.burrow_speed != *burrow as f32 {
+            wrong.push(format!(
+                "{name}: the book burrows {burrow} and it digs {}",
+                t.burrow_speed
+            ));
+        }
+        if t.hovers != *hovers {
+            wrong.push(format!(
+                "{name}: the book {} and it {}",
+                if *hovers { "hovers" } else { "does not hover" },
+                if t.hovers { "does" } else { "does not" }
+            ));
+        }
+        let tagged = t
+            .features
+            .contains(crate::actions::class_features::SWIM_SPEED_TAG);
+        if tagged != *swims {
+            wrong.push(format!(
+                "{name}: the book {} and it {}",
+                if *swims { "swims" } else { "prints no swim speed" },
+                if tagged { "carries the tag" } else { "does not" }
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's Speed row:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count — see the sibling sweeps for why a match
+    // that silently stops matching is the failure this guards.
+    assert!(
+        checked > 320,
+        "only {checked} of the book's {} stat blocks were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_SPEEDS.len()
+    );
+}
+
 /// Every stat block's **Resistances**, **Immunities** and
 /// **Vulnerabilities** rows, against what the bestiary declares.
 ///
