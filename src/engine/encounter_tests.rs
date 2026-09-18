@@ -123458,3 +123458,148 @@ fn every_stat_blocks_damage_lines_match_the_book() {
         SRD_DAMAGE_LINES.len()
     );
 }
+
+/// The **Star** card — *"Increase one of your ability scores by 2, to a
+/// maximum of 24"* — and the lane it needed, which is the mirror of a
+/// shadow's drain and did not exist until this card asked for it.
+#[test]
+fn the_star_card_puts_two_points_on_a_score_for_good() {
+    use crate::actions::item_actions::{DRAW_FROM_THE_DECK, MYSTERIOUS_DECK_TABLE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let star = MYSTERIOUS_DECK_TABLE
+        .iter()
+        .find(|c| c.card == "Star")
+        .expect("the Star is in the deck");
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 1301);
+    let drawer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // The card raises the drawer's best score, which for a fighter is
+    // Strength — read rather than assumed, so a chassis edit moves the
+    // test with it.
+    let best = [
+        AbilityScoreType::Strength,
+        AbilityScoreType::Dexterity,
+        AbilityScoreType::Constitution,
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Wisdom,
+        AbilityScoreType::Charisma,
+    ]
+    .into_iter()
+    .max_by_key(|a| e.actors[&drawer].ability_score(*a))
+    .unwrap();
+    let before = e.actors[&drawer].ability_score(best);
+    let modifier_before = e.actors[&drawer].ability_modifier(best);
+
+    for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, star) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&drawer].ability_score(best), before + 2);
+    assert_eq!(e.actors[&drawer].ability_raise_of(best), 2);
+    assert_eq!(
+        e.actors[&drawer].ability_modifier(best),
+        modifier_before + 1,
+        "two points is a modifier, which is the whole of what the card buys"
+    );
+
+    // …and it stops at RAW's ceiling rather than climbing forever.
+    for _ in 0..20 {
+        for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, star) {
+            ef.apply(&mut e);
+        }
+    }
+    assert_eq!(
+        e.actors[&drawer].ability_score(best),
+        24,
+        "RAW: \"to a maximum of 24\""
+    );
+}
+
+/// The **Balance** card — *"increase one of your ability scores by 2 …
+/// provided you also decrease another one of your ability scores by
+/// 2"*, with RAW's floor: *"You can't decrease an ability that has a
+/// score of 5 or lower."*
+#[test]
+fn the_balance_card_trades_two_points_for_two_points() {
+    use crate::actions::item_actions::{DRAW_FROM_THE_DECK, MYSTERIOUS_DECK_TABLE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let balance = MYSTERIOUS_DECK_TABLE
+        .iter()
+        .find(|c| c.card == "Balance")
+        .expect("the Balance is in the deck");
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 1302);
+    let drawer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let scores = |e: &EncounterInstance| {
+        [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ]
+        .map(|a| e.actors[&drawer].ability_score(a))
+    };
+    let before = scores(&e);
+    for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, balance) {
+        ef.apply(&mut e);
+    }
+    let after = scores(&e);
+    let up: Vec<usize> = (0..6).filter(|i| after[*i] > before[*i]).collect();
+    let down: Vec<usize> = (0..6).filter(|i| after[*i] < before[*i]).collect();
+    assert_eq!(up.len(), 1, "exactly one score rises");
+    assert_eq!(down.len(), 1, "and exactly one falls");
+    assert_eq!(after[up[0]], before[up[0]] + 2);
+    assert_eq!(after[down[0]], before[down[0]] - 2);
+    assert!(
+        before[down[0]] > 5,
+        "RAW refuses to cut a score of 5 or lower, and the card picked \
+         the lowest one above it"
+    );
+}
+
+/// The **Talons** card — *"Every magic item you wear or carry
+/// disintegrates."* Every item in this engine is a magic item, so the
+/// card takes the pack.
+#[test]
+fn the_talons_card_takes_the_whole_pack() {
+    use crate::actions::item_actions::{DRAW_FROM_THE_DECK, MYSTERIOUS_DECK_TABLE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::{MYSTERIOUS_DECK, POTION_OF_HEALING};
+
+    let talons = MYSTERIOUS_DECK_TABLE
+        .iter()
+        .find(|c| c.card == "Talons")
+        .expect("the Talons is in the deck");
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 1303);
+    let drawer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    {
+        let a = e.actors.get_mut(&drawer).unwrap();
+        a.pickup_item(&MYSTERIOUS_DECK);
+        a.pickup_item(&POTION_OF_HEALING);
+    }
+    assert!(e.actors[&drawer].items().len() >= 2);
+    for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, talons) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&drawer].items().is_empty(),
+        "the deck goes with everything else — which is the card"
+    );
+
+    // And a second draw with nothing to take says so rather than
+    // pretending something happened.
+    for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, talons) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.messages().iter().any(|m| m.contains("nothing to take")),
+        "an empty pack is a real outcome of this card"
+    );
+}

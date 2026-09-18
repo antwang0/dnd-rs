@@ -5731,6 +5731,33 @@ pub struct ActorInstance {
     /// fighter who drank the storm giant's potion is drained from 29.
     /// Cleared by both rests.
     ability_drain: HashMap<AbilityScoreType, u32>,
+    /// Points permanently **added** to an ability score — the mirror of
+    /// `ability_drain` directly above, and the other half of a pair that
+    /// was one-sided for as long as the only thing in the game that
+    /// moved a score was a shadow.
+    ///
+    /// SRD 5.2's Mysterious Deck is what made the other direction
+    /// exist: the *Star* card reads *"Increase one of your ability
+    /// scores by 2, to a maximum of 24"* and the *Balance* card *"You
+    /// can increase one of your ability scores by 2, to a maximum of
+    /// 22, provided you also decrease another one of your ability
+    /// scores by 2."* Both are increases to the score itself rather
+    /// than bonuses hung off an object, which is the distinction
+    /// `Item::ability_score_bonuses` exists to draw: a stone that adds
+    /// two points stops adding them when you take it off, and a card
+    /// that adds two points does not.
+    ///
+    /// Folded into the **base** in `ability_score`, before the item
+    /// floors and bonuses, for exactly that reason — a raised score is
+    /// the creature's own, so an Ogre Power gauntlet's *"your Strength
+    /// is 19"* floor beats a Strength that a card lifted to 18 and
+    /// loses to one it lifted to 20, which is what a floor means.
+    ///
+    /// Not cleared by a rest. `clear_ability_drain` is the drain's own
+    /// undo and RAW gives it one — *"the reduction lasts until the
+    /// target finishes a Short or Long Rest"* — while nothing in the
+    /// book takes a Star card's two points back.
+    ability_raise: HashMap<AbilityScoreType, u32>,
     /// The Stealth total that hid this creature, per SRD 5.2's "make
     /// note of your check's total, which is the DC for a creature to
     /// find you". Written by `resolve_hide_attempt`, read by the Search
@@ -6383,8 +6410,9 @@ impl ActorInstance {
             languages: ct.languages.clone(),
             cr: ct.cr,
             hitpoints: hp_roll_val,
-            // Nothing arrives drained.
+            // Nothing arrives drained, and nothing arrives lifted.
             ability_drain: HashMap::new(),
+            ability_raise: HashMap::new(),
             movement: 0.0,
             action_slots: 0,
             restricted_action_slots: 0,
@@ -11079,7 +11107,7 @@ impl ActorInstance {
     /// See `Item::ability_score_bonuses` for why the second lane is not
     /// the first one with a different number in it.
     pub fn ability_score(&self, ast: AbilityScoreType) -> u32 {
-        let base = match ast {
+        let printed = match ast {
             AbilityScoreType::Strength => self.strength,
             AbilityScoreType::Intelligence => self.intelligence,
             AbilityScoreType::Dexterity => self.dexterity,
@@ -11087,6 +11115,17 @@ impl ActorInstance {
             AbilityScoreType::Constitution => self.constitution,
             AbilityScoreType::Charisma => self.charisma,
         };
+        // Points a card put on the sheet for good, which are the
+        // creature's own and so are part of the number every other lane
+        // below reads. Empty for everybody in almost every fight — see
+        // `ability_raise`, and see `ability_drain` below for the lane
+        // that goes the other way and deliberately does not run here.
+        let base = printed
+            + self
+                .ability_raise
+                .get(&ast)
+                .copied()
+                .unwrap_or(0);
         let floored = self
             .active_items()
             .flat_map(|item| item.ability_score_floors.iter())
@@ -11158,6 +11197,49 @@ impl ActorInstance {
     /// the panel, which is a number that does not exist. Reachable
     /// exactly where the `before > 0` guard above is — after a Death
     /// Ward has left somebody standing at 0.
+    /// Add `amount` points to `ast`, permanently, stopping at `ceiling`
+    /// — SRD 5.2's Mysterious Deck, *"Increase one of your ability
+    /// scores by 2, to a maximum of 24"*.
+    ///
+    /// Returns how many points actually landed, which is the whole of
+    /// what a caller needs to know and is not always `amount`: the
+    /// ceiling is RAW's and differs between the two cards that hand out
+    /// increases (24 for the Star, 22 for the Balance), so the cap is
+    /// the caller's to name rather than a constant here.
+    ///
+    /// The ceiling is measured against the **current** score, items and
+    /// all, because that is the number the sentence is about — a
+    /// fighter already at 24 through a belt is at the Star card's
+    /// maximum whether or not the belt is theirs to keep. That is the
+    /// generous reading of a clause the book does not decide, and the
+    /// direction it errs in is the one that makes the card worth less
+    /// rather than more.
+    ///
+    /// Accumulates, like the drain it mirrors: two Star cards are four
+    /// points, subject to the ceiling each time.
+    pub fn raise_ability(
+        &mut self,
+        ast: AbilityScoreType,
+        amount: u32,
+        ceiling: u32,
+    ) -> u32 {
+        let before = self.ability_score(ast);
+        let room = ceiling.saturating_sub(before);
+        let landed = amount.min(room);
+        if landed > 0 {
+            *self.ability_raise.entry(ast).or_insert(0) += landed;
+        }
+        landed
+    }
+
+    /// How many points are currently *added* to `ast` — the read side
+    /// of `raise_ability`, and the mirror of `ability_drain_of`. Read
+    /// by the panel, which is where a player finds out why a modifier
+    /// moved.
+    pub fn ability_raise_of(&self, ast: AbilityScoreType) -> u32 {
+        self.ability_raise.get(&ast).copied().unwrap_or(0)
+    }
+
     pub fn drain_ability(&mut self, ast: AbilityScoreType, amount: u32) -> bool {
         let before = self.ability_score(ast);
         *self.ability_drain.entry(ast).or_insert(0) += amount.min(before);

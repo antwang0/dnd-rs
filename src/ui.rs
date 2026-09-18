@@ -1165,6 +1165,38 @@ pub fn render_sideinfo(
                 Style::default().fg(Color::LightRed),
             )));
         }
+        // …and the same row read the other way, for the lane that puts
+        // points *on* a score for good. SRD 5.2's Mysterious Deck is the
+        // only thing in the game that does it — the *Star* card and the
+        // *Balance* card — and it needs its own line for the reason the
+        // drain does: the number that moved is the modifier, and the
+        // modifier is not printed anywhere. Green rather than red,
+        // because this one is good news.
+        let raised: Vec<String> = [
+            crate::engine::types::AbilityScoreType::Strength,
+            crate::engine::types::AbilityScoreType::Dexterity,
+            crate::engine::types::AbilityScoreType::Constitution,
+            crate::engine::types::AbilityScoreType::Intelligence,
+            crate::engine::types::AbilityScoreType::Wisdom,
+            crate::engine::types::AbilityScoreType::Charisma,
+        ]
+        .into_iter()
+        .filter(|a| curr_actor.ability_raise_of(*a) > 0)
+        .map(|a| {
+            format!(
+                "{} +{} (now {})",
+                a,
+                curr_actor.ability_raise_of(a),
+                curr_actor.ability_score(a)
+            )
+        })
+        .collect();
+        if !raised.is_empty() {
+            stats_lines.push(Line::from(Span::styled(
+                format!("Raised: {}", raised.join(", ")),
+                Style::default().fg(Color::LightGreen),
+            )));
+        }
     }
     // …and the third state a body can be in that the Movement number
     // does not account for: inside the stone. The row a player needs is

@@ -11621,16 +11621,17 @@ pub const ANIMATED_SHIELD_NAME: &str = "Animated Shield";
 /// What turning over one card of a [`MYSTERIOUS_DECK_TABLE`] row does
 /// to the board.
 ///
-/// Nine of the twenty-two do something; thirteen are
+/// Twelve of the twenty-two do something; ten are
 /// [`CardEffect::Flavour`]. That ratio is not an apology, and it is
 /// worth reading before the table: the Mysterious Deck is a *campaign*
-/// item, and most of its cards are written in a vocabulary a fight has
-/// no words for. Twenty-five pieces of jewelry, a keep with monsters in
-/// it, proficiency and Expertise in Persuasion, a year of Advantage on
-/// Death Saving Throws, 1d3 castings of Wish, an NPC who becomes
-/// Hostile in a way you will not learn about until they reveal
-/// themselves — those are consequences measured in sessions. The nine
-/// that land are the nine that are measured in rounds.
+/// item, and most of its remaining cards are written in a vocabulary a
+/// fight has no words for. Twenty-five pieces of jewelry, a keep with
+/// monsters in it, proficiency and Expertise in Persuasion, a year of
+/// Advantage on Death Saving Throws, 1d3 castings of Wish, an NPC who
+/// becomes Hostile in a way you will not learn about until they reveal
+/// themselves — those are consequences measured in sessions. The twelve
+/// that land are the ones measured in rounds, or in a number on a
+/// sheet.
 ///
 /// Each flavour row still prints its card by name, so a draw always
 /// tells the table what came up. See [`WonderEffect::Flavour`] directly
@@ -11702,6 +11703,37 @@ pub enum CardEffect {
     /// draws."* RAW offers a choice; the engine takes the half it can
     /// spell, for the Fool's reason and with one more card.
     Jester,
+    /// **Star.** *"Increase one of your ability scores by 2, to a
+    /// maximum of 24."* The engine had no lane that raised a score
+    /// until this card asked for one — see
+    /// `ActorInstance::raise_ability`, the mirror of the drain a shadow
+    /// has always been able to inflict.
+    Star,
+    /// **Balance.** *"You can increase one of your ability scores by 2,
+    /// to a maximum of 22, provided you also decrease another one of
+    /// your ability scores by 2. You can't decrease an ability that has
+    /// a score of 5 or lower. Alternatively, you can choose not to
+    /// adjust your ability scores, in which case this card has no
+    /// effect."*
+    ///
+    /// The engine takes the trade rather than the refusal, because a
+    /// card that does nothing is a card the log cannot distinguish from
+    /// one that failed. Which two scores is the drawer's choice in the
+    /// book and a rule here: the raise goes on the highest score and
+    /// the cut on the lowest that is above 5, which is what a player
+    /// optimising the trade would pick and is the only reading that does
+    /// not need a prompt.
+    Balance,
+    /// **Talons.** *"Every magic item you wear or carry
+    /// disintegrates."*
+    ///
+    /// The whole card, and the engine has everything it needs for it:
+    /// every item in the game is a magic item here, so *"every magic
+    /// item you wear or carry"* is the pack. RAW's *"Artifacts in your
+    /// possession vanish instead"* is the same sentence with a worse
+    /// noun — the engine has no artifact tier — so both halves come to
+    /// the same thing.
+    Talons,
     /// A card whose consequences are measured in sessions. Named in the
     /// log and otherwise nothing — see the enum's own docstring for the
     /// thirteen and why.
@@ -11748,7 +11780,7 @@ pub static MYSTERIOUS_DECK_TABLE: &[DeckCard] = &[
         upto: 5,
         card: "Balance",
         log: "{actor} may trade two points of one ability score for two of another",
-        effect: CardEffect::Flavour,
+        effect: CardEffect::Balance,
     },
     DeckCard {
         upto: 10,
@@ -11850,7 +11882,7 @@ pub static MYSTERIOUS_DECK_TABLE: &[DeckCard] = &[
         upto: 82,
         card: "Star",
         log: "{actor} is permanently improved in one respect",
-        effect: CardEffect::Flavour,
+        effect: CardEffect::Star,
     },
     DeckCard {
         upto: 87,
@@ -11862,7 +11894,7 @@ pub static MYSTERIOUS_DECK_TABLE: &[DeckCard] = &[
         upto: 91,
         card: "Talons",
         log: "every magic item {actor} carries crumbles",
-        effect: CardEffect::Flavour,
+        effect: CardEffect::Talons,
     },
     DeckCard {
         upto: 96,
@@ -12115,9 +12147,129 @@ impl MysteriousDeckItem {
                     label: "the Puzzle card",
                 })]
             }
+            CardEffect::Star => {
+                // RAW lets the drawer pick; the engine picks the score
+                // that is already the best, because a `+2` is worth a
+                // modifier only on an odd score and the highest one is
+                // the one every roll that matters already reads.
+                let Some(ability) = encounter
+                    .actors
+                    .get(&drawer_id)
+                    .and_then(|a| Self::extreme_ability(a, true, 0))
+                else {
+                    return Vec::new();
+                };
+                vec![Box::new(crate::engine::side_effects::RaiseAbility {
+                    actor_id: drawer_id,
+                    ability,
+                    amount: BALANCE_STEP,
+                    ceiling: STAR_CEILING,
+                    label: "the Star card",
+                })]
+            }
+            CardEffect::Balance => {
+                let Some(actor) = encounter.actors.get(&drawer_id) else {
+                    return Vec::new();
+                };
+                let up = Self::extreme_ability(actor, true, 0);
+                // RAW: *"You can't decrease an ability that has a score
+                // of 5 or lower."* So the cut looks for the lowest score
+                // that is still above five, and the card does nothing at
+                // all for a creature whose every score is at or under it
+                // — which is RAW's own third option read from the one
+                // side the engine can reach it from.
+                let down = Self::extreme_ability(actor, false, BALANCE_FLOOR);
+                let (Some(up), Some(down)) = (up, down) else {
+                    encounter.log(
+                        "  the scales find nothing to trade and the card lapses.".to_string(),
+                    );
+                    return Vec::new();
+                };
+                if up == down {
+                    encounter
+                        .log("  the scales find nothing to trade and the card lapses.".to_string());
+                    return Vec::new();
+                }
+                vec![
+                    Box::new(crate::engine::side_effects::RaiseAbility {
+                        actor_id: drawer_id,
+                        ability: up,
+                        amount: BALANCE_STEP,
+                        ceiling: BALANCE_CEILING,
+                        label: "the Balance card",
+                    }) as Box<dyn ApplicableSideEffect>,
+                    Box::new(crate::engine::side_effects::DrainAbility {
+                        actor_id: drawer_id,
+                        ability: down,
+                        amount: BALANCE_STEP,
+                        label: "the Balance card",
+                    }),
+                ]
+            }
+            CardEffect::Talons => {
+                let carried: Vec<&'static str> = encounter
+                    .actors
+                    .get(&drawer_id)
+                    .map(|a| a.items().iter().map(|i| i.name).collect())
+                    .unwrap_or_default();
+                if carried.is_empty() {
+                    encounter.log("  …and finds nothing to take.".to_string());
+                    return Vec::new();
+                }
+                let drawer = encounter.actor_name(drawer_id);
+                if let Some(actor) = encounter.actors.get_mut(&drawer_id) {
+                    for name in &carried {
+                        actor.remove_item_by_name(name);
+                    }
+                }
+                encounter.log(format!(
+                    "  {} loses {}.",
+                    drawer,
+                    carried.join(", ").to_lowercase()
+                ));
+                Vec::new()
+            }
             CardEffect::Fool => self.draw_again(encounter, drawer_id, 1),
             CardEffect::Jester => self.draw_again(encounter, drawer_id, 2),
         }
+    }
+
+    /// The drawer's highest or lowest ability score, skipping anything
+    /// at or below `floor`.
+    ///
+    /// Ties break on the order `AbilityScoreType` is written in, which
+    /// is the book's own — Strength, Dexterity, Constitution,
+    /// Intelligence, Wisdom, Charisma — so a creature with six identical
+    /// scores gets a repeatable answer rather than a hash-order one.
+    fn extreme_ability(
+        actor: &crate::actors::actor_template::ActorInstance,
+        highest: bool,
+        floor: u32,
+    ) -> Option<AbilityScoreType> {
+        const ORDER: [AbilityScoreType; 6] = [
+            AbilityScoreType::Strength,
+            AbilityScoreType::Dexterity,
+            AbilityScoreType::Constitution,
+            AbilityScoreType::Intelligence,
+            AbilityScoreType::Wisdom,
+            AbilityScoreType::Charisma,
+        ];
+        let mut best: Option<(u32, AbilityScoreType)> = None;
+        for ability in ORDER {
+            let score = actor.ability_score(ability);
+            if score <= floor {
+                continue;
+            }
+            let better = match &best {
+                None => true,
+                Some((b, _)) if highest => score > *b,
+                Some((b, _)) => score < *b,
+            };
+            if better {
+                best = Some((score, ability));
+            }
+        }
+        best.map(|(_, a)| a)
     }
 
     /// RAW's free draws — the Fool's one and the Jester's two — taken
@@ -12165,6 +12317,22 @@ impl MysteriousDeckItem {
 
 /// The Sun card's *"10 Temporary Hit Points"*.
 const SUN_TEMP_HP: u32 = 10;
+
+/// The two points the Star card adds and the Balance card trades. One
+/// constant, because RAW writes the same number on both.
+const BALANCE_STEP: u32 = 2;
+
+/// The Star card's *"to a maximum of 24"*.
+const STAR_CEILING: u32 = 24;
+
+/// The Balance card's *"to a maximum of 22"* — two points short of the
+/// Star's, which is the book pricing the card that costs you something
+/// below the card that does not.
+const BALANCE_CEILING: u32 = 22;
+
+/// The Balance card's *"You can't decrease an ability that has a score
+/// of 5 or lower."*
+const BALANCE_FLOOR: u32 = 5;
 
 /// The Puzzle card's *"1d4 + 1"*. The `+1` is added at the site, since
 /// `Dice` is a count and a face.

@@ -2595,6 +2595,50 @@ impl ApplicableSideEffect for DrainAbility {
     }
 }
 
+/// Put points **onto** an ability score for good — the mirror of
+/// [`DrainAbility`] directly above.
+///
+/// Much the smaller of the two, and the asymmetry is the rule's: a
+/// drain can empty a score and kill, so it owes the encounter a death's
+/// worth of bookkeeping; a raise can only stop at a ceiling. What it
+/// shares is the lane — see `ActorInstance::raise_ability` — and the
+/// convention of saying nothing about a target that has left the board.
+///
+/// `ceiling` is carried rather than fixed because RAW's two increases
+/// name different ones: the Mysterious Deck's *Star* card stops at 24
+/// and its *Balance* card at 22.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct RaiseAbility {
+    pub actor_id: usize,
+    pub ability: crate::engine::types::AbilityScoreType,
+    pub amount: u32,
+    pub ceiling: u32,
+    /// What did it, for the log — "the Star card".
+    pub label: &'static str,
+}
+
+impl ApplicableSideEffect for RaiseAbility {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let landed = actor.raise_ability(self.ability, self.amount, self.ceiling);
+        let now = actor.ability_score(self.ability);
+        if landed == 0 {
+            ei.log(format!(
+                "  {}: {}'s {} is already at the maximum the card allows.",
+                self.label, name, self.ability
+            ));
+            return;
+        }
+        ei.log(format!(
+            "  {}: {}'s {} rises by {} (now {}).",
+            self.label, name, self.ability, landed, now
+        ));
+    }
+}
+
 /// Bring a flying actor down **under control** — take away every source
 /// of flight and set the actor on the floor, with no fall damage and no
 /// Prone.
