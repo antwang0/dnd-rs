@@ -200,6 +200,16 @@ pub struct AttackParams<'a> {
     pub nonlethal: bool,
 }
 
+/// The ability score SRD 5.2's **Heavy** property asks for — *"if it's
+/// a Melee weapon and your Strength score isn't at least 13 or if it's
+/// a Ranged weapon and your Dexterity score isn't at least 13."*
+///
+/// A score rather than a modifier, which is how the book writes it and
+/// so how the engine reads it: 13 is a `+1`, and a threshold expressed
+/// in modifiers would land on 12 as well and be wrong for one score in
+/// six.
+pub const HEAVY_WEAPON_MINIMUM_SCORE: u32 = 13;
+
 impl AttackParams<'_> {
     /// The swing every weapon in the engine is, minus the five things
     /// that make it a particular one: who, at whom, called what, for
@@ -3392,6 +3402,12 @@ pub fn resolve_attack_outcome_with_rider(
     // attacker's Help / Hidden / Inspired priming — RAW: those primes
     // are consumed on the roll, regardless of disadvantage.
     encounter.apply_reactive_attack_taxes(p.caster_id, p.target_id, &mut tally);
+    // SRD 5.2's **Heavy** property, which is the half of the entry the
+    // engine never read — see
+    // `EncounterInstance::heavy_weapon_is_too_much_for`.
+    if encounter.heavy_weapon_is_too_much_for(p.caster_id, p.heavy, p.is_melee) {
+        tally.add(RollMode::Disadvantage);
+    }
     // 5e long-range disadvantage: ranged weapon attacks beyond normal
     // range but within max range impose disadvantage. The `long_range`
     // threshold (in tiles) is set by the weapon definition — melee

@@ -119579,7 +119579,7 @@ fn one_heave_breaks_the_cheap_hold_more_often_than_the_dear_one() {
         let stuck = e.actors[&victim].has_condition(Condition::Adhered);
         let pinned = e.actors[&victim].has_condition(Condition::ArrowPinned);
         assert!(
-            !(stuck && !pinned),
+            !stuck || pinned,
             "seed {seed}: one roll beat DC 20 and not DC 13"
         );
         if !stuck && pinned {
@@ -119613,7 +119613,7 @@ fn one_heave_breaks_the_cheap_hold_more_often_than_the_dear_one() {
 fn every_swarms_bite_is_the_one_srd_five_two_prints() {
     use crate::actions::monster_attacks::{
         SWARM_OF_BATS_BITES, SWARM_OF_INSECTS_BITES, SWARM_OF_PIRANHAS_BITES,
-        SWARM_OF_RATS_BITES, SWARM_OF_RAVENS_BEAKS,
+        SWARM_OF_RATS_BITES, SWARM_OF_RAVENS_BEAKS, SimpleWeapon,
     };
     use crate::engine::types::DamageType;
 
@@ -119623,7 +119623,12 @@ fn every_swarms_bite_is_the_one_srd_five_two_prints() {
     // `damage_ability` field, and it is the half of the fix nothing
     // else in the engine would have caught: a `2d4` that quietly adds
     // Dexterity is 40% over the book on the lightest bite in the game.
-    let simple: &[(&str, &crate::actions::monster_attacks::SimpleWeapon, (u32, u32), DamageType, bool)] = &[
+    // (label, static, dice pool, damage type, does the Hit line add a
+    // modifier?) — named, because the tuple is wide enough that clippy
+    // asks for it and a reader would too.
+    type SwarmBiteRow =
+        (&'static str, &'static SimpleWeapon, (u32, u32), DamageType, bool);
+    let simple: &[SwarmBiteRow] = &[
         ("bats", &SWARM_OF_BATS_BITES, (2, 4), DamageType::Piercing, false),
         ("rats", &SWARM_OF_RATS_BITES, (2, 4), DamageType::Piercing, false),
         ("insects", &SWARM_OF_INSECTS_BITES, (2, 4), DamageType::Poison, true),
@@ -121143,5 +121148,126 @@ fn the_striding_boots_treble_a_jump_and_change_no_speed() {
     assert_eq!(
         e.actors[&id].long_jump_feet(false),
         e.actors[&id].long_jump_feet(true) / 2
+    );
+}
+
+/// SRD 5.2's **Heavy** property — *"You have Disadvantage on attack
+/// rolls with a Heavy weapon if it's a Melee weapon and your Strength
+/// score isn't at least 13 or if it's a Ranged weapon and your
+/// Dexterity score isn't at least 13."*
+///
+/// The flag has been on `AttackParams` since the Great Weapon Master
+/// feat needed a gate; the property's own rule was never read. The case
+/// it is written for is the one this engine produces most: the loot
+/// table hands out a Vorpal Sword with a swing attached, and nothing
+/// stopped a wizard picking one up and using it as well as the fighter
+/// does.
+#[test]
+fn a_heavy_weapon_is_too_much_for_a_weak_arm() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::attack::HEAVY_WEAPON_MINIMUM_SCORE;
+    use crate::engine::types::AbilityScoreType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 9), 0, 0)
+        .unwrap();
+    // The fixture only means anything while the two arms differ across
+    // RAW's threshold.
+    assert!(
+        e.actors[&fighter].ability_score(AbilityScoreType::Strength)
+            >= HEAVY_WEAPON_MINIMUM_SCORE,
+        "a fighter can lift a greatsword"
+    );
+    assert!(
+        e.actors[&wizard].ability_score(AbilityScoreType::Strength)
+            < HEAVY_WEAPON_MINIMUM_SCORE,
+        "and a wizard cannot"
+    );
+
+    assert!(!e.heavy_weapon_is_too_much_for(fighter, true, true));
+    assert!(
+        e.heavy_weapon_is_too_much_for(wizard, true, true),
+        "RAW: Strength 13, or the blade is too much for you"
+    );
+    // The tax is the *property*, not the weight of the dice: the same
+    // wizard swinging something that is not Heavy rolls straight.
+    assert!(!e.heavy_weapon_is_too_much_for(wizard, false, true));
+
+    // The ranged half of the same sentence, read against Dexterity —
+    // and the fighter, whose Strength carries a greatsword, is the one
+    // this half can catch.
+    let dex_short = |id: usize| {
+        e.actors[&id].ability_score(AbilityScoreType::Dexterity) < HEAVY_WEAPON_MINIMUM_SCORE
+    };
+    for id in [fighter, wizard] {
+        assert_eq!(
+            e.heavy_weapon_is_too_much_for(id, true, false),
+            dex_short(id),
+            "the ranged half asks Dexterity, not Strength"
+        );
+    }
+}
+
+
+/// The Heavy clause is only worth its line if somebody in the pool
+/// actually trips it, and the ones who do are all on the ranged half:
+/// a Bandit, a Knight and a Thug each shoulder a heavy crossbow with
+/// Dexterity 11 or 12, and a Gnoll and a Hobgoblin each draw a longbow
+/// with Dexterity 12. That is the rule biting five of the templates
+/// the encounter generator hands out, not a clause kept warm for a
+/// hypothetical — so the test asserts the list is non-empty rather
+/// than asserting its exact membership, because a statblock edit that
+/// lifts one of them to 13 is a legitimate change and should not have
+/// to come here and edit a test to make it.
+#[test]
+fn the_heavy_property_has_carriers_in_the_template_pool() {
+    use crate::engine::attack::HEAVY_WEAPON_MINIMUM_SCORE;
+
+    let mut carriers = 0usize;
+    for t in EncounterInstance::template_pool() {
+        for a in t.actions.iter() {
+            let heavy_ranged =
+                matches!(a.name(), "longbow" | "heavy crossbow" | "energy bow");
+            if heavy_ranged && t.dexterity < HEAVY_WEAPON_MINIMUM_SCORE {
+                carriers += 1;
+            }
+        }
+    }
+    assert!(
+        carriers > 0,
+        "the Heavy property should bite somebody the generator can roll"
+    );
+}
+
+/// And the predicate reads the score off the actor on the board, not
+/// off the template it came from, so the check is made where the
+/// buffs, drains and polymorphs live.
+#[test]
+fn a_pool_bandit_shoulders_a_crossbow_it_is_not_strong_enough_for() {
+    use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+    use crate::engine::attack::HEAVY_WEAPON_MINIMUM_SCORE;
+    use crate::engine::types::AbilityScoreType;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let bandit = e
+        .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&bandit].ability_score(AbilityScoreType::Dexterity)
+            < HEAVY_WEAPON_MINIMUM_SCORE,
+        "the Bandit is the carrier this test is about"
+    );
+    assert!(
+        e.heavy_weapon_is_too_much_for(bandit, true, false),
+        "a heavy crossbow in Dexterity-12 hands is a Disadvantage"
+    );
+    assert!(
+        !e.heavy_weapon_is_too_much_for(bandit, false, false),
+        "the scimitar is not Heavy and pays nothing"
     );
 }

@@ -4741,6 +4741,59 @@ impl EncounterInstance {
     /// Deliberately excludes the Rogue's Elusive clause, which is not a
     /// source but a cap on the result — see
     /// `resolve_attack_mode_against`.
+    /// SRD 5.2's **Heavy** weapon property: *"You have Disadvantage on
+    /// attack rolls with a Heavy weapon if it's a Melee weapon and your
+    /// Strength score isn't at least 13 or if it's a Ranged weapon and
+    /// your Dexterity score isn't at least 13."*
+    ///
+    /// `AttackParams::heavy` has been on the struct since the Great
+    /// Weapon Master feat needed a gate, and the *property* it names
+    /// has a rule of its own that nothing checked.
+    ///
+    /// The **score**, not the modifier — RAW says 13, which is a `+1`,
+    /// and a threshold written in scores is one to read in scores: a
+    /// modifier test would let a 12 through as well, and be wrong for
+    /// one score in six.
+    ///
+    /// Both halves of the sentence are written, but today it is the
+    /// ranged half that has the carriers. Sweeping
+    /// `EncounterInstance::template_pool` for a Heavy weapon in hands
+    /// below the threshold finds five, all of them shooters: the
+    /// Bandit, the Knight and the Thug each shoulder a heavy crossbow
+    /// at Dexterity 12, 11 and 12, and the Gnoll and the Hobgoblin
+    /// each draw a longbow at Dexterity 12. No chassis in the pool
+    /// swings a Heavy melee weapon with Strength below 13 — the
+    /// greatsword and greataxe live on arms built for them — so the
+    /// Strength half is written for the case the engine can still
+    /// produce rather than the one it does: a drained, polymorphed or
+    /// hastily-equipped actor, since the check reads the score off the
+    /// actor on the board and not off the statblock it was stamped
+    /// from.
+    ///
+    /// A predicate on the encounter rather than a branch at the one
+    /// call site, so the rule has a name — `attack_mode_tally`'s
+    /// neighbours are all cohorts and tables, and a clause that reads a
+    /// weapon *property* cannot join them, because the tally is handed
+    /// ids and never sees the object.
+    pub fn heavy_weapon_is_too_much_for(
+        &self,
+        attacker_id: usize,
+        heavy: bool,
+        is_melee: bool,
+    ) -> bool {
+        if !heavy {
+            return false;
+        }
+        let ability = if is_melee {
+            crate::engine::types::AbilityScoreType::Strength
+        } else {
+            crate::engine::types::AbilityScoreType::Dexterity
+        };
+        self.actors.get(&attacker_id).is_some_and(|a| {
+            a.ability_score(ability) < crate::engine::attack::HEAVY_WEAPON_MINIMUM_SCORE
+        })
+    }
+
     pub fn attack_mode_tally(
         &self,
         attacker_id: usize,
