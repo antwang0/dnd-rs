@@ -122977,21 +122977,6 @@ fn every_stat_block_is_the_size_and_kind_the_book_says() {
     );
 }
 
-#[test]
-fn tmp_dump2() {
-    let mut out = String::new();
-    for t in every_reachable_creature_template() {
-        let mut mods: Vec<String> = t.damage_modifiers.iter().map(|(dt,m)| format!("{:?}:{:?}",dt,m)).collect();
-        mods.sort();
-        let mut nm: Vec<String> = t.nonmagical_damage_modifiers.iter().map(|(dt,m)| format!("{:?}:{:?}",dt,m)).collect();
-        nm.sort();
-        let mut ci: Vec<String> = t.condition_immunities.iter().map(|c| format!("{:?}",c)).collect();
-        ci.sort();
-        out.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\n", t.name, mods.join(","), nm.join(","), ci.join(","), t.speed, t.cr));
-    }
-    std::fs::write("/tmp/claude-0/-home-user-dnd-rs/8a2d3b30-40ee-5f5e-b893-8ba320cfa6cf/scratchpad/eng2.tsv", out).unwrap();
-}
-
 /// Every stat block's **Resistances**, **Immunities** and
 /// **Vulnerabilities** rows, against what the bestiary declares.
 ///
