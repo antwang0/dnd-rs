@@ -138,6 +138,22 @@ pub static DRAKE_COMPANION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // Carried by the drake rather than back-linked from the ranger,
         // for the reasons `WILDFIRE_SPIRIT_TAG` gives.
         features: HashSet::from([DRAKE_COMPANION_TAG]),
+        // The pool `DRAKE_BREATH` spends, and it was missing entirely.
+        // A recharge key that names no row on the holder's sheet fails
+        // closed, so `is_recharge_available("drake_breath")` answered
+        // false on every turn of every fight and the drake's cone of
+        // fire — half of what a Drakewarden's subclass *is* — had never
+        // once gone off. See
+        // `every_recharge_pool_has_an_ability_that_spends_it`.
+        //
+        // **6, the stingiest rung**, because RAW's cadence is not a
+        // recharge at all: *"once you use this feature, you can't use
+        // it again until you finish a Short or Long Rest."* The engine
+        // has no rest inside a fight, and a one-in-six is the nearest
+        // thing to once — it comes to about one extra breath over a
+        // ten-round fight, which is the shape of a short-rest ability
+        // and not of a dragon's.
+        recharge_abilities: vec![("drake_breath", 6)],
         ..CreatureTemplate::defaults()
     }
 });

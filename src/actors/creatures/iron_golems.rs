@@ -116,7 +116,20 @@ pub static IRON_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the more common "Recharge 5-6" the dragons share. The lower
         // refresh probability keeps the breath as a once-per-encounter-
         // ish nuke rather than a turn-2 re-tap.
-        recharge_abilities: vec![("iron poison breath", 6)],
+        //
+        // **The key is `breath_weapon`, and it used to be `iron poison
+        // breath`.** That is the action's *display name*, not its
+        // recharge key — `IRON_GOLEM_BREATH` declares
+        // `recharge_key: "breath_weapon"` and says in its own docstring
+        // that it shares the dragons' pool on purpose. A recharge key
+        // that names no row fails closed, which meant
+        // `is_recharge_available("breath_weapon")` answered false on
+        // every turn of every fight and a CR 16 golem never breathed
+        // once. Nothing reported it, because an ability nobody uses
+        // looks exactly like an ability nobody needed — see
+        // `every_recharge_pool_has_an_ability_that_spends_it`, which is
+        // the sweep that found it and the reason it cannot come back.
+        recharge_abilities: vec![("breath_weapon", 6)],
         has_extra_attack: true,
         // 5e **Magic Weapons**: "the golem's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),

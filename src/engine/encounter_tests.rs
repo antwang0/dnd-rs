@@ -121804,3 +121804,204 @@ fn cut_free_refuses_a_target_with_no_web_on_them() {
             .is_empty()
     );
 }
+
+/// Every recharge pool a stat block declares is one some action on the
+/// roster actually spends, and every key an action spends is one some
+/// stat block declares.
+///
+/// The failure this guards against is named in
+/// `RechargingAttack`'s own docstring and was, when this sweep was
+/// written, live twice over: *"a mismatched key fails closed
+/// (`is_recharge_available` finds no entry and answers false), which
+/// surfaces as 'the monster never uses its rock' rather than as an
+/// ability that recharges silently forever."* Both halves of the
+/// mismatch are silent, and silent in the worst way — an ability
+/// nobody ever sees is indistinguishable from an ability nobody
+/// needed, so no test failed and no log line was missing.
+///
+/// What it found:
+///
+///   - The **Iron Golem** declared `("iron poison breath", 6)`, which
+///     is the action's *display name*. `IRON_GOLEM_BREATH` spends
+///     `"breath_weapon"`. A CR 16 golem had never breathed.
+///   - The **Drake Companion** declared no pool at all, and
+///     `DRAKE_BREATH` spends `"drake_breath"`. The Drakewarden
+///     Ranger's cone of fire had never gone off.
+///
+/// ## Why the source rather than the types
+///
+/// Because only some of the readers are visible to a `&dyn Action`.
+/// Four chassis declare `Action::recharge_key`; the rest ask
+/// `actor_has_recharge(encounter, caster_id, "whelm")` inline, inside
+/// their own `custom_validate_input`, where nothing but the compiler
+/// can see the string. A runtime sweep would therefore report every
+/// inline reader's pool as unread and would have to carry an exception
+/// list as long as the thing it was checking.
+///
+/// Reading the tree has its own failure mode — a reader spelled some
+/// third way is invisible to the regexes below — and the guard against
+/// *that* is the vacuity check: the sweep asserts it found a
+/// substantial number of keys on both sides, so a pattern that stops
+/// matching fails loudly rather than passing on an empty set. This is
+/// the same bargain `every_qualified_name_a_doc_comment_cites_still_exists`
+/// and the bestiary reachability sweep both make.
+#[test]
+fn every_recharge_pool_has_an_ability_that_spends_it() {
+    use std::collections::BTreeSet;
+
+    // Walk the crate the way the doc sweep does: from the package
+    // root, which is where cargo puts the working directory.
+    let mut sources: Vec<(String, String)> = Vec::new();
+    let mut stack = vec![std::path::PathBuf::from("src")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).expect("the source tree is readable") {
+            let path = entry.expect("a readable directory entry").path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let name = path.to_string_lossy().to_string();
+            let text = std::fs::read_to_string(&path).expect("a readable source file");
+            sources.push((name, text));
+        }
+    }
+    assert!(
+        sources.len() > 300,
+        "the source scan found {} files, which means it stopped working",
+        sources.len()
+    );
+
+    // Declared pools: `recharge_abilities: vec![("key", n), …]`.
+    let mut declared: BTreeSet<String> = BTreeSet::new();
+    // Spent keys: the declared `recharge_key:` fields and the three
+    // spellings of an inline ask.
+    let mut spent: BTreeSet<String> = BTreeSet::new();
+    for (name, text) in &sources {
+        // The test module's own fixtures and prose are not the roster —
+        // this very docstring contains a `("key", n)` example.
+        if name.contains("encounter_tests") {
+            continue;
+        }
+        for start in text.match_indices("recharge_abilities: vec![").map(|(i, _)| i) {
+            let tail = &text[start..];
+            let Some(end) = tail.find(']') else { continue };
+            for key in quoted_strings(&tail[..end]) {
+                declared.insert(key);
+            }
+        }
+        for start in text.match_indices("recharge_key: \"").map(|(i, _)| i) {
+            spent.extend(quoted_strings(&text[start..start + 80]).into_iter().take(1));
+        }
+        for needle in [
+            "actor_has_recharge(",
+            "is_recharge_available(",
+            "spend_recharge(",
+            "set_recharge_available(",
+        ] {
+            for start in text.match_indices(needle).map(|(i, _)| i) {
+                let window = &text[start..(start + 200).min(text.len())];
+                let Some(close) = window.find(')') else { continue };
+                spent.extend(quoted_strings(&window[..close]).into_iter().take(1));
+            }
+        }
+    }
+
+    assert!(
+        declared.len() >= 10 && spent.len() >= 10,
+        "the sweep found {} declared pools and {} spenders, which means \
+         one of the patterns stopped matching rather than that the \
+         roster shrank",
+        declared.len(),
+        spent.len()
+    );
+
+    let orphaned: Vec<&String> = declared.difference(&spent).collect();
+    assert!(
+        orphaned.is_empty(),
+        "these recharge pools are declared on a stat block and nothing \
+         ever spends them — the ability can never fire: {:?}",
+        orphaned
+    );
+    let unbacked: Vec<&String> = spent.difference(&declared).collect();
+    assert!(
+        unbacked.is_empty(),
+        "these actions spend a recharge pool no stat block declares — \
+         `is_recharge_available` answers false forever and the action \
+         can never fire: {:?}",
+        unbacked
+    );
+}
+
+/// The string literals inside one slice of source, in order. Naive on
+/// purpose: it is reading argument lists and struct fields, neither of
+/// which contains an escaped quote anywhere in this crate.
+fn quoted_strings(fragment: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = fragment;
+    while let Some(open) = rest.find('"') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('"') else { break };
+        out.push(rest[..close].to_string());
+        rest = &rest[close + 1..];
+    }
+    out
+}
+
+/// The two abilities the recharge sweep found dead, alive — checked by
+/// use rather than by declaration, because a declaration is what was
+/// wrong in the first place.
+///
+/// Both had a key on one side of the gate and a different key (or no
+/// key at all) on the other, so `is_recharge_available` answered false
+/// forever: the Iron Golem's Poison Breath and the Drake Companion's
+/// cone of fire had each never fired in any fight the engine had ever
+/// run.
+#[test]
+fn the_two_breaths_that_never_fired_now_do() {
+    use crate::actions::monster_attacks::IRON_GOLEM_BREATH;
+    use crate::actors::creatures::drakes::{DRAKE_BREATH, DRAKE_COMPANION_TEMPLATE};
+    use crate::actors::creatures::iron_golems::IRON_GOLEM_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    type Case = (
+        &'static std::sync::LazyLock<CreatureTemplate>,
+        &'static (dyn Action + Send + Sync),
+        &'static str,
+    );
+    let cases: [Case; 2] = [
+        (&IRON_GOLEM_TEMPLATE, &IRON_GOLEM_BREATH, "breath_weapon"),
+        (&DRAKE_COMPANION_TEMPLATE, &DRAKE_BREATH, "drake_breath"),
+    ];
+    for (template, action, key) in cases {
+        let mut e = ei_with_terrain(24, 24, &[]);
+        let breather = e
+            .instantiate_creature(template, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(7, 5), 1, 0)
+            .unwrap();
+        assert!(
+            e.actors[&breather].is_recharge_available(key),
+            "{}: the pool the action spends is one the sheet declares",
+            template.name
+        );
+        let aim = vec![Coordinate::new(9, 5)];
+        assert!(
+            action.custom_validate_input(&e, breather, None, Some(&aim), None),
+            "{}: a breath with its charge in hand is a legal action",
+            template.name
+        );
+        // …and spending it closes the gate, which is the other half of
+        // the same statement: a pool that nothing can spend and a pool
+        // that spending does not close are the same bug seen from two
+        // sides.
+        e.actors.get_mut(&breather).unwrap().spend_recharge(key);
+        assert!(
+            !action.custom_validate_input(&e, breather, None, Some(&aim), None),
+            "{}: and a spent one is not",
+            template.name
+        );
+    }
+}
