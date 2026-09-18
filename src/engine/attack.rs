@@ -5135,7 +5135,14 @@ pub fn push_on_hit_riders(
                 kind,
             },
         ));
-        added += 1;
+        // …and `added` is deliberately untouched. It is the *damage*
+        // this function contributed — the caller adds it straight onto
+        // `damage_dealt`, which is the number the swallow threshold,
+        // the hydra's head count and the log line are all measured in —
+        // and an exposure deals none. Counting the rider here as one
+        // point was this block's first bug: every rat bite in the game
+        // reported a phantom point of damage per contagion the rat was
+        // carrying.
     }
     added
 }

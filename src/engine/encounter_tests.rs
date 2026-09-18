@@ -127896,3 +127896,59 @@ fn a_fever_has_no_caster_and_spends_nothing_off_its_victim() {
         "six rounds of laughing at nobody's spell left the rogue in the open"
     );
 }
+
+/// `push_on_hit_riders` returns the **damage** it contributed, and a
+/// contagion exposure contributes none.
+///
+/// The return value is added straight onto the caller's
+/// `damage_dealt`, which is the figure the swallow threshold, the
+/// hydra's head count and the log line are all measured in. Counting
+/// the carrier rider as a point was this lane's first bug: every rat
+/// bite in the game reported a phantom point of damage per contagion
+/// the rat was carrying.
+///
+/// Pinned against a rat, which carries one, and against a creature that
+/// carries none, so the assertion is about the contagion and not about
+/// the shape of the swing.
+#[test]
+fn a_contagion_rider_queues_an_exposure_and_no_damage() {
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
+    use crate::engine::attack::{RiderSwing, push_on_hit_riders};
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::side_effects::ApplicableSideEffect;
+    use crate::engine::types::DamageType;
+
+    let swing = RiderSwing {
+        is_melee: true,
+        is_spell: false,
+        is_crit: false,
+        natural_twenty: false,
+        damage_so_far: 7,
+        damage_type: DamageType::Piercing,
+    };
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let rat = e
+        .instantiate_creature(&GIANT_RAT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let plain = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(5, 9), 1, 1)
+        .unwrap();
+    let victim = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .unwrap();
+    assert!(e.actors[&rat].carries_contagion(ContagionKind::SewerPlague));
+
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let from_rat = push_on_hit_riders(&mut e, &mut effects, rat, victim, swing);
+    assert_eq!(
+        from_rat, 0,
+        "an exposure is a saving throw, not a point of damage"
+    );
+    assert_eq!(effects.len(), 1, "…and it is queued as an effect");
+
+    let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+    let from_plain = push_on_hit_riders(&mut e, &mut effects, plain, victim, swing);
+    assert_eq!(from_plain, 0);
+    assert!(effects.is_empty(), "a commoner carries nothing");
+}
