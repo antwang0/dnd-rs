@@ -51,6 +51,11 @@ pub static OTYUGH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*OTYUGH_TENTACLE);
     CreatureTemplate {
         name: "Otyugh",
+        // SRD 5.2 **Sewer Plague**: *"sometimes transmitted by creatures
+        // that dwell in such areas, including otyughs and rats."* A
+        // wounding blow from this stat block is an exposure — see
+        // `crate::engine::contagions`.
+        carries: crate::engine::contagions::SEWER_PLAGUE_CARRIER,
         // 'O' (uppercase) — distinct from 'o' (Ogre uses 'O' too; we
         // share the glyph since both are CR-5 large brutes and the
         // glyph pool is exhausted at uppercase letters that read as

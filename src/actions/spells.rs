@@ -5049,10 +5049,27 @@ impl Action for LesserRestoration {
             return false;
         };
         Self::CANDIDATES.iter().any(|c| target.has_condition(*c))
+            // …or a contagion the book names this spell as the cure
+            // for. Without this clause a party's only answer to Sight
+            // Rot would be refused as a cast with nothing to do: the
+            // rot's Blinded *is* on the list above, but stripping it
+            // would leave the contagion on the ledger to re-blind the
+            // victim at the next sunrise, which is a cure that does not
+            // cure. See `side_effects`.
+            || !target.cures_available_by_magic().is_empty()
     }
+    /// One cast, one cure — RAW's *"end one condition on it"*.
+    ///
+    /// The contagion takes priority over the condition list, and it has
+    /// to: a creature blinded by Sight Rot has `Blinded` on the map
+    /// *and* the rot on its ledger, and popping the condition alone
+    /// would look like a cure right up until the party bedded down and
+    /// woke to a blind cleric. Ending the contagion takes the condition
+    /// with it (see `ActorInstance::cure_contagion`), so this branch is
+    /// strictly the better of the two wherever both apply.
     fn side_effects(
         &self,
-        _encounter: &mut EncounterInstance,
+        encounter: &mut EncounterInstance,
         _caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
@@ -5061,6 +5078,15 @@ impl Action for LesserRestoration {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
+        let has_contagion = encounter
+            .actors
+            .get(&target_id)
+            .is_some_and(|t| !t.cures_available_by_magic().is_empty());
+        if has_contagion {
+            return vec![Box::new(
+                crate::engine::side_effects::CureContagionsByMagic { actor_id: target_id },
+            )];
+        }
         vec![Box::new(crate::engine::side_effects::RemoveOneOfConditions {
             actor_id: target_id,
             candidates: Self::CANDIDATES.to_vec(),
@@ -10248,6 +10274,21 @@ impl Action for HealSpellHigh {
             Box::new(RemoveCondition {
                 actor_id: target_id,
                 condition: Condition::Poisoned,
+            }),
+            // SRD 5.2 **Sight Rot**: *"Magic such as a **Heal** or
+            // Lesser Restoration spell ends the contagion
+            // immediately."* The clause is printed on the contagion
+            // rather than on the spell, which is why it rides here as
+            // a fourth cleanse rather than appearing in Heal's own
+            // text. Ordered after the three conditions and it has to
+            // be: ending the contagion strips the Blinded it was
+            // holding up, and doing that first would leave the
+            // `RemoveCondition` above with nothing to announce.
+            //
+            // Free and silent for the 99% of targets carrying nothing
+            // — see `CureContagionsByMagic`.
+            Box::new(crate::engine::side_effects::CureContagionsByMagic {
+                actor_id: target_id,
             }),
         ]);
         effects

@@ -45,6 +45,14 @@ pub static GNOME_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*MISTY_STEP);
     CreatureTemplate {
         name: "Rock Gnome Illusionist",
+        // SRD 5.2 **Cackle Fever**: *"which affects Humanoids only
+        // (gnomes are strangely immune)."* The one parenthesis in the
+        // whole *Magical Contagions* section that names a species, and
+        // the only reason `contagion_immunities` exists. Declared here
+        // rather than inferred from the name — see the field's
+        // docstring for why a substring match on "gnome" is not a
+        // species check.
+        contagion_immunities: &[crate::engine::contagions::ContagionKind::CackleFever],
         // 'G' — distinct from 'g' (goblin / grick) and reads as a
         // small, robed INT-caster.
         glyph: 'G',

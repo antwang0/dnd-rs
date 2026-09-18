@@ -243,19 +243,35 @@ pub static SWARM_OF_BATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
 /// SRD 5.2 prints both CR-¼ swarms at a flat 2d4, and the rat swarm's
 /// `2d6` here was the 2014 line; see `SWARM_OF_RATS_BITES`.
 pub static SWARM_OF_RATS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
-    swarm_template(
-        "Swarm of Rats",
-        'ß',
-        10,
-        "4d8-4",
-        30.,
-        [9, 11, 9, 2, 10, 3],
-        HashSet::from([SpecialSense::Darkvision(30)]),
-        0.25,
-        &SWARM_OF_RATS_BITES,
-        false,
-        HashSet::new(),
-    )
+    CreatureTemplate {
+        // SRD 5.2 **Sewer Plague**: *"sometimes transmitted by
+        // creatures that dwell in such areas, including otyughs and
+        // **rats**."* The clause names the animal rather than a stat
+        // block, so all three printings of it carry the contagion — the
+        // Rat, the Giant Rat and this. A swarm of them is the most
+        // dangerous of the three for exactly the reason a swarm is
+        // dangerous at all: it bites every round it is on you, and each
+        // bite is a fresh DC 11.
+        //
+        // Arrives as a `..swarm_template(…)` spread rather than as a
+        // twelfth parameter, which is the shape the Swarm of Bats'
+        // flying speed already established for the one-off overrides on
+        // this chassis.
+        carries: crate::engine::contagions::SEWER_PLAGUE_CARRIER,
+        ..swarm_template(
+            "Swarm of Rats",
+            'ß',
+            10,
+            "4d8-4",
+            30.,
+            [9, 11, 9, 2, 10, 3],
+            HashSet::from([SpecialSense::Darkvision(30)]),
+            0.25,
+            &SWARM_OF_RATS_BITES,
+            false,
+            HashSet::new(),
+        )
+    }
 });
 
 /// Swarm of Insects — CR ½ Medium swarm of Tiny beasts. SRD 5.2: AC 11,

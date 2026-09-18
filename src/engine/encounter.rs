@@ -18004,6 +18004,14 @@ impl EncounterInstance {
         // the install would be a no-op refresh of a condition that was
         // about to lift.
         self.apply_hostile_emanations(actor_id);
+        // SRD 5.2's *Spreading the Contagion* — "any Humanoid that
+        // starts its turn within a 10-foot Emanation originating from a
+        // creature infected with Cackle Fever". The same moment and the
+        // same shape as the stat-block emanations above, and
+        // deliberately a separate sweep: a contagion is acquired rather
+        // than declared, and it does not stop at the party line. See
+        // `crate::engine::contagions`.
+        self.spread_contagions(actor_id);
         // A new turn is a fresh "first time on a turn" for everybody, so
         // the ledger is cleared for the whole board rather than for the
         // actor whose turn is opening. RAW scopes the clause to *a
@@ -24370,6 +24378,14 @@ fn rest_one(actor: &mut ActorInstance, roller: &mut FastRandRoller) -> Vec<Strin
         ));
     }
     actor.long_rest();
+    // SRD 5.2's *Magical Contagions*, whose entire clock is this
+    // moment: the incubation ending, the nightly *Fighting the
+    // Contagion* save, and the symptoms being written back onto the
+    // condition map `long_rest` has just emptied. After the rest for
+    // all three of those reasons — see `ActorInstance::contagion_night`
+    // — and ahead of the level-up below, so a fever that has just
+    // worsened is on the sheet before anything reads it.
+    lines.extend(actor.contagion_night(roller));
     for (item, back) in actor.regain_item_charges(roller) {
         lines.push(format!(
             "{}'s {} regains {} charge{}.",

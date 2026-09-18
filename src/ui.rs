@@ -1501,6 +1501,57 @@ pub fn render_sideinfo(
             Style::default().fg(Color::Yellow),
         )));
     }
+    // SRD 5.2's **Magical Contagions** — see
+    // `crate::engine::contagions`. Its own line rather than a row on
+    // the condition list above, because a contagion is not a condition
+    // and the difference is the one thing a player needs to know about
+    // it: the conditions on that line are gone by morning and this is
+    // the one thing that is not. It also carries state no condition
+    // has — whether the incubation is over, and how many of RAW's
+    // three nightly saves have been banked — and a reader who cannot
+    // see the count has no way to tell a fever they are two nights
+    // from shaking off from one they have just caught.
+    //
+    // Absent for every creature carrying nothing, which is all but a
+    // handful.
+    if !curr_actor.infections().is_empty() {
+        let labels: Vec<String> = curr_actor
+            .infections()
+            .iter()
+            .map(|infection| {
+                let row = infection.row();
+                if infection.incubating {
+                    // Named as such rather than hidden: RAW's victim
+                    // does not know either, but RAW's victim is not the
+                    // one deciding whether to push on to the next room.
+                    return format!("{} (incubating)", row.name);
+                }
+                match row.escape_save {
+                    // Cackle Fever's *"after the creature succeeds on
+                    // three of these saves"* — the only progress bar in
+                    // the section.
+                    Some(escape) if escape.successes_needed > 0 => format!(
+                        "{} ({}/{} saves)",
+                        row.name,
+                        infection.successes,
+                        escape.successes_needed
+                    ),
+                    // Sewer Plague counts down the Exhaustion ladder
+                    // instead, which the Conditions line above is
+                    // already showing.
+                    Some(_) => row.name.to_string(),
+                    // Sight Rot, which has no save at all and wants to
+                    // say so — a player who does not know that is a
+                    // player waiting for a night that will never help.
+                    None => format!("{} (needs a spell)", row.name),
+                }
+            })
+            .collect();
+        stats_lines.push(Line::from(Span::styled(
+            format!("Infected: {}", labels.join(", ")),
+            Style::default().fg(Color::Red),
+        )));
+    }
     // Damage modifier callout — only render if the creature has any.
     push_damage_modifier_line(&mut stats_lines, curr_actor);
     frame.render_widget(
@@ -1986,6 +2037,80 @@ mod tests {
             panel.contains("darkness"),
             "an unlit board says so on the panel:\n{}",
             panel
+        );
+    }
+
+    /// SRD 5.2's **Magical Contagions** get a line of their own, and
+    /// each of the three says the one thing a player can act on: how
+    /// long until it shows, how close it is to being shaken off, or
+    /// that nothing but a spell will do it.
+    ///
+    /// A contagion is the only adverse status in the engine that
+    /// survives a night's sleep, which is exactly why it cannot ride
+    /// the Conditions line — everything on that line is gone by
+    /// morning.
+    #[test]
+    fn the_panel_names_a_contagion_and_says_what_can_be_done_about_it() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::engine::contagions::ContagionKind;
+
+        // A tall, wide terminal. Tall because the panel splits its
+        // height three ways and the infection line sits below the
+        // conditions line, which a fever puts a row on — at the default
+        // 24 rows the Resources pane is six lines and the assertion
+        // would be about the fold. Wide because two contagions on one
+        // sheet is a long line, and at 60 columns the assertion would
+        // be about the truncation.
+        let panel = |e: &EncounterInstance| rendered_panel_sized(e, 100, 48, 0);
+
+        let mut e = encounter_with(&[(&FIGHTER_TEMPLATE, 0), (&FIGHTER_TEMPLATE, 1)]);
+        e.process_stack();
+        assert!(
+            !panel(&e).contains("Infected"),
+            "a healthy creature says nothing about contagions"
+        );
+        let id = e.current_turn_actor_id().expect("somebody is up");
+
+        // Incubating: nothing is happening yet, and saying so is the
+        // point — it is the fact the party plans the next room around.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .infect(ContagionKind::CackleFever, false);
+        let rendered = panel(&e);
+        assert!(
+            rendered.contains("Cackle Fever") && rendered.contains("incubating"),
+            "an incubating fever says so:\n{}",
+            rendered
+        );
+
+        // Symptomatic: the nightly progress bar, which is the only one
+        // in the section.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .cure_contagion(ContagionKind::CackleFever);
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .infect(ContagionKind::CackleFever, true);
+        let rendered = panel(&e);
+        assert!(
+            rendered.contains("0/3 saves"),
+            "a fever in progress prints how far along the cure is:\n{}",
+            rendered
+        );
+
+        // Sight Rot, which has no save at all and needs to say so.
+        e.actors
+            .get_mut(&id)
+            .unwrap()
+            .infect(ContagionKind::SightRot, true);
+        let rendered = panel(&e);
+        assert!(
+            rendered.contains("Sight Rot") && rendered.contains("needs a spell"),
+            "a contagion no night can shake says so:\n{}",
+            rendered
         );
     }
 

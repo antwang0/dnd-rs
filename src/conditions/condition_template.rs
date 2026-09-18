@@ -511,6 +511,30 @@ pub enum Condition {
     /// case the coarser timer loses and the direction it is safer to
     /// lose in.
     Lethargic,
+    /// **Uncontrollable Laughter** — SRD 5.2 *Cackle Fever*: *"On a
+    /// failed save, the creature takes 5 (1d10) Psychic damage and has
+    /// the Incapacitated condition as it laughs uncontrollably. At the
+    /// end of each of its turns, the creature repeats the save, ending
+    /// the effect on itself on a success. After 1 minute, it succeeds
+    /// automatically."*
+    ///
+    /// Its own condition rather than a bare `Incapacitated`, for the
+    /// reason `Lethargic` above it is: the escape hatch is keyed on the
+    /// condition. [`crate::engine::repeat_saves`] holds **one entry per
+    /// condition per victim**, so a fevered creature laughing at a
+    /// goblin's scimitar and then Banished by a wizard would have had
+    /// the two share a row — and whichever landed second would have
+    /// silently cancelled the first one's escape.
+    ///
+    /// The mechanical content is `Incapacitated`'s, through
+    /// `blocks_action_economy`, which is the whole of RAW's sentence:
+    /// movement is untouched (a laughing creature can still stagger
+    /// away), attackers get nothing, and the holder's saves are
+    /// unchanged. See [`crate::engine::contagions::CACKLING_ESCAPE`]
+    /// for the escape it is registered with and
+    /// [`crate::engine::contagions::CACKLING_ROUNDS`] for the minute
+    /// that caps it.
+    Cackling,
     /// Slowed — SRD 5.2 **Slow**, and the mirror of `Hasted` on every
     /// axis the two share.
     ///
@@ -4217,6 +4241,7 @@ impl Condition {
             Condition::Fleet => "fleet",
             Condition::Slowed => "slowed",
             Condition::Lethargic => "lethargic",
+            Condition::Cackling => "laughing uncontrollably",
             Condition::DeathWarded => "warded against death",
             Condition::Petrified => "petrified",
             Condition::Sanctuary => "sanctified",
@@ -4590,6 +4615,11 @@ impl Condition {
                 // has a Speed of 0". This cohort is the first half of
                 // that sentence; `zeros_movement` is the second.
                 | Condition::Lethargic
+                // SRD 5.2 Cackle Fever: "has the Incapacitated
+                // condition as it laughs uncontrollably". This cohort
+                // is the whole of that clause — the laughter takes the
+                // turn and nothing else. See `Condition::Cackling`.
+                | Condition::Cackling
         )
     }
 

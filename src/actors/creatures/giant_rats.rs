@@ -43,6 +43,11 @@ pub static GIANT_RAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&GIANT_RAT_BITE);
     CreatureTemplate {
         name: "Giant Rat",
+        // SRD 5.2 **Sewer Plague**: *"sometimes transmitted by creatures
+        // that dwell in such areas, including otyughs and rats."* A
+        // wounding blow from this stat block is an exposure — see
+        // `crate::engine::contagions`.
+        carries: crate::engine::contagions::SEWER_PLAGUE_CARRIER,
         // 'r' (lowercase) — small rodent silhouette. Shared with Dryad
         // ('r'); the team color disambiguates on the map and the beast
         // / fey CR contexts rarely collide in random encounter rolls.

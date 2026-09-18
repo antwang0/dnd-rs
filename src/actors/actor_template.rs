@@ -3609,6 +3609,44 @@ pub struct CreatureTemplate {
     /// `EncounterInstance::apply_hostile_emanations`, at the top of
     /// every *other* creature's turn.
     pub emanations: &'static [crate::engine::emanations::Emanation],
+    /// SRD 5.2 **Magical Contagions** this stat block carries and hands
+    /// on with a wounding blow — see [`crate::engine::contagions`].
+    ///
+    /// > *Sewer Plague … is sometimes transmitted by creatures that
+    /// > dwell in such areas, including otyughs and rats. Any Humanoid
+    /// > that is wounded by a creature that carries the contagion …
+    /// > must succeed on a DC 11 Constitution saving throw.*
+    ///
+    /// That sentence is the whole of this field: four stat blocks name
+    /// themselves in it and nothing else in the bestiary does. Declared
+    /// on the creature rather than on the attack for the reason
+    /// `emanations` beside it is — a carrier's every wounding blow
+    /// carries it, including ones added later and ones it borrows, and
+    /// a rider bolted onto the bite would have to be bolted onto the
+    /// tentacle too.
+    ///
+    /// A creature that carries a contagion **has** it: `ActorInstance`
+    /// walks in symptomatic, so an otyugh is a plague reservoir rather
+    /// than a creature that happens to spread something it does not
+    /// have. That also means a carrier of Cackle Fever spreads it by
+    /// its Emanation as well as by its claws, which is RAW reading both
+    /// clauses together.
+    pub carries: &'static [crate::engine::contagions::ContagionKind],
+    /// The contagions this stat block simply cannot catch — SRD 5.2's
+    /// *"(gnomes are strangely immune)"*, and nothing else in the
+    /// section.
+    ///
+    /// A declared list rather than a species check, for the reason the
+    /// emanation roster's `recharge_key` docstring gives about
+    /// inferring anything from a creature's *name*: `GNOME_TEMPLATE` is
+    /// called "Rock Gnome Illusionist" today and a substring match on
+    /// "gnome" would also catch every gnoll that ever gets renamed.
+    ///
+    /// Distinct from `condition_immunities`, which is about what a
+    /// creature can be *made to feel*: a gnome that catches nothing is
+    /// still perfectly capable of being Blinded or Exhausted by
+    /// anything else on the board.
+    pub contagion_immunities: &'static [crate::engine::contagions::ContagionKind],
     /// Class-feature tags available to this creature (Second Wind,
     /// Action Surge, etc.). Empty for ordinary monsters.
     pub features: HashSet<&'static str>,
@@ -4846,6 +4884,8 @@ impl CreatureTemplate {
             attach: None,
             swallow: None,
             emanations: &[],
+            carries: &[],
+            contagion_immunities: &[],
             features: HashSet::new(),
             regen_per_round: 0,
             heads: 0,
@@ -5524,6 +5564,9 @@ pub struct ActorInstance {
     /// This creature's 5e Emanation traits, copied from its template.
     /// See `CreatureTemplate::emanations`.
     emanations: &'static [crate::engine::emanations::Emanation],
+    /// The contagions this creature cannot catch, copied from its
+    /// template. See `CreatureTemplate::contagion_immunities`.
+    contagion_immunities: &'static [crate::engine::contagions::ContagionKind],
     /// The creature this actor is currently latched onto, or `None` for
     /// everything that fights at arm's length.
     ///
@@ -6057,6 +6100,27 @@ pub struct ActorInstance {
     /// that takes its own levels back. Everything else that hands out a
     /// rung hands it out for good.
     suffocation_exhaustion: u32,
+    /// SRD 5.2's **Magical Contagions** this creature is carrying — see
+    /// [`crate::engine::contagions`].
+    ///
+    /// The one piece of adverse status in the engine that a long rest
+    /// does **not** end, and the reason it is a field rather than a
+    /// condition: `long_rest` clears the condition map wholesale, and a
+    /// contagion the night wiped could never be fought off, because
+    /// it would never survive to be rolled against. See the module
+    /// docstring.
+    ///
+    /// A `Vec` rather than a set of three flags, because the ledger
+    /// carries state per row — whether the incubation is over, how many
+    /// of RAW's three saves have been banked — and because a creature
+    /// carrying two contagions at once is a creature carrying two rows,
+    /// which is exactly what the book's "also become infected" clause
+    /// produces. At most one row per [`ContagionKind`]; `infect` is the
+    /// only writer and it is what keeps that true.
+    ///
+    /// Empty for essentially every creature in the bestiary, which is
+    /// why the sweeps that read it all lead with an `is_empty` check.
+    infections: Vec<crate::engine::contagions::Infection>,
     /// 5e Fighter Indomitable — one-shot "reroll the next failed save"
     /// marker. Set by the Indomitable action; consumed at the save
     /// site (`EncounterInstance::roll_save`) on a fail. Refreshed by
@@ -6466,6 +6530,7 @@ impl ActorInstance {
             ridden_by: None,
             attach: ct.attach,
             emanations: ct.emanations,
+            contagion_immunities: ct.contagion_immunities,
             attached_to: None,
             swallow: ct.swallow,
             swallowed_by: None,
@@ -6508,6 +6573,15 @@ impl ActorInstance {
             // this is measured off exists.
             breath_rounds: 0,
             suffocation_exhaustion: 0,
+            // Whatever the stat block declares it walks in carrying —
+            // RAW's "creatures that dwell in such areas, including
+            // otyughs and rats". Symptomatic from the start: a carrier
+            // is not incubating, it is the outbreak.
+            infections: ct
+                .carries
+                .iter()
+                .map(|&kind| crate::engine::contagions::Infection::symptomatic(kind))
+                .collect(),
             indomitable_pending: false,
             pending_subdual: false,
             legendary_resistance_remaining: ct.legendary_resistances,
@@ -9061,8 +9135,30 @@ impl ActorInstance {
         // Explicit rather than riding the `conditions.clear()` below,
         // which bypasses `remove_condition` and would otherwise strand
         // the tier count with no flag beside it.
-        self.reduce_exhaustion(1);
-        self.hitpoints = self.max_hitpoints();
+        //
+        // Both this rung and the hit points below are what SRD 5.2's
+        // **Sewer Plague** takes away: *"While the creature has any
+        // Exhaustion levels, finishing a Long Rest neither restores
+        // lost Hit Points nor reduces the creature's Exhaustion
+        // level."* One predicate rather than two because RAW writes it
+        // as one sentence about one night — see `restless_with_plague`,
+        // and `contagion_night` for the dawn save that is the only way
+        // off the ladder while it holds.
+        let restless = self.restless_with_plague();
+        if restless {
+            // The one thing the clause cannot be allowed to take: the
+            // line above has already set `hp_state` to `Active`, and an
+            // active actor on zero hit points is a state nothing else
+            // in the engine can produce or knows how to read. A plagued
+            // creature that went down in the last room wakes on its
+            // feet with one hit point and no more — which is also the
+            // harshest honest reading of "neither restores lost Hit
+            // Points".
+            self.hitpoints = self.hitpoints.max(1);
+        } else {
+            self.reduce_exhaustion(1);
+            self.hitpoints = self.max_hitpoints();
+        }
         self.temp_hp = 0;
         // 5e Arcane Ward RAW: "once you create the ward, you can't create
         // it again until you finish a long rest." Dropping both the pool
@@ -9172,6 +9268,23 @@ impl ActorInstance {
         let dice_count = (self.level / 2).max(1);
         let roll = roller.roll(&Dice::new(dice_count, 8)) as i32;
         let heal = (roll + con_mod * dice_count as i32).max(0) as u32;
+        // SRD 5.2 **Sewer Plague**: *"While the creature has any
+        // Exhaustion levels, it regains only half the normal number of
+        // Hit Points from spending Hit Point Dice."* This heal is the
+        // engine's whole Hit Point Dice lane — see the docstring above
+        // on what it approximates — so this is the one site the clause
+        // has to bite at. Rounded down, which is the engine's rule for
+        // every halving.
+        //
+        // Gated on the same `restless_with_plague` predicate the long
+        // rest reads, and that is RAW rather than a shortcut: both of
+        // Sewer Plague's standing clauses open with the identical
+        // *"While the creature has any Exhaustion levels"*.
+        let heal = if self.restless_with_plague() {
+            heal / 2
+        } else {
+            heal
+        };
         self.heal(heal);
 
         // The Battle Master maneuvers used to be chained on here as a
@@ -10292,18 +10405,372 @@ impl ActorInstance {
     /// just less so.
     ///
     /// Reached by every cleanse through `remove_condition(Exhausted)`.
+    ///
+    /// Floored by `exhaustion_floor` — SRD 5.2 Cackle Fever's *"1
+    /// Exhaustion level, **which lasts until the contagion ends on the
+    /// creature**"*. A fevered creature's last rung is the fever's, and
+    /// nothing short of curing it takes that rung away: not a night's
+    /// sleep, not a Greater Restoration. Applied here rather than at
+    /// each caller because "every cleanse" is precisely the set of
+    /// things the clause is written against.
     pub fn reduce_exhaustion(&mut self, levels: u32) -> bool {
-        if self.exhaustion == 0 {
-            // Keep the flag and the number honest even if something
-            // desynced them — a bare `conditions.remove` elsewhere would
-            // otherwise leave a level-0 creature flagged as exhausted.
-            return self.conditions.remove(&Condition::Exhausted).is_some();
+        let floor = self.exhaustion_floor();
+        if self.exhaustion <= floor {
+            // Nothing to shed. The flag is still reconciled against the
+            // number for the reason below, which is why a floored
+            // creature at level 0 (no contagion, no exhaustion) still
+            // falls through to the `remove` rather than returning early
+            // on the floor alone.
+            if self.exhaustion == 0 {
+                // Keep the flag and the number honest even if something
+                // desynced them — a bare `conditions.remove` elsewhere
+                // would otherwise leave a level-0 creature flagged as
+                // exhausted.
+                return self.conditions.remove(&Condition::Exhausted).is_some();
+            }
+            return false;
         }
-        self.exhaustion = self.exhaustion.saturating_sub(levels);
+        self.exhaustion = self.exhaustion.saturating_sub(levels).max(floor);
         if self.exhaustion == 0 {
             self.conditions.remove(&Condition::Exhausted);
         }
         true
+    }
+
+    /// Every SRD 5.2 **Magical Contagion** this creature is carrying,
+    /// incubating ones included — see [`crate::engine::contagions`].
+    ///
+    /// Empty for essentially the whole bestiary, which is why every
+    /// sweep that reads it leads with `is_empty`.
+    pub fn infections(&self) -> &[crate::engine::contagions::Infection] {
+        &self.infections
+    }
+
+    /// This creature's ledger row for `kind`, or `None`.
+    pub fn infection(
+        &self,
+        kind: crate::engine::contagions::ContagionKind,
+    ) -> Option<&crate::engine::contagions::Infection> {
+        self.infections.iter().find(|i| i.kind == kind)
+    }
+
+    /// True while `kind` is on the ledger at all — incubating or
+    /// showing.
+    pub fn is_infected_with(&self, kind: crate::engine::contagions::ContagionKind) -> bool {
+        self.infection(kind).is_some()
+    }
+
+    /// True while `kind`'s symptoms are actually doing something, which
+    /// is the question every *rule* asks. The incubation window is a
+    /// fact about the ledger and nothing else: RAW's effects all begin
+    /// *"1d4 days after infection"*, so a creature that caught it this
+    /// afternoon is not yet feverish, not yet blind, and — the clause
+    /// worth being explicit about — not yet contagious.
+    pub fn has_symptoms_of(&self, kind: crate::engine::contagions::ContagionKind) -> bool {
+        self.infection(kind).is_some_and(|i| !i.incubating)
+    }
+
+    /// True while any contagion's symptoms are showing. The cheap gate
+    /// the UI and the damage chokepoint both lead with.
+    pub fn is_symptomatic(&self) -> bool {
+        self.infections.iter().any(|i| !i.incubating)
+    }
+
+    /// SRD 5.2's *"(gnomes are strangely immune)"*, plus the type gate
+    /// every entry prints — *"affects Humanoids only"*, *"Any Beast or
+    /// Humanoid"*.
+    ///
+    /// Two clauses in one predicate because they fail the same way: a
+    /// creature this returns `false` for is never rolled for at all,
+    /// rather than rolled for and shrugging it off. That matters for
+    /// the same reason it matters in `apply_hostile_emanations` — a
+    /// rolled-and-passed save banks a 24-hour immunity, and banking one
+    /// against a plague that was never a danger is a difference that
+    /// outlives the round.
+    pub fn can_catch(&self, kind: crate::engine::contagions::ContagionKind) -> bool {
+        !self.contagion_immunities.contains(&kind)
+            && kind.row().catches_type(self.creature_type())
+            && !self.is_infected_with(kind)
+    }
+
+    /// Write `kind` onto the ledger, returning `true` if it was not
+    /// already there.
+    ///
+    /// `symptomatic` is the incubation switch: `false` is the ordinary
+    /// catch (RAW's *"1d4 days after infection"*, compressed to the
+    /// next sunrise), and `true` is for the entry that prints no
+    /// incubation at all — Sight Rot blinds you on the spot — and for a
+    /// carrier or an outbreak, which is a creature that already has it.
+    ///
+    /// The only writer, which is what keeps the ledger to at most one
+    /// row per kind.
+    pub fn infect(
+        &mut self,
+        kind: crate::engine::contagions::ContagionKind,
+        symptomatic: bool,
+    ) -> bool {
+        use crate::engine::contagions::Infection;
+        if self.is_infected_with(kind) {
+            return false;
+        }
+        self.infections.push(if symptomatic {
+            Infection::symptomatic(kind)
+        } else {
+            Infection::caught(kind)
+        });
+        if symptomatic {
+            self.begin_contagion_symptoms(kind);
+        }
+        true
+    }
+
+    /// Pay out the onset of `kind` — RAW's *Fever* / *Fatigue* rung and
+    /// the condition the entry installs.
+    ///
+    /// Separate from `infect` because the sunrise calls it on a row
+    /// that is already on the ledger, and idempotent in the direction
+    /// that matters: the Exhaustion level is granted once, at the
+    /// moment the incubation ends, and the condition is re-applied at
+    /// every sunrise because `long_rest` has just cleared the map it
+    /// lives in.
+    fn begin_contagion_symptoms(&mut self, kind: crate::engine::contagions::ContagionKind) {
+        let row = kind.row();
+        if row.onset_exhaustion > 0 {
+            self.gain_exhaustion(row.onset_exhaustion);
+        }
+        if let Some(condition) = row.onset_condition {
+            self.add_condition(condition, ConditionTimer::Permanent);
+        }
+    }
+
+    /// Take `kind` off the ledger and undo what it was holding up,
+    /// returning `true` if it was there.
+    ///
+    /// The condition goes with it — that is the half a cure has to do
+    /// explicitly, because `Blinded` installed by Sight Rot looks
+    /// exactly like `Blinded` installed by anything else. The
+    /// Exhaustion level does **not** come back: RAW's clause is that
+    /// the level *lasts until* the contagion ends, not that ending it
+    /// refunds one, and a creature that fought off a week of fever is
+    /// entitled to a night's sleep to walk the rung back down. Dropping
+    /// the row first is what lets that night's `reduce_exhaustion` see
+    /// a floor of zero.
+    pub fn cure_contagion(&mut self, kind: crate::engine::contagions::ContagionKind) -> bool {
+        let Some(index) = self.infections.iter().position(|i| i.kind == kind) else {
+            return false;
+        };
+        let showing = !self.infections[index].incubating;
+        self.infections.remove(index);
+        if let Some(condition) = kind.row().onset_condition
+            && showing
+        {
+            self.remove_condition(condition);
+        }
+        true
+    }
+
+    /// The Exhaustion level the creature's contagions hold it at — the
+    /// sum of every symptomatic row's [`Contagion::exhaustion_floor`].
+    ///
+    /// [`Contagion::exhaustion_floor`]:
+    ///     crate::engine::contagions::Contagion::exhaustion_floor
+    pub fn exhaustion_floor(&self) -> u32 {
+        self.infections
+            .iter()
+            .filter(|i| !i.incubating)
+            .map(|i| i.row().exhaustion_floor())
+            .sum()
+    }
+
+    /// SRD 5.2 Sight Rot's *"Magic such as a Heal or Lesser Restoration
+    /// spell ends the contagion immediately."*
+    ///
+    /// Returns what it ended, so the caster's log line can name it.
+    ///
+    /// Scoped to the rows whose entry says so, which today is Sight Rot
+    /// alone — read off [`Contagion::escape_save`] being `None`, which
+    /// is not a coincidence but the same fact stated twice: the entry
+    /// that gives its victim no save is the entry that names the spell
+    /// instead.
+    ///
+    /// [`Contagion::escape_save`]:
+    ///     crate::engine::contagions::Contagion::escape_save
+    pub fn cure_contagions_by_magic(
+        &mut self,
+    ) -> Vec<crate::engine::contagions::ContagionKind> {
+        let curable = self.cures_available_by_magic();
+        for kind in &curable {
+            self.cure_contagion(*kind);
+        }
+        curable
+    }
+
+    /// What [`Self::cure_contagions_by_magic`] would end, without
+    /// ending it — the read half, for the two casters that have to
+    /// decide whether the spell has anything to do before they spend a
+    /// slot on it.
+    pub fn cures_available_by_magic(&self) -> Vec<crate::engine::contagions::ContagionKind> {
+        self.infections
+            .iter()
+            .filter(|i| i.row().escape_save.is_none())
+            .map(|i| i.kind)
+            .collect()
+    }
+
+    /// SRD 5.2 **Sewer Plague**'s two standing clauses, which open with
+    /// the same seven words and therefore share one predicate:
+    ///
+    /// > *Weakness. **While the creature has any Exhaustion levels**, it
+    /// > regains only half the normal number of Hit Points from spending
+    /// > Hit Point Dice.*
+    /// >
+    /// > *Restlessness. **While the creature has any Exhaustion
+    /// > levels**, finishing a Long Rest neither restores lost Hit
+    /// > Points nor reduces the creature's Exhaustion level.*
+    ///
+    /// The Exhaustion condition is the gate rather than the plague
+    /// itself, which is the whole trap the entry is built as: the
+    /// plague's own onset grants the level that arms both clauses, the
+    /// dawn save that could take the level away is the only thing that
+    /// ends the plague, and a failed one adds a rung instead. A plagued
+    /// party that keeps pushing walks into every room worse off than it
+    /// left the last.
+    pub fn restless_with_plague(&self) -> bool {
+        self.exhaustion > 0
+            && self.has_symptoms_of(crate::engine::contagions::ContagionKind::SewerPlague)
+    }
+
+    /// One night's worth of SRD 5.2 **Magical Contagions** — the
+    /// incubation ending, the *Fighting the Contagion* saves, and the
+    /// symptoms being written back onto a condition map the rest has
+    /// just emptied. Returns the lines the caller should log.
+    ///
+    /// Called from `rest_one` **after** `ActorInstance::long_rest`, and
+    /// the order is three rules at once:
+    ///
+    ///   - the rest's own `conditions.clear()` has to have run before
+    ///     Sight Rot's `Blinded` is re-applied, or the sweep would
+    ///     erase it again;
+    ///   - the rest's `reduce_exhaustion(1)` is *"finishing a Long
+    ///     Rest"*, and Sewer Plague's save is *"daily at dawn"*, which
+    ///     is after it — so a plagued creature's ladder is moved by its
+    ///     own save rather than by a night it does not get;
+    ///   - a contagion cured by tonight's save leaves the ledger before
+    ///     the onset below could re-arm it.
+    ///
+    /// Rows are walked in ledger order, which is insertion order, which
+    /// is deterministic — two contagions on one creature resolve the
+    /// same way on every run of a seed.
+    pub fn contagion_night(&mut self, roller: &mut impl Roller) -> Vec<String> {
+        use crate::engine::contagions::ContagionKind;
+
+        let mut lines: Vec<String> = Vec::new();
+        if self.infections.is_empty() {
+            return lines;
+        }
+        // A corpse catches nothing and shakes nothing off. The rest
+        // itself is gated the same way one level up.
+        if !matches!(self.hp_state, HpState::Active) {
+            return lines;
+        }
+        let name = self.name().to_string();
+        // Snapshot the tags before rolling: the loop mutates the ledger
+        // (a cure removes a row), and RAW's *"1d4 days after
+        // infection"* means a row that started the night incubating
+        // does not also get tonight's escape save — the incubation is
+        // the night.
+        let rows: Vec<(ContagionKind, bool)> = self
+            .infections
+            .iter()
+            .map(|i| (i.kind, i.incubating))
+            .collect();
+        for (kind, was_incubating) in rows {
+            let row = kind.row();
+            if was_incubating {
+                // The compression: RAW's 1d4 days, rounded to the one
+                // night the engine has. See the module docstring.
+                if let Some(entry) = self.infections.iter_mut().find(|i| i.kind == kind) {
+                    entry.incubating = false;
+                }
+                self.begin_contagion_symptoms(kind);
+                lines.push(format!("{} {}.", name, row.onset_flavor));
+                continue;
+            }
+            // Already showing: re-apply the symptom the rest wiped,
+            // before rolling, so a creature that fails tonight's save
+            // is still blind rather than briefly cured by the sweep.
+            if let Some(condition) = row.onset_condition {
+                self.add_condition(condition, ConditionTimer::Permanent);
+            }
+            let Some(escape) = row.escape_save else {
+                // Sight Rot: no save, only a spell. See
+                // `cure_contagions_by_magic`.
+                continue;
+            };
+            // Rolled off the actor's own sheet rather than through the
+            // encounter's save chokepoint, because there is no
+            // encounter: `long_rest_party` rests a `Vec` of actors that
+            // are on no board at all. A nightly Constitution save has
+            // nothing an encounter would add to it — no cover, no
+            // caster's metamagic, no aura — so the plain roll is the
+            // whole rule.
+            let total = roller.roll(&Dice::new(1, 20)) as i32
+                + self.save_modifier(AbilityScoreType::Constitution);
+            let passed = total >= escape.dc;
+            if escape.counted_in_exhaustion {
+                // Sewer Plague's ladder branch.
+                if passed {
+                    // Straight to the field: the floor `reduce_exhaustion`
+                    // enforces belongs to Cackle Fever, and a creature
+                    // carrying both should still be able to walk the
+                    // plague's rung off.
+                    self.exhaustion = self.exhaustion.saturating_sub(1);
+                    if self.exhaustion == 0 {
+                        self.conditions.remove(&Condition::Exhausted);
+                        self.cure_contagion(kind);
+                        lines.push(format!("{} {}.", name, row.cure_flavor));
+                    } else {
+                        lines.push(format!(
+                            "{} rallies against the {} (Exhaustion {}).",
+                            name, row.name, self.exhaustion
+                        ));
+                    }
+                } else {
+                    self.gain_exhaustion(1);
+                    lines.push(format!(
+                        "{}'s {} worsens overnight (Exhaustion {}).",
+                        name, row.name, self.exhaustion
+                    ));
+                }
+                continue;
+            }
+            // Cackle Fever's counting branch: three successes, ever,
+            // not three in a row.
+            if !passed {
+                lines.push(format!("{} sweats through the night with {}.", name, row.name));
+                continue;
+            }
+            let banked = {
+                let Some(entry) = self.infections.iter_mut().find(|i| i.kind == kind) else {
+                    continue;
+                };
+                entry.successes += 1;
+                entry.successes
+            };
+            if banked >= escape.successes_needed.max(1) {
+                self.cure_contagion(kind);
+                lines.push(format!("{} {}.", name, row.cure_flavor));
+            } else {
+                lines.push(format!(
+                    "{} sleeps a little easier ({} of {} saves against {}).",
+                    name,
+                    banked,
+                    escape.successes_needed.max(1),
+                    row.name
+                ));
+            }
+        }
+        lines
     }
 
     pub fn is_immune_to_condition(&self, c: Condition) -> bool {

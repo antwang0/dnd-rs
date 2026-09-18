@@ -8,6 +8,7 @@ pub mod board;
 pub mod breath;
 pub mod burrowing;
 pub mod conjured_terrain;
+pub mod contagions;
 pub mod criticals;
 pub mod dice;
 pub mod emanations;

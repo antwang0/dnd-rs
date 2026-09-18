@@ -5101,6 +5101,42 @@ pub fn push_on_hit_riders(
             }
         }
     }
+    // SRD 5.2 **Magical Contagions**' carrier clause — *"Any Humanoid
+    // that is wounded by a creature that carries the contagion … must
+    // succeed on a DC 11 Constitution saving throw"*.
+    //
+    // Here rather than as a row on `ON_HIT_RIDERS` because that table
+    // is keyed on a *condition marker* the attacker is carrying (an
+    // envenomed blade, a bane weapon's tag), and a contagion is not a
+    // condition — it is the ledger in `engine::contagions`, which is
+    // what outlives the fight. The trigger, the lane and the queueing
+    // are otherwise identical, which is why it sits at the end of the
+    // same function.
+    //
+    // Every lane, not just melee: RAW says "wounded by a creature that
+    // carries the contagion" with no qualifier about how, and a rat
+    // that could infect you by biting but not by clawing would be a
+    // distinction the book does not draw.
+    let carried: Vec<crate::engine::contagions::ContagionKind> =
+        match encounter.actors.get(&caster_id) {
+            Some(attacker) if !attacker.infections().is_empty() => attacker
+                .infections()
+                .iter()
+                .filter(|i| !i.incubating)
+                .map(|i| i.kind)
+                .collect(),
+            _ => Vec::new(),
+        };
+    for kind in carried {
+        effects.push(Box::new(
+            crate::engine::side_effects::ExposeToContagion {
+                victim_id: target_id,
+                source_id: caster_id,
+                kind,
+            },
+        ));
+        added += 1;
+    }
     added
 }
 

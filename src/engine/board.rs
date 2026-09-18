@@ -93,6 +93,29 @@ pub struct BoardSettings {
     /// Carried across the room boundary like the rest: a `--frozen` run
     /// is a dungeon in winter, not one cold room.
     pub frozen: bool,
+    /// Which of SRD 5.2's **Magical Contagions** has taken hold in this
+    /// dungeon, if any — see [`crate::engine::contagions`].
+    ///
+    /// The sixth answer to the struct's own question, and the one the
+    /// book asks for out loud: *"An outbreak of such a contagion can
+    /// form the basis of an adventure as characters search for a cure
+    /// and try to stop the contagion's spread."* An outbreak is a fact
+    /// about the *place*, exactly as the rain and the traps are, and it
+    /// is carried from room to room for the same reason — a plague pit
+    /// with one sick room in it is not a plague pit.
+    ///
+    /// Sewer Plague needs none of this and is unaffected by it: it
+    /// names its own carriers in the bestiary, so an otyugh is a
+    /// reservoir whether or not anybody asked for an outbreak. What the
+    /// flag buys is the other two, which RAW gives no creature vector
+    /// at all. Setting it to `SewerPlague` is still meaningful and
+    /// still does what it says — it puts the plague in the humanoids
+    /// too, not only in the vermin.
+    ///
+    /// Applied to the **monster side only**; see
+    /// [`crate::engine::encounter::EncounterInstance::seed_outbreak`]
+    /// for why the party is left out of it.
+    pub outbreak: Option<crate::engine::contagions::ContagionKind>,
 }
 
 impl BoardSettings {
@@ -125,6 +148,15 @@ impl BoardSettings {
         }
         encounter.scatter_traps(self.traps);
         encounter.carve_rifts(self.rifts);
+        // Last, and it is the one entry here that touches creatures
+        // rather than tiles. After the geometry because it reads the
+        // roster rather than the map and nothing it does can change
+        // where anybody is standing — and last in the list so a reader
+        // scanning `apply` sees the board built and then populated,
+        // which is the order it happens in.
+        if let Some(kind) = self.outbreak {
+            encounter.seed_outbreak(kind);
+        }
     }
 }
 
@@ -145,5 +177,6 @@ mod tests {
         assert_eq!(board.traps, 0);
         assert_eq!(board.rifts, 0);
         assert!(!board.frozen);
+        assert_eq!(board.outbreak, None);
     }
 }

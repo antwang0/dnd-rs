@@ -1438,6 +1438,7 @@ mod tests {
             traps: 4,
             rifts: 2,
             frozen: true,
+            outbreak: Some(crate::engine::contagions::ContagionKind::CackleFever),
         };
         app.board.apply(&mut app.encounter);
         app.encounter
@@ -1496,6 +1497,21 @@ mod tests {
         assert!(
             rift_tiles(&app) > 0,
             "the second room's floor was quietly mended"
+        );
+        // …and the outbreak, which is the one setting here that lands
+        // on creatures rather than on tiles. This fixture generates no
+        // monster roster at all (`cr_target: 0.0`), so there is nobody
+        // in either room for it to take — what is pinned here is that
+        // the *setting* survives the boundary, which is this struct's
+        // whole job. What the outbreak does once there is somebody to
+        // catch it is
+        // `an_outbreak_seeds_the_locals_and_leaves_the_party_alone`,
+        // over in the engine's own suite where a board can be given a
+        // roster.
+        assert_eq!(
+            app.board.outbreak,
+            Some(crate::engine::contagions::ContagionKind::CackleFever),
+            "the plague stayed in the first room"
         );
         // …and the freeze, asked the only way a generated room can be
         // asked it. The ice *count* is the map's business — a room that

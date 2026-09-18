@@ -114955,6 +114955,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/breath.rs", include_str!("breath.rs")),
         ("engine/burrowing.rs", include_str!("burrowing.rs")),
         ("engine/conjured_terrain.rs", include_str!("conjured_terrain.rs")),
+        ("engine/contagions.rs", include_str!("contagions.rs")),
         ("engine/criticals.rs", include_str!("criticals.rs")),
         ("engine/dice.rs", include_str!("dice.rs")),
         ("engine/emanations.rs", include_str!("emanations.rs")),
@@ -126226,5 +126227,718 @@ fn the_talons_card_takes_the_whole_pack() {
     assert!(
         e.messages().iter().any(|m| m.contains("nothing to take")),
         "an empty pack is a real outcome of this card"
+    );
+}
+
+// ---------------------------------------------------------------------
+// SRD 5.2 **Magical Contagions** — see `crate::engine::contagions`.
+//
+// The section's clauses are spread over five chokepoints (an on-hit
+// rider, a start-of-turn Emanation, the damage pipeline, the
+// end-of-turn escape ledger and the long rest), so the tests below are
+// grouped here rather than beside each one: what is being pinned is a
+// disease with a life cycle, and a test that saw only one chokepoint
+// would pin a symptom.
+// ---------------------------------------------------------------------
+
+/// One `ActorInstance` off a template, on no board at all — the shape
+/// `EncounterInstance::long_rest_party` rests between two rooms of the
+/// dungeon, and the only shape in which the rest-clock half of
+/// `crate::engine::contagions` can be asked anything.
+fn lone_actor(
+    template: &'static crate::actors::actor_template::CreatureTemplate,
+) -> crate::actors::actor_template::ActorInstance {
+    crate::actors::actor_template::ActorInstance::from_creature_template(
+        template,
+        Coordinate::new(0, 0),
+        0,
+        &mut crate::engine::dice::FastRandRoller::with_seed(1),
+        0,
+    )
+    .expect("a template instantiates")
+}
+
+/// SRD 5.2 **Sewer Plague**: *"Any Humanoid that is wounded by a
+/// creature that carries the contagion … must succeed on a DC 11
+/// Constitution saving throw or become infected."*
+///
+/// Swept over seeds because the outcome is a die roll — the shape is
+/// what is asserted, and over enough seeds both branches show up. What
+/// is *not* a die roll is the incubation: every creature that catches
+/// it walks out of the fight with nothing showing, which is the whole
+/// of RAW's "1d4 days after infection".
+#[test]
+fn a_rat_that_draws_blood_hands_the_plague_on() {
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+
+    let mut caught = 0;
+    let mut spared = 0;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let rat = e
+            .instantiate_creature(&GIANT_RAT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        // A commoner rather than anything that fights back: the
+        // fighter this test opened with riposted the rat to death on
+        // the first miss, which is a correct fighter and a useless
+        // fixture.
+        let victim = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        assert!(
+            e.actors[&rat].has_symptoms_of(ContagionKind::SewerPlague),
+            "a carrier is a reservoir, not a courier"
+        );
+
+        // Bites until one connects, then reads the ledger. A miss is
+        // not a wound and cannot expose anybody.
+        for _ in 0..12 {
+            let bite = e.actors[&rat]
+                .available_actions()
+                .into_iter()
+                .find(|a| a.name().contains("bite"))
+                .expect("a rat bites");
+            let targets = vec![victim];
+            for ef in bite.side_effects(&mut e, rat, Some(&targets), None, None) {
+                ef.apply(&mut e);
+            }
+            if !e.actors.contains_key(&victim)
+                || e.actors[&victim].is_infected_with(ContagionKind::SewerPlague)
+            {
+                break;
+            }
+            // A commoner has four hit points; keep it on its feet so
+            // the loop is measuring saves rather than mortality.
+            e.actors.get_mut(&victim).unwrap().heal(20);
+        }
+        if e.actors
+            .get(&victim)
+            .is_some_and(|v| v.is_infected_with(ContagionKind::SewerPlague))
+        {
+            caught += 1;
+            assert!(
+                !e.actors[&victim].has_symptoms_of(ContagionKind::SewerPlague),
+                "the fight you catch it in is never the fight it costs you"
+            );
+            assert_eq!(
+                e.actors[&victim].exhaustion_level(),
+                0,
+                "an incubating plague does nothing at all"
+            );
+        } else {
+            spared += 1;
+        }
+    }
+    assert!(caught > 0, "a DC 11 save is not a formality");
+    assert!(spared > 0, "nor is it unmakeable");
+}
+
+/// The type gate, which every entry in the section prints and which is
+/// checked before a die is touched: *"affects Humanoids only"*.
+///
+/// A skeleton bitten by a plague rat a hundred times is a skeleton.
+#[test]
+fn the_plague_does_not_take_in_something_the_book_does_not_let_it_take() {
+    use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 7);
+    let rat = e
+        .instantiate_creature(&GIANT_RAT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+        .unwrap();
+    for _ in 0..40 {
+        let bite = e.actors[&rat]
+            .available_actions()
+            .into_iter()
+            .find(|a| a.name().contains("bite"))
+            .expect("a rat bites");
+        let targets = vec![skeleton];
+        for ef in bite.side_effects(&mut e, rat, Some(&targets), None, None) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.actors[&skeleton].is_infected_with(ContagionKind::SewerPlague),
+            "the undead do not catch the plague"
+        );
+    }
+}
+
+/// SRD 5.2's closing clause on both spreading entries: *"On a
+/// successful save, the Humanoid can't catch the contagion from that
+/// particular infected creature for the next 24 hours."*
+///
+/// Scoped to the individual creature, which is RAW's own word — so the
+/// fighter who shrugged off this rat is still in danger from the next
+/// one. That is the same reading `making_the_save_once_ends_a_ghasts_
+/// stench_for_good` pins one ledger over, and it is the same ledger.
+#[test]
+fn shrugging_off_one_carrier_says_nothing_about_the_next() {
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::actors::creatures::giant_rats::GIANT_RAT_TEMPLATE;
+    use crate::engine::contagions::{ContagionKind, SEWER_PLAGUE};
+
+    let mut caught_from_the_second = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let first = e
+            .instantiate_creature(&GIANT_RAT_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+            .unwrap();
+        let second = e
+            .instantiate_creature(&GIANT_RAT_TEMPLATE, Coordinate::new(5, 8), 1, 0)
+            .unwrap();
+        let victim = e
+            .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+
+        // Bank the save against the first rat by hand, which is exactly
+        // what a made save does.
+        e.bank_trait_immunity(victim, first, SEWER_PLAGUE.name);
+        for _ in 0..20 {
+            assert!(
+                !e.expose_to_contagion(victim, first, ContagionKind::SewerPlague, 11),
+                "the 24-hour clause is not a one-round reprieve (seed {seed})"
+            );
+        }
+        // …and the second rat is a second rat. One roll is all this can
+        // ever be: whichever way it goes, the pairing is settled after
+        // it — a failure infects and a success banks the same 24-hour
+        // immunity against *this* rat. So the sweep is over seeds.
+        if e.expose_to_contagion(victim, second, ContagionKind::SewerPlague, 11) {
+            caught_from_the_second += 1;
+        }
+    }
+    assert!(
+        caught_from_the_second > 0,
+        "surviving one rat is not immunity to the species"
+    );
+}
+
+/// The compression: RAW's *"1d4 days after infection"* is the engine's
+/// next long rest, and the symptoms are what the party wakes up to.
+///
+/// No dice anywhere in the assertion path — the infection is written
+/// onto the ledger directly, because what is under test is the sunrise
+/// rather than the catch.
+#[test]
+fn the_incubation_is_over_in_the_morning() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::dice::FastRandRoller;
+
+    let mut fighter = lone_actor(&FIGHTER_TEMPLATE);
+    assert!(fighter.infect(ContagionKind::SewerPlague, false));
+    assert!(fighter.is_infected_with(ContagionKind::SewerPlague));
+    assert!(!fighter.has_symptoms_of(ContagionKind::SewerPlague));
+    assert_eq!(fighter.exhaustion_level(), 0);
+
+    let mut roller = FastRandRoller::with_seed(11);
+    fighter.long_rest();
+    let lines = fighter.contagion_night(&mut roller);
+
+    assert!(
+        fighter.has_symptoms_of(ContagionKind::SewerPlague),
+        "the night is the incubation"
+    );
+    assert_eq!(
+        fighter.exhaustion_level(),
+        1,
+        "RAW's Fatigue: the creature gains 1 Exhaustion level"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("grey-faced")),
+        "a symptom nobody was told about is a bug three rooms later"
+    );
+}
+
+/// SRD 5.2 **Cackle Fever**'s *Fever*: *"1 Exhaustion level, **which
+/// lasts until the contagion ends on the creature**."*
+///
+/// The one word that separates it from Sewer Plague's bare "gains 1
+/// Exhaustion level", and most of what makes the two feel different: a
+/// night's sleep cannot pay the fever's rung off, so the fever's second
+/// symptom stays armed for as long as the fever does.
+#[test]
+fn the_fever_holds_its_rung_against_the_night() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+
+    let mut fighter = lone_actor(&FIGHTER_TEMPLATE);
+    fighter.infect(ContagionKind::CackleFever, true);
+    assert_eq!(fighter.exhaustion_level(), 1);
+    assert!(fighter.has_condition(Condition::Exhausted));
+
+    // A night, and another, and another. Each one spends RAW's
+    // *"finishing a Long Rest reduces a creature's Exhaustion level by
+    // 1"* and none of them can have the fever's rung.
+    for _ in 0..4 {
+        fighter.long_rest();
+        assert_eq!(
+            fighter.exhaustion_level(),
+            1,
+            "the fever's level lasts until the contagion ends"
+        );
+        assert!(
+            fighter.has_condition(Condition::Exhausted),
+            "the number and the flag are one fact"
+        );
+    }
+    // …and neither can a Greater Restoration, which is the same
+    // `reduce_exhaustion` with a bigger argument.
+    assert!(!fighter.reduce_exhaustion(5));
+    assert_eq!(fighter.exhaustion_level(), 1);
+
+    // Curing it hands the rung back to the ordinary rules: the level
+    // does not refund itself, but the next night can finally pay it.
+    assert!(fighter.cure_contagion(ContagionKind::CackleFever));
+    assert_eq!(
+        fighter.exhaustion_level(),
+        1,
+        "RAW says the level lasts until the contagion ends, not that \
+         ending it refunds one"
+    );
+    fighter.long_rest();
+    assert_eq!(fighter.exhaustion_level(), 0);
+    assert!(!fighter.has_condition(Condition::Exhausted));
+}
+
+/// SRD 5.2 **Cackle Fever**'s *Uncontrollable Laughter*: *"the creature
+/// makes a DC 13 Constitution saving throw each time it takes damage
+/// other than Psychic damage. On a failed save, the creature takes 5
+/// (1d10) Psychic damage and has the Incapacitated condition."*
+///
+/// The one clause in the whole section with a per-round surface, and
+/// the reason a fever is worth carrying into a fight at all.
+#[test]
+fn a_fevered_creature_that_takes_a_hit_doubles_up_laughing() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    let mut laughing = 0;
+    let mut steady = 0;
+    for seed in 0..60u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .infect(ContagionKind::CackleFever, true);
+        DealDamage {
+            actor_id: fighter,
+            amount: 3,
+            damage_type: DamageType::Slashing,
+        }
+        .apply(&mut e);
+        if e.actors[&fighter].has_condition(Condition::Cackling) {
+            laughing += 1;
+            assert!(
+                e.actors[&fighter].is_incapacitated(),
+                "RAW: has the Incapacitated condition as it laughs"
+            );
+            assert!(
+                e.repeat_save_pending(fighter, Condition::Cackling),
+                "RAW: at the end of each of its turns, the creature repeats the save"
+            );
+        } else {
+            steady += 1;
+        }
+    }
+    assert!(laughing > 0, "a DC 13 save is not a formality");
+    assert!(steady > 0, "nor is it unmakeable");
+}
+
+/// The exclusion in the same sentence: *"each time it takes damage
+/// **other than Psychic damage**"*.
+///
+/// Load-bearing rather than flavour — the laughter's own 1d10 is
+/// Psychic, and a reading without the exclusion would have a fevered
+/// creature laugh itself to death off one scratch.
+#[test]
+fn the_laughter_is_never_set_off_by_its_own_kind_of_damage() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::side_effects::DealDamage;
+    use crate::engine::types::DamageType;
+
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .infect(ContagionKind::CackleFever, true);
+        DealDamage {
+            actor_id: fighter,
+            amount: 3,
+            damage_type: DamageType::Psychic,
+        }
+        .apply(&mut e);
+        assert!(
+            !e.actors[&fighter].has_condition(Condition::Cackling),
+            "psychic damage is the one kind the clause exempts (seed {seed})"
+        );
+    }
+}
+
+/// SRD 5.2 **Cackle Fever**'s *Spreading the Contagion*: *"Any Humanoid
+/// (other than a gnome) that starts its turn within a 10-foot Emanation
+/// originating from a creature infected with Cackle Fever must succeed
+/// on a DC 10 Constitution saving throw or also become infected."*
+///
+/// Three things at once, and all three are the clause:
+///
+///   - it fires out of the *victim's* initiative slot, like every other
+///     start-of-turn emanation;
+///   - it crosses the party line, unlike every stat-block emanation the
+///     engine has — a plague that stopped politely at the team boundary
+///     would not be one;
+///   - a gnome catches nothing at all, which is the only parenthesis in
+///     the section that names a species.
+#[test]
+fn cackle_fever_takes_the_creature_standing_next_to_it_whatever_side_it_is_on() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::gnomes::GNOME_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+
+    let mut caught = 0;
+    for seed in 0..40u64 {
+        let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        let sick = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        // The same side as the carrier: RAW says "any Humanoid".
+        let ally = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(7, 5), 0, 0)
+            .unwrap();
+        let gnome = e
+            .instantiate_creature(&GNOME_TEMPLATE, Coordinate::new(5, 7), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&sick)
+            .unwrap()
+            .infect(ContagionKind::CackleFever, true);
+
+        // The carrier's own turn exposes nobody — the trigger is the
+        // victim's turn opening.
+        e.start_turn_for(sick);
+        assert!(!e.actors[&ally].is_infected_with(ContagionKind::CackleFever));
+
+        e.start_turn_for(ally);
+        if e.actors[&ally].is_infected_with(ContagionKind::CackleFever) {
+            caught += 1;
+        }
+        for _ in 0..8 {
+            e.start_turn_for(gnome);
+        }
+        assert!(
+            !e.actors[&gnome].is_infected_with(ContagionKind::CackleFever),
+            "gnomes are strangely immune (seed {seed})"
+        );
+    }
+    assert!(caught > 0, "a DC 10 save is not unfailable");
+}
+
+/// SRD 5.2 **Sight Rot** — the entry that is the odd one out in every
+/// direction: it blinds immediately (no incubation line), it gives its
+/// victim no save to fight it off, and it names the spell that ends it.
+///
+/// The interesting half is what a *cure* has to be. Stripping the
+/// Blinded alone looks like a cure right up until the party beds down,
+/// at which point the sunrise writes it straight back on — so the test
+/// rests the victim afterwards and looks again.
+#[test]
+fn sight_rot_blinds_on_the_spot_and_only_a_spell_ends_it() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::dice::FastRandRoller;
+
+    let mut fighter = lone_actor(&FIGHTER_TEMPLATE);
+    fighter.infect(ContagionKind::SightRot, true);
+    assert!(
+        fighter.has_condition(Condition::Blinded),
+        "no incubation line: the victim is blind before the round is out"
+    );
+
+    // A night, and another. There is no save on this entry, so nothing
+    // changes and the blindness is re-written each sunrise.
+    let mut roller = FastRandRoller::with_seed(2);
+    for _ in 0..5 {
+        fighter.long_rest();
+        fighter.contagion_night(&mut roller);
+        assert!(
+            fighter.has_condition(Condition::Blinded),
+            "RAW gives Sight Rot's victim no saving throw at all"
+        );
+    }
+
+    // Stripping the condition by hand is not a cure…
+    fighter.remove_condition(Condition::Blinded);
+    fighter.long_rest();
+    fighter.contagion_night(&mut roller);
+    assert!(
+        fighter.has_condition(Condition::Blinded),
+        "a cure that leaves the contagion on the ledger is not a cure"
+    );
+
+    // …and the spell the entry names is.
+    assert_eq!(
+        fighter.cure_contagions_by_magic(),
+        vec![ContagionKind::SightRot]
+    );
+    assert!(!fighter.has_condition(Condition::Blinded));
+    fighter.long_rest();
+    fighter.contagion_night(&mut roller);
+    assert!(
+        !fighter.has_condition(Condition::Blinded),
+        "the rot is off the ledger, so there is nothing to re-apply"
+    );
+}
+
+/// The spell half of the same clause, cast rather than called: *"Magic
+/// such as a Heal or **Lesser Restoration** spell ends the contagion
+/// immediately."*
+///
+/// Also pins the validator, because the interesting failure is the one
+/// where the spell refuses to be cast at all: Lesser Restoration is
+/// gated on the target having something to lift, and a contagion is not
+/// a condition.
+#[test]
+fn lesser_restoration_is_the_cure_the_entry_names() {
+    use crate::actions::spells::LESSER_RESTORATION;
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 1);
+    let cleric = e
+        .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 5), 0, 0)
+        .unwrap();
+    assert!(
+        !LESSER_RESTORATION.custom_validate_input(&e, cleric, Some(&vec![fighter]), None, None),
+        "a clean ally is not a target"
+    );
+
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .infect(ContagionKind::SightRot, true);
+    assert!(
+        LESSER_RESTORATION.custom_validate_input(&e, cleric, Some(&vec![fighter]), None, None),
+        "the entry names this spell as its cure"
+    );
+    let targets = vec![fighter];
+    for ef in LESSER_RESTORATION.side_effects(&mut e, cleric, Some(&targets), None, None) {
+        ef.apply(&mut e);
+    }
+    assert!(!e.actors[&fighter].is_infected_with(ContagionKind::SightRot));
+    assert!(!e.actors[&fighter].has_condition(Condition::Blinded));
+}
+
+/// SRD 5.2 **Sewer Plague**'s two standing clauses, which are the
+/// nastiest thing in the section and the only rules in the engine that
+/// take a rest away:
+///
+/// > *Weakness. While the creature has any Exhaustion levels, it
+/// > regains only half the normal number of Hit Points from spending
+/// > Hit Point Dice.*
+/// >
+/// > *Restlessness. While the creature has any Exhaustion levels,
+/// > finishing a Long Rest neither restores lost Hit Points nor reduces
+/// > the creature's Exhaustion level.*
+#[test]
+fn the_plague_takes_the_night_away_and_halves_the_hour() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::dice::FastRandRoller;
+
+    let build = || lone_actor(&FIGHTER_TEMPLATE);
+
+    // The healthy control, so what the plague costs is measured against
+    // the same sheet rather than against a remembered number.
+    let mut healthy = build();
+    let full = healthy.max_hitpoints();
+    healthy.take_damage(full - 1);
+    healthy.long_rest();
+    assert_eq!(healthy.hitpoints(), full, "an ordinary night is a full night");
+
+    let mut plagued = build();
+    plagued.infect(ContagionKind::SewerPlague, true);
+    assert_eq!(plagued.exhaustion_level(), 1, "the onset arms both clauses");
+    plagued.take_damage(full - 1);
+    let before = plagued.hitpoints();
+    plagued.long_rest();
+    assert_eq!(
+        plagued.hitpoints(),
+        before,
+        "RAW: finishing a Long Rest neither restores lost Hit Points…"
+    );
+    assert_eq!(
+        plagued.exhaustion_level(),
+        1,
+        "…nor reduces the creature's Exhaustion level"
+    );
+
+    // …and the hour of sitting down is worth half. Rolled off the same
+    // seed on both sheets so the comparison is of the clause and not of
+    // the dice.
+    let short_rest_gain = |plague: bool| {
+        let mut a = build();
+        if plague {
+            a.infect(ContagionKind::SewerPlague, true);
+        }
+        a.take_damage(a.max_hitpoints() - 1);
+        let before = a.hitpoints();
+        a.short_rest(&mut FastRandRoller::with_seed(4));
+        a.hitpoints() - before
+    };
+    let whole = short_rest_gain(false);
+    let half = short_rest_gain(true);
+    assert!(whole > 1, "the fixture's own premise");
+    assert_eq!(half, whole / 2, "RAW: only half the normal number");
+}
+
+/// SRD 5.2 **Sewer Plague**'s *Fighting the Contagion*: *"Daily at
+/// dawn, an infected creature makes a DC 11 Constitution saving throw.
+/// On a failed save, the creature gains 1 Exhaustion level as its
+/// fatigue worsens. On a successful save, the creature's Exhaustion
+/// level decreases by 1. If the creature's Exhaustion level is reduced
+/// to 0, the contagion ends."*
+///
+/// The ladder branch, and the only escape in the section whose failure
+/// makes things worse. Swept over seeds because it is a die roll; what
+/// is asserted is that both directions happen and that reaching zero is
+/// the cure.
+#[test]
+fn the_dawn_save_walks_the_ladder_in_both_directions() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::dice::FastRandRoller;
+
+    let mut worsened = 0;
+    let mut cured = 0;
+    for seed in 0..60u64 {
+        let mut fighter = lone_actor(&FIGHTER_TEMPLATE);
+        fighter.infect(ContagionKind::SewerPlague, true);
+        let mut roller = FastRandRoller::with_seed(seed);
+        let before = fighter.exhaustion_level();
+        fighter.long_rest();
+        fighter.contagion_night(&mut roller);
+        if fighter.is_infected_with(ContagionKind::SewerPlague) {
+            assert_eq!(
+                fighter.exhaustion_level(),
+                before + 1,
+                "a failed dawn save is a rung up the ladder (seed {seed})"
+            );
+            worsened += 1;
+        } else {
+            assert_eq!(
+                fighter.exhaustion_level(),
+                0,
+                "reaching zero is what ends it (seed {seed})"
+            );
+            cured += 1;
+        }
+    }
+    assert!(worsened > 0, "a DC 11 save is not a formality");
+    assert!(cured > 0, "nor is it unmakeable");
+}
+
+/// SRD 5.2 **Cackle Fever**'s *Fighting the Contagion*: *"After the
+/// creature succeeds on three of these saves, the contagion ends on
+/// it."*
+///
+/// Cumulative, not consecutive — the same reading `engine::repeat_saves`
+/// gives the identical sentence. Driven to completion rather than
+/// swept, because what is being pinned is the count.
+#[test]
+fn three_good_nights_end_a_fever_however_many_bad_ones_are_between_them() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::engine::dice::FastRandRoller;
+
+    let mut fighter = lone_actor(&FIGHTER_TEMPLATE);
+    fighter.infect(ContagionKind::CackleFever, true);
+    let mut roller = FastRandRoller::with_seed(19);
+    let mut nights = 0;
+    let mut banked = 0;
+    while fighter.is_infected_with(ContagionKind::CackleFever) && nights < 200 {
+        fighter.long_rest();
+        fighter.contagion_night(&mut roller);
+        nights += 1;
+        let now = fighter
+            .infection(ContagionKind::CackleFever)
+            .map_or(3, |i| i.successes);
+        assert!(
+            now == banked || now == banked + 1,
+            "a night banks one success or none"
+        );
+        banked = now;
+    }
+    assert_eq!(banked, 3, "the third success is the cure");
+    assert!(
+        !fighter.is_infected_with(ContagionKind::CackleFever),
+        "two hundred nights of a DC 13 save without three successes"
+    );
+    assert!(
+        nights >= 3,
+        "three successes cannot be banked in fewer than three nights"
+    );
+    assert!(
+        nights > 3,
+        "seed 19 happens to fail at least one night, which is what \
+         makes this a test of a cumulative count rather than a \
+         consecutive one"
+    );
+}
+
+/// [`BoardSettings::outbreak`] takes the locals and leaves the party
+/// alone, which is the whole point of the flag: an outbreak the party
+/// starts with is one they have already caught.
+///
+/// [`BoardSettings::outbreak`]: crate::engine::board::BoardSettings
+#[test]
+fn an_outbreak_seeds_the_locals_and_leaves_the_party_alone() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+
+    let mut e = ei_with_terrain_seeded(20, 20, &[], 13);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    // A bandit rather than a goblin: SRD 5.2 prints goblins as **Fey**,
+    // and Cackle Fever is a Humanoid's disease.
+    let local = e
+        .instantiate_creature(&BANDIT_TEMPLATE, Coordinate::new(9, 9), 1, 0)
+        .unwrap();
+    let skeleton = e
+        .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(9, 5), 1, 0)
+        .unwrap();
+
+    assert_eq!(e.seed_outbreak(ContagionKind::CackleFever), 1);
+    assert!(
+        e.actors[&local].has_symptoms_of(ContagionKind::CackleFever),
+        "the outbreak is what the party walks into"
+    );
+    assert!(
+        !e.actors[&skeleton].is_infected_with(ContagionKind::CackleFever),
+        "the type gate holds here too"
+    );
+    assert!(
+        !e.actors[&fighter].is_infected_with(ContagionKind::CackleFever),
+        "seeding the party spends the rule before the first round"
     );
 }

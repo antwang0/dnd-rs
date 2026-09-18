@@ -1554,6 +1554,19 @@ impl ApplicableSideEffect for DealDamage {
         // anybody who is not on their feet.
         if landed > 0 {
             ei.apply_damage_triggered_escapes(self.actor_id);
+            // SRD 5.2 **Cackle Fever**'s *"each time it takes damage
+            // other than Psychic damage"*. Beside the escape sweep
+            // above because it is triggered by the same event and
+            // placed after the outcome match for the same reason: a
+            // blow that put the victim on the floor is not a blow they
+            // stand there laughing at, and `cackle_at_damage` declines
+            // for anybody who is not combat-active.
+            //
+            // It can re-enter `DealDamage` with the laughter's own
+            // 1d10, which is safe and bounded: the re-entry is Psychic
+            // and the clause excludes Psychic, so the recursion is one
+            // level deep by construction rather than by a guard.
+            ei.cackle_at_damage(self.actor_id, self.damage_type);
         }
         // 5e Warding Bond reflect: mirror the post-resistance damage onto
         // the bonding partner. Skip when the partner is the actor itself
@@ -1942,6 +1955,30 @@ impl ApplicableSideEffect for GainTempHp {
         if after > before {
             ei.log(format!("{} gains {} temp HP.", name, after));
         }
+    }
+}
+
+/// SRD 5.2 **Sewer Plague**'s carrier clause, as a queued effect —
+/// *"Any Humanoid that is wounded by a creature that carries the
+/// contagion … must succeed on a DC 11 Constitution saving throw."*
+///
+/// Queued by the on-hit rider lane rather than resolved there, so the
+/// exposure save lands in the log after the bite's own damage line
+/// rather than in the middle of it. That is also the reading the whole
+/// rider lane already gives *"wounded by"* and *"a creature that takes
+/// Piercing or Slashing damage from an object coated with the poison"*:
+/// a swing that connected is a wound, whatever the victim's resistances
+/// then did to the number. See [`crate::engine::contagions`].
+pub struct ExposeToContagion {
+    pub victim_id: usize,
+    pub source_id: usize,
+    pub kind: crate::engine::contagions::ContagionKind,
+}
+
+impl ApplicableSideEffect for ExposeToContagion {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let dc = self.kind.row().exposure_dc;
+        ei.expose_to_contagion(self.victim_id, self.source_id, self.kind, dc);
     }
 }
 
@@ -2975,6 +3012,37 @@ impl ApplicableSideEffect for RemoveOneOfConditions {
                 announce_condition_lifted(ei, self.actor_id, &name, *c);
                 return;
             }
+        }
+    }
+}
+
+/// SRD 5.2 **Sight Rot**: *"Magic such as a Heal or Lesser Restoration
+/// spell ends the contagion immediately."*
+///
+/// The only clause in *Magical Contagions* that names a spell, and the
+/// reason it is a side effect rather than a line inside either spell:
+/// the two casters that carry it are a level-2 bonus action and a
+/// level-6 action, and neither should have to know what a contagion is.
+///
+/// Scoped by the ledger rather than by a candidate list — see
+/// `ActorInstance::cure_contagions_by_magic`, which ends exactly the
+/// rows whose entry gives its victim no save of its own, which today is
+/// Sight Rot and nothing else. A creature whose Cackle Fever a cleric
+/// would dearly like to end is not on that list, because RAW does not
+/// put it there.
+pub struct CureContagionsByMagic {
+    pub actor_id: usize,
+}
+
+impl ApplicableSideEffect for CureContagionsByMagic {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        let Some(actor) = ei.get_actor(self.actor_id) else {
+            return;
+        };
+        let name = actor.name().to_string();
+        let cured = actor.cure_contagions_by_magic();
+        for kind in cured {
+            ei.log(format!("  {} {}.", name, kind.row().cure_flavor));
         }
     }
 }

@@ -16,6 +16,7 @@ use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::encounter::EncounterInstance;
 use crate::engine::board::BoardSettings;
 use crate::engine::lighting::AmbientLight;
+use crate::engine::contagions::ContagionKind;
 use crate::engine::weather::Weather;
 use crate::engine::terrain_gen::TerrainGenParams;
 
@@ -104,6 +105,7 @@ impl Cli {
         let mut traps = 0usize;
         let mut rifts = 0usize;
         let mut frozen = false;
+        let mut outbreak: Option<ContagionKind> = None;
         let mut name_parts: Vec<String> = Vec::new();
         for arg in args {
             // Checked before the number parse and before the name
@@ -177,6 +179,23 @@ impl Cli {
                 frozen = true;
                 continue;
             }
+            // The outbreak, on the same `--` lane as the light and the
+            // weather and parsed the same way — see
+            // `BoardSettings::outbreak`. A named value rather than a
+            // bare flag, because there are three contagions and they
+            // are not a ladder: `--sewer` and `--sight` are different
+            // adventures, not different amounts of the same one.
+            //
+            // Checked after the count flags and the freeze so a
+            // spelling this parser does not know falls through to the
+            // class-name lane and is reported there, which is where
+            // every other unrecognized `--word` ends up.
+            if let Some(flagless) = arg.strip_prefix("--")
+                && let Some(kind) = ContagionKind::parse(flagless)
+            {
+                outbreak = Some(kind);
+                continue;
+            }
             match arg.parse::<u64>() {
                 Ok(n) if seed.is_none() => seed = Some(n),
                 _ => name_parts.push(arg),
@@ -197,6 +216,7 @@ impl Cli {
                 traps,
                 rifts,
                 frozen,
+                outbreak,
             },
         }))
     }
@@ -259,7 +279,7 @@ impl Cli {
         let mut msg =
             String::from(
                 "usage: dnd-rs [seed] [class name] [--light-level] [--weather] \
-                 [--traps[=N]] [--rifts[=N]] [--frozen]\n\n",
+                 [--traps[=N]] [--rifts[=N]] [--frozen] [--outbreak]\n\n",
             );
         msg.push_str("Every argument is optional and order-independent: the first\n");
         msg.push_str("argument that parses as a number is the seed, a --flag sets\n");
@@ -283,6 +303,8 @@ impl Cli {
             "Frozen water (thawed by default):\n  \
              --frozen turns every pool to slippery ice\n\n",
         );
+        msg.push_str(&Self::outbreak_listing());
+        msg.push('\n');
         msg.push_str("Classes:\n");
         msg.push_str(&Self::class_listing());
         msg
@@ -312,6 +334,21 @@ impl Cli {
         format!(
             "Weather ({} is the default):\n  {}\n",
             Weather::default().label(),
+            flags.join(", ")
+        )
+    }
+
+    /// The magical-contagion options, read off `ContagionKind::NAMES`
+    /// for the reason the two listings above it read off theirs: the
+    /// help text must not be able to advertise a spelling the parser
+    /// refuses. See `BoardSettings::outbreak`.
+    fn outbreak_listing() -> String {
+        let flags: Vec<String> = ContagionKind::NAMES
+            .iter()
+            .map(|n| format!("--{}", n))
+            .collect();
+        format!(
+            "Magical contagions (no outbreak by default):\n  {}\n",
             flags.join(", ")
         )
     }
