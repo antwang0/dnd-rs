@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::WEASEL_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Weasel — CR 0 tiny beast. The canonical "snake-killer" tiny
 /// mustelid: a single flat-1 bite, AC 13, 1 HP. Slots beside the
@@ -55,6 +56,7 @@ pub static WEASEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Beast,
         actions,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

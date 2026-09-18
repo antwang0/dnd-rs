@@ -69,7 +69,7 @@ pub static CLOAKER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 14,
         constitution: 12,
         charisma: 7,
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::from([SpecialSense::Darkvision(120)]),
         cr: 8.0,
         size: Size::Large,
         creature_type: CreatureType::Aberration,

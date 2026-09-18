@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::MASTIFF_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Mastiff — CR ⅛ medium beast. The "guard dog" tier of canine: a
 /// trained hunting / herding hound. Heavier-jawed than the vanilla
@@ -61,6 +62,7 @@ pub static MASTIFF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Medium,
         creature_type: CreatureType::Beast,
         actions,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

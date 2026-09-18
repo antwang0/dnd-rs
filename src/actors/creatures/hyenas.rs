@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::HYENA_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Hyena — CR 0 medium beast. A pack scavenger that swarms wounded
 /// prey: low base damage, but the `has_pack_tactics: true` flag turns
@@ -32,6 +33,7 @@ pub static HYENA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Beast,
         actions,
         has_pack_tactics: true,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

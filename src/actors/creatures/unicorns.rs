@@ -4,7 +4,7 @@ use crate::actions::monster_attacks::{
 };
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageType, Language, Size};
+use crate::engine::types::{CreatureType, DamageType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -110,6 +110,7 @@ pub static UNICORN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         charge: Some(crate::actions::monster_attacks::UNICORN_CHARGE),
         // 5e **Magic Weapons**: "the unicorn's weapon attacks are magical."
         features: HashSet::from([crate::actions::class_features::MAGICAL_ATTACKS_TAG]),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

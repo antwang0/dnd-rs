@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_GOAT_RAM;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Giant Goat — CR ½ large beast. The "mountain ram" tier of caprid:
 /// a Large frame with chunky 2d4 horns and a 19-HP envelope. Slots
@@ -66,6 +67,7 @@ pub static GIANT_GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 2d4 bludgeoning and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::GIANT_GOAT_CHARGE),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

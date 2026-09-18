@@ -54,9 +54,7 @@ pub static BULETTE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 10,
         constitution: 21,
         charisma: 5,
-        // Tremorsense lives in SpecialSense; falling back to Darkvision
-        // keeps the template valid without inventing a new sense variant.
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::from([SpecialSense::Darkvision(60), SpecialSense::Tremorsense(120)]),
         cr: 5.0,
         size: Size::Large,
         creature_type: CreatureType::Monstrosity,

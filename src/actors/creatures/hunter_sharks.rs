@@ -66,7 +66,7 @@ pub static HUNTER_SHARK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         wisdom: 10,
         constitution: 15,
         charisma: 4,
-        senses: HashSet::from([SpecialSense::Blindsight(30)]),
+        senses: HashSet::from([SpecialSense::Blindsight(60)]),
         cr: 2.0,
         size: Size::Large,
         creature_type: CreatureType::Beast,

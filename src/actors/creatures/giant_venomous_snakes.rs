@@ -62,10 +62,7 @@ pub static GIANT_VENOMOUS_SNAKE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
         charisma: 3,
         // Blindsight 10 — pit-organ vibration sense at close range.
         // Darkvision 60 — night / dungeon biome coverage.
-        senses: HashSet::from([
-            SpecialSense::Blindsight(10),
-            SpecialSense::Darkvision(60),
-        ]),
+        senses: HashSet::from([SpecialSense::Blindsight(10)]),
         cr: 0.25,
         size: Size::Medium,
         creature_type: CreatureType::Beast,

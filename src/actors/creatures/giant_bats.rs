@@ -73,7 +73,7 @@ pub static GIANT_BAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // gate (the engine routes Blindsight through the concealment
         // chokepoint in `engine::attack`). The load-bearing sensory
         // trait that separates the bat from the Hawk / Eagle pool.
-        senses: HashSet::from([SpecialSense::Blindsight(60)]),
+        senses: HashSet::from([SpecialSense::Blindsight(120)]),
         cr: 0.25,
         size: Size::Large,
         creature_type: CreatureType::Beast,
@@ -111,13 +111,14 @@ mod tests {
 
     #[test]
     fn giant_bat_carries_blindsight() {
-        // Pin the load-bearing sensory trait: Blindsight 60 is what
-        // separates the bat from the Hawk / Eagle pool. A future
-        // template refactor that quietly stripped Blindsight would
-        // demote the bat to "a slightly larger Hawk" — flattening
-        // the cave-echo-locator identity.
+        // Pin the load-bearing sensory trait: SRD 5.2's *"Senses
+        // Blindsight 120 ft."* is what separates the bat from the Hawk
+        // / Eagle pool. A future template refactor that quietly
+        // stripped Blindsight would demote the bat to "a slightly
+        // larger Hawk" — flattening the cave-echo-locator identity.
+        // The range was 60 here until the Senses sweep read the page.
         let a = make();
-        assert!(a.senses().contains(&SpecialSense::Blindsight(60)));
+        assert!(a.senses().contains(&SpecialSense::Blindsight(120)));
     }
 
     #[test]

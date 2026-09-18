@@ -84,7 +84,7 @@ pub static HORNED_DEVIL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         wisdom: 16,
         constitution: 21,
         charisma: 18,
-        senses: HashSet::from([SpecialSense::Darkvision(120)]),
+        senses: HashSet::from([SpecialSense::Darkvision(150)]),
         languages: HashSet::from([Language::Infernal]),
         cr: 11.0,
         size: Size::Large,

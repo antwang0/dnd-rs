@@ -56,10 +56,7 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 3,
         wisdom: 11,
         charisma: 11,
-        senses: HashSet::from([
-            SpecialSense::Blindsight(120),
-            SpecialSense::Tremorsense(120),
-        ]),
+        senses: HashSet::from([SpecialSense::Blindsight(120)]),
         cr: 30.0,
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,

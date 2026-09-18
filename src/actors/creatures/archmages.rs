@@ -5,7 +5,7 @@ use crate::actions::spells::{
     MAGE_ARMOR, MISTY_STEP, SHIELD, STONESKIN, TIME_STOP,
 };
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -82,7 +82,7 @@ pub static ARCHMAGE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 20,
         wisdom: 15,
         charisma: 16,
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::new(),
         languages: HashSet::from([Language::Common, Language::Draconic, Language::Elvish]),
         cr: 12.0,
         size: Size::Medium,

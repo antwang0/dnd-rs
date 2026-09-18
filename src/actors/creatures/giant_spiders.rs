@@ -63,10 +63,7 @@ pub static GIANT_SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         intelligence: 2,
         wisdom: 11,
         charisma: 4,
-        senses: HashSet::from([
-            SpecialSense::Blindsight(10),
-            SpecialSense::Darkvision(60),
-        ]),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 1.0,
         size: Size::Large,
         creature_type: CreatureType::Beast,

@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{LION_BITE, LION_CLAWS, LION_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::engine::jumping::Leap;
-use crate::engine::types::{CreatureType, Size, Skill};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -55,6 +55,7 @@ pub static LION_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::LION_POUNCE),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

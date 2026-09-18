@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GREATAXE, MINOTAUR_GORE};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, Skill};
+use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -46,6 +46,7 @@ pub static MINOTAUR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 2d8 piercing and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::MINOTAUR_CHARGE),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

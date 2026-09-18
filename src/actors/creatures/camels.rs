@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::CAMEL_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Camel — CR ⅛ large beast. The "desert pack animal" tier of large
 /// herbivore: a tall, slow-moving herd beast with a single nipping bite
@@ -64,6 +65,7 @@ pub static CAMEL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Beast,
         actions,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

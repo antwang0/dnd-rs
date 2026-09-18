@@ -60828,7 +60828,7 @@ fn true_sight_on_target_negates_attacker_invisible_advantage() {
 }
 
 /// 5e intrinsic Truesight: a creature with template
-/// `SpecialSense::Truesight(_)` (Deva, Solar, Pit Fiend, etc.)
+/// `SpecialSense::Truesight(_)` (Solar, Lich, Balor, Rakshasa)
 /// counters illusion-concealment **without** needing the True
 /// Seeing spell on it. Pre-`has_truesight` this gate only read the
 /// `Condition::TrueSighted` flag, silently letting a Solar miss an
@@ -60836,13 +60836,19 @@ fn true_sight_on_target_negates_attacker_invisible_advantage() {
 /// straight through. This test pins the bug fix: an attacker with
 /// template Truesight neutralizes a target's Invisible just like
 /// the spell-installed condition does.
+///
+/// Flown by the Solar rather than the Deva, which is what it used to
+/// read: the Deva's sense row in SRD 5.2 is Darkvision 120 and nothing
+/// else, and the Truesight this test was spending was one the engine
+/// had given it by mistake — see
+/// `every_stat_blocks_senses_match_the_book`.
 #[test]
 fn template_truesight_counters_target_invisible() {
-    use crate::actors::creatures::devas::DEVA_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::solars::SOLAR_TEMPLATE;
     let mut e = ei_with_terrain(15, 15, &[]);
     let attacker = e
-        .instantiate_creature(&DEVA_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SOLAR_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let target = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(6, 2), 1, 0)
@@ -60851,14 +60857,14 @@ fn template_truesight_counters_target_invisible() {
         .get_mut(&target)
         .unwrap()
         .add_condition(Condition::Invisible, ConditionTimer::Rounds(10));
-    // Deva carries template Truesight 120; the goblin's Invisible
-    // does not impose disadvantage on the deva's swing. Without
+    // The Solar carries template Truesight 120; the goblin's Invisible
+    // does not impose disadvantage on the Solar's swing. Without
     // `has_truesight` reading the senses pool, this would resolve
     // to RollMode::Disadvantage.
     assert_eq!(
         e.compute_attack_mode(attacker, target, true),
         RollMode::Normal,
-        "Deva's intrinsic Truesight must counter target Invisible"
+        "the Solar's intrinsic Truesight must counter target Invisible"
     );
 }
 
@@ -122093,6 +122099,40 @@ fn renamed_to_engine(book: &str) -> &str {
     book
 }
 
+/// Every template the engine can put on a board that is a *stat block*
+/// — the whole reachable roster minus the player-character builds —
+/// keyed by the name the book prints.
+///
+/// The scaffolding every book-conformance sweep in this file opens
+/// with, written once. Each of them needs the same two things and used
+/// to spell out both: the reachability walk (so a creature built by a
+/// chassis function counts exactly like one written as a struct
+/// literal, and so the sixty-odd stat blocks nobody writes out by hand
+/// are not silently skipped), and the player-character exclusion.
+///
+/// **The exclusion is not tidiness.** `pc_template_families` and the
+/// bestiary collide on names: the book prints a Druid stat block at CR
+/// 2 with 44 hit points, and `druids::DRUID_TEMPLATE` is a playable
+/// level-5 Druid that shares the word and nothing else. A sweep that
+/// let the PC build win the key would report the collision as a wrong
+/// stat block — and which of the two wins is decided by iteration
+/// order, so it would do it intermittently.
+///
+/// Returns a `BTreeMap` so a failure message lists its rows in a stable
+/// order; several sweeps join one.
+fn bestiary_by_name() -> std::collections::BTreeMap<&'static str, &'static CreatureTemplate> {
+    let pcs: std::collections::HashSet<usize> = crate::actors::creatures::pc_template_families()
+        .into_iter()
+        .flat_map(|(_, templates)| templates)
+        .map(|t| std::ptr::from_ref(t) as usize)
+        .collect();
+    every_reachable_creature_template()
+        .into_iter()
+        .filter(|t| !pcs.contains(&(std::ptr::from_ref(*t) as usize)))
+        .map(|t| (t.name, t))
+        .collect()
+}
+
 /// Every stat block SRD 5.2 prints a flat armour class and a flat hit
 /// point total for, against what the bestiary actually declares.
 ///
@@ -122484,46 +122524,26 @@ fn every_stat_blocks_defences_match_the_book() {
     ("Zombie", 8, 15),
     ];
 
-    // Every template the engine can put on a board, by pointer, so a
-    // creature built by a chassis function counts exactly like one
-    // written as a struct literal — see
-    // `every_reachable_creature_template`. The sweep used to read the
-    // `ac:` and `hitpoints:` lines out of the source instead, which
-    // meant that sixty-odd of the book's stat blocks (every dragon, the
-    // goliaths, the goblinoid warriors) had no line to read and were
-    // silently skipped. They are the ones a mistake is most likely to
-    // hide in, because they are the ones nobody writes out by hand.
+    // The reachability walk and the player-character exclusion, both of
+    // which every sweep in this file needs — see `bestiary_by_name`.
     //
-    // **The player-character chassis are excluded**, and one of them is
-    // why: the engine's `Druid` is a level-scaled PC with a subclass and
-    // a spell list, and SRD 5.2's *Druid* is a CR 2 NPC with AC 13 and
-    // 44 hit points. They share a name and nothing else, and a sweep
-    // that compared them would be reporting a collision as a bug. The
-    // rest of `pc_template_families` is the same kind of object, so the
-    // whole lane goes rather than the one row.
-    let pcs: std::collections::HashSet<usize> =
-        crate::actors::creatures::pc_template_families()
-            .into_iter()
-            .flat_map(|(_, templates)| templates)
-            .map(|t| std::ptr::from_ref(t) as usize)
-            .collect();
-    let mut found: std::collections::BTreeMap<&str, (u32, f32)> =
-        std::collections::BTreeMap::new();
-    for t in every_reachable_creature_template() {
-        if pcs.contains(&(std::ptr::from_ref(t) as usize)) {
-            continue;
-        }
-        found.insert(t.name, (t.ac, t.hitpoints.average_roll()));
-    }
+    // The sweep used to read the `ac:` and `hitpoints:` lines out of the
+    // source instead of off the statics, which meant that sixty-odd of
+    // the book's stat blocks (every dragon, the goliaths, the goblinoid
+    // warriors) had no line to read and were silently skipped. They are
+    // the ones a mistake is most likely to hide in, because they are the
+    // ones nobody writes out by hand.
+    let found = bestiary_by_name();
 
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (name, book_ac, book_hp) in SRD_DEFENCES {
-        let Some((ac, hp)) = found.get(renamed_to_engine(name)) else {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
             continue;
         };
+        let (ac, hp) = (t.ac, t.hitpoints.average_roll());
         checked += 1;
-        if ac != book_ac {
+        if ac != *book_ac {
             wrong.push(format!(
                 "{name}: the book prints AC {book_ac} and it wears {ac}"
             ));
@@ -122927,38 +122947,22 @@ fn every_stat_block_is_the_size_and_kind_the_book_says() {
     ("Zombie", "Medium", "Undead"),
     ];
 
-    let pcs: std::collections::HashSet<usize> =
-        crate::actors::creatures::pc_template_families()
-            .into_iter()
-            .flat_map(|(_, templates)| templates)
-            .map(|t| std::ptr::from_ref(t) as usize)
-            .collect();
-    let mut found: std::collections::BTreeMap<&str, (String, String)> =
-        std::collections::BTreeMap::new();
-    for t in every_reachable_creature_template() {
-        if pcs.contains(&(std::ptr::from_ref(t) as usize)) {
-            continue;
-        }
-        found.insert(
-            t.name,
-            (format!("{:?}", t.size), format!("{:?}", t.creature_type)),
-        );
-    }
+    let found = bestiary_by_name();
 
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (name, sizes, kind) in SRD_SIZE_AND_TYPE {
-        let engine_name = renamed_to_engine(name);
-        let Some((size, creature_type)) = found.get(engine_name) else {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
             continue;
         };
+        let (size, creature_type) = (format!("{:?}", t.size), format!("{:?}", t.creature_type));
         checked += 1;
         if !sizes.split('|').any(|s| s == size) {
             wrong.push(format!(
                 "{name}: the book prints {sizes} and it stands {size}"
             ));
         }
-        if creature_type != kind {
+        if creature_type != *kind {
             wrong.push(format!(
                 "{name}: the book prints {kind} and it is a {creature_type}"
             ));
@@ -122974,6 +122978,448 @@ fn every_stat_block_is_the_size_and_kind_the_book_says() {
         "only {checked} of the book's {} stat blocks were matched to a \
          template — a rename has dropped rows out of the sweep",
         SRD_SIZE_AND_TYPE.len()
+    );
+}
+
+/// Every stat block's **Senses** row — the non-visual and
+/// dark-piercing ones — against what the bestiary declares.
+///
+/// The fifth book-conformance sweep, after the Hit lines, the defences,
+/// the size-and-type row and the damage lines, and the one whose
+/// failures decide whether a creature can find its target at all.
+/// Nothing in this engine leans on a stat-block row harder: the board
+/// has ambient light on it, `--dark` turns it off, and the four senses
+/// in `SpecialSense` are the whole of what sees through darkness,
+/// invisibility, fog and a wall of stone. A missing Darkvision is a
+/// monster that stands still in an unlit room; a missing Tremorsense is
+/// a bulette that cannot find the thing standing on top of it.
+///
+/// It found forty-five wrong stat blocks, in five shapes:
+///
+///   - **The whole animal appendix.** SRD 5.2 gives the cat, the goat,
+///     the lion, the panther, the weasel, the hyena, the mastiff, the
+///     camel, the elk and the jackal Darkvision, and the engine gave
+///     none of them any sense at all. Ten more animals had one at the
+///     wrong range — the giant badger and the giant toad at 30 where
+///     the book prints 60, the giant bat and the killer whale at
+///     Blindsight 60 where the book prints 120.
+///   - **Darkvision that 2024 took away.** The archmage, the pegasus,
+///     the roc, the winter wolf and the wereboar are all printed with a
+///     bare *Passive Perception* line now, and all five were carrying
+///     the 2014 sense.
+///   - **Truesight read as Darkvision.** The balor and the rakshasa see
+///     through illusion RAW and saw only in the dark here; the lich,
+///     the solar and the deva each carried a redundant second sense
+///     beside the right one — and on the deva the extra was a Truesight
+///     120 that the book does not give it at all, which is the whole of
+///     what the *Invisibility* spell is for.
+///   - **Tremorsense that had been rounded off.** The bulette's own
+///     comment said Tremorsense "lives in `SpecialSense`" and then
+///     declared Darkvision instead; the earth elemental's was simply
+///     absent. Both feel through the floor RAW. The chuul and the
+///     tarrasque had the opposite problem — a Tremorsense the book does
+///     not print.
+///   - **Ranges off by a category.** The cloaker, the medusa, the
+///     horned devil and the wyvern all see further in 5.2 than the
+///     engine let them, the medusa and the horned devil by 90 feet.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its four
+/// siblings; see there for the rename and the player-character
+/// exclusion.
+///
+/// ## What the table stores and what it does not
+///
+/// **The four senses `SpecialSense` models**, in the book's own
+/// alphabetical order, as `"Kind range"` separated by `", "` — the
+/// Senses row's own syntax, so a row can be checked against the page by
+/// eye. An empty string is a stat block whose Senses row is nothing but
+/// a passive Perception score, which is most of the bestiary's
+/// humanoids.
+///
+/// **Not passive Perception**, which every row prints and which this
+/// engine derives from the Wisdom score and the skill list rather than
+/// storing — a transcribed copy would be asserting the derivation
+/// against itself.
+///
+/// **Not the parenthetical riders.** The horned devil's Darkvision is
+/// *"150 ft. (unimpeded by magical Darkness)"* and the table stores
+/// 150: the rider is a real rule with no surface here yet, and a row
+/// that tried to say so would be storing a fact about the engine rather
+/// than one about the book.
+#[test]
+fn every_stat_blocks_senses_match_the_book() {
+    /// `(name, senses)` — SRD 5.2, one row per stat block, senses in
+    /// the book's order and spelling.
+    const SRD_SENSES: &[(&str, &str)] = &[
+    ("Aboleth", "Darkvision 120"),
+    ("Adult Black Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Blue Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Brass Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Bronze Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Copper Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Gold Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Green Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Red Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult Silver Dragon", "Blindsight 60, Darkvision 120"),
+    ("Adult White Dragon", "Blindsight 60, Darkvision 120"),
+    ("Air Elemental", "Darkvision 60"),
+    ("Allosaurus", ""),
+    ("Ancient Black Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Blue Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Brass Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Bronze Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Copper Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Gold Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Green Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Red Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient Silver Dragon", "Blindsight 60, Darkvision 120"),
+    ("Ancient White Dragon", "Blindsight 60, Darkvision 120"),
+    ("Animated Armor", "Blindsight 60"),
+    ("Animated Flying Sword", "Blindsight 60"),
+    ("Animated Rug of Smothering", "Blindsight 60"),
+    ("Ankheg", "Darkvision 60, Tremorsense 60"),
+    ("Ankylosaurus", ""),
+    ("Ape", ""),
+    ("Archelon", ""),
+    ("Archmage", ""),
+    ("Assassin", ""),
+    ("Avatar of Death", "Truesight 60"),
+    ("Awakened Shrub", ""),
+    ("Awakened Tree", ""),
+    ("Axe Beak", ""),
+    ("Azer Sentinel", ""),
+    ("Baboon", ""),
+    ("Badger", "Darkvision 30"),
+    ("Balor", "Truesight 120"),
+    ("Bandit", ""),
+    ("Bandit Captain", ""),
+    ("Barbed Devil", "Darkvision 120"),
+    ("Basilisk", "Darkvision 60"),
+    ("Bat", "Blindsight 60"),
+    ("Bearded Devil", "Darkvision 120"),
+    ("Behir", "Darkvision 90"),
+    ("Berserker", ""),
+    ("Black Bear", "Darkvision 60"),
+    ("Black Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Black Pudding", "Blindsight 60"),
+    ("Blink Dog", "Darkvision 60"),
+    ("Blood Hawk", ""),
+    ("Blue Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Boar", ""),
+    ("Bone Devil", "Darkvision 120"),
+    ("Brass Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Bronze Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Brown Bear", "Darkvision 60"),
+    ("Bugbear Stalker", "Darkvision 60"),
+    ("Bugbear Warrior", "Darkvision 60"),
+    ("Bulette", "Darkvision 60, Tremorsense 120"),
+    ("Camel", "Darkvision 60"),
+    ("Cat", "Darkvision 60"),
+    ("Centaur Trooper", ""),
+    ("Chain Devil", "Darkvision 120"),
+    ("Chimera", "Darkvision 60"),
+    ("Chuul", "Darkvision 60"),
+    ("Clay Golem", "Darkvision 60"),
+    ("Cloaker", "Darkvision 120"),
+    ("Cloud Giant", ""),
+    ("Cockatrice", "Darkvision 60"),
+    ("Commoner", ""),
+    ("Constrictor Snake", "Blindsight 10"),
+    ("Copper Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Couatl", "Truesight 120"),
+    ("Crab", "Blindsight 30"),
+    ("Crocodile", ""),
+    ("Cultist", ""),
+    ("Cultist Fanatic", ""),
+    ("Darkmantle", "Blindsight 60"),
+    ("Death Dog", "Darkvision 120"),
+    ("Deer", "Darkvision 60"),
+    ("Deva", "Darkvision 120"),
+    ("Dire Wolf", "Darkvision 60"),
+    ("Djinni", "Darkvision 120"),
+    ("Doppelganger", "Darkvision 60"),
+    ("Draconic Spirit", "Blindsight 30, Darkvision 60"),
+    ("Draft Horse", ""),
+    ("Dragon Turtle", "Darkvision 120"),
+    ("Dretch", "Darkvision 60"),
+    ("Drider", "Darkvision 120"),
+    ("Dryad", "Darkvision 60"),
+    ("Dust Mephit", "Darkvision 60"),
+    ("Eagle", ""),
+    ("Earth Elemental", "Darkvision 60, Tremorsense 60"),
+    ("Efreeti", "Darkvision 120"),
+    ("Elephant", ""),
+    ("Elk", "Darkvision 60"),
+    ("Erinyes", "Truesight 120"),
+    ("Ettercap", "Darkvision 60"),
+    ("Ettin", "Darkvision 60"),
+    ("Fire Elemental", "Darkvision 60"),
+    ("Fire Giant", ""),
+    ("Flesh Golem", "Darkvision 60"),
+    ("Flying Snake", "Blindsight 10"),
+    ("Frog", "Darkvision 30"),
+    ("Frost Giant", ""),
+    ("Gargoyle", "Darkvision 60"),
+    ("Gelatinous Cube", "Blindsight 60"),
+    ("Ghast", "Darkvision 60"),
+    ("Ghost", "Darkvision 60"),
+    ("Ghoul", "Darkvision 60"),
+    ("Giant Ape", ""),
+    ("Giant Badger", "Darkvision 60"),
+    ("Giant Bat", "Blindsight 120"),
+    ("Giant Boar", ""),
+    ("Giant Centipede", "Blindsight 30"),
+    ("Giant Constrictor Snake", "Blindsight 10"),
+    ("Giant Crab", "Blindsight 30"),
+    ("Giant Crocodile", ""),
+    ("Giant Eagle", ""),
+    ("Giant Elk", "Darkvision 90"),
+    ("Giant Fire Beetle", "Blindsight 30"),
+    ("Giant Fly", "Darkvision 60"),
+    ("Giant Frog", "Darkvision 30"),
+    ("Giant Goat", "Darkvision 60"),
+    ("Giant Hyena", "Darkvision 60"),
+    ("Giant Insect", "Darkvision 60"),
+    ("Giant Lizard", "Darkvision 60"),
+    ("Giant Octopus", "Darkvision 60"),
+    ("Giant Owl", "Darkvision 120"),
+    ("Giant Rat", "Darkvision 60"),
+    ("Giant Scorpion", "Blindsight 60"),
+    ("Giant Seahorse", ""),
+    ("Giant Shark", "Blindsight 60"),
+    ("Giant Spider", "Darkvision 60"),
+    ("Giant Toad", "Darkvision 60"),
+    ("Giant Venomous Snake", "Blindsight 10"),
+    ("Giant Vulture", "Darkvision 60"),
+    ("Giant Wasp", ""),
+    ("Giant Weasel", "Darkvision 60"),
+    ("Giant Wolf Spider", "Blindsight 10, Darkvision 60"),
+    ("Gibbering Mouther", "Darkvision 60"),
+    ("Glabrezu", "Truesight 120"),
+    ("Gladiator", ""),
+    ("Gnoll Warrior", "Darkvision 60"),
+    ("Goat", "Darkvision 60"),
+    ("Goblin Boss", "Darkvision 60"),
+    ("Goblin Minion", "Darkvision 60"),
+    ("Goblin Warrior", "Darkvision 60"),
+    ("Gold Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Gorgon", "Darkvision 60"),
+    ("Gray Ooze", "Blindsight 60"),
+    ("Green Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Green Hag", "Darkvision 60"),
+    ("Grick", "Darkvision 60"),
+    ("Griffon", "Darkvision 60"),
+    ("Grimlock", "Blindsight 30"),
+    ("Guard", ""),
+    ("Guard Captain", ""),
+    ("Guardian Naga", "Darkvision 60"),
+    ("Harpy", ""),
+    ("Hawk", ""),
+    ("Hell Hound", "Darkvision 60"),
+    ("Hezrou", "Darkvision 120"),
+    ("Hill Giant", ""),
+    ("Hippogriff", ""),
+    ("Hippopotamus", ""),
+    ("Hobgoblin Captain", "Darkvision 60"),
+    ("Hobgoblin Warrior", "Darkvision 60"),
+    ("Homunculus", "Darkvision 60"),
+    ("Horned Devil", "Darkvision 150"),
+    ("Hunter Shark", "Blindsight 60"),
+    ("Hydra", "Darkvision 60"),
+    ("Hyena", "Darkvision 60"),
+    ("Ice Devil", "Blindsight 120"),
+    ("Ice Mephit", "Darkvision 60"),
+    ("Imp", "Darkvision 120"),
+    ("Incubus", "Darkvision 60"),
+    ("Invisible Stalker", "Darkvision 60"),
+    ("Iron Golem", "Darkvision 120"),
+    ("Jackal", "Darkvision 90"),
+    ("Killer Whale", "Blindsight 120"),
+    ("Knight", ""),
+    ("Kobold Warrior", "Darkvision 60"),
+    ("Kraken", "Truesight 120"),
+    ("Lamia", "Darkvision 60"),
+    ("Lemure", "Darkvision 120"),
+    ("Lich", "Truesight 120"),
+    ("Lion", "Darkvision 60"),
+    ("Lizard", "Darkvision 30"),
+    ("Mage", ""),
+    ("Magma Mephit", "Darkvision 60"),
+    ("Magmin", "Darkvision 60"),
+    ("Mammoth", ""),
+    ("Manticore", "Darkvision 60"),
+    ("Marilith", "Truesight 120"),
+    ("Mastiff", "Darkvision 60"),
+    ("Medusa", "Darkvision 150"),
+    ("Merfolk Skirmisher", ""),
+    ("Merrow", "Darkvision 60"),
+    ("Mimic", "Darkvision 60"),
+    ("Minotaur Skeleton", "Darkvision 60"),
+    ("Minotaur of Baphomet", "Darkvision 60"),
+    ("Mule", ""),
+    ("Mummy", "Darkvision 60"),
+    ("Mummy Lord", "Truesight 60"),
+    ("Nalfeshnee", "Truesight 120"),
+    ("Night Hag", "Darkvision 120"),
+    ("Nightmare", ""),
+    ("Noble", ""),
+    ("Ochre Jelly", "Blindsight 60"),
+    ("Octopus", "Darkvision 30"),
+    ("Ogre", "Darkvision 60"),
+    ("Ogre Zombie", "Darkvision 60"),
+    ("Oni", "Darkvision 60"),
+    ("Otyugh", "Darkvision 120"),
+    ("Owl", "Darkvision 120"),
+    ("Owlbear", "Darkvision 60"),
+    ("Panther", "Darkvision 60"),
+    ("Pegasus", ""),
+    ("Phase Spider", "Darkvision 60"),
+    ("Piranha", "Darkvision 60"),
+    ("Pirate", ""),
+    ("Pirate Captain", ""),
+    ("Pit Fiend", "Truesight 120"),
+    ("Planetar", "Truesight 120"),
+    ("Plesiosaurus", ""),
+    ("Polar Bear", "Darkvision 60"),
+    ("Pony", ""),
+    ("Priest", ""),
+    ("Priest Acolyte", ""),
+    ("Pseudodragon", "Blindsight 10, Darkvision 60"),
+    ("Pteranodon", ""),
+    ("Purple Worm", "Blindsight 30, Tremorsense 60"),
+    ("Quasit", "Darkvision 120"),
+    ("Rakshasa", "Truesight 60"),
+    ("Rat", "Darkvision 30"),
+    ("Raven", ""),
+    ("Red Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Reef Shark", "Blindsight 30"),
+    ("Remorhaz", "Darkvision 60, Tremorsense 60"),
+    ("Rhinoceros", ""),
+    ("Riding Horse", ""),
+    ("Roc", ""),
+    ("Roper", "Darkvision 60"),
+    ("Rust Monster", "Darkvision 60"),
+    ("Saber-Toothed Tiger", "Darkvision 60"),
+    ("Sahuagin Warrior", "Darkvision 120"),
+    ("Salamander", "Darkvision 60"),
+    ("Satyr", ""),
+    ("Scorpion", "Blindsight 10"),
+    ("Scout", ""),
+    ("Sea Hag", "Darkvision 60"),
+    ("Seahorse", ""),
+    ("Shadow", "Darkvision 60"),
+    ("Shambling Mound", "Blindsight 60"),
+    ("Shield Guardian", "Blindsight 10, Darkvision 60"),
+    ("Shrieker Fungus", "Blindsight 30"),
+    ("Silver Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Skeleton", "Darkvision 60"),
+    ("Solar", "Truesight 120"),
+    ("Specter", "Darkvision 60"),
+    ("Sphinx of Lore", "Truesight 120"),
+    ("Sphinx of Valor", "Truesight 120"),
+    ("Sphinx of Wonder", "Darkvision 60"),
+    ("Spider", "Darkvision 30"),
+    ("Spirit Naga", "Darkvision 60"),
+    ("Sprite", ""),
+    ("Spy", ""),
+    ("Steam Mephit", "Darkvision 60"),
+    ("Stirge", "Darkvision 60"),
+    ("Stone Giant", "Darkvision 60"),
+    ("Stone Golem", "Darkvision 120"),
+    ("Storm Giant", "Darkvision 120, Truesight 30"),
+    ("Succubus", "Darkvision 60"),
+    ("Tarrasque", "Blindsight 120"),
+    ("Tiger", "Darkvision 60"),
+    ("Tough", ""),
+    ("Tough Boss", ""),
+    ("Treant", ""),
+    ("Triceratops", ""),
+    ("Troll", "Darkvision 60"),
+    ("Troll Limb", "Darkvision 60"),
+    ("Tyrannosaurus Rex", ""),
+    ("Unicorn", "Darkvision 60"),
+    ("Vampire", "Darkvision 120"),
+    ("Vampire Familiar", "Darkvision 60"),
+    ("Vampire Spawn", "Darkvision 60"),
+    ("Venomous Snake", "Blindsight 10"),
+    ("Violet Fungus", "Blindsight 30"),
+    ("Vrock", "Darkvision 120"),
+    ("Vulture", ""),
+    ("Warhorse", ""),
+    ("Warhorse Skeleton", "Darkvision 60"),
+    ("Warrior Infantry", ""),
+    ("Warrior Veteran", ""),
+    ("Water Elemental", "Darkvision 60"),
+    ("Weasel", "Darkvision 60"),
+    ("Werebear", "Darkvision 60"),
+    ("Wereboar", ""),
+    ("Wererat", "Darkvision 60"),
+    ("Weretiger", "Darkvision 60"),
+    ("Werewolf", "Darkvision 60"),
+    ("White Dragon Wyrmling", "Blindsight 10, Darkvision 60"),
+    ("Wight", "Darkvision 60"),
+    ("Will-o’-Wisp", "Darkvision 120"),
+    ("Winter Wolf", ""),
+    ("Wolf", "Darkvision 60"),
+    ("Worg", "Darkvision 60"),
+    ("Wraith", "Darkvision 60"),
+    ("Wyvern", "Darkvision 120"),
+    ("Xorn", "Darkvision 60, Tremorsense 60"),
+    ("Young Black Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Blue Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Brass Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Bronze Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Copper Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Gold Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Green Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Red Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young Silver Dragon", "Blindsight 30, Darkvision 120"),
+    ("Young White Dragon", "Blindsight 30, Darkvision 120"),
+    ("Zombie", "Darkvision 60"),
+    ];
+
+    let found = bestiary_by_name();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, printed) in SRD_SENSES {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        checked += 1;
+        let mut got: Vec<String> = t
+            .senses
+            .iter()
+            .map(|s| match s {
+                crate::engine::types::SpecialSense::Blindsight(r) => format!("Blindsight {r}"),
+                crate::engine::types::SpecialSense::Darkvision(r) => format!("Darkvision {r}"),
+                crate::engine::types::SpecialSense::Tremorsense(r) => format!("Tremorsense {r}"),
+                crate::engine::types::SpecialSense::Truesight(r) => format!("Truesight {r}"),
+            })
+            .collect();
+        // The book's row is alphabetical by sense name, and so is
+        // `SpecialSense`'s declaration order, so one sort puts both
+        // sides in the same order without either side knowing it.
+        got.sort();
+        if got.join(", ") != *printed {
+            wrong.push(format!(
+                "{name}: the book prints [{printed}] and it senses [{}]",
+                got.join(", ")
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2's Senses row:\n  {}",
+        wrong.join("\n  ")
+    );
+    // A floor, not a count — see the sibling sweeps for why a match
+    // that silently stops matching is the failure this guards.
+    assert!(
+        checked > 320,
+        "only {checked} of the book's {} stat blocks were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_SENSES.len()
     );
 }
 
@@ -123370,27 +123816,7 @@ fn every_stat_blocks_damage_lines_match_the_book() {
 
     let physical: std::collections::HashSet<DamageType> =
         DamageType::PHYSICAL.iter().copied().collect();
-    let pcs: std::collections::HashSet<usize> =
-        crate::actors::creatures::pc_template_families()
-            .into_iter()
-            .flat_map(|(_, templates)| templates)
-            .map(|t| std::ptr::from_ref(t) as usize)
-            .collect();
-    let mut found: std::collections::BTreeMap<&str, Vec<(DamageType, DamageModifier)>> =
-        std::collections::BTreeMap::new();
-    for t in every_reachable_creature_template() {
-        if pcs.contains(&(std::ptr::from_ref(t) as usize)) {
-            continue;
-        }
-        let mut line: Vec<(DamageType, DamageModifier)> = t
-            .damage_modifiers
-            .iter()
-            .filter(|(dt, _)| !physical.contains(dt))
-            .map(|(dt, m)| (*dt, *m))
-            .collect();
-        line.sort_by_key(|(dt, _)| format!("{dt:?}"));
-        found.insert(t.name, line);
-    }
+    let found = bestiary_by_name();
 
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
@@ -123398,7 +123824,7 @@ fn every_stat_blocks_damage_lines_match_the_book() {
         if ABSORBS.contains(name) {
             continue;
         }
-        let Some(line) = found.get(renamed_to_engine(name)) else {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
             continue;
         };
         checked += 1;
@@ -123418,8 +123844,10 @@ fn every_stat_blocks_damage_lines_match_the_book() {
             })
             .collect();
         want.sort();
-        let mut got: Vec<String> = line
+        let mut got: Vec<String> = t
+            .damage_modifiers
             .iter()
+            .filter(|(dt, _)| !physical.contains(dt))
             .map(|(dt, m)| format!("{dt:?}:{m:?}"))
             .collect();
         got.sort();

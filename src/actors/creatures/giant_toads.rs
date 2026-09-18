@@ -45,7 +45,7 @@ pub static GIANT_TOAD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 10,
         constitution: 13,
         charisma: 3,
-        senses: HashSet::from([SpecialSense::Darkvision(30)]),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 1.0,
         size: Size::Large,
         creature_type: CreatureType::Beast,

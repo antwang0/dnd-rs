@@ -68,7 +68,7 @@ pub static RAKSHASA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 16,
         constitution: 18,
         charisma: 20,
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::from([SpecialSense::Truesight(60)]),
         languages: HashSet::from([Language::Common, Language::Infernal]),
         cr: 13.0,
         size: Size::Medium,

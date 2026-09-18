@@ -76,7 +76,7 @@ pub static GIANT_BADGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // (matches the Giant Frog's 30-ft envelope at the same CR
         // tier). Routes through the standard `SpecialSense::Darkvision`
         // chokepoint.
-        senses: HashSet::from([SpecialSense::Darkvision(30)]),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 0.25,
         size: Size::Medium,
         creature_type: CreatureType::Beast,

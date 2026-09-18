@@ -90,7 +90,7 @@ pub static LICH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 21, // primary spellcasting ability
         wisdom: 14,
         charisma: 16,
-        senses: HashSet::from([SpecialSense::Truesight(120), SpecialSense::Darkvision(120)]),
+        senses: HashSet::from([SpecialSense::Truesight(120)]),
         languages: HashSet::from([Language::Common, Language::Draconic, Language::Infernal]),
         cr: 21.0,
         size: Size::Medium,

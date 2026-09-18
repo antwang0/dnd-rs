@@ -2,7 +2,7 @@ use crate::actions::class_features::RAMPAGE_TAG;
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_HYENA_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -38,6 +38,7 @@ pub static GIANT_HYENA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // keeps. See `RAMPAGE_TAG`.
         features: HashSet::from([RAMPAGE_TAG]),
         has_pack_tactics: true,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

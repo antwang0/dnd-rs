@@ -47,10 +47,7 @@ pub static SOLAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 25,
         wisdom: 25,
         charisma: 30,
-        senses: HashSet::from([
-            SpecialSense::Truesight(120),
-            SpecialSense::Darkvision(120),
-        ]),
+        senses: HashSet::from([SpecialSense::Truesight(120)]),
         languages: HashSet::from([Language::Celestial, Language::Common]),
         cr: 21.0,
         size: Size::Large,

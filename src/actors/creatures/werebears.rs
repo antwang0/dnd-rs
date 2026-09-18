@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WEREBEAR_BITE, WEREBEAR_CLAWS, WEREBEAR_MULTI};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size};
+use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -76,7 +76,7 @@ pub static WEREBEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 12,
         constitution: 17,
         charisma: 12,
-        senses: HashSet::new(),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         languages: HashSet::from([Language::Common]),
         cr: 5.0,
         size: Size::Medium,

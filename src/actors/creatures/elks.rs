@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ELK_HOOVES, ELK_RAM};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Elk — CR ¼ large beast. The forest cervid: a fast (50 ft)
 /// Large frame with two distinct swings (Ram or Hooves per
@@ -81,6 +82,7 @@ pub static ELK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 2d6 bludgeoning and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::ELK_CHARGE),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

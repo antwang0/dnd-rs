@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::CAT_CLAWS;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Cat — CR 0 tiny beast. The canonical "hearth cat" ambient mouser: a
 /// single claws swing for 1 slashing, AC 12, 2 HP. Slots beside the
@@ -62,6 +63,7 @@ pub static CAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Tiny,
         creature_type: CreatureType::Beast,
         actions,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

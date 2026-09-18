@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ROC_BEAK, ROC_MULTI, ROC_TALONS};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{AbilityScoreType, CreatureType, Size, Skill, SpecialSense};
+use crate::engine::types::{AbilityScoreType, CreatureType, Size, Skill};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -43,7 +43,7 @@ pub static ROC_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         constitution: 20,
         charisma: 9,
         skills: HashSet::from([Skill::Perception]),
-        senses: HashSet::from([SpecialSense::Darkvision(120)]),
+        senses: HashSet::new(),
         cr: 11.0,
         size: Size::Gargantuan,
         creature_type: CreatureType::Monstrosity,

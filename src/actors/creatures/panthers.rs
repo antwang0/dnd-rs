@@ -2,7 +2,7 @@ use crate::actions::class_features::{NIMBLE_DISENGAGE, NIMBLE_HIDE};
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{PANTHER_BITE, PANTHER_CLAW, PANTHER_POUNCE};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, Skill};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -64,6 +64,7 @@ pub static PANTHER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // or prone. Read at the melee attack chokepoint off
         // `ActorInstance::charge`.
         charge: Some(PANTHER_POUNCE),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -47,7 +47,7 @@ pub static BALOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 20,
         wisdom: 16,
         charisma: 22,
-        senses: HashSet::from([SpecialSense::Darkvision(120)]),
+        senses: HashSet::from([SpecialSense::Truesight(120)]),
         languages: HashSet::from([Language::Abyssal]),
         cr: 19.0,
         size: Size::Huge,

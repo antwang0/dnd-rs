@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{WINTER_WOLF_BITE, WINTER_WOLF_BREATH};
 use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Language, Size};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
@@ -34,7 +34,7 @@ pub static WINTER_WOLF_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 12,
         constitution: 14,
         charisma: 8,
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::new(),
         languages: HashSet::from([Language::Giant, Language::Common]),
         cr: 3.0,
         size: Size::Large,

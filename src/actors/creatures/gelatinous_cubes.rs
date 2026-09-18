@@ -2,7 +2,7 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GELATINOUS_CUBE_ENGULF, GELATINOUS_CUBE_PSEUDOPOD};
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -61,6 +61,7 @@ pub static GELATINOUS_CUBE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             Condition::Prone,
             Condition::Asleep,
         ]),
+        senses: HashSet::from([SpecialSense::Blindsight(60)]),
         ..CreatureTemplate::defaults()
     }
 });

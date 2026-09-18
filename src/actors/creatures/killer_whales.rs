@@ -75,7 +75,7 @@ pub static KILLER_WHALE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         // Blindsight 60 — echolocation. The load-bearing combat
         // sense; defines the orca's anti-stealth pressure on murky-
         // water encounters where line of sight breaks down.
-        senses: HashSet::from([SpecialSense::Blindsight(60)]),
+        senses: HashSet::from([SpecialSense::Blindsight(120)]),
         cr: 3.0,
         size: Size::Huge,
         creature_type: CreatureType::Beast,
@@ -116,15 +116,16 @@ mod tests {
 
     #[test]
     fn killer_whale_has_echolocation_blindsight() {
-        // Pin the load-bearing sensory trait: Blindsight 60
-        // anchors the orca's "echolocating apex predator" identity
-        // and breaks invisible-prey concealment at the same range
-        // as the Hook Horror / Otyugh / Mammoth cohort. A future
-        // template refactor that stripped Blindsight would demote
-        // the orca to "a big shark with no senses" — losing the
+        // Pin the load-bearing sensory trait: SRD 5.2's *"Senses
+        // Blindsight 120 ft."* anchors the orca's "echolocating apex
+        // predator" identity and breaks invisible-prey concealment out
+        // to twice the Hook Horror / Otyugh / Mammoth cohort's range.
+        // A future template refactor that stripped Blindsight would
+        // demote the orca to "a big shark with no senses" — losing the
         // anti-stealth pressure that makes it interesting on
-        // murky-water encounters.
+        // murky-water encounters. The range was 60 here until the
+        // Senses sweep read the page.
         let a = make();
-        assert!(a.senses().contains(&SpecialSense::Blindsight(60)));
+        assert!(a.senses().contains(&SpecialSense::Blindsight(120)));
     }
 }

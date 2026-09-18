@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GOAT_RAM;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Goat — CR 0 medium beast. The barnyard ungulate floor of the
 /// caprid family: a single 1d4+STR headbutt on a 4-HP frame. Slots
@@ -66,6 +67,7 @@ pub static GOAT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // extra 1d4 bludgeoning and a Strength save vs prone. Read at the melee attack
         // chokepoint off `ActorInstance::charge`.
         charge: Some(crate::actions::monster_attacks::GOAT_CHARGE),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

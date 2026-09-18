@@ -1,8 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_LIZARD_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::sync::LazyLock;
+use std::collections::HashSet;
 
 /// Giant Lizard — CR ¼ large beast. The "underground reptile" pack
 /// fodder of the Underdark / swamp biomes: vanilla 1d8+STR bite, AC
@@ -65,6 +66,7 @@ pub static GIANT_LIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         mountable: true,
         creature_type: CreatureType::Beast,
         actions,
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });

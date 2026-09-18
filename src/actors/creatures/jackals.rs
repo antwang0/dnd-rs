@@ -1,7 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::JACKAL_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, Skill};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -40,6 +40,7 @@ pub static JACKAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         creature_type: CreatureType::Beast,
         actions,
         has_pack_tactics: true,
+        senses: HashSet::from([SpecialSense::Darkvision(90)]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -29,10 +29,7 @@ pub static CHUUL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 11,
         constitution: 16,
         charisma: 5,
-        senses: HashSet::from([
-            SpecialSense::Darkvision(60),
-            SpecialSense::Tremorsense(60),
-        ]),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         cr: 4.0,
         size: Size::Large,
         creature_type: CreatureType::Aberration,

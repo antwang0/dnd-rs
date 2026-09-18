@@ -79,10 +79,7 @@ pub static DEVA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         wisdom: 20,
         constitution: 18,
         charisma: 20,
-        senses: HashSet::from([
-            SpecialSense::Darkvision(120),
-            SpecialSense::Truesight(120),
-        ]),
+        senses: HashSet::from([SpecialSense::Darkvision(120)]),
         languages: HashSet::from([Language::Celestial, Language::Common]),
         cr: 10.0,
         size: Size::Medium,
@@ -199,26 +196,28 @@ mod tests {
     }
 
     #[test]
-    fn deva_template_pins_truesight() {
-        // Pin the load-bearing defensive clause: the deva's Truesight
-        // is what flavors it as a credible counter to invisible /
-        // illusion-wrapped enemies. A future refactor of the sense
-        // set shouldn't strip this template field. Routes through the
-        // instance-level `senses()` accessor so a template-internal
-        // sense refactor that moves the field but preserves the
-        // semantic behavior still passes the pin.
+    fn deva_sees_in_the_dark_and_no_further() {
+        // SRD 5.2: *"Senses Darkvision 120 ft.; Passive Perception
+        // 19."* One sense, and the deva's whole sensory row.
+        //
+        // This test used to pin a Truesight 120 beside it, on the
+        // reasoning that seeing through illusion is what an angel is
+        // for. The book does not agree — Truesight is the Solar's line,
+        // not the Deva's — and the sense was doing real work: it made
+        // the Invisibility spell useless against a creature RAW leaves
+        // it perfectly good against. Routes through the instance-level
+        // `senses()` accessor so a template-internal refactor that
+        // moves the field but keeps the behaviour still passes.
         let a = make();
         assert!(
-            a.senses().iter().any(|s| matches!(s, SpecialSense::Truesight(120))),
-            "deva must carry Truesight 120 — the celestial perception lane",
+            a.senses()
+                .iter()
+                .any(|s| matches!(s, SpecialSense::Darkvision(120))),
+            "deva must carry Darkvision 120 — its one printed sense",
         );
-        // And the load-bearing behavioral clause: `has_truesight`
-        // returns true so the compute_attack_mode illusion-suppression
-        // gate actually fires for a deva. Without this the template
-        // sense would be a flavor field with no in-engine effect.
         assert!(
-            a.has_truesight(),
-            "deva must report has_truesight() — the gate the engine reads"
+            !a.has_truesight(),
+            "deva must not report has_truesight() — that is the Solar's row"
         );
     }
 }

@@ -41,7 +41,7 @@ pub static MEDUSA_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         intelligence: 12,
         wisdom: 13,
         charisma: 15,
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::from([SpecialSense::Darkvision(150)]),
         languages: HashSet::from([Language::Common]),
         cr: 6.0,
         size: Size::Medium,

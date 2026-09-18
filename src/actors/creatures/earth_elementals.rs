@@ -40,7 +40,7 @@ pub static EARTH_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         wisdom: 10,
         constitution: 20,
         charisma: 5,
-        senses: HashSet::from([SpecialSense::Darkvision(60)]),
+        senses: HashSet::from([SpecialSense::Darkvision(60), SpecialSense::Tremorsense(60)]),
         languages: HashSet::from([Language::Primordial]),
         cr: 5.0,
         size: Size::Large,

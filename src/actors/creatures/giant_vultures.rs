@@ -1,9 +1,7 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_VULTURE_MULTI;
 use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
-use crate::engine::types::{
-    CreatureType, DamageModifier, DamageType, Size,
-};
+use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -93,6 +91,7 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
             DamageType::Necrotic,
             DamageModifier::Resistance,
         )]),
+        senses: HashSet::from([SpecialSense::Darkvision(60)]),
         ..CreatureTemplate::defaults()
     }
 });
