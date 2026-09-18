@@ -119481,8 +119481,8 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
     );
 }
 
-/// Every spell whose docstring names its school in prose declares that
-/// same school in code.
+/// Every spell whose docstring opens *"level-N <school>"* charges an
+/// N-level slot and declares that school in code.
 ///
 /// The third of the quote-against-the-code sweeps, and the one with the
 /// widest reach: **two hundred and sixty-one** of the spells in
@@ -119507,11 +119507,17 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
 /// Cure Wounds filed under Evocation fed the blaster's discounts and
 /// starved the warder's ward, every cast, for as long as both existed.
 ///
+/// The **level** half of the same sentence rides along, and it found
+/// the one thing in the file that only a two-field check could: a whole
+/// paragraph about *Aid* — a stub that was never written — glued to the
+/// top of Aura of Vitality's docstring, where it had been describing
+/// the wrong spell to every reader since both were added.
+///
 /// Matched on the **struct's own doc comment** rather than on any
 /// comment in the file, so a spell that mentions a neighbour's school
 /// in passing is not read as claiming it.
 #[test]
-fn every_spell_that_names_its_school_in_prose_declares_that_school() {
+fn every_spell_that_names_its_level_and_school_in_prose_declares_them_in_code() {
     const SCHOOLS: [&str; 8] = [
         "abjuration",
         "conjuration",
@@ -119554,6 +119560,65 @@ fn every_spell_that_names_its_school_in_prose_declares_that_school() {
         }
     }
 
+    // …and the slot each one charges, off its own `cost` body. `None`
+    // for the handful that price themselves at runtime (Counterspell,
+    // Shield, Continual Flame), which simply drop out of the level half
+    // of the comparison.
+    let slot_of = |chunk: &str| -> Option<u32> {
+        let at = chunk.find("\n    fn cost(")?;
+        let rest = &chunk[at + 1..];
+        let end = rest.find("\n    }")?;
+        let body = &rest[..end];
+        let literal_after = |opener: &str| -> Option<u32> {
+            let i = body.find(opener)?;
+            let digits: String = body[i + opener.len()..]
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            digits.parse().ok()
+        };
+        let spends_a_slot = ["action_and_slot(", "bonus_action_and_slot(", "reaction_and_slot("]
+            .iter()
+            .any(|opener| body.contains(opener));
+        if spends_a_slot {
+            // The literal, where the price is one — and otherwise the
+            // base level the upcast override is resolved against, which
+            // is the shape every scaling spell in the file writes:
+            // `action_and_slot(cast_level(overrides, 3))`.
+            //
+            // Both, rather than only the first, because a spell whose
+            // price is conditional writes *both* forms into one body —
+            // Spiritual Weapon is a bonus action and a level-2 slot on
+            // the cast and a bare bonus action on every swing after —
+            // and a reader that gave up on the non-literal would fall
+            // through to the cantrip branch below and price the most
+            // expensive cleric spell in the game at nothing.
+            return ["action_and_slot(", "bonus_action_and_slot(", "reaction_and_slot("]
+                .iter()
+                .find_map(|opener| literal_after(opener))
+                .or_else(|| literal_after("cast_level(overrides,"));
+        }
+        // A cantrip: an action (or bonus action, or reaction) and no
+        // slot at all.
+        for opener in ["action_only()", "bonus_action_only()", "reaction_only()"] {
+            if body.contains(opener) {
+                return Some(0);
+            }
+        }
+        None
+    };
+    let mut slots: std::collections::BTreeMap<&str, u32> = std::collections::BTreeMap::new();
+    for chunk in source.split("\nimpl Action for ").skip(1) {
+        let ty = chunk
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("");
+        if let Some(slot) = slot_of(chunk) {
+            slots.insert(ty, slot);
+        }
+    }
+
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0usize;
     for (ty, code) in &declared {
@@ -119581,20 +119646,27 @@ fn every_spell_that_names_its_school_in_prose_declares_that_school() {
         let lower = doc.to_ascii_lowercase();
         // *"level-2 abjuration"* / *"level 2 abjuration"* / *"cantrip
         // evocation"* — the shape the file's own prose uses.
-        let Some(quoted) = SCHOOLS
+        let Some((quoted, level)) = SCHOOLS
             .iter()
             .filter_map(|school| lower.find(school).map(|i| (*school, i)))
-            .filter(|(_, i)| {
-                let before = lower[..*i].trim_end();
-                before.ends_with("cantrip")
-                    || (before.len() >= 2
-                        && before
-                            .rsplit([' ', '-'])
-                            .next()
-                            .is_some_and(|w| w.chars().all(|c| c.is_ascii_digit())))
+            .filter_map(|(school, i)| {
+                let before = lower[..i].trim_end();
+                if before.ends_with("cantrip") {
+                    return Some((i, school, Some(0u32)));
+                }
+                let word = before.rsplit([' ', '-']).next()?;
+                word.parse::<u32>().ok().map(|n| (i, school, Some(n)))
             })
-            .min_by_key(|(_, i)| *i)
-            .map(|(school, _)| school)
+            // The **earliest** such phrase in the doc comment, which is
+            // the spell's own: every entry in this file opens with its
+            // name, level and school, and a later one is a reference to
+            // a neighbour. Stone Shape's docstring argues against giving
+            // itself a second mode by naming Wall of Stone as "a
+            // level-5 evocation", and a reader that took the last match
+            // would report Stone Shape as an evocation on the strength
+            // of a sentence about a different spell.
+            .min_by_key(|(i, _, _)| *i)
+            .map(|(_, school, level)| (school, level))
         else {
             continue;
         };
@@ -119602,18 +119674,33 @@ fn every_spell_that_names_its_school_in_prose_declares_that_school() {
         if !quoted.eq_ignore_ascii_case(code) {
             wrong.push(format!("{ty} says {quoted} in prose and {code} in code"));
         }
+        if let (Some(said), Some(charged)) = (level, slots.get(ty).copied())
+            && said != charged
+        {
+            wrong.push(format!(
+                "{ty} says level-{said} in prose and charges a level-{charged} slot"
+            ));
+        }
     }
     assert!(
         checked >= 200,
-        "only {checked} spells name a school in prose — the walk has stopped \
-         finding them"
+        "only {checked} spells name a level and a school in prose — the walk \
+         has stopped finding them"
+    );
+    // …and the level half is read for most of them too, rather than
+    // silently dropping out because nothing prices itself literally.
+    let priced = declared.keys().filter(|ty| slots.contains_key(*ty)).count();
+    assert!(
+        priced >= 200,
+        "only {priced} spells price themselves in a shape the sweep can read \
+         — the level half has stopped biting"
     );
     assert!(
         wrong.is_empty(),
-        "these spells are filed under one school and described as another; the \
-         school is what an Abjurer's ward and an Evoker's sculpting both read, \
-         so a spell in the wrong one pays the wrong subclass on every \
-         cast:\n{}",
+        "these spells are priced or filed as one thing and described as \
+         another; the school is what an Abjurer's ward and an Evoker's \
+         sculpting both read, so a spell in the wrong one pays the wrong \
+         subclass on every cast:\n{}",
         wrong.join("\n")
     );
 }

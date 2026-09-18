@@ -13197,10 +13197,6 @@ impl Action for HealingSpirit {
 
 pub static HEALING_SPIRIT: LazyLock<HealingSpirit> = LazyLock::new(|| HealingSpirit {});
 
-/// Aid — level-2 evocation, action. Boosts up to three creatures' max
-/// HP by 5 (level-2 baseline) for 8 hours. We already have the simpler
-/// single-target Aid; this aliased version is a no-op stub kept off the
-/// spell list for now. (Engine note: see the existing AID for the impl.)
 /// Aura of Vitality — level-3 evocation, concentration, bonus action.
 /// Anchors a 30-ft radius aura that lets the caster spend a bonus action
 /// each round to heal one ally inside the aura for 2d6 HP. We model the
