@@ -53,7 +53,6 @@ pub static ABOLETH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // The ancient horror is immune to Charmed (its mind is too alien)
         // and Frightened (it has watched stars die).
         condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
-        regen_per_round: 10,
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),

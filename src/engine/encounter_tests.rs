@@ -29699,9 +29699,17 @@ fn cleansing_touch_validate_rejects_clean_target() {
     );
 }
 
-/// Vampire has the regen profile (20 HP per round, suppressed by
-/// radiant damage), the lifesteal multiattack, and the standard
-/// undead immunity set.
+/// Vampire has the lifesteal multiattack, the charming gaze, and — as
+/// of SRD 5.2 — no regeneration.
+///
+/// The template healed 20 a round with a radiant suppressor, standing
+/// in for the 2014 vampire's **Regeneration**. 5.2 replaces that trait
+/// with **Misty Escape**, which is a different rule doing a different
+/// job: the vampire does not heal through a fight at all, it survives
+/// dropping to 0 by becoming mist and has to reach its resting place
+/// within two hours. The heal is gone; the escape has no combat
+/// surface here, and inventing one out of the other is what the old
+/// number was.
 #[test]
 fn vampire_template_has_regen_and_charm_gaze() {
     use crate::actions::monster_attacks::{VAMPIRE_CHARMING_GAZE, VAMPIRE_MULTIATTACK};
@@ -29711,7 +29719,11 @@ fn vampire_template_has_regen_and_charm_gaze() {
         .instantiate_creature(&VAMPIRE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let actor = &e.actors[&v];
-    assert_eq!(actor.regen_per_round(), 20);
+    assert_eq!(
+        actor.regen_per_round(),
+        0,
+        "SRD 5.2 replaces the vampire's Regeneration with Misty Escape"
+    );
     // Action list contains both the gaze and the multiattack.
     let names: std::collections::HashSet<_> = actor
         .actions
@@ -32200,8 +32212,18 @@ fn druid_template_instantiates() {
     );
 }
 
-/// Tarrasque template: gargantuan, fire+poison immune, regen 40, and
-/// the multiattack lane is present.
+/// Tarrasque template: gargantuan, fire+poison immune, and no
+/// regeneration at all.
+///
+/// The last clause is the one worth a test. The template healed 40 hit
+/// points a round under a comment saying *"the tarrasque regenerates
+/// unconditionally"* — which was the 2014 stat block's **Regeneration
+/// 40**, and SRD 5.2 does not print it. Its Traits block is four lines
+/// long and none of them is a heal: Legendary Resistance, Magic
+/// Resistance, Reflective Carapace, Siege Monster. Forty a round with
+/// no suppressor and no cap is not a hard fight, it is an unkillable
+/// one for any party whose damage lands under that, and nothing on the
+/// page asks for it.
 #[test]
 fn tarrasque_template_immunities_and_regen() {
     use crate::actors::creatures::tarrasques::TARRASQUE_TEMPLATE;
@@ -32213,7 +32235,11 @@ fn tarrasque_template_immunities_and_regen() {
     assert!(actor.is_immune_to(DamageType::Fire));
     assert!(actor.is_immune_to(DamageType::Poison));
     assert!(actor.resists_nonmagical(DamageType::Bludgeoning));
-    assert_eq!(actor.regen_per_round(), 40);
+    assert_eq!(
+        actor.regen_per_round(),
+        0,
+        "SRD 5.2 gives the tarrasque no Regeneration trait"
+    );
     // Tarrasque is condition-immune to mind-affecting effects.
     assert!(actor.is_immune_to_condition(Condition::Charmed));
     assert!(actor.is_immune_to_condition(Condition::Frightened));
@@ -125043,6 +125069,122 @@ fn every_stat_blocks_attack_routine_matches_the_book() {
         "only {checked} of the book's {} printed routines were matched to a \
          template — a rename has dropped rows out of the sweep",
         SRD_ROUTINES.len()
+    );
+}
+
+/// Every **Regeneration** trait in the bestiary, against the four the
+/// book prints.
+///
+/// The tenth book-conformance sweep, and the smallest table in the
+/// file: SRD 5.2 gives exactly four stat blocks a heal at the top of
+/// their turn — the oni and the shield guardian at 10, the troll at 15,
+/// the troll limb at 5 — and this sweep is as much about the other
+/// three hundred and twenty-one as about those.
+///
+/// A wrong regeneration is the hardest kind of stat-block error to see
+/// from inside a fight, because it does not change any number the
+/// player is shown. It changes how long the fight is, and the two
+/// directions fail differently:
+///
+///   - **Too little** and the trait stops being a puzzle. The troll
+///     healed 3 a round where the book heals 15 — a fifth of the trait,
+///     on the creature it is named after. Three points against a party
+///     doing thirty is a rounding error; fifteen is the reason somebody
+///     has to go and find a torch, which is the whole of what a troll
+///     is for.
+///   - **Too much** and the fight stops being winnable. The tarrasque
+///     healed 40 a round with no suppressor, under a comment saying
+///     *"the tarrasque regenerates unconditionally"* — the 2014 stat
+///     block's **Regeneration 40**, which 5.2 does not print at all.
+///     Its Traits block is four lines and none of them is a heal. The
+///     vampire healed 20, which is the same story: 5.2 replaces the
+///     2014 Regeneration with **Misty Escape**, a rule about surviving
+///     0 hit points rather than about never reaching them. And the
+///     aboleth healed 10 for no printed reason in either edition.
+///
+/// The three that had one and should not are the reason the table is
+/// checked in **both** directions: a sweep that only walked its own
+/// rows would have said nothing about any of them, and they are the
+/// three that mattered most.
+///
+/// The hydra is deliberately not a row. Its *"regains 20 Hit Points
+/// when it grows new heads"* is part of **Multiple Heads** rather than
+/// a Regeneration trait, is conditional on a head having died, and is
+/// modelled by `CreatureTemplate::heads`; it used to be
+/// `regen_per_round: 10` and the field's own docstring explains at
+/// length why it is not any more.
+///
+/// Shares `renamed_to_engine` and `bestiary_by_name` with its nine
+/// siblings.
+#[test]
+fn every_regeneration_trait_is_one_the_book_prints() {
+    /// `(name, hit points per turn, suppressed by)` — SRD 5.2's
+    /// Regeneration traits, all four of them.
+    const SRD_REGENERATION: &[(&str, u32, &[DamageType])] = &[
+        // *"The oni regains 10 Hit Points at the start of each of its
+        // turns if it has at least 1 Hit Point."* No damage type stops
+        // it; the only gate is being alive, which the engine's
+        // combat-active check already is.
+        ("Oni", 10, &[]),
+        // *"The guardian regains 10 Hit Points at the start of each of
+        // its turns if it has at least 1 Hit Point."*
+        ("Shield Guardian", 10, &[]),
+        // *"The troll regains 15 Hit Points at the start of each of its
+        // turns. If the troll takes Acid or Fire damage, this trait
+        // doesn't function on the troll's next turn."*
+        ("Troll", 15, &[DamageType::Acid, DamageType::Fire]),
+        // The same trait at a third the size, on the arm that fell off.
+        ("Troll Limb", 5, &[DamageType::Acid, DamageType::Fire]),
+    ];
+
+    let found = bestiary_by_name();
+    let mut wrong: Vec<String> = Vec::new();
+
+    for (name, per_turn, suppressors) in SRD_REGENERATION {
+        let Some(t) = found.get(renamed_to_engine(name)) else {
+            wrong.push(format!("{name}: the book gives it Regeneration and the bestiary has no such template"));
+            continue;
+        };
+        if t.regen_per_round != *per_turn {
+            wrong.push(format!(
+                "{name}: the book regains {per_turn} a turn and it regains {}",
+                t.regen_per_round
+            ));
+        }
+        let mut got: Vec<String> = t.regen_suppressors.iter().map(|d| d.to_string()).collect();
+        got.sort();
+        let mut want: Vec<String> = suppressors.iter().map(|d| d.to_string()).collect();
+        want.sort();
+        if got != want {
+            wrong.push(format!(
+                "{name}: the book's trait is stopped by [{}] and this one by [{}]",
+                want.join(", "),
+                got.join(", ")
+            ));
+        }
+    }
+
+    // The other direction, and the half that found the tarrasque.
+    for (name, t) in &found {
+        if t.regen_per_round == 0 {
+            continue;
+        }
+        if SRD_REGENERATION
+            .iter()
+            .any(|(n, _, _)| renamed_to_engine(n) == *name)
+        {
+            continue;
+        }
+        wrong.push(format!(
+            "{name}: regains {} a turn and SRD 5.2 prints it no Regeneration trait",
+            t.regen_per_round
+        ));
+    }
+
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks disagree with SRD 5.2 about healing:\n  {}",
+        wrong.join("\n  ")
     );
 }
 

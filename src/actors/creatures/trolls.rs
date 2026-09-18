@@ -42,7 +42,13 @@ pub static TROLL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Giant,
         actions,
-        regen_per_round: 3,
+        // SRD 5.2: *"The troll regains 15 Hit Points at the start of
+        // each of its turns."* Fifteen, not the three it was healing —
+        // a fifth of the trait, on the creature the trait is named
+        // after. Three hit points a round is a rounding error against
+        // a party doing thirty; fifteen is the reason somebody has to
+        // find a torch, which is the whole of what a troll is for.
+        regen_per_round: 15,
         regen_suppressors: HashSet::from([DamageType::Acid, DamageType::Fire]),
         skills: HashSet::from([Skill::Perception]),
         ..CreatureTemplate::defaults()
@@ -140,11 +146,24 @@ mod tests {
     /// cannot kill — and the moment the suppressor list drifts apart
     /// from the troll's, the torch that ends one stops ending the
     /// other, for no reason anybody wrote down.
+    ///
+    /// The first assertion used to read the other way round — *the arm
+    /// heals faster than the troll* — and it was true only because the
+    /// troll's own regeneration was mistyped as 3 where SRD 5.2 prints
+    /// 15. The arm heals faster *relative to its own hit points*, which
+    /// is the sentence the paragraph above is actually about, and that
+    /// is what is pinned now: five on fourteen is a third of the limb a
+    /// turn, fifteen on ninety-four is a sixth of the troll.
     #[test]
     fn the_arm_heals_faster_than_the_troll_and_burns_the_same() {
         let limb = make(&TROLL_LIMB_TEMPLATE);
         let troll = make(&TROLL_TEMPLATE);
-        assert!(limb.regen_per_round() > troll.regen_per_round());
+        assert!(troll.regen_per_round() > limb.regen_per_round());
+        let share = |a: &ActorInstance| a.regen_per_round() as f32 / a.max_hitpoints() as f32;
+        assert!(
+            share(&limb) > share(&troll),
+            "the arm gets a bigger fraction of itself back each turn"
+        );
         for dt in [DamageType::Acid, DamageType::Fire] {
             assert!(limb.regen_suppressed_by(dt), "{:?} should stop it", dt);
             assert!(troll.regen_suppressed_by(dt), "{:?} should stop it", dt);

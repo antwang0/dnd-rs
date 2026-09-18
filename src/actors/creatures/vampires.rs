@@ -74,11 +74,6 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             AbilityScoreType::Charisma,
         ]),
         condition_immunities: HashSet::from([Condition::Poisoned]),
-        // Regenerate 20 HP at end of round while combat-active. Radiant
-        // damage suppresses for the round (proxy for 5e's "sunlight /
-        // holy water" downside — radiant is the carrier for both).
-        regen_per_round: 20,
-        regen_suppressors: HashSet::from([DamageType::Radiant]),
         has_magic_resistance: true,
         legendary_actions_per_round: 3,
         legendary_actions: crate::engine::legendary_actions::VAMPIRE_LEGENDARY,

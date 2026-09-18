@@ -96,9 +96,6 @@ pub static TARRASQUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Paralyzed,
             Condition::Poisoned,
         ]),
-        // Regenerates 40 HP at the end of each of its turns. No
-        // suppressor — the tarrasque regenerates unconditionally.
-        regen_per_round: 40,
         // 5e Legendary Resistance (3/Day): three failed saves per long
         // rest are auto-promoted to passes. The Tarrasque needs these
         // to shrug off Power Word Kill / Banishment / Hold Monster from
