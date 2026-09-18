@@ -5047,10 +5047,29 @@ impl EncounterInstance {
 
         // Target-side modifiers.
         if let Some(target) = self.actors.get(&target_id) {
-            // Prone target: melee attackers get advantage, ranged get
-            // disadvantage. Single source of truth for the prone clause.
+            // SRD 5.2 **Prone**: *"An attack roll against you has
+            // Advantage if the attacker is **within 5 feet** of you.
+            // Otherwise, that attack roll has Disadvantage."*
+            //
+            // Measured in feet, which is what the book says and what
+            // this line used to read as `is_melee`. The two agree for
+            // every ordinary weapon and part company on the ones this
+            // engine has most of: a **reach** weapon is a melee attack
+            // made from ten feet, so a pike-wielder stabbing down at
+            // somebody a tile further off was collecting an advantage
+            // RAW gives to whoever is standing over them. The mirror
+            // case is rarer and just as wrong — an archer with a
+            // prone enemy at their feet has RAW's advantage and was
+            // being charged disadvantage for it.
+            //
+            // `footprint_distance` is a gap, so `MELEE_REACH`'s 1 is
+            // "one tile between us" — the same spelling of five feet
+            // the Life Bond and the interposer cohort use.
             if target.has_condition(Condition::Prone) {
-                tally.add(if is_melee {
+                let within_five_feet = self
+                    .footprint_distance(attacker_id, target_id)
+                    .is_some_and(|gap| gap <= crate::actions::action_template::MELEE_REACH);
+                tally.add(if within_five_feet {
                     RollMode::Advantage
                 } else {
                     RollMode::Disadvantage
@@ -6367,12 +6386,7 @@ impl EncounterInstance {
     /// accurate while every row on the list carried the five-foot
     /// clause; a caller reading `target_grants_melee_auto_crit(.., false)`
     /// and concluding the answer must be `false` would now be wrong.
-    pub fn target_grants_auto_crit(
-        &self,
-        attacker_id: usize,
-        target_id: usize,
-        is_melee: bool,
-    ) -> bool {
+    pub fn target_grants_auto_crit(&self, attacker_id: usize, target_id: usize) -> bool {
         if attacker_id == target_id {
             return false;
         }
@@ -6381,12 +6395,10 @@ impl EncounterInstance {
         };
         // 5e Rogue Assassin **Assassinate**, second half: "any hit you
         // score against a surprised creature is a critical hit." Read
-        // before the melee gate below, and not folded into it, because
-        // RAW's clause says *any* hit — the assassin's crossbow bolt
-        // counts and so does their Booming Blade. The rest of the
-        // cohort is melee-only because the conditions on it are: RAW
-        // grants the auto-crit on a Paralyzed or Unconscious target
-        // only "if the attacker is within 5 feet".
+        // before the distance gate below, and not folded into it,
+        // because RAW's clause says *any* hit at *any* range — the
+        // assassin's crossbow bolt counts and so does their Booming
+        // Blade.
         //
         // The first half of Assassinate — advantage against anything
         // that hasn't taken a turn yet — lives in `attack_mode_tally`,
@@ -6400,16 +6412,36 @@ impl EncounterInstance {
         {
             return true;
         }
-        if !is_melee {
+        // SRD 5.2, Paralyzed and Unconscious alike: *"Any attack roll
+        // that hits you is a Critical Hit **if the attacker is within 5
+        // feet of you**."*
+        //
+        // Feet, and the clause names no weapon — which is not the
+        // question this used to ask. It took `is_melee`, under a
+        // comment quoting the distance correctly, and the two answers
+        // part company in both directions on the weapons this engine
+        // has most of: a glaive is a melee attack made from *ten* feet
+        // and was collecting an auto-crit RAW does not give it, and a
+        // dagger thrown point-blank at a sleeping creature is a ranged
+        // attack from *within* five and was not getting the one RAW
+        // does.
+        //
+        // The same spelling of five feet the Prone clause in
+        // `attack_mode_tally` uses, and for the same reason: they are
+        // the same sentence in two conditions.
+        if self
+            .footprint_distance(attacker_id, target_id)
+            .is_none_or(|gap| gap > crate::actions::action_template::MELEE_REACH)
+        {
             return false;
         }
         // Stunned isn't on the RAW auto-crit list — only Paralyzed and
-        // Unconscious carry the "any hit is a crit in melee" clause.
-        // Petrified inherits Incapacitated but not the auto-crit rider
-        // (RAW: "the creature is incapacitated... unaware of its
-        // surroundings"). Asleep is modeled as Unconscious here for the
-        // action-economy lockout but RAW does grant the same auto-crit
-        // since natural unconsciousness applies.
+        // Unconscious carry the clause. Petrified inherits Incapacitated
+        // but not the auto-crit rider (RAW's Petrified prints six
+        // clauses and this is not one of them). Asleep is modeled as
+        // Unconscious here for the action-economy lockout, and RAW does
+        // grant the same auto-crit since natural unconsciousness
+        // applies.
         target.has_condition(Condition::Paralyzed)
             || target.has_condition(Condition::Unconscious)
             || target.has_condition(Condition::Asleep)
@@ -9976,15 +10008,46 @@ impl EncounterInstance {
         amount: u32,
         damage_type: DamageType,
     ) -> ObjectDamageOutcome {
+        let Some((_, profile)) = self.breakable_at(coord) else {
+            return ObjectDamageOutcome::NothingThere;
+        };
+        let outcome = self.resolve_object_damage(coord, amount, damage_type);
+        match outcome {
+            ObjectDamageOutcome::NothingThere => {}
+            ObjectDamageOutcome::Shrugged => self.log(format!(
+                "  the {} is unharmed by {:?}.",
+                profile.label, damage_type
+            )),
+            ObjectDamageOutcome::Damaged { remaining } => self.log(format!(
+                "  the {} takes the blow at {} ({} HP left).",
+                profile.label, coord, remaining
+            )),
+            ObjectDamageOutcome::Breached => {
+                self.log(format!("  the {} is breached at {}.", profile.label, coord))
+            }
+        }
+        outcome
+    }
+
+    /// [`Self::damage_object_at`] without the log line.
+    ///
+    /// The split is for the *area* caller. One blow on one tile is one
+    /// sentence and reads well; a Fireball over nine tiles of wall is
+    /// nine of them, saying the same thing nine times with a different
+    /// coordinate on each — which is how a log stops being read. So the
+    /// swing lane keeps its line and
+    /// [`Self::damage_objects_in_area`] prints one summary instead.
+    fn resolve_object_damage(
+        &mut self,
+        coord: Coordinate,
+        amount: u32,
+        damage_type: DamageType,
+    ) -> ObjectDamageOutcome {
         let Some((patch_id, profile)) = self.breakable_at(coord) else {
             return ObjectDamageOutcome::NothingThere;
         };
         let scaled = profile.effective_damage(amount, damage_type);
         if scaled == 0 {
-            self.log(format!(
-                "  the {} is unharmed by {:?}.",
-                profile.label, damage_type
-            ));
             return ObjectDamageOutcome::Shrugged;
         }
         let Some(patch) = self.conjured_terrain.iter_mut().find(|p| p.id == patch_id) else {
@@ -9996,17 +10059,12 @@ impl EncounterInstance {
         let left = patch.hp[slot].saturating_sub(scaled);
         patch.hp[slot] = left;
         if left > 0 {
-            let label = profile.label;
-            self.log(format!(
-                "  the {} takes {} {:?} at {} ({} HP left).",
-                label, scaled, damage_type, coord, left
-            ));
             return ObjectDamageOutcome::Damaged { remaining: left };
         }
         // The tile falls. Removed from both lists in one pass, so the
         // ledger and the pool stay the same length and the same tiles —
         // see `ConjuredTerrain::hp`.
-        let (was, name) = (patch.restore[slot].1, patch.name);
+        let was = patch.restore[slot].1;
         let written = patch.terrain_type;
         patch.restore.remove(slot);
         patch.hp.remove(slot);
@@ -10017,7 +10075,6 @@ impl EncounterInstance {
         if self.terrain_at(coord).map(|t| t.terrain_type) == Some(written) {
             self.set_terrain_at(coord, was);
         }
-        self.log(format!("  the {} is breached at {}.", name, coord));
         ObjectDamageOutcome::Breached
     }
 
@@ -10060,8 +10117,42 @@ impl EncounterInstance {
             .into_iter()
             .filter(|c| self.breakable_at(*c).is_some())
             .collect();
+        // What the area is standing on, named once for the summary
+        // below. Every tile a burst reaches belongs to the same wall in
+        // every case the engine can produce; a board with two breakable
+        // patches inside one blast would be summarised under the first,
+        // which is a log line rather than a rule.
+        let label = tiles
+            .first()
+            .and_then(|c| self.breakable_at(*c))
+            .map(|(_, p)| p.label);
+        let (mut hit, mut breached) = (0usize, 0usize);
         for coord in tiles {
-            self.damage_object_at(coord, amount, damage_type);
+            match self.resolve_object_damage(coord, amount, damage_type) {
+                ObjectDamageOutcome::Breached => {
+                    hit += 1;
+                    breached += 1;
+                }
+                ObjectDamageOutcome::Damaged { .. } => hit += 1,
+                ObjectDamageOutcome::Shrugged | ObjectDamageOutcome::NothingThere => {}
+            }
+        }
+        // One line for the whole blast — see `resolve_object_damage`.
+        let Some(label) = label else { return };
+        if breached > 0 {
+            self.log(format!(
+                "  the {} is breached in {} place{}.",
+                label,
+                breached,
+                if breached == 1 { "" } else { "s" }
+            ));
+        } else if hit > 0 {
+            self.log(format!("  the {} is scorched but holds.", label));
+        } else {
+            self.log(format!(
+                "  the {} is unharmed by {:?}.",
+                label, damage_type
+            ));
         }
     }
 

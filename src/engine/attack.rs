@@ -187,6 +187,16 @@ pub struct AttackParams<'a> {
     /// here — a declaration is a declaration, and an archer who typed
     /// the word should see the arrow behave like an arrow rather than
     /// have the word silently dropped upstream.
+    ///
+    /// **A melee *spell* attack cannot be pulled**, which is narrower
+    /// than RAW: a Shocking Grasp is a melee attack and the book's
+    /// clause names melee attacks. The spell-attack resolver is
+    /// `spells::spell_attack_outcome`, which is reached from each
+    /// spell's own `side_effects` and would need every one of them to
+    /// thread the override through to get here. Two dozen spells
+    /// touching a clause that matters to two of them is a worse trade
+    /// than the omission, and the omission is in the safe direction:
+    /// a warlock who wants a prisoner draws a blade.
     pub nonlethal: bool,
 }
 
@@ -3684,7 +3694,7 @@ pub fn resolve_attack_outcome_with_rider(
     // is a critical hit" wording).
     let is_crit = nat_crit
         || (hit
-            && encounter.target_grants_auto_crit(p.caster_id, p.target_id, p.is_melee));
+            && encounter.target_grants_auto_crit(p.caster_id, p.target_id));
     // 5e Adamantine Armor: "any Critical Hit against you becomes a
     // normal hit". Read here rather than at the nat-20 test so it
     // catches every way a swing can crit, the auto-crit promotion

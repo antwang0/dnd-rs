@@ -1209,8 +1209,19 @@ fn ai_cant_cast_when_slot_exhausted() {
     let _ = zombie;
 }
 
+/// SRD 5.2 **Prone**: *"An attack roll against you has Advantage if the
+/// attacker is **within 5 feet** of you. Otherwise, that attack roll has
+/// Disadvantage."*
+///
+/// Measured in feet, which is not the same question as "is this a melee
+/// attack" — and the engine used to ask the second one. The two agree
+/// for an ordinary sword and part company on a reach weapon, which is
+/// what the second half of this test is about: a pike-wielder stabbing
+/// down at somebody ten feet away is making a melee attack from
+/// *outside* five feet, and RAW gives them the disadvantage rather than
+/// the advantage.
 #[test]
-fn attack_mode_prone_target_melee_advantage() {
+fn a_prone_target_is_easy_to_hit_from_next_to_it_and_hard_from_anywhere_else() {
     use crate::conditions::{Condition, ConditionTimer};
     use crate::engine::dice::RollMode;
 
@@ -1225,12 +1236,29 @@ fn attack_mode_prone_target_melee_advantage() {
         .get_mut(&target)
         .unwrap()
         .add_condition(Condition::Prone, ConditionTimer::Permanent);
-    // Melee attack vs prone target → advantage.
+
+    // Standing over them: advantage, whichever hand the blow comes from.
     assert_eq!(
         e.compute_attack_mode(attacker, target, true),
         RollMode::Advantage
     );
-    // Ranged attack vs prone target → disadvantage.
+    // A bow at point-blank range gets the same advantage and pays the
+    // ranged-in-close-combat tax for it, and the two cancel — which is
+    // RAW arriving out of two rules rather than out of a special case.
+    assert_eq!(
+        e.compute_attack_mode(attacker, target, false),
+        RollMode::Normal
+    );
+
+    // Now step back out of reach. The clause is about distance, so both
+    // lanes turn over together: a glaive at ten feet is as badly placed
+    // as a bow at fifty.
+    e.place_actor_at(attacker, Coordinate::new(2, 9)).unwrap();
+    assert_eq!(
+        e.compute_attack_mode(attacker, target, true),
+        RollMode::Disadvantage,
+        "a reach weapon is a melee attack made from outside five feet"
+    );
     assert_eq!(
         e.compute_attack_mode(attacker, target, false),
         RollMode::Disadvantage
@@ -8114,12 +8142,16 @@ fn drow_fey_ancestry_blocks_charm_and_sleep() {
     assert!(e.actors[&goblin].has_condition(Condition::Asleep));
 }
 
-/// 5e Paralyzed clause: "any attack that hits the creature is a
-/// critical hit if the attacker is within 5 feet of the creature."
-/// `target_grants_auto_crit` is the central gate the attack-
-/// resolution sites read.
+/// SRD 5.2, Paralyzed and Unconscious alike: *"Any attack roll that hits
+/// you is a Critical Hit **if the attacker is within 5 feet of you**."*
+///
+/// Feet, and no weapon named — which is not the question the gate used
+/// to ask. It took an `is_melee` flag, and the two answers part company
+/// in both directions: a glaive is a melee attack made from ten feet,
+/// and a dagger thrown point-blank at a sleeping creature is a ranged
+/// attack from within five.
 #[test]
-fn paralyzed_grants_melee_auto_crit_gate() {
+fn a_helpless_target_auto_crits_by_distance_and_not_by_weapon() {
     use crate::conditions::{Condition, ConditionTimer};
 
     let mut e = ei_with_terrain(15, 15, &[]);
@@ -8127,41 +8159,48 @@ fn paralyzed_grants_melee_auto_crit_gate() {
         .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let t = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(3, 2), 1, 0)
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
         .unwrap();
     // Baseline: no paralysis, no auto-crit gate.
-    assert!(!e.target_grants_auto_crit(a, t, true));
-    // Apply Paralyzed: melee gate flips on, ranged stays off.
+    assert!(!e.target_grants_auto_crit(a, t));
     e.actors
         .get_mut(&t)
         .unwrap()
         .add_condition(Condition::Paralyzed, ConditionTimer::Rounds(2));
-    assert!(e.target_grants_auto_crit(a, t, true));
     assert!(
-        !e.target_grants_auto_crit(a, t, false),
-        "ranged attacks do not auto-crit on a paralyzed target — only the in-melee clause fires"
+        e.target_grants_auto_crit(a, t),
+        "standing over a paralysed creature is the whole clause"
     );
+    // Back out of reach: a melee attack from ten feet is still ten feet
+    // away, and the clause is about the distance.
+    e.place_actor_at(a, Coordinate::new(2, 9)).unwrap();
+    assert!(
+        !e.target_grants_auto_crit(a, t),
+        "a reach weapon is not within five feet"
+    );
+    e.place_actor_at(a, Coordinate::new(2, 2)).unwrap();
+
     // Unconscious also flips the gate.
     e.actors.get_mut(&t).unwrap().remove_condition(Condition::Paralyzed);
     e.actors
         .get_mut(&t)
         .unwrap()
         .add_condition(Condition::Unconscious, ConditionTimer::Permanent);
-    assert!(e.target_grants_auto_crit(a, t, true));
-    // Self-target is excluded — a paralyzed creature can't melee
-    // auto-crit itself if some action somehow rolls a self-attack.
-    assert!(!e.target_grants_auto_crit(t, t, true));
+    assert!(e.target_grants_auto_crit(a, t));
+    // Self-target is excluded — a paralyzed creature can't auto-crit
+    // itself if some action somehow rolls a self-attack.
+    assert!(!e.target_grants_auto_crit(t, t));
     // Stunned alone is NOT in the RAW auto-crit clause.
     let other = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 5), 2, 0)
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 2, 0)
         .unwrap();
     e.actors
         .get_mut(&other)
         .unwrap()
         .add_condition(Condition::Stunned, ConditionTimer::Rounds(2));
     assert!(
-        !e.target_grants_auto_crit(a, other, true),
-        "Stunned is not in the auto-crit cohort per 5e RAW"
+        !e.target_grants_auto_crit(a, other),
+        "Stunned is not in the auto-crit cohort per SRD 5.2"
     );
 }
 
@@ -90761,18 +90800,18 @@ fn an_assassin_crits_a_surprised_target_at_any_range() {
         .unwrap();
 
     // Nothing yet: an unsurprised target is an ordinary target.
-    assert!(!e.target_grants_auto_crit(assassin, victim, false));
+    assert!(!e.target_grants_auto_crit(assassin, victim));
 
     e.actors
         .get_mut(&victim)
         .unwrap()
         .add_condition(Condition::Surprised, ConditionTimer::Rounds(1));
     assert!(
-        e.target_grants_auto_crit(assassin, victim, false),
+        e.target_grants_auto_crit(assassin, victim),
         "the bolt crits from across the room"
     );
     assert!(
-        !e.target_grants_auto_crit(ordinary, victim, true),
+        !e.target_grants_auto_crit(ordinary, victim),
         "surprise is not a general auto-crit — it is the assassin's"
     );
 }

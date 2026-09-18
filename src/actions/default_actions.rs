@@ -2480,12 +2480,23 @@ impl Action for Sunder {
             return Vec::new();
         };
         let name = actor.name().to_string();
-        let to_hit = actor.spell_attack_modifier(swing.attack_ability);
+        let ability_to_hit = actor.spell_attack_modifier(swing.attack_ability);
         let damage_bonus = swing
             .damage_ability
             .map(|a| actor.ability_modifier(a))
             .unwrap_or(0)
-            + swing.flat_bonus;
+            + swing.flat_bonus
+            + actor.item_damage_bonus()
+            + actor.damage_bonus_buff();
+        // Whatever the pack and the party's buffs are worth to a swing.
+        // `caster_attack_buffs` with `is_spell: false` is the same term
+        // the attack pipeline folds in for an ordinary hit — a fighter
+        // with a `+3` sword and a Bless on them should chop at a wall
+        // the way they chop at anything else, and a Sunder that read
+        // only the ability modifier would be the one swing in the
+        // engine their gear did not reach.
+        let (flat_buff, condition_buff) = encounter.caster_attack_buffs(caster_id, false);
+        let to_hit = ability_to_hit + flat_buff + condition_buff;
         // A plain d20 against a number, with no roll-mode tally: an
         // object is not Prone, not Invisible, not flanked and not
         // dodging, so every input the shared tally reads is absent by
