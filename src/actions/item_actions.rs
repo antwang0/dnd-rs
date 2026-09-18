@@ -8498,7 +8498,7 @@ impl Action for ReleaseInhaledPoison {
                 match (i, self.poison.repeat) {
                     (0, Some(clause)) => encounter.begin_repeat_save(
                         victim,
-                        caster_id,
+                        Some(caster_id),
                         self.poison.dc,
                         clause,
                         self.poison.timer,

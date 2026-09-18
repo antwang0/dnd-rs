@@ -18779,7 +18779,7 @@ fn a_repeat_save_frees_its_victim_and_a_hopeless_one_does_not() {
         e.pop_prompt();
         e.begin_repeat_save(
             fighter,
-            sphinx,
+            Some(sphinx),
             dc,
             &PARALYSING_ROAR,
             ConditionTimer::Rounds(10),
@@ -18825,7 +18825,7 @@ fn a_repeat_save_lapses_with_the_condition_it_was_written_for() {
     // A DC nobody makes, so a lapse can only be the condition leaving.
     e.begin_repeat_save(
         fighter,
-        sphinx,
+        Some(sphinx),
         99,
         &PARALYSING_ROAR,
         ConditionTimer::Rounds(10),
@@ -18863,7 +18863,7 @@ fn a_repeat_save_is_not_owed_to_something_that_shrugged_the_condition_off() {
     );
     e.begin_repeat_save(
         golem,
-        sphinx,
+        Some(sphinx),
         99,
         &PARALYSING_ROAR,
         ConditionTimer::Rounds(10),
@@ -97618,7 +97618,7 @@ fn a_paralysing_ladder_hands_its_victim_off_to_the_escape_ledger() {
     e.repeat_saves.clear();
     e.begin_repeat_save(
         victim,
-        dragon,
+        Some(dragon),
         1,
         PARALYZING_BREATH
             .second_escape
@@ -97651,7 +97651,7 @@ fn a_sword_wound_can_be_shaken_off() {
         .unwrap();
     e.pop_prompt();
     assert_eq!(SWORD_WOUND.condition, Condition::Wounded);
-    e.begin_repeat_save(victim, swinger, 1, &SWORD_WOUND, ConditionTimer::Rounds(10));
+    e.begin_repeat_save(victim, Some(swinger), 1, &SWORD_WOUND, ConditionTimer::Rounds(10));
     assert!(!e.actors[&victim].can_regain_hitpoints());
     e.tick_repeat_saves(victim);
     assert!(
@@ -104377,7 +104377,7 @@ fn the_blindness_repeat_is_a_real_roll() {
                 .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(6, 6), 1, 0)
                 .unwrap();
             e.pop_prompt();
-            e.begin_repeat_save(victim, wizard, dc, clause, ConditionTimer::Rounds(10));
+            e.begin_repeat_save(victim, Some(wizard), dc, clause, ConditionTimer::Rounds(10));
             assert!(e.actors[&victim].has_condition(clause.condition));
 
             e.tick_repeat_saves(victim);
@@ -127766,7 +127766,7 @@ fn a_laughing_caster_cannot_hold_the_spell() {
     );
 
     // The laughter, installed the way the fever installs it.
-    e.begin_repeat_save(wizard, wizard, 13, &CACKLING_ESCAPE, CACKLING_ROUNDS);
+    e.begin_repeat_save(wizard, None, 13, &CACKLING_ESCAPE, CACKLING_ROUNDS);
     assert!(e.actors[&wizard].has_condition(Condition::Cackling));
     e.reconcile_broken_concentration();
     assert!(
@@ -127843,4 +127843,56 @@ fn a_plague_carrier_is_a_reservoir_and_not_a_patient() {
             template.name
         );
     }
+}
+
+
+/// A repeat save with **nobody** behind it does not read the victim's
+/// own sheet as the source's.
+///
+/// `engine::repeat_saves` routes every escape through the caster-aware
+/// save lane, which folds in `CASTER_SAVE_MODE_RIDERS` — three rows
+/// that read the *source's* sheet and two of which spend something off
+/// it. The obvious way to write a self-inflicted repeat is to name the
+/// victim as its own source, and it is a trap: a sorcerer coughing
+/// through Cackle Fever would burn a Heightened Spell prime to give
+/// *itself* Disadvantage, and an Arcane Trickster with Magical Ambush
+/// would be dragged out of hiding by its own illness.
+///
+/// Pinned on Magical Ambush, which is the one of the three whose
+/// consequence outlives the roll: being Hidden is worth an attack's
+/// advantage and a whole turn's positioning, and losing it to a fever
+/// would be invisible in the log.
+#[test]
+fn a_fever_has_no_caster_and_spends_nothing_off_its_victim() {
+    use crate::actions::class_features::MAGICAL_AMBUSH_TAG;
+    use crate::actors::creatures::rogues::ARCANE_TRICKSTER_ROGUE_TEMPLATE;
+    use crate::engine::contagions::{CACKLING_ESCAPE, CACKLING_ROUNDS};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let rogue = e
+        .instantiate_creature(&ARCANE_TRICKSTER_ROGUE_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    assert!(
+        e.actors[&rogue].has_passive_feature(MAGICAL_AMBUSH_TAG),
+        "the fixture's own premise"
+    );
+    e.actors
+        .get_mut(&rogue)
+        .unwrap()
+        .add_condition(Condition::Hidden, ConditionTimer::Permanent);
+
+    e.begin_repeat_save(rogue, None, 13, &CACKLING_ESCAPE, CACKLING_ROUNDS);
+    assert!(e.actors[&rogue].has_condition(Condition::Cackling));
+    for _ in 0..6 {
+        e.tick_repeat_saves(rogue);
+        assert!(
+            e.actors[&rogue].has_condition(Condition::Hidden)
+                || !e.actors[&rogue].has_condition(Condition::Cackling),
+            "a cough is not a cast, and it does not give the rogue away"
+        );
+    }
+    assert!(
+        e.actors[&rogue].has_condition(Condition::Hidden),
+        "six rounds of laughing at nobody's spell left the rogue in the open"
+    );
 }

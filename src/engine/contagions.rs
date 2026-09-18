@@ -880,12 +880,16 @@ impl EncounterInstance {
         // RAW's minute is the cap; the ledger is the escape hatch. See
         // `CACKLING_ESCAPE`.
         //
-        // `victim_id` is passed as its own source: there is nobody else
-        // to name — the fever was caught days ago and whoever passed it
-        // on may not be on this board — and a self-sourced save is the
-        // plain roll, which is what a Constitution save against your own
-        // illness should be.
-        self.begin_repeat_save(victim_id, victim_id, dc, &CACKLING_ESCAPE, CACKLING_ROUNDS);
+        // **`None` for the source, not the victim's own id.** There is
+        // nobody to name — the fever was caught days ago and whoever
+        // passed it on may not be on this board — and naming the victim
+        // is the trap `PendingRepeat::source_id` documents: every
+        // caster-side rider on `CASTER_SAVE_MODE_RIDERS` would then
+        // read the victim's own sheet as the source's, so a sorcerer
+        // would spend a Heightened Spell prime giving *itself*
+        // Disadvantage and an Arcane Trickster would be dragged out of
+        // hiding by its own cough.
+        self.begin_repeat_save(victim_id, None, dc, &CACKLING_ESCAPE, CACKLING_ROUNDS);
     }
 
     /// Seed an outbreak onto the monster side of a freshly generated

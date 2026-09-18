@@ -14675,7 +14675,7 @@ impl Action for MetallicBreath {
                     // condition, and only the encounter can do that.
                     encounter.begin_repeat_save(
                         tid,
-                        caster_id,
+                        Some(caster_id),
                         self.dc,
                         &WEAKENING_BREATH,
                         ConditionTimer::Rounds(10),
@@ -17019,7 +17019,7 @@ impl Action for AndrosphinxRoar {
                     }
                     encounter.begin_repeat_save(
                         tid,
-                        caster_id,
+                        Some(caster_id),
                         ROAR_DC,
                         &PARALYSING_ROAR,
                         // RAW's "after 1 minute, it succeeds

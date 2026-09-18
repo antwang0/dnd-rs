@@ -447,7 +447,7 @@ impl EncounterInstance {
         match ladder.second_escape {
             Some(clause) => self.begin_repeat_save(
                 victim_id,
-                pending.source_id,
+                Some(pending.source_id),
                 pending.dc,
                 clause,
                 ladder.second_timer,

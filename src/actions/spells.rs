@@ -3615,7 +3615,7 @@ impl Action for BlindnessDeafness {
         // from nothing. Nothing else in the cast is ordered against it.
         encounter.begin_repeat_save(
             target_id,
-            caster_id,
+            Some(caster_id),
             dc,
             self.escape,
             // RAW's one minute, which is the cap the repeats race

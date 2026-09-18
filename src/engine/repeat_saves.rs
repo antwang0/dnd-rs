@@ -144,11 +144,23 @@ pub struct PendingRepeat {
     /// consecutive — *"after three successful saves, the poison ends"*
     /// says nothing about them being in a row.
     pub successes: u32,
-    /// Who inflicted it. Only used to route the roll through
+    /// Who inflicted it, or `None` for the clauses nobody inflicted.
+    ///
+    /// `Some` routes the roll through
     /// `roll_save_against_caster_vs_condition`, so the source's own
     /// save-mode riders (a Heightened Spell prime, an aura) apply to
     /// the repeat exactly as they did to the opening save.
-    pub source_id: usize,
+    ///
+    /// `None` is the lane a **disease** needs, and it needs it rather
+    /// than merely preferring it. The obvious way to write a
+    /// self-inflicted repeat is to name the victim as its own source,
+    /// and every caster-side rider on `CASTER_SAVE_MODE_RIDERS` then
+    /// reads the *victim's* sheet as the source's: a sorcerer coughing
+    /// through Cackle Fever would spend their own Heightened Spell
+    /// prime to give themselves Disadvantage, and an Arcane Trickster
+    /// with Magical Ambush would be dragged out of hiding by their own
+    /// illness. A clause with nobody behind it says so.
+    pub source_id: Option<usize>,
     pub dc: i32,
 }
 
@@ -175,7 +187,7 @@ impl EncounterInstance {
     pub fn begin_repeat_save(
         &mut self,
         victim_id: usize,
-        source_id: usize,
+        source_id: Option<usize>,
         dc: i32,
         clause: &'static RepeatSave,
         timer: ConditionTimer,
@@ -251,13 +263,26 @@ impl EncounterInstance {
                 continue;
             }
             let name = self.actor_name(victim_id);
-            let save = self.roll_save_against_caster_vs_condition(
-                victim_id,
-                entry.clause.ability,
-                entry.dc,
-                entry.source_id,
-                entry.clause.condition,
-            );
+            let save = match entry.source_id {
+                Some(source_id) => self.roll_save_against_caster_vs_condition(
+                    victim_id,
+                    entry.clause.ability,
+                    entry.dc,
+                    source_id,
+                    entry.clause.condition,
+                ),
+                // Nobody's spell, so nobody's riders — see
+                // `PendingRepeat::source_id`. Still the tagged lane, so
+                // the victim's *own* cohort (a feature granting
+                // advantage against this condition) is read exactly as
+                // it is on every other save in the engine.
+                None => self.roll_save_vs_condition(
+                    victim_id,
+                    entry.clause.ability,
+                    entry.dc,
+                    entry.clause.condition,
+                ),
+            };
             if !save.passed() {
                 // The clauses that charge for failing — SRD 5.2's Burnt
                 // Othur Fumes and nothing else yet. See

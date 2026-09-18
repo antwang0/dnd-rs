@@ -10476,7 +10476,7 @@ fn push_follow_up_effect(
             // installed yet would be an escape from nothing, and a
             // condition without its entry is the crueller effect this
             // variant exists to stop shipping.
-            encounter.begin_repeat_save(target_id, caster_id, dc, clause, timer);
+            encounter.begin_repeat_save(target_id, Some(caster_id), dc, clause, timer);
         }
         FollowUpEffect::Push { tiles } => {
             let Some(caster) = encounter.actors.get(&caster_id) else {
