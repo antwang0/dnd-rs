@@ -76204,8 +76204,8 @@ fn non_abjuration_casts_do_not_feed_the_ward() {
 fn abjuration_spells_report_their_school() {
     use crate::actions::action_template::Action;
     use crate::actions::spells::{
-        AID, BANISHMENT, COUNTERSPELL, DEATH_WARD, DISPEL_MAGIC, MAGE_ARMOR, SANCTUARY,
-        SHIELD, STONESKIN,
+        AID, BANISHMENT, COUNTERSPELL, CURE_WOUNDS, DEATH_WARD, DISPEL_MAGIC, MAGE_ARMOR,
+        MASS_CURE_WOUNDS, SANCTUARY, SHIELD,
     };
     let tagged: Vec<&dyn Action> = vec![
         &*SHIELD,
@@ -76213,10 +76213,18 @@ fn abjuration_spells_report_their_school() {
         &*SANCTUARY,
         &*AID,
         &*DEATH_WARD,
-        &*STONESKIN,
         &*BANISHMENT,
         &*COUNTERSPELL,
         &*DISPEL_MAGIC,
+        // The healing lane, which SRD 5.2 moved here wholesale from
+        // Evocation and which the engine had left behind — four spells
+        // were still feeding the Evoker's discounts and none of them
+        // was feeding the Abjurer's ward. Stoneskin came off this list
+        // in the same pass and in the other direction: the 2024
+        // printing files it under Transmutation, which is what turning
+        // somebody's skin to stone is.
+        &*CURE_WOUNDS,
+        &*MASS_CURE_WOUNDS,
     ];
     for action in tagged {
         assert_eq!(
@@ -78128,7 +78136,7 @@ fn enchantment_spells_report_their_school() {
     use crate::actions::spells::{
         BANE, BLESS, CHARM_MONSTER, CHARM_PERSON, COMMAND, COMPULSION, CONFUSION,
         CROWN_OF_MADNESS, DOMINATE_BEAST, DOMINATE_MONSTER, DOMINATE_PERSON, FEEBLEMIND,
-        HEROISM, HOLD_MONSTER, HOLD_PERSON, HYPNOTIC_PATTERN, MASS_SUGGESTION, MIND_SLIVER,
+        HEROISM, HOLD_MONSTER, HOLD_PERSON, MASS_SUGGESTION, MIND_SLIVER,
         OTTOS_IRRESISTIBLE_DANCE, POWER_WORD_KILL, POWER_WORD_PAIN, POWER_WORD_STUN, SLEEP,
         SUGGESTION, TASHAS_HIDEOUS_LAUGHTER, VICIOUS_MOCKERY,
     };
@@ -78146,7 +78154,12 @@ fn enchantment_spells_report_their_school() {
         &*DOMINATE_MONSTER,
         &*CONFUSION,
         &*CROWN_OF_MADNESS,
-        &*HYPNOTIC_PATTERN,
+        // Hypnotic Pattern is **not** here, and never should have
+        // been: SRD 5.2 prints it as Level 3 **Illusion**, as did the
+        // printing before it. A twisting pattern of colours is not a
+        // charm, and filing it under Enchantment kept the Illusionist
+        // away from the one crowd-control spell their subclass is
+        // built around.
         &*SLEEP,
         &*TASHAS_HIDEOUS_LAUGHTER,
         &*COMPULSION,
@@ -119464,6 +119477,143 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
         "these stat blocks carry condition immunities their own quoted SRD line \
          does not give them; a creature that cannot be frightened is a creature \
          Turn Undead does nothing to:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// Every spell whose docstring names its school in prose declares that
+/// same school in code.
+///
+/// The third of the quote-against-the-code sweeps, and the one with the
+/// widest reach: **two hundred and sixty-one** of the spells in
+/// `spells.rs` open with a sentence of the shape *"Lesser Restoration —
+/// level-2 abjuration"*, and until this sweep existed not one of those
+/// sentences was ever compared to the `school()` beneath it.
+///
+/// Twelve had drifted, and the drift ran both ways. SRD 5.2 moved the
+/// whole **healing** lane from Evocation to Abjuration and Stoneskin
+/// and Earthquake from Abjuration and Evocation to Transmutation, and
+/// the code had been left behind; Goodberry, Power Word Heal,
+/// Resilient Sphere, Divine Favor and four spells that are not in the
+/// SRD at all had the opposite problem, with the code right and the
+/// prose quoting an older printing.
+///
+/// **The school is not decoration**, which is what makes this worth a
+/// sweep rather than a tidy-up. Six subclasses and two reactions read
+/// it: an Abjuration Wizard weaves their Arcane Ward off the school of
+/// the spell they just cast, an Evoker sculpts and potentiates off
+/// theirs, and `Action::school()` returning `Some` is how Counterspell
+/// and the absorbing family decide that a thing is a spell at all. A
+/// Cure Wounds filed under Evocation fed the blaster's discounts and
+/// starved the warder's ward, every cast, for as long as both existed.
+///
+/// Matched on the **struct's own doc comment** rather than on any
+/// comment in the file, so a spell that mentions a neighbour's school
+/// in passing is not read as claiming it.
+#[test]
+fn every_spell_that_names_its_school_in_prose_declares_that_school() {
+    const SCHOOLS: [&str; 8] = [
+        "abjuration",
+        "conjuration",
+        "divination",
+        "enchantment",
+        "evocation",
+        "illusion",
+        "necromancy",
+        "transmutation",
+    ];
+
+    let source = include_str!("../actions/spells.rs");
+
+    // The `school()` each `impl Action for T` declares, by type name.
+    // Scoped to the method's own body: an unbounded search would walk
+    // on to the next `SpellSchool::` literal in the chunk and read a
+    // neighbouring method's answer.
+    let mut declared: std::collections::BTreeMap<&str, &str> =
+        std::collections::BTreeMap::new();
+    for chunk in source.split("\nimpl Action for ").skip(1) {
+        let ty = chunk
+            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .next()
+            .unwrap_or("");
+        let Some(at) = chunk.find("\n    fn school(&self) -> Option<SpellSchool> {") else {
+            continue;
+        };
+        let rest = &chunk[at + 1..];
+        let Some(end) = rest.find("\n    }") else { continue };
+        let body = &rest[..end];
+        let Some(school_at) = body.find("SpellSchool::") else {
+            continue;
+        };
+        let name: &str = body[school_at + "SpellSchool::".len()..]
+            .split(|c: char| !c.is_alphanumeric())
+            .next()
+            .unwrap_or("");
+        if !name.is_empty() {
+            declared.insert(ty, name);
+        }
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (ty, code) in &declared {
+        // The struct's own doc comment: the run of `///` lines
+        // immediately above `pub struct T`.
+        let Some(at) = source
+            .find(&format!("\npub struct {ty} "))
+            .or_else(|| source.find(&format!("\npub struct {ty}{{")))
+            .or_else(|| source.find(&format!("\npub struct {ty}\n")))
+        else {
+            continue;
+        };
+        let mut doc = String::new();
+        for line in source[..at].lines().rev() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("///") {
+                doc.insert_str(0, rest);
+                doc.insert(0, ' ');
+            } else if t.is_empty() || t.starts_with("#[") {
+                continue;
+            } else {
+                break;
+            }
+        }
+        let lower = doc.to_ascii_lowercase();
+        // *"level-2 abjuration"* / *"level 2 abjuration"* / *"cantrip
+        // evocation"* — the shape the file's own prose uses.
+        let Some(quoted) = SCHOOLS
+            .iter()
+            .filter_map(|school| lower.find(school).map(|i| (*school, i)))
+            .filter(|(_, i)| {
+                let before = lower[..*i].trim_end();
+                before.ends_with("cantrip")
+                    || (before.len() >= 2
+                        && before
+                            .rsplit([' ', '-'])
+                            .next()
+                            .is_some_and(|w| w.chars().all(|c| c.is_ascii_digit())))
+            })
+            .min_by_key(|(_, i)| *i)
+            .map(|(school, _)| school)
+        else {
+            continue;
+        };
+        checked += 1;
+        if !quoted.eq_ignore_ascii_case(code) {
+            wrong.push(format!("{ty} says {quoted} in prose and {code} in code"));
+        }
+    }
+    assert!(
+        checked >= 200,
+        "only {checked} spells name a school in prose — the walk has stopped \
+         finding them"
+    );
+    assert!(
+        wrong.is_empty(),
+        "these spells are filed under one school and described as another; the \
+         school is what an Abjurer's ward and an Evoker's sculpting both read, \
+         so a spell in the wrong one pays the wrong subclass on every \
+         cast:\n{}",
         wrong.join("\n")
     );
 }

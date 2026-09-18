@@ -2274,8 +2274,21 @@ impl Action for HealSpell {
     fn scales_with_slot(&self) -> bool {
         true
     }
+    /// **Abjuration**, not Evocation, and this was the single biggest
+    /// school error in the file because of where it sits: a chassis,
+    /// not a spell. SRD 5.2 moved the whole healing lane to Abjuration
+    /// — *"Cure Wounds — Level 1 Abjuration"*, *"Healing Word — Level 1
+    /// Abjuration"* — and the two rows on this chassis are the two most
+    /// cast spells in the engine.
+    ///
+    /// One answer for the whole chassis is right *here* and only here:
+    /// both rows are healing spells and the book files both the same
+    /// way. `SmiteSpell`, `SummonSpell` and `PartyBuffSpell` next door
+    /// each carry the school as a per-row field, because their rows do
+    /// not agree — see `SmiteSpell::school`, whose docstring makes the
+    /// argument in full.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Evocation)
+        Some(SpellSchool::Abjuration)
     }
     fn name(&self) -> &str {
         self.display_name
@@ -5504,8 +5517,10 @@ pub static HEROISM: LazyLock<Heroism> = LazyLock::new(|| Heroism {});
 pub struct MassHealingWord {}
 
 impl Action for MassHealingWord {
+    // Abjuration, not Evocation: SRD 5.2 moved the whole healing
+    // lane to Abjuration. See `HealSpellHigh::school`.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Evocation)
+        Some(SpellSchool::Abjuration)
     }
     fn name(&self) -> &str {
         "mass healing word"
@@ -7617,8 +7632,14 @@ impl Action for HypnoticPattern {
     fn holds_concentration(&self) -> bool {
         true
     }
+    // SRD 5.2: *"Hypnotic Pattern — Level 3 **Illusion**
+    // (Bard, Sorcerer, Warlock, Wizard)"*, and it was Illusion in
+    // the previous printing too — this one was simply filed wrong.
+    // It is a twisting pattern of colours, not a charm, and the
+    // Illusionist whose subclass is built around the school could
+    // not reach its own signature crowd-control spell.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Enchantment)
+        Some(SpellSchool::Illusion)
     }
     fn name(&self) -> &str {
         "hypnotic pattern"
@@ -7724,7 +7745,7 @@ impl Action for HypnoticPattern {
 
 pub static HYPNOTIC_PATTERN: LazyLock<HypnoticPattern> = LazyLock::new(|| HypnoticPattern {});
 
-/// Divine Favor — level-1 evocation, concentration. Self-buff: weapon
+/// Divine Favor — level-1 transmutation, concentration. Self-buff: weapon
 /// attacks deal +1d4 radiant for the duration. We approximate the +1d4
 /// damage rider as a flat +2 attack-buff (the engine doesn't have a
 /// per-attack-extra-damage lane for self-buffs yet). Installed via
@@ -8788,8 +8809,10 @@ pub static CONE_OF_COLD: LazyLock<ConeOfCold> = LazyLock::new(|| ConeOfCold {});
 pub struct MassCureWounds {}
 
 impl Action for MassCureWounds {
+    // Abjuration, not Evocation: SRD 5.2 moved the whole healing
+    // lane to Abjuration. See `HealSpellHigh::school`.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Evocation)
+        Some(SpellSchool::Abjuration)
     }
     fn name(&self) -> &str {
         "mass cure wounds"
@@ -9480,7 +9503,7 @@ impl Action for Revivify {
 
 pub static REVIVIFY: LazyLock<Revivify> = LazyLock::new(|| Revivify {});
 
-/// Stoneskin — level-4 abjuration, concentration. Touch. Until the spell
+/// Stoneskin — level-4 transmutation, concentration. Touch. Until the spell
 /// ends, the target has resistance to bludgeoning, piercing, and slashing
 /// damage — exactly those three, through `Condition::Stoneskinned` and
 /// its row on `TYPED_RESISTANCE_CONDITIONS`.
@@ -9505,8 +9528,13 @@ impl Action for Stoneskin {
     fn holds_concentration(&self) -> bool {
         true
     }
+    // SRD 5.2: *"Stoneskin — Level 4 **Transmutation** (Druid,
+    // Ranger, Sorcerer, Wizard)"*. Abjuration in the previous
+    // printing, and the spell's own text is the argument for the
+    // change: it turns a creature's flesh to stone, which is what
+    // Transmutation is.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Abjuration)
+        Some(SpellSchool::Transmutation)
     }
     fn name(&self) -> &str {
         "stoneskin"
@@ -10192,7 +10220,7 @@ impl Action for TashasHideousLaughter {
 pub static TASHAS_HIDEOUS_LAUGHTER: LazyLock<TashasHideousLaughter> =
     LazyLock::new(|| TashasHideousLaughter {});
 
-/// Heal — level-6 evocation, action, 60 ft range. Restores 70 HP to a
+/// Heal — level-6 abjuration, action, 60 ft range. Restores 70 HP to a
 /// single creature and ends Blinded, Deafened, Poisoned (5e RAW), and
 /// clears any one Frightened / Charmed via condition cleanse. We pull
 /// out a few key debuffs after the heal so it's not just a giant HP
@@ -10201,8 +10229,14 @@ pub static TASHAS_HIDEOUS_LAUGHTER: LazyLock<TashasHideousLaughter> =
 pub struct HealSpellHigh {}
 
 impl Action for HealSpellHigh {
+    // SRD 5.2 files **every healing spell** under Abjuration —
+    // *"Heal — Level 6 Abjuration (Cleric, Druid)"* — where the
+    // previous printing had them under Evocation. The engine's
+    // Abjuration Wizard weaves an Arcane Ward off the school and
+    // its Evoker sculpts spells off it, so a heal under the wrong
+    // one paid the wrong subclass.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Evocation)
+        Some(SpellSchool::Abjuration)
     }
     fn name(&self) -> &str {
         "heal"
@@ -11226,7 +11260,7 @@ impl Action for Sunburst {
 
 pub static SUNBURST: LazyLock<Sunburst> = LazyLock::new(|| Sunburst {});
 
-/// Mass Heal — level-9 conjuration, action. A pool of 700 HP is divided
+/// Mass Heal — level-9 abjuration, action. A pool of 700 HP is divided
 /// among any number of allies within range; each chosen ally regains HP
 /// up to the pool. We model this by sorting allies by missing HP (most
 /// hurt first) and pouring the pool until it's empty or every ally is
@@ -11539,7 +11573,7 @@ impl Action for MeteorSwarm {
 
 pub static METEOR_SWARM: LazyLock<MeteorSwarm> = LazyLock::new(|| MeteorSwarm {});
 
-/// Prayer of Healing — level-2 evocation. Pick up to six allies within
+/// Prayer of Healing — level-2 abjuration. Pick up to six allies within
 /// 30 ft (12 tiles) of the caster; each regains 2d8 + WIS HP. RAW has a
 /// 10-minute cast time (so it's strictly out-of-combat per book); we keep
 /// it as a one-action in-combat heal because (a) our encounter loop has
@@ -11552,8 +11586,10 @@ pub static METEOR_SWARM: LazyLock<MeteorSwarm> = LazyLock::new(|| MeteorSwarm {}
 pub struct PrayerOfHealing {}
 
 impl Action for PrayerOfHealing {
+    // Abjuration, not Evocation: SRD 5.2 moved the whole healing
+    // lane to Abjuration. See `HealSpellHigh::school`.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Evocation)
+        Some(SpellSchool::Abjuration)
     }
     fn name(&self) -> &str {
         "prayer of healing"
@@ -11848,7 +11884,7 @@ impl Action for Resurrection {
 
 pub static RESURRECTION: LazyLock<Resurrection> = LazyLock::new(|| Resurrection {});
 
-/// Power Word Heal — level-9 evocation. Single touch target regains all
+/// Power Word Heal — level-9 enchantment. Single touch target regains all
 /// HP, then the spell cleanses every captivating / control condition
 /// (Charmed, Frightened, Paralyzed, Stunned) and stands them up from
 /// Prone. The 5e RAW also lets the target use a reaction to stand and
@@ -13161,7 +13197,7 @@ impl Action for HealingSpirit {
 
 pub static HEALING_SPIRIT: LazyLock<HealingSpirit> = LazyLock::new(|| HealingSpirit {});
 
-/// Aid — level-2 abjuration, action. Boosts up to three creatures' max
+/// Aid — level-2 evocation, action. Boosts up to three creatures' max
 /// HP by 5 (level-2 baseline) for 8 hours. We already have the simpler
 /// single-target Aid; this aliased version is a no-op stub kept off the
 /// spell list for now. (Engine note: see the existing AID for the impl.)
@@ -14124,7 +14160,7 @@ impl Action for CrusadersMantle {
 
 pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| CrusadersMantle {});
 
-/// Earthquake — level-8 evocation, concentration. Burst at a point within
+/// Earthquake — level-8 transmutation, concentration. Burst at a point within
 /// 500ft; every enemy in a 20ft radius (= 4-tile gap) makes a STR save vs
 /// the caster's spell DC: fail = knocked Prone and takes 5d6 bludgeoning,
 /// pass = no damage / no prone. Allies are spared (caster picks the safe
@@ -14149,8 +14185,15 @@ impl Action for Earthquake {
     fn holds_concentration(&self) -> bool {
         true
     }
+    // SRD 5.2: *"Earthquake — Level 8 **Transmutation** (Cleric,
+    // Druid, Sorcerer)"*. It was Evocation in the previous
+    // printing, and the school is not decoration: the Evocation
+    // Wizard's Sculpt Spells reads it, Potent Cantrip reads it, and
+    // a Transmuter's Arcane Ward does not. Filed under the wrong
+    // school, the eight-level earth-shaker was picking up the
+    // blaster's discounts.
     fn school(&self) -> Option<SpellSchool> {
-        Some(SpellSchool::Evocation)
+        Some(SpellSchool::Transmutation)
     }
     fn name(&self) -> &str {
         "earthquake"
@@ -15458,7 +15501,7 @@ impl Action for ChainLightning {
 
 pub static CHAIN_LIGHTNING: LazyLock<ChainLightning> = LazyLock::new(|| ChainLightning {});
 
-/// Goodberry — 5e druid level-1 transmutation. Conjures up to 10 magical
+/// Goodberry — 5e druid level-1 conjuration. Conjures up to 10 magical
 /// berries; eating one restores 1 HP. We collapse the "10 berries over an
 /// hour" RAW into a single in-combat heal of 10 HP on a touch-range ally
 /// — the caster's WIS modifier isn't added (RAW: berries are a flat 1 HP
@@ -19635,7 +19678,7 @@ pub fn all_summon_spells() -> Vec<&'static SummonSpell> {
     all
 }
 
-/// Power Word Pain — 5e level-7 necromancy (XGtE), action,
+/// Power Word Pain — 5e level-7 enchantment (XGtE), action,
 /// concentration. Single target within 24 tiles (60 ft); no save, no
 /// attack roll — but the spell only takes effect if the target has
 /// 100 HP or fewer at cast time. RAW: target is racked with excruciating
@@ -22050,7 +22093,7 @@ impl Action for EvardsBlackTentacles {
 pub static EVARDS_BLACK_TENTACLES: LazyLock<EvardsBlackTentacles> =
     LazyLock::new(|| EvardsBlackTentacles {});
 
-/// Otiluke's Resilient Sphere — level-4 evocation, concentration. The
+/// Otiluke's Resilient Sphere — level-4 abjuration, concentration. The
 /// caster encases a single target in a sphere of force. The target
 /// makes a DEX save vs the caster's spell DC; on fail, they're Sphered
 /// (a full incapacitation envelope: zero movement, blocked action
@@ -34291,7 +34334,7 @@ impl Action for AnimateObjects {
 
 pub static ANIMATE_OBJECTS: LazyLock<AnimateObjects> = LazyLock::new(|| AnimateObjects {});
 
-/// Magnify Gravity — level-1 evocation (TCE / SAiS / EGtW spell list).
+/// Magnify Gravity — level-1 transmutation (TCE / SAiS / EGtW spell list).
 /// A 5ft-radius (1-tile burst) crushing gravity well snaps down at a point
 /// within range: every creature in the burst makes a STR save vs the
 /// caster's spell DC. On fail they take 2d8 force damage AND their speed
@@ -34972,7 +35015,7 @@ impl Action for DetectMagic {
 
 pub static DETECT_MAGIC: LazyLock<DetectMagic> = LazyLock::new(|| DetectMagic {});
 
-/// Immolation — level-5 transmutation (sorcerer / wizard spell list),
+/// Immolation — level-5 evocation (sorcerer / wizard spell list),
 /// concentration. 90-ft single-target. The target makes a DEX save vs
 /// the caster's spell save DC; on a fail they take 8d6 fire damage AND
 /// catch fire — taking 4d6 fire damage at the end of each of their turns
