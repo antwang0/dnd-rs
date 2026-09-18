@@ -8286,7 +8286,7 @@ impl Action for ApplyPoison {
             return false;
         };
         actor.has_a_bladed_attack()
-            && !crate::engine::poisons::ALL_POISONS
+            && !crate::engine::poisons::ALL_INJURY_POISONS
                 .iter()
                 .any(|p| actor.has_condition(p.marker))
             // The Dagger of Venom's coating counts too. It is the same
@@ -12281,9 +12281,18 @@ impl MysteriousDeckItem {
     /// drawn (*"once the Fool or Jester has left the deck, reroll on
     /// the table if that card comes up again"*). The engine does not
     /// track which cards have left, so the recursion is capped instead
-    /// — see [`MAX_FREE_DRAWS`]. Without a cap, a run of Fools is an
-    /// unbounded stack, and a d100 that can do that once in a thousand
-    /// draws will do it.
+    /// — at **one level**, by the re-entrancy guard
+    /// `EncounterInstance::within_free_deck_draws`: a Fool drawn *by* a
+    /// free draw deals nothing further. Without a cap, a run of Fools
+    /// is an unbounded stack, and a d100 that can do that once in a
+    /// thousand draws will do it.
+    ///
+    /// A depth guard rather than the counter this comment used to cite
+    /// by a name (`MAX_FREE_DRAWS`) that has never existed. The
+    /// difference is worth stating: a counter would let the second Fool
+    /// deal and stop the third, and the guard stops the second — which
+    /// is the shorter answer and the one RAW's "remove the card" clause
+    /// points at.
     ///
     /// The free draws do **not** spend a charge, which is RAW's own
     /// *"this draw doesn't count as one of your declared draws."*

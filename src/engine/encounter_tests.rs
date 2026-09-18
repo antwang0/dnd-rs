@@ -115169,6 +115169,39 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
                     stale.push(format!("{}:{} — {}", path, n + 1, cited));
                 }
             }
+            // …and the third shape, which is neither: a **bare**
+            // intra-doc link to a SHOUTY constant, `[`ALL_POISONS`]`
+            // with no path in front of it. Rustdoc resolves those
+            // against the module they are written in, so they are as
+            // much a claim as a qualified one — and until this clause
+            // they were the only claim in the file nothing checked.
+            //
+            // Two had rotted in exactly the way the qualified ones do.
+            // `engine::poisons` cited an `ALL_INJURY_POISONS` on the
+            // strength of the symmetry with `ALL_INHALED_POISONS` next
+            // to it, and the constant was called `ALL_POISONS`; the
+            // Mysterious Deck cited a `MAX_FREE_DRAWS` that had never
+            // existed, for a cap that is a re-entrancy guard rather
+            // than a counter.
+            //
+            // Scoped to SHOUTY names of three characters or more, which
+            // is what keeps it from reading a `[`Self`]` or a `[`HP`]`
+            // as a constant.
+            let mut rest = line;
+            while let Some(open) = rest.find("[`") {
+                rest = &rest[open + 2..];
+                let Some(close) = rest.find("`]") else { break };
+                let name = &rest[..close];
+                rest = &rest[close + 2..];
+                if name.len() >= 3
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+                    && !declared.contains(name)
+                {
+                    stale.push(format!("{}:{} — {}", path, n + 1, name));
+                }
+            }
         }
     }
     assert!(

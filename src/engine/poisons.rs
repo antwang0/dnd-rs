@@ -1,26 +1,30 @@
-//! **Poison** — SRD 5.2's *Poison* section, or the quarter of it that
+//! **Poison** — SRD 5.2's *Poison* section, or the half of it that
 //! happens inside a six-second round.
 //!
 //! The book sorts its sample poisons by how they get into you, and the
-//! four types are four completely different pieces of machinery:
+//! four types are four completely different pieces of machinery. Two of
+//! them are here and two of them are not, and the line between the
+//! pairs is whether the delivery is something a creature does on its
+//! turn:
 //!
 //!   - **Injury.** *"Can be applied as a Bonus Action to a weapon, a
 //!     piece of ammunition, or similar object. … A creature that takes
 //!     Piercing or Slashing damage from an object coated with the
 //!     poison is exposed to its effects."* A bonus action, a swing, a
-//!     Constitution save. This module is those.
+//!     Constitution save. [`Poison`] and the four rows on
+//!     [`ALL_INJURY_POISONS`].
+//!   - **Inhaled.** *"Blowing the powder or releasing the gas subjects
+//!     creatures in a 5-foot Cube to its effect. The resulting cloud
+//!     dissipates immediately afterward."* An action, an area, and a
+//!     cloud that is gone before anybody's next turn.
+//!     [`InhaledPoison`] and the three rows on
+//!     [`ALL_INHALED_POISONS`].
 //!   - **Contact.** *"Smeared on an object and remains potent until it
 //!     is touched or washed off."* The trap layer's shape without the
 //!     trap layer's tile: the poison is on a doorknob, and the engine
 //!     has no doorknobs.
 //!   - **Ingested.** *"A creature must swallow an entire dose."* A
 //!     dinner, not a fight.
-//!   - **Inhaled.** *"Blowing the powder or releasing the gas subjects
-//!     creatures in a 5-foot Cube to its effect. The resulting cloud
-//!     dissipates immediately afterward."* The one other type with a
-//!     board surface, and the one shape the zone layer would carry
-//!     almost unaltered — a radius-0 area that fires once and goes. It
-//!     is not here yet, and it is named rather than forgotten.
 //!
 //! ## Why the injury four are the ones worth having
 //!
@@ -64,7 +68,11 @@
 //! ## Where the halves of a poison live
 //!
 //! Three files, and the split is the same one every magic weapon in the
-//! armoury already makes:
+//! armoury already makes. What follows is the **injury** lane's
+//! arrangement; the inhaled lane is the same three files with the
+//! middle step taken out, because a thrown vial is spent by the throw
+//! and has no coating to remember — see
+//! [`crate::actions::item_actions`]'s `ReleaseInhaledPoison`:
 //!
 //!   - **Here**: the row, in the shape the book prints it, plus
 //!     [`Poison::rider`], which is the whole conversion into the
@@ -499,7 +507,14 @@ pub const ALL_INHALED_POISONS: [InhaledPoison; 3] =
 /// Read by `ON_HIT_RIDERS` to build the four rows, and by the sweeps
 /// that check each row has a vial somebody can find and an action
 /// somebody can spend it with.
-pub const ALL_POISONS: [Poison; 4] = [
+///
+/// Named for its type rather than for the module, which
+/// [`ALL_INHALED_POISONS`] directly above it already was. It was
+/// `ALL_POISONS` — a name that reads as "every poison in the book" and
+/// has not been true since the inhaled lane arrived, and a name this
+/// module's own docstring had already mis-cited once on the strength of
+/// the symmetry it implied.
+pub const ALL_INJURY_POISONS: [Poison; 4] = [
     SERPENT_VENOM,
     SPIDERS_STING,
     WYVERN_POISON,
@@ -519,7 +534,7 @@ mod tests {
     /// complains about one.
     #[test]
     fn every_poison_can_cost_a_creature_something() {
-        for poison in ALL_POISONS {
+        for poison in ALL_INJURY_POISONS {
             assert!(
                 poison.damage.count > 0 || poison.condition.is_some(),
                 "{} is applied and does nothing",
@@ -537,7 +552,7 @@ mod tests {
     /// commonest sentence from the deadliest rows on the table.
     #[test]
     fn the_damaging_poisons_are_the_ones_that_halve() {
-        for poison in ALL_POISONS {
+        for poison in ALL_INJURY_POISONS {
             let halves = poison.policy == SaveDamagePolicy::HalfOnSave;
             assert_eq!(
                 halves,
@@ -556,7 +571,7 @@ mod tests {
     /// would be a 2,000 GP vial that is worse than the 200 GP one.
     #[test]
     fn the_ladder_climbs() {
-        let mut by_price = ALL_POISONS;
+        let mut by_price = ALL_INJURY_POISONS;
         by_price.sort_by_key(|p| p.price_gp);
         for pair in by_price.windows(2) {
             assert!(
@@ -575,7 +590,7 @@ mod tests {
     #[test]
     fn no_two_poisons_share_a_marker() {
         let mut seen: Vec<Condition> = Vec::new();
-        for poison in ALL_POISONS {
+        for poison in ALL_INJURY_POISONS {
             assert!(
                 !seen.contains(&poison.marker),
                 "{} shares a marker with another poison",
@@ -592,7 +607,7 @@ mod tests {
     /// derives.
     #[test]
     fn the_rider_is_the_row() {
-        for poison in ALL_POISONS {
+        for poison in ALL_INJURY_POISONS {
             let rider = poison.rider();
             assert_eq!(rider.condition, poison.marker);
             assert_eq!(rider.dice.count, 0, "{}: a poison is not a smite", poison.name);

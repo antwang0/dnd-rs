@@ -2265,7 +2265,7 @@ fn try_kindle_weapon(
 /// it, and a Purple Worm Poison spent on the first goblin through the
 /// door is gone.
 ///
-/// Read off `engine::poisons::ALL_POISONS` at the point of use rather
+/// Read off `engine::poisons::ALL_INJURY_POISONS` at the point of use rather
 /// than duplicated here, so a fifth poison is a row in that module and
 /// nothing at all in this one; the names are the actions'.
 const POISON_DOSES_CHEAPEST_FIRST: &[&str] = &[
