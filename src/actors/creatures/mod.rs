@@ -1,5 +1,6 @@
 pub mod aboleths;
 pub mod otherworldly_steeds;
+pub mod avatars_of_death;
 pub mod gray_oozes;
 pub mod ice_devils;
 pub mod planetars;

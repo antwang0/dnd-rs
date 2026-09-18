@@ -4086,6 +4086,27 @@ pub enum Condition {
     /// list: RAW's Dispel Magic names *"a spell"*, and a pair of boots
     /// is not one.
     Springing,
+    /// SRD 5.2's **Mysterious Deck**, the *Euryale* card — *"The card's
+    /// medusa-like visage curses you. You take a −2 penalty to saving
+    /// throws while cursed in this way. Only a god or the magic of the
+    /// Fates card can end this curse."*
+    ///
+    /// The whole card, and the only one in the deck whose printed text
+    /// is already a number this engine adds up. It rides
+    /// `CONDITION_SAVE_BONUSES` at `-2` — the second negative row on
+    /// that cohort, after the bard's Unsettling Words, and the first
+    /// that is not spent on the save it taxes: Euryale is a *standing*
+    /// penalty, so it is deliberately absent from `CONSUMED_ON_SAVE`.
+    /// A cursed creature rolls two points short on every save it makes
+    /// for as long as the curse holds, which is what makes turning this
+    /// card over worse than turning over most of the ones that look
+    /// worse.
+    ///
+    /// Not on `is_dispellable_buff` and not on the Dispel Magic list.
+    /// RAW is unusually firm about it — *"only a god or the magic of
+    /// the Fates card"* — and a curse a level-3 spell shrugs off is not
+    /// the card the book printed.
+    EuryalesCurse,
 }
 
 /// The Long Jump distance the SRD 5.2 **Jump** spell grants, in feet.
@@ -4103,6 +4124,7 @@ impl Condition {
             Condition::Leaping => "leaping",
             Condition::Bounding => "bounding",
             Condition::Springing => "springing",
+            Condition::EuryalesCurse => "cursed by Euryale",
             Condition::StaffStriking => "staff of striking charged",
             Condition::StaffWithering => "staff of withering charged",
             Condition::StaffLightning => "staff lightning charged",

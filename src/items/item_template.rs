@@ -7570,6 +7570,35 @@ pub static HORSESHOES_OF_SPEED: Item = Item {
 ///
 /// See [`crate::actions::item_actions::WAND_OF_WONDER_TABLE`] for the
 /// eighteen rows, which four are not modelled, and why.
+/// **Mysterious Deck** (Wondrous Item, Legendary) — SRD 5.2's name for
+/// the Deck of Many Things, and the only item in the book whose entry is
+/// mostly a list of ways a character's campaign ends.
+///
+/// `charges: 22` and no recharge, which is the deck being a deck: RAW's
+/// *"once a card is drawn, it disappears"* is followed immediately by
+/// *"the card reappears in the deck"* for twenty of the twenty-two, so
+/// the count is not really a stack of cards left — it is how many times
+/// anybody is going to be allowed to do this. Twenty-two is the number
+/// of cards in the deck the engine deals from, which makes it a number
+/// with a reason rather than a balance knob.
+///
+/// No attunement, deliberately and per RAW: the deck asks nothing of you
+/// except that you pick it up. That is most of what makes it dangerous —
+/// every other Legendary on the shelf costs an attunement slot, which is
+/// a decision made in advance by somebody who has read the entry.
+///
+/// See [`crate::actions::item_actions::MYSTERIOUS_DECK_TABLE`] for the
+/// twenty-two cards, which of them the board can show, and why the other
+/// thirteen cannot.
+pub static MYSTERIOUS_DECK: Item = Item {
+    name: crate::actions::item_actions::MYSTERIOUS_DECK_NAME,
+    glyph: 'd',
+    charges: 22,
+    recharge: None,
+    on_use: &[&crate::actions::item_actions::DRAW_FROM_THE_DECK],
+    ..Item::DEFAULTS
+};
+
 pub static WAND_OF_WONDER: Item = Item {
     name: crate::actions::item_actions::WAND_OF_WONDER_NAME,
     glyph: 'w',
@@ -9101,6 +9130,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // family, because a table this wide wants to be a thing that happens
     // to a party once rather than a tool they learn to use.
     &WAND_OF_WONDER,
+    // …and the one object on the shelf that is worse than the wand in
+    // every direction at once. One entry, for the wand's reason turned
+    // up as far as it goes: a Mysterious Deck should be something that
+    // happens to a campaign, not something a party farms.
+    &MYSTERIOUS_DECK,
     // The shackles that answer a boss that leaves. No attunement, no
     // charges, and a prerequisite instead: somebody has to land the
     // lockdown first.

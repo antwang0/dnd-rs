@@ -1760,13 +1760,26 @@ pub struct SimpleWeapon {
     /// `crate::actions::feats::GREAT_WEAPON_MASTER_TAG`.
     ///
     /// RAW's own clause — the Strength-13 / Dexterity-13 disadvantage —
-    /// is deliberately **not** enforced here. Every wielder on the
-    /// roster meets the threshold for the weapon they are printed with
-    /// (a stat block does not carry a weapon it fumbles), so the gate
-    /// would be dead code that only a loot drop could wake, and the
-    /// engine has no equip step for one to fail at. The day a creature
-    /// can pick a greataxe up off the floor, this flag is what that
-    /// check reads.
+    /// **is** enforced, at
+    /// `EncounterInstance::heavy_weapon_is_too_much_for`, which this
+    /// flag is what feeds through `AttackParams::heavy`. This paragraph
+    /// used to say the opposite, on the premise that *"every wielder on
+    /// the roster meets the threshold for the weapon they are printed
+    /// with (a stat block does not carry a weapon it fumbles)"*, and
+    /// the premise was simply false: sweeping the generator's pool
+    /// turns up five templates that do not, and all five are shooters
+    /// — the Bandit, the Knight and the Thug each carry a heavy
+    /// crossbow at Dexterity 12, 11 and 12, and the Gnoll and the
+    /// Hobgoblin each draw a longbow at Dexterity 12. Five of the most
+    /// common monsters in the game were shooting straight through a
+    /// clause printed in the same entry as the one they were being
+    /// taxed by.
+    ///
+    /// The Strength half has no carrier on the roster, and that part of
+    /// the old note stands: the greataxes and greatswords are on arms
+    /// built for them. It is still read, because the check asks the
+    /// actor standing on the board rather than the statblock it was
+    /// stamped from, and a drain or a polymorph can produce the case.
     pub is_heavy: bool,
     /// SRD 5.2's **Loading** weapon property — *"you can fire only one
     /// piece of ammunition from a Loading weapon when you use an

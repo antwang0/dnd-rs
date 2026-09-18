@@ -279,6 +279,10 @@ fn legendary_attack(
             deals_no_damage: false,
             // Nothing with a legendary action list is taking prisoners.
             nonlethal: false,
+            // One attack in SRD 5.2 is written as an automatic hit, and
+            // it is not on a legendary list — the Avatar of Death has
+            // no legendary actions.
+            always_hits: false,
         },
     );
     let landed = !effects.is_empty();

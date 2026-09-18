@@ -11618,6 +11618,641 @@ pub static ANIMATE_SHIELD: SelfConditionItem = SelfConditionItem {
 
 pub const ANIMATED_SHIELD_NAME: &str = "Animated Shield";
 
+/// What turning over one card of a [`MYSTERIOUS_DECK_TABLE`] row does
+/// to the board.
+///
+/// Nine of the twenty-two do something; thirteen are
+/// [`CardEffect::Flavour`]. That ratio is not an apology, and it is
+/// worth reading before the table: the Mysterious Deck is a *campaign*
+/// item, and most of its cards are written in a vocabulary a fight has
+/// no words for. Twenty-five pieces of jewelry, a keep with monsters in
+/// it, proficiency and Expertise in Persuasion, a year of Advantage on
+/// Death Saving Throws, 1d3 castings of Wish, an NPC who becomes
+/// Hostile in a way you will not learn about until they reveal
+/// themselves — those are consequences measured in sessions. The nine
+/// that land are the nine that are measured in rounds.
+///
+/// Each flavour row still prints its card by name, so a draw always
+/// tells the table what came up. See [`WonderEffect::Flavour`] directly
+/// above, which is the same idea at four rows of eighteen.
+pub enum CardEffect {
+    /// **Skull.** *"An Avatar of Death appears in an unoccupied space
+    /// as close to you as possible."* The one card this whole file was
+    /// written for — see
+    /// [`crate::actors::creatures::avatars_of_death`].
+    Avatar,
+    /// **Knight.** *"You gain the service of a Knight, who magically
+    /// appears in an unoccupied space you choose within 30 feet of
+    /// yourself,"* and *"serves you loyally until death"* — so, the
+    /// drawer's own team.
+    Knight,
+    /// **Flames.** *"A powerful devil becomes your enemy. The devil
+    /// seeks your ruin … before attempting to slay you."* RAW leaves
+    /// the devil unnamed; the bestiary's bone devil is the one that
+    /// reads as *powerful* without ending the fight on arrival, which
+    /// a pit fiend at CR 20 would.
+    Flames,
+    /// **Donjon.** *"You disappear and become entombed in a state of
+    /// suspended animation in an extradimensional sphere,"* and *"you
+    /// draw no more cards."* The engine already has a lane for a
+    /// creature that is off the board and not dead —
+    /// `Condition::Banished`, at [`crate::engine::banishment`] — and
+    /// this is what it is for, with a timer long enough to mean RAW's
+    /// *"until you are found."*
+    Donjon,
+    /// **Puzzle.** *"Permanently reduce your Intelligence or Wisdom by
+    /// 1d4 + 1 (to a minimum score of 1)."*
+    ///
+    /// "Permanently" is the one word the engine cannot honour: its
+    /// ability drain is cleared by a rest, because the only thing that
+    /// drained a score before this card was a shadow. Inside the fight
+    /// the card was drawn in, the two are the same number.
+    Puzzle,
+    /// **Sun.** *"A magic item (chosen by the GM) appears on your
+    /// person. In addition, you gain 10 Temporary Hit Points daily at
+    /// dawn until you die."*
+    ///
+    /// Half a card: the temporary hit points land, once, because a
+    /// daily refill is a clock no fight runs long enough to see. The
+    /// magic item does not — the engine's loot arrives from a table at
+    /// the end of a fight rather than into a hand in the middle of one.
+    Sun,
+    /// **Euryale.** *"The card's medusa-like visage curses you. You
+    /// take a −2 penalty to saving throws while cursed in this way."*
+    ///
+    /// The cleanest card in the deck to model, and the only one whose
+    /// RAW text is already a number the engine adds up — see
+    /// `Condition::EuryalesCurse`. *"Only a god or the magic of the
+    /// Fates card can end this curse"* is honoured by giving it no
+    /// timer a fight can outlast.
+    Euryale,
+    /// **Fool.** *"You have Disadvantage on D20 Tests for the next 72
+    /// hours. Draw another card; this draw doesn't count as one of your
+    /// declared draws."*
+    ///
+    /// The second sentence lands and the first does not, which is the
+    /// opposite way round from every other split card here. A blanket
+    /// Disadvantage on *every* D20 test is a condition the engine has
+    /// no single switch for — attack rolls, saves and checks are three
+    /// lanes — and 72 hours is not a fight. A free extra draw is one
+    /// line, and it is the half that makes the Fool feel like the Fool.
+    Fool,
+    /// **Jester.** *"You have Advantage on D20 Tests for the next 72
+    /// hours, or you can draw two additional cards beyond your declared
+    /// draws."* RAW offers a choice; the engine takes the half it can
+    /// spell, for the Fool's reason and with one more card.
+    Jester,
+    /// A card whose consequences are measured in sessions. Named in the
+    /// log and otherwise nothing — see the enum's own docstring for the
+    /// thirteen and why.
+    Flavour,
+}
+
+/// One card of the deck, and one band of the d100 that finds it.
+pub struct DeckCard {
+    /// The top of this card's range on RAW's **22-card** column. The
+    /// rows are in ascending order and the first whose `upto` the roll
+    /// does not exceed wins, so the bands are implicit and cannot
+    /// overlap or leave a gap — the same shape [`WonderRow`] uses, and
+    /// checked the same way.
+    ///
+    /// The 13-card column is not modelled. RAW says *"most (75 percent)
+    /// of these decks have thirteen cards, but some have
+    /// twenty-two,"* and a deck that is sometimes one table and
+    /// sometimes another is a fact about the object that the engine has
+    /// nowhere to store — `Item` carries charges, not a provenance. The
+    /// 22-card column is the superset, so the deck on the shelf is one
+    /// of the rarer ones and every card exists in it.
+    pub upto: u32,
+    /// The card's name, printed before anything resolves. Every row has
+    /// one, including the thirteen that do nothing else — which is the
+    /// point of having it.
+    pub card: &'static str,
+    /// RAW's own sentence, shortened to a line. `{actor}` is replaced
+    /// with the drawer's name.
+    pub log: &'static str,
+    pub effect: CardEffect,
+}
+
+/// SRD 5.2's **Mysterious Deck**, all twenty-two cards in the order the
+/// book's 22-card column puts them: alphabetical, which is not the
+/// order anybody would have guessed and is worth not re-sorting.
+///
+/// The bands are RAW's exactly — five faces for Balance, four for
+/// Donjon, four for Skull — so the frequencies are the book's rather
+/// than a flat 1-in-22. Balance, Comet, Fates and Gem are five faces
+/// each and do nothing; Skull is four and is the reason the item is
+/// Legendary.
+pub static MYSTERIOUS_DECK_TABLE: &[DeckCard] = &[
+    DeckCard {
+        upto: 5,
+        card: "Balance",
+        log: "{actor} may trade two points of one ability score for two of another",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 10,
+        card: "Comet",
+        log: "{actor} is promised Advantage on death saves for a year, for one chosen foe",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 14,
+        card: "Donjon",
+        log: "the floor opens under {actor} and does not close",
+        effect: CardEffect::Donjon,
+    },
+    DeckCard {
+        upto: 18,
+        card: "Euryale",
+        log: "a medusa's face looks back at {actor} out of the card",
+        effect: CardEffect::Euryale,
+    },
+    DeckCard {
+        upto: 23,
+        card: "Fates",
+        log: "reality's fabric unravels and spins anew for {actor}",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 27,
+        card: "Flames",
+        log: "something in the lower planes learns {actor}'s name",
+        effect: CardEffect::Flames,
+    },
+    DeckCard {
+        upto: 31,
+        card: "Fool",
+        log: "{actor} laughs, and draws again",
+        effect: CardEffect::Fool,
+    },
+    DeckCard {
+        upto: 36,
+        card: "Gem",
+        log: "a fortune in jewels piles up at {actor}'s feet",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 41,
+        card: "Jester",
+        log: "the Jester grins at {actor} and deals two more",
+        effect: CardEffect::Jester,
+    },
+    DeckCard {
+        upto: 46,
+        card: "Key",
+        log: "a rare weapon appears on {actor}'s person",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 51,
+        card: "Knight",
+        log: "a knight steps out of nowhere and takes {actor}'s side",
+        effect: CardEffect::Knight,
+    },
+    DeckCard {
+        upto: 56,
+        card: "Moon",
+        log: "{actor} is granted the power to cast Wish",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 60,
+        card: "Puzzle",
+        log: "something goes out of {actor}'s mind and does not come back",
+        effect: CardEffect::Puzzle,
+    },
+    DeckCard {
+        upto: 64,
+        card: "Rogue",
+        log: "somebody {actor} trusts has quietly stopped being a friend",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 68,
+        card: "Ruin",
+        log: "every coin and deed {actor} owns is gone",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 73,
+        card: "Sage",
+        log: "{actor} is owed one true answer to one question",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 77,
+        card: "Skull",
+        log: "a ghostly skeleton in a tattered black robe steps out of the card for {actor}",
+        effect: CardEffect::Avatar,
+    },
+    DeckCard {
+        upto: 82,
+        card: "Star",
+        log: "{actor} is permanently improved in one respect",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 87,
+        card: "Sun",
+        log: "light gathers around {actor} and settles",
+        effect: CardEffect::Sun,
+    },
+    DeckCard {
+        upto: 91,
+        card: "Talons",
+        log: "every magic item {actor} carries crumbles",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 96,
+        card: "Throne",
+        log: "{actor} is now the rightful owner of a keep, and of its monsters",
+        effect: CardEffect::Flavour,
+    },
+    DeckCard {
+        upto: 100,
+        card: "Void",
+        log: "{actor}'s soul goes somewhere else and the body stays",
+        effect: CardEffect::Flavour,
+    },
+];
+
+pub const MYSTERIOUS_DECK_NAME: &str = "Mysterious Deck";
+
+/// SRD 5.2's **Mysterious Deck** (Wondrous Item, Legendary) — the
+/// artifact this document calls by that name and everybody else calls
+/// the Deck of Many Things.
+///
+/// The chassis is [`WandOfWonderItem`]'s in every structural respect —
+/// a d100, an ascending table of implicit bands, a row that names
+/// itself in the log before it resolves — and it is a second struct
+/// rather than a second table on that one because the two items differ
+/// in the two things a chassis cannot parameterise: the wand is aimed
+/// at a point and the deck is not aimed at anything, and a wand row
+/// forwards a spell where a card row does something the engine has no
+/// spell for.
+///
+/// **Not aimed, and so `TargetingSchema::NoArgs`.** Every card in the
+/// deck is written about *you* — the drawer — even the ones that put
+/// something else on the board: the avatar appears next to you, the
+/// knight appears next to you, the devil is your enemy. There is
+/// nothing to point at.
+///
+/// **Three clauses of the Skull card live here rather than on the
+/// avatar's stat block**, because they belong to the card:
+///
+///   - *"The avatar targets only you with its attacks."* Not modelled.
+///     The engine's AI picks its target by what it can reach and what
+///     is nearly dead; there is no lane for a grudge, and inventing one
+///     for a single summon would be a targeting override every other
+///     creature in the bestiary would then have to declare it does not
+///     want.
+///   - *"If an ally of yours deals damage to the avatar, that ally
+///     summons another Avatar of Death."* Not modelled — it is a spawn
+///     trigger on a damage event, and the engine's damage pipeline has
+///     no hook that fires on *who* dealt it rather than on what it was.
+///     It is also, in a fight the party is trying to win, a clause
+///     nobody would ever trigger on purpose.
+///   - *"A creature slain by an avatar can't be restored to life."*
+///     Not modelled. Nothing in the engine can restore the dead to life
+///     mid-fight, so there is nothing for the clause to forbid.
+///
+/// **What a draw costs.** An Action, and one card. RAW's declared-draws
+/// ceremony — *"you must declare how many cards you intend to draw"*,
+/// with the undrawn remainder flying out on their own if you stop — is
+/// a promise made before the first card and kept over an hour, which
+/// is not a shape a turn has. One draw, one Action, and the deck's
+/// charges are its cards.
+pub struct MysteriousDeckItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    pub billing: ItemUseBilling,
+    /// The table this deck deals from — a field for
+    /// [`WandOfWonderItem::table`]'s reason, and read by the sweep that
+    /// walks every card.
+    pub table: &'static [DeckCard],
+}
+
+impl MysteriousDeckItem {
+    /// How far from the drawer to look for room for something the card
+    /// put on the board.
+    ///
+    /// RAW gives the Knight *"within 30 feet"* and the avatar *"as
+    /// close to you as possible"*; twelve tiles is the larger of those
+    /// two at the engine's 2.5 feet per tile, and the smaller one does
+    /// not need a number — `find_spawn_near` already searches outward
+    /// from the drawer and stops at the first free space, which *is*
+    /// "as close as possible".
+    const SPAWN_SEARCH: isize = 12;
+
+    /// First instance id of the deck's band. The summon items claim 200
+    /// and up and the Wand of Wonder's interlopers 300; this sits clear
+    /// of both.
+    const CARD_BAND: usize = 400;
+
+    /// RAW's Donjon is *"until you are found and removed from the
+    /// sphere"*, which is not a number of rounds. A hundred is: the
+    /// engine's longest fight is a fifth of it, so the timer exists to
+    /// keep the condition on the same machinery as every other
+    /// condition rather than to ever expire.
+    const DONJON_ROUNDS: u32 = 100;
+
+    /// The card a 1–100 roll turns over. The first row whose `upto` the
+    /// roll does not exceed — see [`DeckCard::upto`].
+    pub(crate) fn card(&self, roll: u32) -> &'static DeckCard {
+        self.table
+            .iter()
+            .find(|c| roll <= c.upto)
+            .unwrap_or_else(|| self.table.last().expect("the deck is never empty"))
+    }
+
+    /// Put a creature on the board beside the drawer, on `team`.
+    fn deal_a_creature(
+        &self,
+        encounter: &mut EncounterInstance,
+        drawer_id: usize,
+        template: &'static std::sync::LazyLock<crate::actors::actor_template::CreatureTemplate>,
+        team: usize,
+    ) -> Option<usize> {
+        let anchor = encounter.actors.get(&drawer_id)?.location();
+        let size = template.size;
+        let spot = encounter.find_spawn_near(anchor, size, Self::SPAWN_SEARCH)?;
+        match encounter.instantiate_creature(template, spot, team, Self::CARD_BAND) {
+            Ok(id) => {
+                encounter.log(format!(
+                    "  a {} stands up at {} (actor #{}).",
+                    template.name.to_lowercase(),
+                    spot,
+                    id
+                ));
+                Some(id)
+            }
+            Err(e) => {
+                encounter.log(format!("  …and finds nowhere to stand: {}", e));
+                None
+            }
+        }
+    }
+
+    /// One card, resolved.
+    ///
+    /// Split from `side_effects` — which rolls the d100, spends the
+    /// card and writes the log line — so the sweep that walks all
+    /// twenty-two rows can do it on purpose rather than by drawing
+    /// until the dice have been kind. Same split, same reason, as
+    /// [`WandOfWonderItem::resolve`].
+    pub(crate) fn resolve(
+        &self,
+        encounter: &mut EncounterInstance,
+        drawer_id: usize,
+        card: &'static DeckCard,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        match card.effect {
+            CardEffect::Flavour => Vec::new(),
+            CardEffect::Avatar => {
+                // The avatar's sheet is an expression in the drawer's,
+                // and this is where the expression is evaluated: half
+                // the drawer's hit point maximum, and the drawer's
+                // proficiency bonus (which the Multiattack then halves
+                // again for its swing count). See
+                // `ActorInstance::set_max_hp` and `set_level`.
+                let Some((hp, level, team)) = encounter.actors.get(&drawer_id).map(|a| {
+                    (a.max_hitpoints() / 2, a.effective_level(), a.team())
+                }) else {
+                    return Vec::new();
+                };
+                // Hostile to the drawer, which is the only part of
+                // *"targets only you"* the engine can express.
+                let foe_team = encounter
+                    .sorted_actor_ids()
+                    .into_iter()
+                    .filter_map(|id| encounter.actors.get(&id))
+                    .map(|a| a.team())
+                    .find(|t| *t != team)
+                    .unwrap_or(team + 1);
+                if let Some(avatar) = self.deal_a_creature(
+                    encounter,
+                    drawer_id,
+                    &crate::actors::creatures::avatars_of_death::AVATAR_OF_DEATH_TEMPLATE,
+                    foe_team,
+                ) && let Some(a) = encounter.actors.get_mut(&avatar)
+                {
+                    a.set_max_hp(hp);
+                    a.set_level(level);
+                }
+                Vec::new()
+            }
+            CardEffect::Knight => {
+                let Some(team) = encounter.actors.get(&drawer_id).map(|a| a.team()) else {
+                    return Vec::new();
+                };
+                self.deal_a_creature(
+                    encounter,
+                    drawer_id,
+                    &crate::actors::creatures::knights::KNIGHT_TEMPLATE,
+                    team,
+                );
+                Vec::new()
+            }
+            CardEffect::Flames => {
+                let Some(team) = encounter.actors.get(&drawer_id).map(|a| a.team()) else {
+                    return Vec::new();
+                };
+                let foe_team = encounter
+                    .sorted_actor_ids()
+                    .into_iter()
+                    .filter_map(|id| encounter.actors.get(&id))
+                    .map(|a| a.team())
+                    .find(|t| *t != team)
+                    .unwrap_or(team + 1);
+                self.deal_a_creature(
+                    encounter,
+                    drawer_id,
+                    &crate::actors::creatures::bone_devils::BONE_DEVIL_TEMPLATE,
+                    foe_team,
+                );
+                Vec::new()
+            }
+            CardEffect::Donjon => vec![Box::new(ApplyCondition {
+                actor_id: drawer_id,
+                condition: Condition::Banished,
+                timer: ConditionTimer::Rounds(Self::DONJON_ROUNDS),
+            })],
+            CardEffect::Euryale => vec![Box::new(ApplyCondition {
+                actor_id: drawer_id,
+                condition: Condition::EuryalesCurse,
+                timer: ConditionTimer::Rounds(Self::DONJON_ROUNDS),
+            })],
+            CardEffect::Sun => vec![Box::new(crate::engine::side_effects::GainTempHp {
+                actor_id: drawer_id,
+                amount: SUN_TEMP_HP,
+            })],
+            CardEffect::Puzzle => {
+                // RAW offers the drawer the choice of Intelligence or
+                // Wisdom, and a player making it rationally gives up
+                // the one they were using less. The engine reads that
+                // as the lower of the two scores, tie going to
+                // Intelligence — which is the choice a fighter would
+                // make and the one a wizard would hate.
+                let Some(ability) = encounter.actors.get(&drawer_id).map(|a| {
+                    let int = a.ability_score(AbilityScoreType::Intelligence);
+                    let wis = a.ability_score(AbilityScoreType::Wisdom);
+                    if int <= wis {
+                        AbilityScoreType::Intelligence
+                    } else {
+                        AbilityScoreType::Wisdom
+                    }
+                }) else {
+                    return Vec::new();
+                };
+                let amount = encounter.roll(&PUZZLE_DICE) + 1;
+                vec![Box::new(crate::engine::side_effects::DrainAbility {
+                    actor_id: drawer_id,
+                    ability,
+                    amount,
+                    label: "the Puzzle card",
+                })]
+            }
+            CardEffect::Fool => self.draw_again(encounter, drawer_id, 1),
+            CardEffect::Jester => self.draw_again(encounter, drawer_id, 2),
+        }
+    }
+
+    /// RAW's free draws — the Fool's one and the Jester's two — taken
+    /// immediately and off the deck's own dice.
+    ///
+    /// Recursive through `resolve`, and bounded by the table rather
+    /// than by a counter: the Fool and the Jester are the only two
+    /// cards that grant a draw, and RAW removes both from the deck once
+    /// drawn (*"once the Fool or Jester has left the deck, reroll on
+    /// the table if that card comes up again"*). The engine does not
+    /// track which cards have left, so the recursion is capped instead
+    /// — see [`MAX_FREE_DRAWS`]. Without a cap, a run of Fools is an
+    /// unbounded stack, and a d100 that can do that once in a thousand
+    /// draws will do it.
+    ///
+    /// The free draws do **not** spend a charge, which is RAW's own
+    /// *"this draw doesn't count as one of your declared draws."*
+    fn draw_again(
+        &self,
+        encounter: &mut EncounterInstance,
+        drawer_id: usize,
+        count: u32,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if encounter.within_free_deck_draws() {
+            encounter.log("  …and the deck declines to deal another.".to_string());
+            return Vec::new();
+        }
+        let mut effects = Vec::new();
+        encounter.in_free_deck_draws(|e| {
+            for _ in 0..count {
+                let roll = e.roll(&Dice::new(1, 100));
+                let card = self.card(roll);
+                let drawer = e.actor_name(drawer_id);
+                e.log(format!(
+                    "  free draw: the {} — {}.",
+                    card.card,
+                    card.log.replace("{actor}", &drawer)
+                ));
+                effects.extend(self.resolve(e, drawer_id, card));
+            }
+        });
+        effects
+    }
+}
+
+/// The Sun card's *"10 Temporary Hit Points"*.
+const SUN_TEMP_HP: u32 = 10;
+
+/// The Puzzle card's *"1d4 + 1"*. The `+1` is added at the site, since
+/// `Dice` is a count and a face.
+const PUZZLE_DICE: Dice = Dice::new(1, 4);
+
+impl Action for MysteriousDeckItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+
+    /// False, and it is the most misleading `false` in the file. Four
+    /// of the twenty-two cards are catastrophic for the drawer and one
+    /// of them summons something that will kill them — but
+    /// `is_harmful` is the engine's question about whether the *action*
+    /// is aimed at an enemy, and this one is aimed at nobody. A deck
+    /// that answered `true` would break the drawer's own Sanctuary for
+    /// the crime of gambling.
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        costs.extend(self.billing.costs(self.item_name));
+        costs
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        caster_holds(encounter, caster_id, self.item_name)
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        if !self.billing.take(encounter, caster_id, self.item_name) {
+            return Vec::new();
+        }
+        let drawer = encounter.actor_name(caster_id);
+        let roll = encounter.roll(&Dice::new(1, 100));
+        let card = self.card(roll);
+        encounter.log(format!(
+            "{} turns over the {} — {}.",
+            drawer,
+            card.card,
+            card.log.replace("{actor}", &drawer)
+        ));
+        self.resolve(encounter, caster_id, card)
+    }
+}
+
+/// Draw one card from the Mysterious Deck and find out. See
+/// [`MysteriousDeckItem`].
+pub static DRAW_FROM_THE_DECK: MysteriousDeckItem = MysteriousDeckItem {
+    action_name: "draw a card",
+    action_aliases: &["draw", "deck", "mysterious deck"],
+    item_name: MYSTERIOUS_DECK_NAME,
+    billing: ItemUseBilling::Charges(1),
+    table: MYSTERIOUS_DECK_TABLE,
+};
+
+
 /// **An oil poured over a blade** — SRD 5.2's Oil of Sharpness, *"for 1
 /// hour, the coated item is magical and has a +3 bonus to attack and
 /// damage rolls."*

@@ -2673,6 +2673,16 @@ const CONDITION_SAVE_BONUSES: &[ConditionRollBonus] = &[
         source: Condition::Unsettled,
         bonus: -4,
     },
+    // SRD 5.2's **Mysterious Deck**, the Euryale card: *"You take a −2
+    // penalty to saving throws while cursed in this way."* The second
+    // negative row here and the first standing one — Unsettling Words
+    // above is spent by `CONSUMED_ON_SAVE` on the next save the holder
+    // rolls, and this is not spent by anything at all. See
+    // `Condition::EuryalesCurse`.
+    ConditionRollBonus {
+        source: Condition::EuryalesCurse,
+        bonus: -2,
+    },
 ];
 
 /// Flat ability-check bonuses contributed by active conditions — the
@@ -11641,6 +11651,61 @@ impl ActorInstance {
     /// 5e's Aid spell semantics: "their hit point maximum and current
     /// hit points increase by 5"). Use a negative delta to apply a
     /// max-HP penalty (e.g. exhaustion); the floor is 1 max HP.
+    /// Write the actor's *base* hit point maximum outright, and fill it.
+    ///
+    /// The one stat block in SRD 5.2 whose HP line is not a dice
+    /// expression at all: the Avatar of Death prints **"HP Half the HP
+    /// maximum of its summoner"**, a number that cannot exist until the
+    /// summoner does. `CreatureTemplate::hitpoints` is a `Dice`, so the
+    /// avatar arrives on the board with a placeholder roll and is told
+    /// what it actually has a moment later.
+    ///
+    /// A **set** rather than the `bump_max_hp` beside it, and the
+    /// difference is not style. A bump is an adjustment to a number the
+    /// sheet already decided — Aid's five, a drain's penalty — and the
+    /// caller does not need to know what that number was. This is the
+    /// opposite: the sheet never decided, and a caller made to express
+    /// "half my summoner's maximum" as a delta would have to read the
+    /// placeholder first, which makes the placeholder meaningful. It is
+    /// not; it is scaffolding.
+    ///
+    /// Current HP goes to the same number, because this runs at the
+    /// moment of arrival and a creature that has just been conjured is
+    /// not already wounded. Floored at 1, so a summoner reduced to a
+    /// single hit point still gets an avatar rather than a corpse.
+    ///
+    /// Touches `base_hitpoints` only, so every bonus lane still stacks
+    /// on top through `max_hitpoints` — an avatar wearing nothing is
+    /// the whole roster today, and the one that is handed an Amulet of
+    /// Health should benefit from it exactly as anything else does.
+    pub fn set_max_hp(&mut self, hp: u32) {
+        self.base_hitpoints = hp.max(1);
+        self.hitpoints = self.max_hitpoints();
+    }
+
+    /// Write the actor's level outright — the proficiency-bonus twin of
+    /// [`Self::set_max_hp`] directly above, and here for the same one
+    /// stat block.
+    ///
+    /// SRD 5.2's Avatar of Death has no challenge rating at all; its
+    /// whole CR line reads *"CR None (XP 0; PB equals its summoner's)"*.
+    /// `effective_level` is `max(level, floor(cr))` and the avatar's
+    /// `cr` is `0.0`, so without this the avatar's proficiency bonus is
+    /// the `+2` of a first-level nobody no matter who conjured it — and
+    /// since its Multiattack count is *"half the summoner's Proficiency
+    /// Bonus (rounded up)"*, an avatar summoned by an archmage would
+    /// swing once instead of three times.
+    ///
+    /// Deliberately **not** a general "level up" lane, whatever the
+    /// name suggests. Nothing in the engine levels a creature during a
+    /// fight, and the day something does it will want experience, hit
+    /// dice and a spell slot table, none of which this touches. What
+    /// this is for is a sheet that arrives with a blank where the
+    /// number goes.
+    pub fn set_level(&mut self, level: u32) {
+        self.level = level;
+    }
+
     pub fn bump_max_hp(&mut self, delta: i32) {
         let new_base = (self.base_hitpoints as i32 + delta).max(1) as u32;
         let added = new_base.saturating_sub(self.base_hitpoints);

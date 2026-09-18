@@ -2262,6 +2262,29 @@ pub struct EncounterInstance {
     /// `ActorInstance::pending_subdual` for why the last few inches of
     /// this need a field on the sheet rather than one on the board.
     subduing_depth: u32,
+    /// How many free draws off a Mysterious Deck are currently
+    /// resolving — SRD 5.2's Fool (*"draw another card; this draw
+    /// doesn't count as one of your declared draws"*) and Jester
+    /// (*"or you can draw two additional cards"*).
+    ///
+    /// A depth on the board rather than a counter passed down the call
+    /// stack, for the reason `subduing_depth` and `critical_depth`
+    /// above it are: the thing that needs to know is the recursion
+    /// itself, and the recursion goes out through
+    /// `MysteriousDeckItem::resolve` and back in through
+    /// `MysteriousDeckItem::draw_again` with a card's worth of effects
+    /// in between.
+    ///
+    /// What it is protecting against is not a rules question but an
+    /// arithmetic one. RAW removes the Fool and the Jester from the
+    /// deck once drawn, which bounds the chain at two; the engine does
+    /// not track which cards have left, so a d100 that lands on the
+    /// Fool's four faces twice running would recurse, and one that did
+    /// it forever would take the stack with it. Four faces in a hundred
+    /// is rarer than most bugs and commoner than never.
+    ///
+    /// Read by `within_free_deck_draws`, raised by `in_free_deck_draws`.
+    free_deck_draw_depth: u32,
     /// The seed both RNGs were built from — the one passed in, or the
     /// one `empty` drew when none was. Read-only after construction and
     /// surfaced by `seed()`; see `empty` for why an unseeded encounter
@@ -14408,6 +14431,32 @@ impl EncounterInstance {
         {
             return heads;
         }
+        // SRD 5.2 **Avatar of Death**: *"the avatar makes a number of
+        // Reaping Scythe attacks equal to half the summoner's
+        // Proficiency Bonus (rounded up)."*
+        //
+        // The second expression-shaped routine in the engine, and it is
+        // read here for the hydra's reason directly above: the printed
+        // `count` on the literal cannot be the answer, because the
+        // answer is a fact about the creature rather than about the
+        // routine. The avatar's own proficiency bonus *is* its
+        // summoner's — the CR line says so, and the card writes it on
+        // at the summon — so the sentence needs nothing from off the
+        // sheet. See `class_features::AVATAR_OF_DEATH_TAG`.
+        //
+        // Floored at one, because `div_ceil` on a proficiency bonus of
+        // at least 2 cannot return less anyway and a clamp that can
+        // never fire is cheaper than an invariant nobody can see.
+        if let Some(pb) = self
+            .actors
+            .get(&caster_id)
+            .filter(|a| {
+                a.has_passive_feature(crate::actions::class_features::AVATAR_OF_DEATH_TAG)
+            })
+            .map(|a| a.proficiency_bonus().max(0) as u32)
+        {
+            return pb.div_ceil(2).max(1);
+        }
         declared
     }
 
@@ -14444,6 +14493,29 @@ impl EncounterInstance {
         self.subduing_depth += 1;
         let out = body(self);
         self.subduing_depth -= 1;
+        out
+    }
+
+    /// True while a free draw off a Mysterious Deck is already
+    /// resolving — the guard that stops a run of Fools from recursing
+    /// off the end of the stack. See `free_deck_draw_depth`.
+    ///
+    /// One deep rather than a counter with a limit, because RAW's own
+    /// bound is one: the Fool and the Jester leave the deck when drawn,
+    /// so at most one chain of free draws can be open at a time even in
+    /// the book. A deck that deals a second Fool inside the first one's
+    /// draw is a deck the engine has failed to shuffle, and declining
+    /// it is the nearest thing to RAW's *"reroll on the table if that
+    /// card comes up again"* that a deck with no memory can offer.
+    pub fn within_free_deck_draws(&self) -> bool {
+        self.free_deck_draw_depth > 0
+    }
+
+    /// Run `body` with the free-draw guard up.
+    pub fn in_free_deck_draws<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
+        self.free_deck_draw_depth += 1;
+        let out = body(self);
+        self.free_deck_draw_depth -= 1;
         out
     }
 
@@ -15720,6 +15792,7 @@ impl EncounterInstance {
             redirect_depth: 0,
             critical_depth: 0,
             subduing_depth: 0,
+            free_deck_draw_depth: 0,
             initialized: false,
             surprise_resolved: false,
             width: terrain_params.width,

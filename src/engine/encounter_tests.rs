@@ -63595,6 +63595,14 @@ fn every_creature_template_in_the_bestiary_is_reachable() {
     for t in by_class_feature {
         note(t);
     }
+    // The sixth road onto the board, and it is one card wide: SRD 5.2's
+    // Mysterious Deck deals a Skull, and a Skull is an Avatar of Death.
+    // Noted by hand rather than walked out of a registry because there
+    // is no registry to walk — `CardEffect::Avatar` carries no template
+    // pointer, since the avatar is the only stat block it could ever
+    // name, and a pointer field on that enum would exist to be read by
+    // this one loop.
+    note(&crate::actors::creatures::avatars_of_death::AVATAR_OF_DEATH_TEMPLATE);
 
     // Cargo runs tests with the working directory set to the package
     // root, which is what makes reading the tree here work at all.
@@ -106387,6 +106395,13 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
         crate::items::item_template::MIRROR_OF_LIFE_TRAPPING.name,
         crate::items::item_template::TALISMAN_OF_ULTIMATE_EVIL.name,
         crate::items::item_template::RING_OF_THREE_WISHES.name,
+        //   - The **Mysterious Deck** is twenty-two cards, and a night's
+        //     sleep does not print more. It is on this list for the Ring
+        //     of Three Wishes' reason and more so: each card is one of a
+        //     fixed number of times anybody is going to be allowed to do
+        //     this, and a deck that refilled would be a deck a party
+        //     farms until it turns up the Knight.
+        crate::items::item_template::MYSTERIOUS_DECK.name,
     ];
 
     let mut wrong: Vec<String> = Vec::new();
@@ -121269,5 +121284,295 @@ fn a_pool_bandit_shoulders_a_crossbow_it_is_not_strong_enough_for() {
     assert!(
         !e.heavy_weapon_is_too_much_for(bandit, false, false),
         "the scimitar is not Heavy and pays nothing"
+    );
+}
+
+
+/// The deck's bands are RAW's own — the 22-card column of the
+/// Mysterious Deck table — and the ladder they are read off has the
+/// same two failure modes any implicit-range table does: a gap, which
+/// makes a card unreachable, and a descent, which makes every card
+/// after it unreachable. Both are checked by walking the list rather
+/// than by reading the numbers off the book twice.
+#[test]
+fn every_card_of_the_mysterious_deck_has_a_band_and_they_tile_the_d100() {
+    use crate::actions::item_actions::MYSTERIOUS_DECK_TABLE;
+
+    assert_eq!(
+        MYSTERIOUS_DECK_TABLE.len(),
+        22,
+        "RAW's 22-card column has twenty-two cards"
+    );
+    let mut previous = 0u32;
+    for card in MYSTERIOUS_DECK_TABLE {
+        assert!(
+            card.upto > previous,
+            "{} ends at {} and the card before it ended at {previous}",
+            card.card,
+            card.upto
+        );
+        previous = card.upto;
+    }
+    assert_eq!(previous, 100, "the last card closes the d100");
+    // And every face finds a card, which is the same statement read
+    // from the other side.
+    for roll in 1..=100u32 {
+        assert!(
+            MYSTERIOUS_DECK_TABLE.iter().any(|c| roll <= c.upto),
+            "a roll of {roll} falls off the end of the deck"
+        );
+    }
+}
+
+/// Every card resolves without taking the drawer off the map by
+/// accident, without panicking, and without leaving the board in a
+/// state the next card cannot be dealt into.
+///
+/// Walked on purpose rather than by drawing until the dice have been
+/// kind: the rarest band on this table is four faces wide, and a random
+/// test would not finish covering it.
+#[test]
+fn every_card_of_the_mysterious_deck_resolves() {
+    use crate::actions::item_actions::{DRAW_FROM_THE_DECK, MYSTERIOUS_DECK_TABLE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    for (i, card) in MYSTERIOUS_DECK_TABLE.iter().enumerate() {
+        let mut e = ei_with_terrain_seeded(24, 24, &[], 800 + i as u64);
+        let drawer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        let foe = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 14), 1, 0)
+            .unwrap();
+        let effects = DRAW_FROM_THE_DECK.resolve(&mut e, drawer, card);
+        for ef in effects {
+            ef.apply(&mut e);
+        }
+        assert!(
+            e.actors.contains_key(&drawer),
+            "the {} card lost the drawer entirely",
+            card.card
+        );
+        assert!(
+            e.actors.contains_key(&foe),
+            "the {} card lost an uninvolved creature",
+            card.card
+        );
+    }
+}
+
+/// The Skull. *"An Avatar of Death appears in an unoccupied space as
+/// close to you as possible,"* with *"HP Half the HP maximum of its
+/// summoner"* and *"PB equals its summoner's"* — three clauses that are
+/// all expressions in the drawer's own sheet, and the only test in the
+/// suite where a creature's stat block is written at the moment it
+/// arrives.
+#[test]
+fn the_skull_deals_an_avatar_cut_to_the_drawers_measure() {
+    use crate::actions::item_actions::{DRAW_FROM_THE_DECK, MYSTERIOUS_DECK_TABLE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let skull = MYSTERIOUS_DECK_TABLE
+        .iter()
+        .find(|c| c.card == "Skull")
+        .expect("the Skull is in the deck");
+    let mut e = ei_with_terrain_seeded(24, 24, &[], 901);
+    let drawer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 14), 1, 0)
+        .unwrap();
+    let before: Vec<usize> = e.sorted_actor_ids();
+    let drawer_max = e.actors[&drawer].max_hitpoints();
+    let drawer_level = e.actors[&drawer].effective_level();
+
+    for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, skull) {
+        ef.apply(&mut e);
+    }
+
+    let avatar = e
+        .sorted_actor_ids()
+        .into_iter()
+        .find(|id| !before.contains(id))
+        .expect("the Skull puts something on the board");
+    let a = &e.actors[&avatar];
+    assert!(
+        a.name().starts_with("Avatar of Death"),
+        "the Skull deals an avatar, not {}",
+        a.name()
+    );
+    assert_eq!(
+        a.max_hitpoints(),
+        drawer_max / 2,
+        "RAW: half the HP maximum of its summoner"
+    );
+    assert_eq!(
+        a.hitpoints(),
+        a.max_hitpoints(),
+        "and it arrives unwounded"
+    );
+    assert_eq!(
+        a.effective_level(),
+        drawer_level,
+        "RAW: PB equals its summoner's"
+    );
+    assert_ne!(
+        a.team(),
+        e.actors[&drawer].team(),
+        "it is not on the drawer's side"
+    );
+}
+
+/// *"Multiattack. The avatar makes a number of Reaping Scythe attacks
+/// equal to half the summoner's Proficiency Bonus (rounded up)."*
+///
+/// Checked at both ends of the range the engine can produce rather than
+/// at one point, because a count that is always 1 would pass a single
+/// assertion and be the bug this clause exists to prevent.
+#[test]
+fn the_avatar_swings_half_its_summoners_proficiency_bonus() {
+    use crate::actors::creatures::avatars_of_death::AVATAR_OF_DEATH_TEMPLATE;
+
+    // level → proficiency bonus → swings. The engine's own ladder: +2
+    // at 1–4, +3 at 5–8, +4 at 9–12, +5 at 13–16, +6 at 17+.
+    for (level, expected) in [(1u32, 1u32), (4, 1), (5, 2), (9, 2), (13, 3), (17, 3)] {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let avatar = e
+            .instantiate_creature(&AVATAR_OF_DEATH_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+            .unwrap();
+        e.actors.get_mut(&avatar).unwrap().set_level(level);
+        let pb = e.actors[&avatar].proficiency_bonus();
+        assert_eq!(
+            e.attack_routine_swings(avatar, 1),
+            expected,
+            "a summoner of level {level} has PB {pb}, so the avatar swings {expected} times"
+        );
+    }
+}
+
+/// And the printed `count` on the literal is not what is read — the
+/// same statement as above, from the side that would break silently. A
+/// creature with no avatar tag keeps the number its stat block prints.
+#[test]
+fn an_ordinary_multiattack_still_reads_its_printed_count() {
+    use crate::actors::creatures::knights::KNIGHT_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let knight = e
+        .instantiate_creature(&KNIGHT_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    for declared in [1u32, 2, 3] {
+        assert_eq!(e.attack_routine_swings(knight, declared), declared);
+    }
+}
+
+/// The Euryale card — *"You take a −2 penalty to saving throws while
+/// cursed in this way"* — and the half of it that matters: the penalty
+/// is standing, not spent on the first save it touches.
+#[test]
+fn euryales_curse_taxes_every_save_and_is_never_spent() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let victim = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    let clean = e.actors[&victim].condition_save_bonus();
+    e.actors.get_mut(&victim).unwrap().add_condition(
+        Condition::EuryalesCurse,
+        ConditionTimer::Rounds(100),
+    );
+    assert_eq!(
+        e.actors[&victim].condition_save_bonus(),
+        clean - 2,
+        "the card is worth exactly two points"
+    );
+    // Three saves later it is still two points, which is what
+    // distinguishes it from the bard's Unsettling Words.
+    for _ in 0..3 {
+        let _ = e.roll_save(victim, AbilityScoreType::Wisdom, 10);
+    }
+    assert!(
+        e.actors[&victim].has_condition(Condition::EuryalesCurse),
+        "only a god or the Fates card ends this"
+    );
+    assert_eq!(e.actors[&victim].condition_save_bonus(), clean - 2);
+}
+
+/// The Fool deals one more card and the Jester two, and neither of them
+/// can deal a third chain: the guard that stops a run of Fools from
+/// walking off the end of the stack. See
+/// `EncounterInstance::within_free_deck_draws`.
+#[test]
+fn a_free_draw_does_not_deal_itself_forever() {
+    use crate::actions::item_actions::{DRAW_FROM_THE_DECK, MYSTERIOUS_DECK_TABLE};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+
+    for name in ["Fool", "Jester"] {
+        let card = MYSTERIOUS_DECK_TABLE
+            .iter()
+            .find(|c| c.card == name)
+            .expect("both jokers are in the deck");
+        let mut e = ei_with_terrain_seeded(24, 24, &[], 950);
+        let drawer = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+            .unwrap();
+        assert!(!e.within_free_deck_draws(), "the guard starts down");
+        for ef in DRAW_FROM_THE_DECK.resolve(&mut e, drawer, card) {
+            ef.apply(&mut e);
+        }
+        assert!(
+            !e.within_free_deck_draws(),
+            "and comes back down after the {name}'s free draws"
+        );
+        assert!(
+            e.messages().iter().any(|l| l.contains("free draw")),
+            "the {name} deals at least one card for free"
+        );
+    }
+}
+
+/// Drawing bills an Action and one card, and the twenty-two run out.
+#[test]
+fn the_deck_spends_a_card_a_draw_and_then_has_none() {
+    use crate::actions::item_actions::DRAW_FROM_THE_DECK;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::MYSTERIOUS_DECK;
+
+    let mut e = ei_with_terrain_seeded(24, 24, &[], 960);
+    let drawer = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&drawer).unwrap().pickup_item(&MYSTERIOUS_DECK);
+    let start = e.actors[&drawer].item_charges_remaining(MYSTERIOUS_DECK.name);
+    assert_eq!(start, 22, "twenty-two cards");
+    // The price is an Action and one card, declared on the action
+    // rather than taken inside it: `ItemUseBilling::Charges` bills
+    // through `cost()`, which is what `Action::execute` pays out of.
+    let costs = DRAW_FROM_THE_DECK.cost(&e, drawer, None, None, None);
+    assert!(
+        costs.iter().any(|r| matches!(
+            r,
+            Resource::ItemCharges { item, count }
+                if *item == MYSTERIOUS_DECK.name && *count == 1
+        )),
+        "a draw costs exactly one card: {:?}",
+        costs
+    );
+    assert!(
+        costs.iter().any(|r| matches!(r, Resource::Action)),
+        "…and the turn's Action"
+    );
+    // And the object is one the drawer has to be holding.
+    assert!(DRAW_FROM_THE_DECK.custom_validate_input(&e, drawer, None, None, None));
+    let empty = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(10, 10), 0, 0)
+        .unwrap();
+    assert!(
+        !DRAW_FROM_THE_DECK.custom_validate_input(&e, empty, None, None, None),
+        "somebody without the deck cannot draw from it"
     );
 }

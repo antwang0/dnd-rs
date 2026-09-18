@@ -21761,6 +21761,22 @@ mod tests {
             // attack wanted, every round, for five AC against an attack
             // that may never come.
             ("cube of force: shield", "no reaction window opens before the roll"),
+            // The Mysterious Deck, and this is the easiest decision on
+            // the list. Nine of its twenty-two cards do something to the
+            // board and four of those nine are catastrophic for the
+            // drawer: Donjon takes them off it, Euryale taxes every save
+            // they will make, Puzzle eats a score, and Skull conjures
+            // something with half their hit points that is there to kill
+            // them. Two of the remaining five are good and three are
+            // sideways. A rung that drew a card would be a rung that
+            // gambles the fight on a d100 with a losing expectation, and
+            // no gate can improve those odds because the odds are the
+            // item.
+            //
+            // It stays entirely real for a human player, which is the
+            // whole point of the deck: it is a decision nobody should
+            // make on somebody else's behalf.
+            ("draw a card", "a d100 with a losing expectation, and no gate improves it"),
             // The Amulet of the Planes is the one row on the table that
             // can lose the fight for the side that uses it. A failed DC
             // 15 Arcana check does not fizzle — it takes the wearer and

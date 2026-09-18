@@ -198,6 +198,37 @@ pub struct AttackParams<'a> {
     /// than the omission, and the omission is in the safe direction:
     /// a warlock who wants a prisoner draws a blade.
     pub nonlethal: bool,
+    /// SRD 5.2's **Automatic hit** — *"Melee Attack Roll: Automatic
+    /// hit, reach 5 ft."*
+    ///
+    /// One attack in the whole document is written this way, and it is
+    /// the Avatar of Death's Reaping Scythe. The phrase is not "the
+    /// attacker has advantage" or "the target's AC counts as 0"; it is
+    /// the attack roll's *result*, printed in place of a bonus. So the
+    /// flag is read as the result and not as a modifier on the way to
+    /// one.
+    ///
+    /// **It is still an attack**, and that is what keeps it on this
+    /// pipeline rather than in a side effect of its own. Everything
+    /// upstream of the die still gets its say — Sanctuary can turn the
+    /// swing away, the Arrow-Catching Shield can take it, the swing
+    /// marks the target for Fancy Footwork, the rider stack still
+    /// burns. What the flag overrides is the single question of
+    /// whether the total beat the AC, and nothing else.
+    ///
+    /// **No natural 20, and no reactive guard.** RAW makes no roll, so
+    /// there is no face to promote a critical off, and a Parry or a
+    /// Defensive Duelist that adds points to an armour class has
+    /// nothing to add them against: both are turned off for this swing
+    /// at `resolve_attack_outcome_with_rider`. The *other* road to a
+    /// critical is untouched — a scythe swung at a Paralyzed target
+    /// crits by the helpless clause, which asks about the target and
+    /// not about the die.
+    ///
+    /// Defaults to `false`, and the direction is the only safe one: an
+    /// attack that forgets to declare itself automatic rolls like
+    /// every other attack in the game.
+    pub always_hits: bool,
 }
 
 /// The ability score SRD 5.2's **Heavy** property asks for — *"if it's
@@ -253,6 +284,7 @@ impl AttackParams<'_> {
         heavy: false,
         deals_no_damage: false,
         nonlethal: false,
+        always_hits: false,
     };
 
     /// SRD 5.2 **Great Weapon Fighting**'s weapon clause — *"the weapon
@@ -3681,6 +3713,17 @@ pub fn resolve_attack_outcome_with_rider(
         && underwater != UnderwaterVerdict::AutoMiss
         && encounter.peerless_aim_rescues(p.caster_id);
     hit |= peerless_aim;
+    // SRD 5.2's **Automatic hit** — the Reaping Scythe, and the only
+    // attack in the document whose printed result is the word rather
+    // than a bonus. See `AttackParams::always_hits`.
+    //
+    // After every clause that can un-hit a swing, because the sentence
+    // is unconditional: the lake, the bent luck and the natural 1 are
+    // all answers to a die that was never rolled. Before the reactive
+    // AC guards below, which are switched off for this swing rather
+    // than allowed to answer it — a Parry that raises an armour class
+    // has nothing to raise it against.
+    hit |= p.always_hits;
     // The defender's last word: the reactive AC guards — SRD 5.2's
     // **Parry** (and the Pirate Captain's **Riposte** half) and the
     // **Defensive Duelist** feat. Here rather than anywhere above
@@ -3691,6 +3734,7 @@ pub fn resolve_attack_outcome_with_rider(
     // nothing. See `try_fire_reactive_ac_guard`, which also declines a
     // swing it cannot turn.
     if hit
+        && !p.always_hits
         && try_fire_reactive_ac_guard(
             encounter,
             p.target_id,
@@ -3708,7 +3752,12 @@ pub fn resolve_attack_outcome_with_rider(
     // so a flat miss still misses — the rider only upgrades a regular
     // hit to a crit (mirrors the RAW "any attack that hits the creature
     // is a critical hit" wording).
-    let is_crit = nat_crit
+    // `nat_crit` is dropped for an automatic hit: RAW rolls no die for
+    // one, so there is no face to promote off. The *other* road to a
+    // critical stays open, because it asks about the target rather
+    // than about the roll — a scythe swung at something Paralyzed
+    // crits for the same reason anything else does.
+    let is_crit = (nat_crit && !p.always_hits)
         || (hit
             && encounter.target_grants_auto_crit(p.caster_id, p.target_id));
     // 5e Adamantine Armor: "any Critical Hit against you becomes a
@@ -3723,6 +3772,12 @@ pub fn resolve_attack_outcome_with_rider(
         // a rescued fumble is a hit, and a line reading "miss (nat 1)"
         // over damage that landed would read as a bug.
         "hit (peerless aim)"
+    } else if p.always_hits {
+        // Ahead of the natural-1 arm for the same reason the boon is:
+        // the scythe lands whatever the die showed, and a line reading
+        // "miss (nat 1)" over damage that arrived is a bug report
+        // waiting to be filed.
+        "hit (automatic)"
     } else if is_nat_one {
         "miss (nat 1)"
     } else if underwater == UnderwaterVerdict::AutoMiss {

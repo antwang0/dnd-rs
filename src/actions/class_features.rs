@@ -14564,6 +14564,26 @@ pub const AQUATIC_ONLY_TAG: &str = "monster.aquatic_only";
 /// Always-on passive; no per-rest charge and no condition gate.
 pub const INCORPOREAL_MOVEMENT_TAG: &str = "monster.incorporeal_movement";
 
+/// SRD 5.2's **Avatar of Death** — *"Multiattack. The avatar makes a
+/// number of Reaping Scythe attacks equal to half the summoner's
+/// Proficiency Bonus (rounded up)."*
+///
+/// On the `monster.` namespace beside the incorporeal tag directly
+/// above, and a tag rather than a field for the reason the hydra's head
+/// count is neither: the number of swings a routine makes is read at
+/// one place — `EncounterInstance::attack_routine_swings` — and a
+/// creature whose count is an expression has to be recognisable there.
+/// A field would have meant a line on all hundred and thirty-six
+/// multiattack literals in the bestiary saying "no, not me".
+///
+/// The expression is over the avatar's *own* proficiency bonus, which
+/// is the summoner's because the stat block says so — *"PB equals its
+/// summoner's"* — and is written onto the avatar at the moment the card
+/// summons it. See `ActorInstance::set_level`.
+///
+/// Always-on passive; no per-rest charge and no condition gate.
+pub const AVATAR_OF_DEATH_TAG: &str = "monster.avatar_of_death";
+
 /// SRD 5.2 **Turn Resistance** — *"the creature has Advantage on saving
 /// throws against any effect that turns Undead."*
 ///
