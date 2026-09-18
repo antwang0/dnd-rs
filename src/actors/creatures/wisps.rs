@@ -59,10 +59,25 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Lightning, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),
-        // Standard incorporeal undead suite. Note: not Charm-immune
-        // RAW (the wisp can be commanded), but we bundle the Charmed
-        // immunity in line with the rest of our undead pool — the
-        // engine's command/charm interactions are tuned around that.
+        // RAW's line, and it differs from the engine's old "standard
+        // incorporeal undead suite" in three places — two absences and
+        // one addition, all three of which change what a party can do
+        // about a wisp.
+        //
+        //   - **Paralyzed** and **Petrified** are on the page and were
+        //     not on this set, which is the sweep's blind spot rather
+        //     than anybody's decision: the quote below wraps across
+        //     three lines, and `every_quoted_immunities_line_is_the_list_beneath_it`
+        //     could only read quotes that fit on one.
+        //   - **Charmed** was here and is not on the page. The comment
+        //     that put it there said so out loud — *"not Charm-immune
+        //     RAW (the wisp can be commanded), but we bundle the
+        //     Charmed immunity in line with the rest of our undead
+        //     pool"* — and it is the one clause on the block that a
+        //     player can actually use. A wisp is a lure; being able to
+        //     turn one is the counterplay the stat block is written
+        //     around, and the rest of the undead pool is not an
+        //     argument about this wisp.
         condition_immunities: HashSet::from([
             // SRD 5.2 "Immunities Lightning, Poison; Exhaustion, Grappled,
             // Paralyzed, Petrified, Poisoned, Prone, Restrained,
@@ -71,10 +86,11 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             Condition::Exhausted,
             Condition::Poisoned,
             Condition::Grappled,
+            Condition::Paralyzed,
+            Condition::Petrified,
             Condition::Restrained,
             Condition::Prone,
             Condition::Unconscious,
-            Condition::Charmed,
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

@@ -93,26 +93,6 @@ pub static STONE_GOLEM_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::actor_gen::ActorGenParams;
-    use crate::engine::encounter::EncounterInstance;
-    use crate::engine::terrain_gen::TerrainGenParams;
-    use crate::engine::types::{AbilityScoreType, Coordinate};
-
-    fn make_test_encounter() -> EncounterInstance {
-        let tp = TerrainGenParams {
-            width: 12,
-            height: 12,
-            branch_depth: 0,
-            branch_prob: 0.0,
-        };
-        let ap = ActorGenParams {
-            cr_target: 0.0,
-            n_teams: 0,
-            pc_template: None,
-            start_team: 0,
-        };
-        EncounterInstance::from_params(&tp, &ap, Some(7)).unwrap()
-    }
 
     /// The golem template carries the full magic-immunity envelope
     /// (poison + psychic damage immunity, construct condition

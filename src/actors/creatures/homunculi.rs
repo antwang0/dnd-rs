@@ -62,13 +62,19 @@ pub static HOMUNCULUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // they do. Exhaustion is a real immunity here (`sickening
         // radiance` installs it, six rungs of it kill), so the set stays
         // at RAW's two rather than inheriting the construct envelope it
-        // does not qualify for. Paralyzed and Petrified are kept: they
-        // are flavour on a clay bird nobody is going to petrify, and
-        // taking them away buys nothing.
+        // does not qualify for.
+        //
+        // Paralyzed and Petrified used to be on it under a comment
+        // arguing they were *"flavour on a clay bird nobody is going to
+        // petrify, and taking them away buys nothing"*. Both halves of
+        // that were wrong. Nobody is going to petrify it, but Hold
+        // Monster paralyses anything and is on four lists in this
+        // engine; and "buys nothing" is the argument for deleting a row
+        // rather than for keeping one — being right about the page
+        // costs nothing either, and it is what stops the sweep below
+        // from being a sweep anybody has to remember to dodge.
         condition_immunities: HashSet::from([
             Condition::Charmed,
-            Condition::Paralyzed,
-            Condition::Petrified,
             Condition::Poisoned,
         ]),
         proficient_saves: HashSet::from([AbilityScoreType::Wisdom, AbilityScoreType::Charisma]),

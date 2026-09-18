@@ -47,17 +47,21 @@ pub static TINY_ANIMATED_OBJECT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock:
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
-        // Standard construct condition immunities (mind-affecting +
-        // poison + paralysis + blinded via blindsight).
+        // The construct envelope, whole. Three rows were wrong in both
+        // directions at once: `Blinded` was here and is not on the 2024
+        // page, and `Deafened` and `Petrified` are on the page and were
+        // not here. `Asleep` is outside the comparison — it is the
+        // Sleep spell's condition and the book has no word for it.
         condition_immunities: std::collections::HashSet::from([
             // SRD 5.2 "Immunities Poison, Psychic; Charmed, Deafened,
             // Exhaustion, Frightened, Paralyzed, Petrified, Poisoned".
             Condition::Exhausted,
             Condition::Poisoned,
             Condition::Charmed,
+            Condition::Deafened,
             Condition::Frightened,
             Condition::Paralyzed,
-            Condition::Blinded,
+            Condition::Petrified,
             Condition::Asleep,
         ]),
         ..CreatureTemplate::defaults()

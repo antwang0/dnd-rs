@@ -44,10 +44,18 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
-        // Standard construct immunity suite — Asleep is explicitly listed
-        // alongside Charmed for documentation clarity (the engine's
-        // dynamic_immunity_to chokepoint already gates Asleep on Charmed
-        // for several other immunity sources).
+        // The construct envelope, and it is RAW's rather than the
+        // engine's: `Blinded` used to be on it and is not on the 2024
+        // page. The previous printing made every animated object blind
+        // *and* immune to being blinded, which is where the row came
+        // from; SRD 5.2 gives this one Blindsight 60 and an ordinary
+        // pair of consequences for losing it, so Darkness and Blindness
+        // are answers to a suit of armour again.
+        //
+        // `Asleep` stays and is the one row here RAW cannot speak to:
+        // it is the Sleep spell's own condition and the book has no
+        // word for it, so the sweep that pins this list against the
+        // quote below leaves it alone. A suit of armour does not sleep.
         condition_immunities: HashSet::from([
             // SRD 5.2 "Immunities Poison, Psychic; Charmed, Deafened,
             // Exhaustion, Frightened, Paralyzed, Petrified, Poisoned".
@@ -58,7 +66,6 @@ pub static ANIMATED_ARMOR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|
             Condition::Frightened,
             Condition::Paralyzed,
             Condition::Petrified,
-            Condition::Blinded,
             Condition::Deafened,
             Condition::Asleep,
         ]),

@@ -119365,9 +119365,38 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
             let Some(at) = line.find("\"Immunities ") else {
                 continue;
             };
-            let rest = &line[at + "\"Immunities ".len()..];
-            let Some(close) = rest.find('"') else { continue };
-            let quoted = &rest[..close];
+            // The quote may run on. RAW's Immunities line is the
+            // longest row in a stat block and a fifth of the ones in
+            // this bestiary do not fit in eighty columns, so the
+            // comment wraps — and a sweep that read only the line the
+            // quote *opens* on silently skipped every one of them.
+            //
+            // Twelve stat blocks were in that blind spot, and the
+            // Will-o'-Wisp was carrying a set two conditions short of
+            // the line directly above it. A sweep with a hole in it is
+            // worse than no sweep, because the hole looks exactly like
+            // a pass.
+            //
+            // Stitched by walking forward and stripping each
+            // continuation line's comment marker, which is the only
+            // shape a wrapped quote takes in this bestiary: a `//` or
+            // `///` and then the rest of the sentence.
+            let mut quoted = String::from(&line[at + "\"Immunities ".len()..]);
+            let mut m = n;
+            while !quoted.contains('"') && m + 1 < lines.len() && m < n + 4 {
+                m += 1;
+                let cont = lines[m].trim_start();
+                let Some(cont) = cont
+                    .strip_prefix("///")
+                    .or_else(|| cont.strip_prefix("//"))
+                else {
+                    break;
+                };
+                quoted.push(' ');
+                quoted.push_str(cont.trim());
+            }
+            let Some(close) = quoted.find('"') else { continue };
+            let quoted = &quoted[..close];
             // A parenthetical is a clause with a condition on it — the
             // archmage's "Charmed (with Mind Blank)" — and not a flat
             // immunity this can compare.
@@ -119388,7 +119417,7 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
             // The list this line is describing: the nearest
             // `condition_immunities:` literal, above or below.
             let lo = n.saturating_sub(12);
-            let hi = (n + 14).min(lines.len());
+            let hi = (n + 18).min(lines.len());
             let window = lines[lo..hi].join("\n");
             let Some(k) = window.find("condition_immunities:") else {
                 continue;
@@ -119399,10 +119428,20 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
             if !body.contains("HashSet::from") {
                 continue;
             }
+            // Filtered to RAW's fifteen names on *both* sides, and
+            // that is the comparison this sweep can honestly make: the
+            // engine carries conditions the book has no word for —
+            // `Asleep` is the Sleep spell's own, `Surprised` is the
+            // surprise rule's — and a printed Immunities line cannot be
+            // read as saying anything about a condition RAW does not
+            // name. Without the filter the sweep would demand that a
+            // construct be removed from the Sleep spell's reach because
+            // a 2024 stat block does not mention a 2014 condition.
             let got: BTreeSet<String> = body
                 .split("Condition::")
                 .skip(1)
                 .map(|r| engine_name(name_prefix(r)))
+                .filter(|c| CONDITIONS.contains(&c.as_str()))
                 .collect();
             checked += 1;
             if got != want {
@@ -119425,6 +119464,188 @@ fn every_quoted_immunities_line_is_the_list_beneath_it() {
         "these stat blocks carry condition immunities their own quoted SRD line \
          does not give them; a creature that cannot be frightened is a creature \
          Turn Undead does nothing to:\n{}",
+        wrong.join("\n")
+    );
+}
+
+/// Every stat block that quotes SRD 5.2's **Speed** line carries the
+/// speeds it just quoted.
+///
+/// The sibling of `every_quoted_immunities_line_is_the_list_beneath_it`,
+/// one row of the stat block up, and it exists because the Draconic
+/// Spirit spent its whole life quoting *"Speed 30 ft., Fly 60 ft., Swim
+/// 30 ft."* twice in its own comments while walking at 40 and not
+/// flying at all. A summoned **dragon** that could not leave the
+/// ground: the engine has had altitude, air-to-ground geometry and a
+/// wind that forces fliers down for longer than that template has
+/// existed, and none of it ever applied to the one summon in the family
+/// the book gives wings.
+///
+/// Two speeds rather than five, because two are what a
+/// `CreatureTemplate` has fields for. Climb, Burrow and Swim are
+/// carried as feature tags where they are carried at all, and asking
+/// this sweep about them would be asking it to read a different shape.
+///
+/// **The fly speed is exact and the walk is a range**, and that
+/// asymmetry is the engine's own convention rather than a softening.
+/// The engine keeps *one* ground speed per creature and collapses an
+/// aquatic stat block's two magnitudes into it — the kraken's docstring
+/// puts it as *"every swimmer on the roster lands somewhere between its
+/// walk and its swim: the water elemental's 30/90 is 50, the merrow's
+/// 10/40 is 20"*, and the reef shark's takes the swim number outright
+/// because a shark never leaves the water. So a quoted Swim entry
+/// widens the walk to the interval between the two printed numbers,
+/// which is exactly what those two docstrings describe and is therefore
+/// a thing this sweep can check rather than a thing it has to be told
+/// to skip. Flight has no such collapse: the engine has a real second
+/// field for it, so the number is the number.
+#[test]
+fn every_quoted_speed_line_is_the_speed_beneath_it() {
+    use std::path::Path;
+
+    /// The quote, stitched back together across the comment lines it
+    /// wraps onto. Same shape and same reason as the immunities
+    /// sweep's — see there.
+    fn stitched(lines: &[&str], n: usize, at: usize) -> Option<String> {
+        let mut quoted = String::from(&lines[n][at + "\"Speed ".len()..]);
+        let mut m = n;
+        while !quoted.contains('"') && m + 1 < lines.len() && m < n + 3 {
+            m += 1;
+            let cont = lines[m].trim_start();
+            let cont = cont
+                .strip_prefix("///")
+                .or_else(|| cont.strip_prefix("//"))?;
+            quoted.push(' ');
+            quoted.push_str(cont.trim());
+        }
+        let close = quoted.find('"')?;
+        quoted.truncate(close);
+        Some(quoted)
+    }
+
+    /// `N` out of `"<label> N ft."`, case-insensitively, or `None`.
+    fn feet(quote: &str, label: &str) -> Option<u32> {
+        let lower = quote.to_ascii_lowercase();
+        let at = lower.find(&label.to_ascii_lowercase())?;
+        let rest = lower[at + label.len()..].trim_start();
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().ok()
+    }
+
+    /// The `CreatureTemplate { … }` literal the quote at `n` sits in or
+    /// beside, as a line range.
+    ///
+    /// Bounded by the literal's own opening brace on each side rather
+    /// than by a fixed window, because a quote can sit either in the
+    /// doc comment *above* the template or in a comment *inside* it,
+    /// and a window big enough for one is big enough to reach into the
+    /// next stat block in a file that holds four.
+    fn enclosing_template(lines: &[&str], n: usize) -> (usize, usize) {
+        const OPENER: &str = "CreatureTemplate {";
+        let mut lo = n;
+        while lo > 0 && !lines[lo].contains(OPENER) && n - lo < 80 {
+            lo -= 1;
+        }
+        let mut hi = n;
+        while hi + 1 < lines.len() && !lines[hi + 1].contains(OPENER) && hi - n < 80 {
+            hi += 1;
+        }
+        (lo, (hi + 1).min(lines.len()))
+    }
+
+    /// The `speed: 30.,` / `fly_speed: 60.0,` literal in that template.
+    fn field(lines: &[&str], n: usize, name: &str) -> Option<f32> {
+        let (lo, hi) = enclosing_template(lines, n);
+        for line in &lines[lo..hi] {
+            let t = line.trim_start();
+            if t.starts_with("//") {
+                continue;
+            }
+            let Some(rest) = t.strip_prefix(name).and_then(|r| r.strip_prefix(':')) else {
+                continue;
+            };
+            let value: String = rest
+                .trim()
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if let Ok(v) = value.trim_end_matches('.').parse::<f32>() {
+                return Some(v);
+            }
+        }
+        None
+    }
+
+    let creatures = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actors/creatures");
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&creatures)
+        .expect("src/actors/creatures/ should be readable")
+        .map(|e| e.expect("a readable dir entry").path())
+        .filter(|p| p.extension().is_some_and(|e| e == "rs"))
+        .collect();
+    files.sort();
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for path in &files {
+        let text = std::fs::read_to_string(path).expect("a creature module");
+        let lines: Vec<&str> = text.lines().collect();
+        for (n, line) in lines.iter().enumerate() {
+            let Some(at) = line.find("\"Speed ") else {
+                continue;
+            };
+            let Some(quote) = stitched(&lines, n, at) else {
+                continue;
+            };
+            // The walking speed is the number the quote opens with.
+            let Some(walk) = quote
+                .split_whitespace()
+                .next()
+                .and_then(|w| w.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let Some(got_walk) = field(&lines, n, "speed") else {
+                continue;
+            };
+            checked += 1;
+            let here = format!(
+                "{}:{}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                n + 1
+            );
+            // The aquatic collapse: anywhere between the two printed
+            // magnitudes. See the docstring.
+            let swim = feet(&quote, "swim ");
+            let (low, high) = match swim {
+                Some(s) => (walk.min(s), walk.max(s)),
+                None => (walk, walk),
+            };
+            if got_walk < low as f32 || got_walk > high as f32 {
+                wrong.push(match swim {
+                    Some(s) => format!(
+                        "{here} quotes Speed {walk} ft. / Swim {s} ft. and walks at {got_walk}"
+                    ),
+                    None => format!("{here} quotes Speed {walk} ft. and walks at {got_walk}"),
+                });
+            }
+            let want_fly = feet(&quote, "fly ").unwrap_or(0);
+            let got_fly = field(&lines, n, "fly_speed").unwrap_or(0.0);
+            if got_fly != want_fly as f32 {
+                wrong.push(format!(
+                    "{here} quotes Fly {want_fly} ft. and flies at {got_fly}"
+                ));
+            }
+        }
+    }
+    assert!(
+        checked >= 15,
+        "only {checked} quoted Speed lines swept — the walk has stopped finding them"
+    );
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks move at a speed their own quoted SRD line does not \
+         give them; a dragon that cannot fly is a different creature from the \
+         one the spell summons:\n{}",
         wrong.join("\n")
     );
 }

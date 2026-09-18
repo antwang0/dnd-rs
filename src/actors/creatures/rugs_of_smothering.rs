@@ -77,18 +77,22 @@ pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
             (DamageType::Poison, DamageModifier::Immunity),
             (DamageType::Psychic, DamageModifier::Immunity),
         ]),
+        // Two rows came off this list and both were the previous
+        // printing's: `Blinded`, which every animated object used to
+        // carry, and `Prone`, which is the one that mattered — a rug
+        // lying flat is the *shape* Prone describes, and SRD 5.2 does
+        // not exempt it. A rug that can be knocked over is a rug a
+        // shove answers.
         condition_immunities: HashSet::from([
             // SRD 5.2 "Immunities Poison, Psychic; Charmed, Deafened,
             // Exhaustion, Frightened, Paralyzed, Petrified, Poisoned".
             Condition::Exhausted,
-            Condition::Blinded,
             Condition::Charmed,
             Condition::Deafened,
             Condition::Frightened,
             Condition::Paralyzed,
             Condition::Petrified,
             Condition::Poisoned,
-            Condition::Prone,
         ]),
         ..CreatureTemplate::defaults()
     }
@@ -121,13 +125,38 @@ mod tests {
         assert!(a.find_action("rug of smothering smother").is_some());
     }
 
-    /// A rug is already on the floor. Prone immunity is the one
-    /// condition on the construct list that is funny rather than
-    /// obvious, and it is the one a copy-pasted envelope would drop.
+    /// A rug *can* be knocked over, and that is the 2024 page rather
+    /// than an oversight.
+    ///
+    /// This test used to assert the opposite, under a comment calling
+    /// Prone immunity *"the one condition on the construct list that is
+    /// funny rather than obvious"*. It is funny, and SRD 5.2 does not
+    /// print it: the Immunities line is Charmed, Deafened, Exhaustion,
+    /// Frightened, Paralyzed, Petrified, Poisoned, and Blinded and
+    /// Prone are both the previous printing's. A rug that a shove
+    /// answers is a rug the party has one more thing to do about.
+    ///
+    /// Pinned in the negative rather than deleted, because the funny
+    /// reading is the one somebody will reach for again.
     #[test]
-    fn you_cannot_knock_over_a_carpet() {
+    fn a_carpet_is_flat_and_can_still_be_knocked_over() {
         let a = make();
-        assert!(a.effectively_immune_to_condition(Condition::Prone));
-        assert!(a.effectively_immune_to_condition(Condition::Blinded));
+        assert!(!a.effectively_immune_to_condition(Condition::Prone));
+        assert!(!a.effectively_immune_to_condition(Condition::Blinded));
+        // …and the seven the page does print are all there.
+        for immune in [
+            Condition::Charmed,
+            Condition::Deafened,
+            Condition::Exhausted,
+            Condition::Frightened,
+            Condition::Paralyzed,
+            Condition::Petrified,
+            Condition::Poisoned,
+        ] {
+            assert!(
+                a.effectively_immune_to_condition(immune),
+                "SRD 5.2 prints {immune:?} on the rug's Immunities line"
+            );
+        }
     }
 }

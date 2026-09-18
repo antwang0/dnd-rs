@@ -632,7 +632,22 @@ pub static DRACONIC_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // with no dice behind it, so the expression is a choice, and
         // the choice is the one whose average is the printed number.
         hitpoints: "8d10+6".parse().unwrap(),
-        speed: 40.,
+        // SRD 5.2: *"Speed 30 ft., Fly 60 ft., Swim 30 ft."* — all
+        // three of them, and for a long time this block had none of
+        // them right. The walk was 40, which is the family's shared
+        // ladder rather than this page; the fly was absent, which is
+        // the one that mattered.
+        //
+        // **A dragon that could not leave the ground.** The spirit is
+        // the only summon in the family the book gives a flying speed,
+        // and the engine has had a full flight layer — altitude,
+        // ranged-attack geometry, Strong Wind grounding fliers, the
+        // fall when a source lapses — for as long as it has had this
+        // template. What the caster was buying was a Large lizard that
+        // walked into melee and died there; what RAW sells is
+        // something that opens at sixty feet up and breathes down.
+        speed: 30.,
+        fly_speed: 60.0,
         strength: 19,
         dexterity: 14,
         constitution: 17,
@@ -660,7 +675,17 @@ pub static DRACONIC_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
             (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Resistance),
         ]),
-        condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
+        // SRD 5.2 "Immunities Charmed, Frightened, Poisoned" — three,
+        // and the third was missing. It is the one with a lane: the
+        // engine's poison is a condition a dozen monster attacks
+        // install, and a spirit that could be poisoned swung at
+        // disadvantage for the rest of the fight it was summoned to
+        // win.
+        condition_immunities: HashSet::from([
+            Condition::Charmed,
+            Condition::Frightened,
+            Condition::Poisoned,
+        ]),
         recharge_abilities: vec![("breath_weapon", 5)],
         // SRD 5.2: *"Speed 30 ft., Fly 60 ft., Swim 30 ft."*
         // SWIM_SPEED_TAG is what makes `TerrainType::Water` free to
