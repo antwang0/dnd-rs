@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{POLAR_BEAR_BITE, POLAR_BEAR_CLAWS, POLAR_BEAR_MULTI};
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -36,6 +38,12 @@ pub static POLAR_BEAR_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
+        // SRD 5.2: *"Resistances Cold"* — which is the only thing
+        // separating this stat block from the brown bear's.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Cold,
+            DamageModifier::Resistance,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });

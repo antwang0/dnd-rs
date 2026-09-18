@@ -82,9 +82,13 @@ pub static WATER_ELEMENTAL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         // RAW swim speed: the tag is what makes `TerrainType::Water`
         // free to cross and lifts the underwater melee penalty.
         features: HashSet::from([SWIM_SPEED_TAG, UNDERWATER_BREATHING_TAG]),
-        ..elemental_body_defaults([(
-            DamageType::Acid,
-            DamageModifier::Resistance,
-        )])
+        // SRD 5.2: *"Resistances Acid, Fire"*. The fire half was
+        // missing, which is the one resistance a water elemental
+        // obviously ought to have and the one nobody thought to write
+        // down.
+        ..elemental_body_defaults([
+            (DamageType::Acid, DamageModifier::Resistance),
+            (DamageType::Fire, DamageModifier::Resistance),
+        ])
     }
 });

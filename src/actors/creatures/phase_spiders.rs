@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::PHASE_SPIDER_BITE;
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 pub static PHASE_SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
@@ -24,7 +24,9 @@ pub static PHASE_SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Large,
         creature_type: CreatureType::Monstrosity,
         actions,
-        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Resistance)]),
+        // SRD 5.2 prints no damage line for the phase spider; the
+        // Poison resistance that used to be here came from neither
+        // printing.
         skills: HashSet::from([Skill::Stealth]),
         ..CreatureTemplate::defaults()
     }

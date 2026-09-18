@@ -35,11 +35,11 @@ pub static ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // Zombies: undead — immune to poison; resistant to necrotic
         // (negative energy is what animates them, so it heals more than
         // it harms). Vulnerable to radiant (turn-undead flavor).
-        damage_modifiers: HashMap::from([
-            (DamageType::Poison, DamageModifier::Immunity),
-            (DamageType::Necrotic, DamageModifier::Resistance),
-            (DamageType::Radiant, DamageModifier::Vulnerability),
-        ]),
+        // SRD 5.2: *"Immunities Poison"*, and that is all. The
+        // Necrotic resistance and the Radiant vulnerability were the
+        // 2014 zombie's, and the vulnerability in particular was worth
+        // double damage from every cleric in the game.
+        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
         // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned" — a corpse
         // walks until it is knocked apart, and never slower. Two
         // conditions in the quotation and two in the list; the
@@ -102,11 +102,11 @@ pub static OGRE_ZOMBIE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         size: Size::Large,
         creature_type: CreatureType::Undead,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Poison, DamageModifier::Immunity),
-            (DamageType::Necrotic, DamageModifier::Resistance),
-            (DamageType::Radiant, DamageModifier::Vulnerability),
-        ]),
+        // SRD 5.2: *"Immunities Poison"*, and that is all. The
+        // Necrotic resistance and the Radiant vulnerability were the
+        // 2014 zombie's, and the vulnerability in particular was worth
+        // double damage from every cleric in the game.
+        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
         // SRD 5.2 "Immunities Poison; Exhaustion, Poisoned", the same
         // line the zombie above carries and the same `Charmed` struck
         // off it.

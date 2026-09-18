@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_EAGLE_BEAK, GIANT_EAGLE_MULTI, GIANT_EAGLE_TALONS};
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Size,
+};
 use std::sync::LazyLock;
 
 /// Giant Eagle — CR 1 large beast. Aerial predator with a one-beak +
@@ -39,6 +41,13 @@ pub static GIANT_EAGLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Celestial,
         actions,
+        // SRD 5.2: *"Resistances Necrotic, Radiant"* — which is the
+        // damage half of the same change that made this a Celestial
+        // rather than a Beast.
+        damage_modifiers: damage_modifiers_from([
+            (DamageType::Necrotic, DamageModifier::Resistance),
+            (DamageType::Radiant, DamageModifier::Resistance),
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{ONI_CLAW, ONI_GLAIVE, ONI_MULTI};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -71,6 +71,11 @@ pub static ONI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e Magic Resistance — advantage on every save vs spells /
         // magical effects. Read by `compute_save_mode`.
         has_magic_resistance: true,
+        // SRD 5.2: *"Resistances Cold"*.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Cold,
+            DamageModifier::Resistance,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });

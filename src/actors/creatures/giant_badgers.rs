@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_BADGER_BITE, GIANT_BADGER_CLAWS, GIANT_BADGER_MULTI};
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -79,6 +81,11 @@ pub static GIANT_BADGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Medium,
         creature_type: CreatureType::Beast,
         actions,
+        // SRD 5.2: *"Resistances Poison"*.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Poison,
+            DamageModifier::Resistance,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });

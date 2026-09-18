@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DeathBurst, MAGMIN_TOUCH};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::actors::creatures::fire_elementals::{
     elemental_defaults,
 };
@@ -118,6 +118,13 @@ pub static MAGMIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // it from any partial double-tap and same-typed allies
         // (other magmins, fire elementals) shrug off the burst entirely.
         death_burst: Some(&MAGMIN_DEATH_BURST),
+        // SRD 5.2: *"Immunities Fire"*, and no Poison — the magmin is
+        // a person made of lava rather than a lava that is a person.
+        // See the djinni's block.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )]),
         ..elemental_defaults([(
             DamageType::Fire,
             DamageModifier::Immunity,
@@ -226,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn magmin_is_fire_and_poison_immune() {
+    fn magmin_is_fire_immune_and_not_poison_immune() {
         let a = ActorInstance::from_creature_template(
             &MAGMIN_TEMPLATE,
             Coordinate::new(0, 0),
@@ -243,10 +250,9 @@ mod tests {
             a.damage_modifier(DamageType::Fire),
             Some(DamageModifier::Immunity)
         );
-        assert_eq!(
-            a.damage_modifier(DamageType::Poison),
-            Some(DamageModifier::Immunity)
-        );
+        // SRD 5.2's Immunities row is *"Fire"* and stops; see the
+        // djinni's block for the line the book draws.
+        assert_eq!(a.damage_modifier(DamageType::Poison), None);
         // Standard elemental condition envelope — no metabolism / joints
         // / mind to coerce.
         assert!(a.effectively_immune_to_condition(Condition::Poisoned));

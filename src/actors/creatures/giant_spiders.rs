@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{GIANT_SPIDER_BITE, SPIDER_WEB};
 use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, Skill, SpecialSense};
-use std::collections::{HashMap, HashSet};
+use crate::engine::types::{CreatureType, Size, Skill, SpecialSense};
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Giant Spider — CR 1 Large beast. A fast melee biter that injects
@@ -71,7 +71,12 @@ pub static GIANT_SPIDER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| 
         size: Size::Large,
         creature_type: CreatureType::Beast,
         actions,
-        damage_modifiers: HashMap::from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // **No damage line at all**, which is what SRD 5.2 prints. The
+        // Poison immunity that used to be here was not in the 2014
+        // printing either — a spider that cannot be poisoned is a
+        // reasonable guess about spiders and is not what either book
+        // says, and it made the bestiary's own venom useless against
+        // the creature most likely to be standing next to one.
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         // RAW's *Web (Recharge 5–6)*.
         recharge_abilities: vec![("web", 5)],

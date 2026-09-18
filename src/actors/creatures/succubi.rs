@@ -71,8 +71,11 @@ pub static SUCCUBUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         damage_modifiers: damage_modifiers_from([
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
-            (DamageType::Lightning, DamageModifier::Resistance),
             (DamageType::Poison, DamageModifier::Resistance),
+            // SRD 5.2's fourth is **Psychic**, not Lightning: the
+            // succubus resists the mind as well as the body, which is
+            // the half of its defences that matches what it does.
+            (DamageType::Psychic, DamageModifier::Resistance),
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

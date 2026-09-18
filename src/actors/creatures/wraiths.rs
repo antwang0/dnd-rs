@@ -60,8 +60,9 @@ pub static WRAITH_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Acid, DamageModifier::Resistance),
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
-            (DamageType::Lightning, DamageModifier::Resistance),
-            (DamageType::Thunder, DamageModifier::Resistance),
+            // Neither Lightning nor Thunder: SRD 5.2's line is Acid,
+            // Bludgeoning, Cold, Fire, Piercing, Slashing, and the two
+            // that used to be here came from the 2014 printing.
             (DamageType::Necrotic, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),

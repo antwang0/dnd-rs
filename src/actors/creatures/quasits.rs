@@ -49,10 +49,16 @@ pub static QUASIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // of an immunity whose damage half was already on the sheet.
         condition_immunities: HashSet::from([Condition::Poisoned]),
         actions,
-        damage_modifiers: damage_modifiers_from([(
-            DamageType::Poison,
-            DamageModifier::Immunity,
-        )]),
+        // SRD 5.2: *"Resistances Cold, Fire, Lightning; Immunities
+        // Poison"*. The three resistances are the demon envelope and
+        // were missing entirely — a quasit was taking full damage from
+        // three of the four elements every demon in the book shrugs off.
+        damage_modifiers: damage_modifiers_from([
+            (DamageType::Cold, DamageModifier::Resistance),
+            (DamageType::Fire, DamageModifier::Resistance),
+            (DamageType::Lightning, DamageModifier::Resistance),
+            (DamageType::Poison, DamageModifier::Immunity),
+        ]),
         // Magic Resistance: advantage on saves vs spells and other
         // magical effects. Slots into the standard caster-counter lane.
         has_magic_resistance: true,

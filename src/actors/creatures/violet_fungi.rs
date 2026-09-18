@@ -1,8 +1,8 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{VIOLET_FUNGUS_MULTI, VIOLET_FUNGUS_ROTTING_TOUCH};
-use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::actors::actor_template::CreatureTemplate;
 use crate::conditions::Condition;
-use crate::engine::types::{CreatureType, DamageModifier, DamageType, Size, SpecialSense};
+use crate::engine::types::{CreatureType, Size, SpecialSense};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -55,7 +55,8 @@ pub static VIOLET_FUNGUS_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         size: Size::Medium,
         creature_type: CreatureType::Plant,
         actions,
-        damage_modifiers: damage_modifiers_from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // SRD 5.2 prints only condition immunities for the violet
+        // fungus — no damage line at all.
         // SRD 5.2 "Immunities Blinded, Charmed, Deafened, Frightened":
         // no eyes to blind, no mind to charm or frighten. Exhaustion is
         // deliberately *not* here, which is the one place this envelope
@@ -80,7 +81,7 @@ mod tests {
     use super::*;
     use crate::actors::actor_template::ActorInstance;
     use crate::engine::dice::FastRandRoller;
-    use crate::engine::types::Coordinate;
+    use crate::engine::types::{Coordinate, DamageType};
 
     fn make() -> ActorInstance {
         ActorInstance::from_creature_template(

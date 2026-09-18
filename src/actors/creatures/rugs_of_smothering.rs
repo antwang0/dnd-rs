@@ -64,7 +64,12 @@ pub static RUG_OF_SMOTHERING_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
         size: Size::Large,
         creature_type: CreatureType::Construct,
         actions,
-        damage_modifiers: damage_modifiers_from([(DamageType::Poison, DamageModifier::Immunity)]),
+        // SRD 5.2: *"Immunities Poison, Psychic"* — the universal
+        // construct pair, and the Psychic half was missing.
+        damage_modifiers: damage_modifiers_from([
+            (DamageType::Poison, DamageModifier::Immunity),
+            (DamageType::Psychic, DamageModifier::Immunity),
+        ]),
         condition_immunities: HashSet::from([
             // SRD 5.2 "Immunities Poison, Psychic; Charmed, Deafened,
             // Exhaustion, Frightened, Paralyzed, Petrified, Poisoned".

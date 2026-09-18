@@ -3,8 +3,10 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     SAHUAGIN_BITE, SAHUAGIN_CLAWS, SAHUAGIN_MULTI, SPEAR, THROWN_SPEAR,
 };
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, Skill, SpecialSense};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, Skill, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -60,6 +62,13 @@ pub static SAHUAGIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // targets. Read by `compute_attack_mode`'s gate.
         features: HashSet::from([SWIM_SPEED_TAG, BLOOD_FRENZY_TAG, UNDERWATER_BREATHING_TAG]),
         skills: HashSet::from([Skill::Perception]),
+        // SRD 5.2: *"Resistances Acid, Cold"* — the deep-water
+        // envelope, and part of the same rewrite that made the
+        // sahuagin a Fiend.
+        damage_modifiers: damage_modifiers_from([
+            (DamageType::Acid, DamageModifier::Resistance),
+            (DamageType::Cold, DamageModifier::Resistance),
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

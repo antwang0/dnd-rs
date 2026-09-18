@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{EFREETI_HURL_FLAME, EFREETI_MULTI, EFREETI_SCIMITAR};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::actors::creatures::fire_elementals::{
     elemental_defaults,
 };
@@ -89,6 +89,13 @@ pub static EFREETI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // signature elemental affinity.
         has_magic_resistance: true,
         has_extra_attack: true,
+        // SRD 5.2: *"Immunities Fire"*, and no Poison — see the
+        // djinni's block for why the shared elemental baseline is
+        // overridden rather than layered onto.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Fire,
+            DamageModifier::Immunity,
+        )]),
         ..elemental_defaults([(
             DamageType::Fire,
             DamageModifier::Immunity,
@@ -134,15 +141,19 @@ mod tests {
             0,
         )
         .unwrap();
-        // Fire immunity is the signature trait — also poison immune,
-        // BPS resistant from the shared elemental baseline.
+        // Fire immunity is the signature trait, and SRD 5.2's whole
+        // Immunities row: *"Fire"*, with no Poison beside it. See the
+        // djinni's block for the line the book draws between an
+        // element and somebody who lives on its plane. The BPS
+        // resistance still comes off the shared elemental baseline.
         assert_eq!(
             a.damage_modifier(DamageType::Fire),
             Some(DamageModifier::Immunity)
         );
         assert_eq!(
             a.damage_modifier(DamageType::Poison),
-            Some(DamageModifier::Immunity)
+            None,
+            "an efreeti is a person who is on fire, not a fire"
         );
         assert_eq!(
             a.nonmagical_damage_modifier(DamageType::Slashing),

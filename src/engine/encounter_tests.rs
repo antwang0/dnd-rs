@@ -16,6 +16,7 @@ use crate::engine::side_effects::ApplicableSideEffect;
 use crate::actors::creatures::skeletons::SKELETON_TEMPLATE;
 use crate::actors::creatures::slimes::SLIME_TEMPLATE;
 use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+use crate::actors::creatures::shadows::SHADOW_TEMPLATE;
 use crate::engine::actor_gen::ActorGenParams;
 use crate::engine::terrain::TerrainInfo;
 use crate::engine::terrain_gen::TerrainGenParams;
@@ -2578,13 +2579,13 @@ fn help_grants_advantage_to_target_attack() {
 }
 
 #[test]
-fn zombie_takes_double_radiant_damage() {
+fn shadow_takes_double_radiant_damage() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
-    // Use a small damage value (3 → 6 doubled) so zombies on the
+    // Use a small damage value (3 → 6 doubled) so shadows on the
     // minimum HP roll (8 HP) still don't drop below 1.
     let before = e.actors[&id].hitpoints();
     DealDamage {
@@ -2614,17 +2615,17 @@ fn zombie_immune_to_poison() {
 }
 
 #[test]
-fn zombie_resists_necrotic() {
+fn shadow_resists_fire() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
         actor_id: id,
         amount: 4,
-        damage_type: crate::engine::types::DamageType::Necrotic,
+        damage_type: crate::engine::types::DamageType::Fire,
     }
     .apply(&mut e);
     // 4 / 2 = 2 damage applied.
@@ -3439,18 +3440,18 @@ fn skeleton_takes_no_poison_damage() {
 }
 
 #[test]
-fn zombie_takes_half_necrotic_damage() {
+fn shadow_takes_half_fire_damage() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
 
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
         amount: 6,
-        damage_type: crate::engine::types::DamageType::Necrotic,
+        damage_type: crate::engine::types::DamageType::Fire,
     }
     .apply(&mut e);
     // Resistance: 6 → 3.
@@ -8484,14 +8485,14 @@ fn damage_scaling_applies_resistance() {
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
-    // Necrotic = resisted (50%) for zombies. 10 raw → 5 actual.
+    // Necrotic = resisted (50%) for shadows. 10 raw → 5 actual.
     DealDamage {
         actor_id: id,
         amount: 10,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
     assert_eq!(e.actors[&id].hitpoints(), max - 5);
@@ -8525,10 +8526,10 @@ fn damage_scaling_applies_vulnerability() {
 
     let mut e = ei_with_terrain(15, 15, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
-    // Radiant = vulnerable (200%) for zombies. 3 raw → 6 actual.
+    // Radiant = vulnerable (200%) for shadows. 3 raw → 6 actual.
     DealDamage {
         actor_id: id,
         amount: 3,
@@ -8575,23 +8576,23 @@ fn damage_immunity_zeros_damage() {
 
 #[test]
 fn damage_resistance_halves_damage() {
-    // Zombie is necrotic-resistant. 8 damage → 4 applied.
+    // Shadow is fire-resistant. 8 damage → 4 applied.
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
         actor_id: id,
         amount: 8,
-        damage_type: crate::engine::types::DamageType::Necrotic,
+        damage_type: crate::engine::types::DamageType::Fire,
     }
     .apply(&mut e);
     assert_eq!(
         e.actors[&id].hitpoints(),
         before - 4,
-        "resistant target should halve necrotic damage"
+        "resistant target should halve fire damage"
     );
 }
 
@@ -9605,13 +9606,13 @@ fn shielded_increases_armor_class_by_5() {
 }
 
 #[test]
-fn zombie_takes_double_radiant_damage_v2() {
-    // Zombie has Radiant vulnerability — damage doubles before HP delta.
+fn shadow_takes_double_radiant_damage_v2() {
+    // Shadow has Radiant vulnerability — damage doubles before HP delta.
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     // Heal up to a high baseline so doubling doesn't drop to 0 noisily.
     let max = e.actors[&id].max_hitpoints();
@@ -9906,7 +9907,7 @@ fn giant_spider_bite_can_apply_poisoned() {
 }
 
 #[test]
-fn giant_spider_immune_to_own_venom() {
+fn a_giant_spider_is_not_immune_to_its_own_venom() {
     use crate::actors::creatures::giant_spiders::GIANT_SPIDER_TEMPLATE;
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
@@ -9917,11 +9918,17 @@ fn giant_spider_immune_to_own_venom() {
     let before = e.actors[&id].hitpoints();
     DealDamage {
         actor_id: id,
-        amount: 50,
+        amount: 6,
         damage_type: DamageType::Poison,
     }
     .apply(&mut e);
-    assert_eq!(e.actors[&id].hitpoints(), before);
+    assert_eq!(
+        e.actors[&id].hitpoints(),
+        before - 6,
+        "SRD 5.2 prints no damage line at all for the giant spider — \
+         a spider that cannot be poisoned is a reasonable guess about \
+         spiders and is not in either printing"
+    );
 }
 
 #[test]
@@ -10063,15 +10070,15 @@ fn damage_modifier_resistance_halves_damage() {
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(15, 15, &[]);
-    // Zombies resist necrotic (halved).
+    // Shadows resist fire (halved).
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
         amount: 8,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
     // 8 -> 4 after resistance.
@@ -10679,19 +10686,19 @@ fn zombie_immune_to_poison_takes_no_damage() {
 }
 
 #[test]
-fn zombie_resistant_to_necrotic_halves() {
+fn shadow_resistant_to_fire_halves() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
         amount: 4,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
     // 4 / 2 = 2 (5e: round down).
@@ -11434,13 +11441,13 @@ fn zombie_immune_to_poison_v3() {
 }
 
 #[test]
-fn zombie_vulnerable_to_radiant() {
+fn shadow_vulnerable_to_radiant() {
     use crate::engine::side_effects::DealDamage;
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
@@ -11454,19 +11461,19 @@ fn zombie_vulnerable_to_radiant() {
 }
 
 #[test]
-fn zombie_resistant_to_necrotic() {
+fn shadow_resistant_to_fire() {
     use crate::engine::side_effects::DealDamage;
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
         actor_id: id,
         amount: 6,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
     // Resistant halves: 6 -> 3.
@@ -11568,20 +11575,20 @@ fn wizard_has_spell_actions() {
 }
 
 #[test]
-fn zombie_resists_necrotic_and_takes_double_radiant() {
+fn shadow_resists_fire_and_takes_double_radiant() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
 
-    // 10 necrotic → resisted to 5.
+    // 10 fire → resisted to 5.
     DealDamage {
         actor_id: id,
         amount: 10,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
     assert_eq!(e.actors[&id].hitpoints(), max - 5);
@@ -11820,18 +11827,18 @@ fn resistance_halves_damage_v2() {
     use crate::engine::types::DamageType;
 
     let mut e = ei_with_terrain(10, 10, &[]);
-    // Zombies are resistant to necrotic.
+    // Shadows are resistant to fire.
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let max = e.actors[&id].max_hitpoints();
     DealDamage {
         actor_id: id,
         amount: 10,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
-    // 10 necrotic against resistant target = 5 actual damage.
+    // 10 fire against resistant target = 5 actual damage.
     assert_eq!(e.actors[&id].hitpoints(), max - 5);
 }
 
@@ -12411,20 +12418,20 @@ fn damage_immunity_reduces_to_zero() {
 fn damage_resistance_halves() {
     use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
     use crate::engine::types::DamageType;
-    // Zombies resist necrotic; 10 → 5.
+    // Shadows resist fire; 10 → 5.
     let mut e = ei_with_terrain(10, 10, &[]);
     let id = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&SHADOW_TEMPLATE, Coordinate::new(2, 2), 0, 0)
         .unwrap();
     let before = e.actors[&id].hitpoints();
     DealDamage {
         actor_id: id,
         amount: 10,
-        damage_type: DamageType::Necrotic,
+        damage_type: DamageType::Fire,
     }
     .apply(&mut e);
     let after = e.actors[&id].hitpoints();
-    // Should have taken 5, not 10. Use saturating because zombie HP
+    // Should have taken 5, not 10. Use saturating because shadow HP
     // could be lower than 10.
     assert!(
         before.saturating_sub(after) < 10,
@@ -29716,8 +29723,11 @@ fn vampire_template_has_regen_and_charm_gaze() {
         .collect();
     assert!(names.contains(VAMPIRE_CHARMING_GAZE.name()));
     assert!(names.contains(VAMPIRE_MULTIATTACK.name()));
-    // Poison immunity (5e MM Vampire).
-    assert!(actor.is_immune_to(DamageType::Poison));
+    // SRD 5.2's whole damage line for the vampire is *"Resistances
+    // Necrotic"*. The Poison immunity this used to assert was a 2014
+    // undead convention the 2024 vampires do not print.
+    assert!(actor.is_resistant_to(DamageType::Necrotic));
+    assert!(!actor.is_immune_to(DamageType::Poison));
 }
 
 /// Vampire charm gaze: failed WIS save Charms the target with the
@@ -45477,7 +45487,10 @@ fn new_creature_nightmare_instantiates() {
     assert!(nightmare.is_ok(), "Nightmare should instantiate");
     let nightmare = nightmare.unwrap();
     assert!(nightmare.is_immune_to(DamageType::Fire));
-    assert!(nightmare.is_resistant_to(DamageType::Cold));
+    assert!(
+        !nightmare.is_resistant_to(DamageType::Cold),
+        "SRD 5.2's Immunities row for the nightmare reads \"Fire\" and stops"
+    );
 }
 
 /// A three-tile walled corridor whose middle tile is difficult
@@ -122998,5 +123011,487 @@ fn every_stat_block_is_the_size_and_kind_the_book_says() {
         "only {checked} of the book's {} stat blocks were matched to a \
          template — a rename has dropped rows out of the sweep",
         SRD_SIZE_AND_TYPE.len()
+    );
+}
+
+#[test]
+fn tmp_dump2() {
+    let mut out = String::new();
+    for t in every_reachable_creature_template() {
+        let mut mods: Vec<String> = t.damage_modifiers.iter().map(|(dt,m)| format!("{:?}:{:?}",dt,m)).collect();
+        mods.sort();
+        let mut nm: Vec<String> = t.nonmagical_damage_modifiers.iter().map(|(dt,m)| format!("{:?}:{:?}",dt,m)).collect();
+        nm.sort();
+        let mut ci: Vec<String> = t.condition_immunities.iter().map(|c| format!("{:?}",c)).collect();
+        ci.sort();
+        out.push_str(&format!("{}\t{}\t{}\t{}\t{}\t{}\n", t.name, mods.join(","), nm.join(","), ci.join(","), t.speed, t.cr));
+    }
+    std::fs::write("/tmp/claude-0/-home-user-dnd-rs/8a2d3b30-40ee-5f5e-b893-8ba320cfa6cf/scratchpad/eng2.tsv", out).unwrap();
+}
+
+/// Every stat block's **Resistances**, **Immunities** and
+/// **Vulnerabilities** rows, against what the bestiary declares.
+///
+/// The fourth book-conformance sweep, and the one whose failures change
+/// whether an attack does anything at all. It found thirty-two wrong
+/// stat blocks, in four distinct shapes:
+///
+///   - **Lines that were simply missing.** The Sphinx of Valor had
+///     neither its Necrotic and Radiant resistance nor its Psychic
+///     immunity; the quasit had none of the three demon resistances;
+///     the polar bear did not resist Cold and the water elemental did
+///     not resist Fire.
+///   - **Lines from the 2014 printing that 2024 dropped.** The zombie's
+///     Necrotic resistance and Radiant vulnerability, the vampire's
+///     Poison immunity, the wraith's Lightning and Thunder, the
+///     will-o'-wisp's Thunder.
+///   - **Lines nobody printed at all.** The giant spider's Poison
+///     immunity and the phase spider's Poison resistance are in neither
+///     book — plausible guesses about spiders that made the bestiary's
+///     own venom useless against the creature most likely to be next to
+///     one.
+///   - **A shared helper reaching too far.** `elemental_defaults`
+///     starts every creature it builds with Poison immunity, which is
+///     right for the four Elementals and the mephits and wrong for the
+///     genies and the magmin: SRD 5.2 draws a line between the things
+///     that *are* an element and the people who live on its plane — the
+///     same line that helper's own two condition-immunity sets already
+///     draw — and the Djinni, the Efreeti and the Magmin are on the far
+///     side of it.
+///
+/// ## What the table holds and what it does not
+///
+/// **The non-physical types only.** Bludgeoning, piercing and slashing
+/// are on the engine's separate `nonmagical_damage_modifiers` lane,
+/// because 5e's clause is *"from nonmagical attacks"* and the engine
+/// keeps the magical axis apart; a row here that stored them would be
+/// comparing two different fields.
+///
+/// **Four stat blocks are exempt**, and all four for one reason: the
+/// engine spells their immunity `DamageModifier::Absorption`, which
+/// takes the damage off *and* heals for it. That is RAW's own pairing —
+/// the Flesh Golem's *"Lightning Absorption"* trait sits beside a
+/// Lightning immunity, and the Clay, Iron and Shambling Mound rows say
+/// the same — collapsed into one value. Absorption implies immunity, so
+/// the exemption loses nothing the sweep would have caught.
+#[test]
+fn every_stat_blocks_damage_lines_match_the_book() {
+    use crate::engine::types::{DamageModifier, DamageType};
+
+    /// `(name, "Type:R,Type:I,Type:V")` — SRD 5.2's Resistances,
+    /// Immunities and Vulnerabilities rows, minus the physical types.
+    const SRD_DAMAGE_LINES: &[(&str, &str)] = &[
+    ("Aboleth", ""),
+    ("Adult Black Dragon", "Acid:I"),
+    ("Adult Blue Dragon", "Lightning:I"),
+    ("Adult Brass Dragon", "Fire:I"),
+    ("Adult Bronze Dragon", "Lightning:I"),
+    ("Adult Copper Dragon", "Acid:I"),
+    ("Adult Gold Dragon", "Fire:I"),
+    ("Adult Green Dragon", "Poison:I"),
+    ("Adult Red Dragon", "Fire:I"),
+    ("Adult Silver Dragon", "Cold:I"),
+    ("Adult White Dragon", "Cold:I"),
+    ("Air Elemental", "Lightning:R,Poison:I,Thunder:I"),
+    ("Allosaurus", ""),
+    ("Ancient Black Dragon", "Acid:I"),
+    ("Ancient Blue Dragon", "Lightning:I"),
+    ("Ancient Brass Dragon", "Fire:I"),
+    ("Ancient Bronze Dragon", "Lightning:I"),
+    ("Ancient Copper Dragon", "Acid:I"),
+    ("Ancient Gold Dragon", "Fire:I"),
+    ("Ancient Green Dragon", "Poison:I"),
+    ("Ancient Red Dragon", "Fire:I"),
+    ("Ancient Silver Dragon", "Cold:I"),
+    ("Ancient White Dragon", "Cold:I"),
+    ("Animated Armor", "Poison:I,Psychic:I"),
+    ("Animated Flying Sword", "Poison:I,Psychic:I"),
+    ("Animated Rug of Smothering", "Poison:I,Psychic:I"),
+    ("Ankheg", ""),
+    ("Ankylosaurus", ""),
+    ("Ape", ""),
+    ("Archelon", ""),
+    ("Archmage", "Psychic:I"),
+    ("Assassin", "Poison:R"),
+    ("Avatar of Death", "Necrotic:I,Poison:I"),
+    ("Awakened Shrub", "Fire:V"),
+    ("Awakened Tree", "Fire:V"),
+    ("Axe Beak", ""),
+    ("Azer Sentinel", "Fire:I,Poison:I"),
+    ("Baboon", ""),
+    ("Badger", "Poison:R"),
+    ("Balor", "Cold:R,Lightning:R,Fire:I,Poison:I"),
+    ("Bandit", ""),
+    ("Bandit Captain", ""),
+    ("Barbed Devil", "Cold:R,Fire:I,Poison:I"),
+    ("Basilisk", ""),
+    ("Bat", ""),
+    ("Bearded Devil", "Cold:R,Fire:I,Poison:I"),
+    ("Behir", "Lightning:I"),
+    ("Berserker", ""),
+    ("Black Bear", ""),
+    ("Black Dragon Wyrmling", "Acid:I"),
+    ("Black Pudding", "Acid:I,Cold:I,Lightning:I"),
+    ("Blink Dog", ""),
+    ("Blood Hawk", ""),
+    ("Blue Dragon Wyrmling", "Lightning:I"),
+    ("Boar", ""),
+    ("Bone Devil", "Cold:R,Fire:I,Poison:I"),
+    ("Brass Dragon Wyrmling", "Fire:I"),
+    ("Bronze Dragon Wyrmling", "Lightning:I"),
+    ("Brown Bear", ""),
+    ("Bugbear Stalker", ""),
+    ("Bugbear Warrior", ""),
+    ("Bulette", ""),
+    ("Camel", ""),
+    ("Cat", ""),
+    ("Centaur Trooper", ""),
+    ("Chain Devil", "Cold:R,Fire:I,Poison:I"),
+    ("Chimera", ""),
+    ("Chuul", "Poison:I"),
+    ("Clay Golem", "Acid:I,Poison:I,Psychic:I"),
+    ("Cloaker", ""),
+    ("Cloud Giant", ""),
+    ("Cockatrice", ""),
+    ("Commoner", ""),
+    ("Constrictor Snake", ""),
+    ("Copper Dragon Wyrmling", "Acid:I"),
+    ("Couatl", "Psychic:I,Radiant:I"),
+    ("Crab", ""),
+    ("Crocodile", ""),
+    ("Cultist", ""),
+    ("Cultist Fanatic", ""),
+    ("Darkmantle", ""),
+    ("Death Dog", ""),
+    ("Deer", ""),
+    ("Deva", "Radiant:R"),
+    ("Dire Wolf", ""),
+    ("Djinni", "Lightning:I,Thunder:I"),
+    ("Doppelganger", ""),
+    ("Draconic Spirit", "Acid:R,Cold:R,Fire:R,Lightning:R,Poison:R"),
+    ("Draft Horse", ""),
+    ("Dragon Turtle", "Fire:R"),
+    ("Dretch", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Drider", ""),
+    ("Druid", ""),
+    ("Dryad", ""),
+    ("Dust Mephit", "Poison:I,Fire:V"),
+    ("Eagle", ""),
+    ("Earth Elemental", "Poison:I,Thunder:V"),
+    ("Efreeti", "Fire:I"),
+    ("Elephant", ""),
+    ("Elk", ""),
+    ("Erinyes", "Cold:R,Fire:I,Poison:I"),
+    ("Ettercap", ""),
+    ("Ettin", ""),
+    ("Fire Elemental", "Fire:I,Poison:I"),
+    ("Fire Giant", "Fire:I"),
+    ("Flesh Golem", "Lightning:I,Poison:I"),
+    ("Flying Snake", ""),
+    ("Frog", ""),
+    ("Frost Giant", "Cold:I"),
+    ("Gargoyle", "Poison:I"),
+    ("Gelatinous Cube", "Acid:I"),
+    ("Ghast", "Necrotic:R,Poison:I"),
+    ("Ghost", "Acid:R,Cold:R,Fire:R,Lightning:R,Thunder:R,Necrotic:I,Poison:I"),
+    ("Ghoul", "Poison:I"),
+    ("Giant Ape", ""),
+    ("Giant Badger", "Poison:R"),
+    ("Giant Bat", ""),
+    ("Giant Boar", ""),
+    ("Giant Centipede", ""),
+    ("Giant Constrictor Snake", ""),
+    ("Giant Crab", ""),
+    ("Giant Crocodile", ""),
+    ("Giant Eagle", "Necrotic:R,Radiant:R"),
+    ("Giant Elk", "Necrotic:R,Radiant:R"),
+    ("Giant Fire Beetle", "Fire:R"),
+    ("Giant Fly", ""),
+    ("Giant Frog", ""),
+    ("Giant Goat", ""),
+    ("Giant Hyena", ""),
+    ("Giant Insect", ""),
+    ("Giant Lizard", ""),
+    ("Giant Octopus", ""),
+    ("Giant Owl", "Necrotic:R,Radiant:R"),
+    ("Giant Rat", ""),
+    ("Giant Scorpion", ""),
+    ("Giant Seahorse", ""),
+    ("Giant Shark", ""),
+    ("Giant Spider", ""),
+    ("Giant Toad", ""),
+    ("Giant Venomous Snake", ""),
+    ("Giant Vulture", "Necrotic:R"),
+    ("Giant Wasp", ""),
+    ("Giant Weasel", ""),
+    ("Giant Wolf Spider", ""),
+    ("Gibbering Mouther", ""),
+    ("Glabrezu", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Gladiator", ""),
+    ("Gnoll Warrior", ""),
+    ("Goat", ""),
+    ("Goblin Boss", ""),
+    ("Goblin Minion", ""),
+    ("Goblin Warrior", ""),
+    ("Gold Dragon Wyrmling", "Fire:I"),
+    ("Gorgon", ""),
+    ("Gray Ooze", "Acid:R,Cold:R,Fire:R"),
+    ("Green Dragon Wyrmling", "Poison:I"),
+    ("Green Hag", ""),
+    ("Grick", ""),
+    ("Griffon", ""),
+    ("Grimlock", ""),
+    ("Guard", ""),
+    ("Guard Captain", ""),
+    ("Guardian Naga", "Poison:I"),
+    ("Half-Dragon", ""),
+    ("Harpy", ""),
+    ("Hawk", ""),
+    ("Hell Hound", "Fire:I"),
+    ("Hezrou", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Hill Giant", ""),
+    ("Hippogriff", ""),
+    ("Hippopotamus", ""),
+    ("Hobgoblin Captain", ""),
+    ("Hobgoblin Warrior", ""),
+    ("Homunculus", "Poison:I"),
+    ("Horned Devil", "Cold:R,Fire:I,Poison:I"),
+    ("Hunter Shark", ""),
+    ("Hydra", ""),
+    ("Hyena", ""),
+    ("Ice Devil", "Cold:I,Fire:I,Poison:I"),
+    ("Ice Mephit", "Cold:I,Poison:I,Fire:V"),
+    ("Imp", "Cold:R,Fire:I,Poison:I"),
+    ("Incubus", "Cold:R,Fire:R,Poison:R,Psychic:R"),
+    ("Invisible Stalker", "Poison:I"),
+    ("Iron Golem", "Fire:I,Poison:I,Psychic:I"),
+    ("Jackal", ""),
+    ("Killer Whale", ""),
+    ("Knight", ""),
+    ("Kobold Warrior", ""),
+    ("Kraken", "Cold:I,Lightning:I"),
+    ("Lamia", ""),
+    ("Lemure", "Cold:R,Fire:I,Poison:I"),
+    ("Lich", "Cold:R,Lightning:R,Necrotic:I,Poison:I"),
+    ("Lion", ""),
+    ("Lizard", ""),
+    ("Mage", ""),
+    ("Magma Mephit", "Fire:I,Poison:I,Cold:V"),
+    ("Magmin", "Fire:I"),
+    ("Mammoth", ""),
+    ("Manticore", ""),
+    ("Marilith", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Mastiff", ""),
+    ("Medusa", ""),
+    ("Merfolk Skirmisher", ""),
+    ("Merrow", ""),
+    ("Mimic", "Acid:I"),
+    ("Minotaur Skeleton", "Poison:I"),
+    ("Minotaur of Baphomet", ""),
+    ("Mule", ""),
+    ("Mummy", "Necrotic:I,Poison:I,Fire:V"),
+    ("Mummy Lord", "Necrotic:I,Poison:I,Fire:V"),
+    ("Nalfeshnee", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Night Hag", "Cold:R,Fire:R"),
+    ("Nightmare", "Fire:I"),
+    ("Noble", ""),
+    ("Ochre Jelly", "Acid:R,Lightning:I"),
+    ("Octopus", ""),
+    ("Ogre", ""),
+    ("Ogre Zombie", "Poison:I"),
+    ("Oni", "Cold:R"),
+    ("Otherworldly Steed", ""),
+    ("Otyugh", ""),
+    ("Owl", ""),
+    ("Owlbear", ""),
+    ("Panther", ""),
+    ("Pegasus", ""),
+    ("Phase Spider", ""),
+    ("Piranha", ""),
+    ("Pirate", ""),
+    ("Pirate Captain", ""),
+    ("Pit Fiend", "Cold:R,Fire:I,Poison:I"),
+    ("Planetar", "Radiant:R"),
+    ("Plesiosaurus", ""),
+    ("Polar Bear", "Cold:R"),
+    ("Pony", ""),
+    ("Priest", ""),
+    ("Priest Acolyte", ""),
+    ("Pseudodragon", ""),
+    ("Pteranodon", ""),
+    ("Purple Worm", ""),
+    ("Quasit", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Rakshasa", ""),
+    ("Rat", ""),
+    ("Raven", ""),
+    ("Red Dragon Wyrmling", "Fire:I"),
+    ("Reef Shark", ""),
+    ("Remorhaz", "Cold:I,Fire:I"),
+    ("Rhinoceros", ""),
+    ("Riding Horse", ""),
+    ("Roc", ""),
+    ("Roper", ""),
+    ("Rust Monster", ""),
+    ("Saber-Toothed Tiger", ""),
+    ("Sahuagin Warrior", "Acid:R,Cold:R"),
+    ("Salamander", "Fire:I,Cold:V"),
+    ("Satyr", ""),
+    ("Scorpion", ""),
+    ("Scout", ""),
+    ("Sea Hag", ""),
+    ("Seahorse", ""),
+    ("Shadow", "Acid:R,Cold:R,Fire:R,Lightning:R,Thunder:R,Necrotic:I,Poison:I,Radiant:V"),
+    ("Shambling Mound", "Cold:R,Fire:R,Lightning:I"),
+    ("Shield Guardian", "Poison:I"),
+    ("Shrieker Fungus", ""),
+    ("Silver Dragon Wyrmling", "Cold:I"),
+    ("Skeleton", "Poison:I"),
+    ("Solar", "Poison:I,Radiant:I"),
+    ("Specter", "Acid:R,Cold:R,Fire:R,Lightning:R,Thunder:R,Necrotic:I,Poison:I"),
+    ("Sphinx of Lore", "Necrotic:R,Radiant:R,Psychic:I"),
+    ("Sphinx of Valor", "Necrotic:R,Radiant:R,Psychic:I"),
+    ("Sphinx of Wonder", "Necrotic:R,Psychic:R,Radiant:R"),
+    ("Spider", ""),
+    ("Spirit Naga", "Poison:I"),
+    ("Sprite", ""),
+    ("Spy", ""),
+    ("Steam Mephit", "Fire:I,Poison:I"),
+    ("Stirge", ""),
+    ("Stone Giant", ""),
+    ("Stone Golem", "Poison:I,Psychic:I"),
+    ("Storm Giant", "Cold:R,Lightning:I,Thunder:I"),
+    ("Succubus", "Cold:R,Fire:R,Poison:R,Psychic:R"),
+    ("Tarrasque", "Fire:I,Poison:I"),
+    ("Tiger", ""),
+    ("Tough", ""),
+    ("Tough Boss", ""),
+    ("Treant", "Fire:V"),
+    ("Triceratops", ""),
+    ("Troll", ""),
+    ("Troll Limb", ""),
+    ("Tyrannosaurus Rex", ""),
+    ("Unicorn", "Poison:I"),
+    ("Vampire", "Necrotic:R"),
+    ("Vampire Familiar", "Necrotic:R"),
+    ("Vampire Spawn", "Necrotic:R"),
+    ("Venomous Snake", ""),
+    ("Violet Fungus", ""),
+    ("Vrock", "Cold:R,Fire:R,Lightning:R,Poison:I"),
+    ("Vulture", ""),
+    ("Warhorse", ""),
+    ("Warhorse Skeleton", "Poison:I"),
+    ("Warrior Infantry", ""),
+    ("Warrior Veteran", ""),
+    ("Water Elemental", "Acid:R,Fire:R,Poison:I"),
+    ("Weasel", ""),
+    ("Werebear", ""),
+    ("Wereboar", ""),
+    ("Wererat", ""),
+    ("Weretiger", ""),
+    ("Werewolf", ""),
+    ("White Dragon Wyrmling", "Cold:I"),
+    ("Wight", "Necrotic:R,Poison:I"),
+    ("Will-o’-Wisp", "Acid:R,Cold:R,Fire:R,Necrotic:R,Lightning:I,Poison:I"),
+    ("Winter Wolf", "Cold:I"),
+    ("Wolf", ""),
+    ("Worg", ""),
+    ("Wraith", "Acid:R,Cold:R,Fire:R,Necrotic:I,Poison:I"),
+    ("Wyvern", ""),
+    ("Xorn", "Poison:I"),
+    ("Young Black Dragon", "Acid:I"),
+    ("Young Blue Dragon", "Lightning:I"),
+    ("Young Brass Dragon", "Fire:I"),
+    ("Young Bronze Dragon", "Lightning:I"),
+    ("Young Copper Dragon", "Acid:I"),
+    ("Young Gold Dragon", "Fire:I"),
+    ("Young Green Dragon", "Poison:I"),
+    ("Young Red Dragon", "Fire:I"),
+    ("Young Silver Dragon", "Cold:I"),
+    ("Young White Dragon", "Cold:I"),
+    ("Zombie", "Poison:I"),
+    ];
+
+    /// The four whose immunity the engine spells as absorption. See the
+    /// test's own docstring.
+    const ABSORBS: &[&str] = &[
+        "Clay Golem",
+        "Flesh Golem",
+        "Iron Golem",
+        "Shambling Mound",
+    ];
+
+    let physical: std::collections::HashSet<DamageType> =
+        DamageType::PHYSICAL.iter().copied().collect();
+    let pcs: std::collections::HashSet<usize> =
+        crate::actors::creatures::pc_template_families()
+            .into_iter()
+            .flat_map(|(_, templates)| templates)
+            .map(|t| std::ptr::from_ref(t) as usize)
+            .collect();
+    let mut found: std::collections::BTreeMap<&str, Vec<(DamageType, DamageModifier)>> =
+        std::collections::BTreeMap::new();
+    for t in every_reachable_creature_template() {
+        if pcs.contains(&(std::ptr::from_ref(t) as usize)) {
+            continue;
+        }
+        let mut line: Vec<(DamageType, DamageModifier)> = t
+            .damage_modifiers
+            .iter()
+            .filter(|(dt, _)| !physical.contains(dt))
+            .map(|(dt, m)| (*dt, *m))
+            .collect();
+        line.sort_by_key(|(dt, _)| format!("{dt:?}"));
+        found.insert(t.name, line);
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (name, printed) in SRD_DAMAGE_LINES {
+        if ABSORBS.contains(name) {
+            continue;
+        }
+        let Some(line) = found.get(renamed_to_engine(name)) else {
+            continue;
+        };
+        checked += 1;
+        let mut want: Vec<String> = printed
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                let (ty, code) = s.split_once(':').expect("every entry is Type:code");
+                format!(
+                    "{ty}:{}",
+                    match code {
+                        "R" => "Resistance",
+                        "I" => "Immunity",
+                        _ => "Vulnerability",
+                    }
+                )
+            })
+            .collect();
+        want.sort();
+        let mut got: Vec<String> = line
+            .iter()
+            .map(|(dt, m)| format!("{dt:?}:{m:?}"))
+            .collect();
+        got.sort();
+        if want != got {
+            wrong.push(format!(
+                "{name}: the book prints [{}] and it carries [{}]",
+                want.join(", "),
+                got.join(", ")
+            ));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "these stat blocks' damage lines disagree with SRD 5.2:\n  {}",
+        wrong.join("\n  ")
+    );
+    assert!(
+        checked > 315,
+        "only {checked} of the book's {} damage lines were matched to a \
+         template — a rename has dropped rows out of the sweep",
+        SRD_DAMAGE_LINES.len()
     );
 }

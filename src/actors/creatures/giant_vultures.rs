@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_VULTURE_MULTI;
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Size,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -85,6 +87,12 @@ pub static GIANT_VULTURE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         // suppression lane in `dispatch_opportunity_attacks`, and gated
         // there on the creature actually being airborne.
         features: HashSet::from([crate::actions::class_features::FLYBY_TAG]),
+        // SRD 5.2: *"Resistances Necrotic"* — the carrion-eater's
+        // half of the celestial birds' pair.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Necrotic,
+            DamageModifier::Resistance,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });

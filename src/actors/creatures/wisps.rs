@@ -53,7 +53,9 @@ pub static WISP_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
             (DamageType::Cold, DamageModifier::Resistance),
             (DamageType::Fire, DamageModifier::Resistance),
             (DamageType::Necrotic, DamageModifier::Resistance),
-            (DamageType::Thunder, DamageModifier::Resistance),
+            // No Thunder: SRD 5.2's resistance line is Acid,
+            // Bludgeoning, Cold, Fire, Necrotic, Piercing, Slashing,
+            // and the thunder that used to be here is a 2014 entry.
             (DamageType::Lightning, DamageModifier::Immunity),
             (DamageType::Poison, DamageModifier::Immunity),
         ]),

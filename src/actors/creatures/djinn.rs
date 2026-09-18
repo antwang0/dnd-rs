@@ -1,6 +1,6 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{DJINNI_MULTI, DJINNI_SCIMITAR, DJINNI_STORM_BOLT};
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::actors::creatures::fire_elementals::{
     elemental_defaults,
 };
@@ -93,10 +93,20 @@ pub static DJINNI_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // the resistance this carried. The djinni is a storm with a
         // face, and the two types its own Whirlwind and thunderous
         // slams are made of are the two it cannot be hurt by.
-        ..elemental_defaults([
+        // **The whole line, written out rather than layered onto
+        // `elemental_defaults`.** That helper starts every creature it
+        // builds with Poison immunity, which is right for the four
+        // Elementals and the mephits and is not right here: SRD 5.2
+        // draws a line between the things that *are* an element and the
+        // people who live on its plane — the same line the helper's own
+        // two condition-immunity sets already draw — and the four genies
+        // are on the far side of it. The book's Immunities row for the
+        // djinni reads *"Lightning, Thunder"* and stops.
+        damage_modifiers: damage_modifiers_from([
             (DamageType::Thunder, DamageModifier::Immunity),
             (DamageType::Lightning, DamageModifier::Immunity),
-        ])
+        ]),
+        ..elemental_defaults([])
     }
 });
 
@@ -136,13 +146,17 @@ mod tests {
             0,
         )
         .unwrap();
-        // Elemental envelope: poison immune and BPS resistant from the
-        // shared tail, plus SRD 5.2's "Immunities Lightning, Thunder" —
+        // SRD 5.2's whole Immunities row is *"Lightning, Thunder"* —
         // full immunity on both, which is the storm the djinni is made
-        // of failing to hurt it.
+        // of failing to hurt it, and **no Poison**: the book draws a
+        // line between the things that are an element and the people
+        // who live on its plane, and the genies are on the far side of
+        // it. The BPS resistance and the condition envelope still come
+        // off the shared elemental tail.
         assert_eq!(
             a.damage_modifier(DamageType::Poison),
-            Some(DamageModifier::Immunity)
+            None,
+            "a djinni is a person, and a person can be poisoned"
         );
         assert_eq!(
             a.damage_modifier(DamageType::Thunder),

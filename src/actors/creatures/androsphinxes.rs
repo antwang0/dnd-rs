@@ -2,10 +2,10 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     ANDROSPHINX_CLAW, ANDROSPHINX_MULTI, ANDROSPHINX_ROAR,
 };
-use crate::actors::actor_template::CreatureTemplate;
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
 use crate::conditions::Condition;
 use crate::engine::types::{
-    AbilityScoreType, CreatureType, Language, Size, SpecialSense,
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
 };
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -136,6 +136,16 @@ pub static ANDROSPHINX_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         features: HashSet::from([
             crate::actions::class_features::MAGICAL_ATTACKS_TAG,
             crate::actions::class_features::ROAR_TAG,
+        ]),
+        // SRD 5.2 (where this stat block is the **Sphinx of Valor**):
+        // *"Resistances Necrotic, Radiant; Immunities Psychic"*. All
+        // three were missing, which left a CR 17 celestial guardian
+        // taking full damage from the two energies its whole identity
+        // is built out of.
+        damage_modifiers: damage_modifiers_from([
+            (DamageType::Necrotic, DamageModifier::Resistance),
+            (DamageType::Radiant, DamageModifier::Resistance),
+            (DamageType::Psychic, DamageModifier::Immunity),
         ]),
         ..CreatureTemplate::resistant_to_nonmagical_physical()
     }

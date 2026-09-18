@@ -56,10 +56,13 @@ pub static VAMPIRE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // 5e MM Vampire: resistant to necrotic + non-magical BPS,
         // immune to poison. Radiant is the regen-suppressor (proxy
         // for the "sunlight / holy water" RAW downside).
-        damage_modifiers: damage_modifiers_from([
-            (DamageType::Necrotic, DamageModifier::Resistance),
-            (DamageType::Poison, DamageModifier::Immunity),
-        ]),
+        // SRD 5.2: *"Resistances Necrotic"*, and that is the whole
+        // line. The Poison immunity beside it was a 2014 undead
+        // convention the 2024 vampires do not print.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Necrotic,
+            DamageModifier::Resistance,
+        )]),
         // Vampire saves: prof in DEX / WIS / CHA per MM.
         proficient_saves: HashSet::from([
             AbilityScoreType::Dexterity,

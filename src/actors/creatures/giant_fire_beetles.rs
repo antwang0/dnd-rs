@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_FIRE_BEETLE_BITE;
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Size, SpecialSense};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -52,6 +54,12 @@ pub static GIANT_FIRE_BEETLE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::ne
             crate::engine::lighting::GLOW_BRIGHT_TILES,
             crate::engine::lighting::GLOW_DIM_TILES,
         )),
+        // SRD 5.2: *"Resistances Fire"*. The beetle glows because it
+        // is full of the stuff.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Fire,
+            DamageModifier::Resistance,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });

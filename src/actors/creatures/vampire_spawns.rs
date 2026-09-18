@@ -40,10 +40,13 @@ pub static VAMPIRE_SPAWN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(||
         features: HashSet::from([TURN_RESISTANCE_TAG]),
         // Necrotic-resistant + non-magical BPS resistance + poison
         // immunity (5e MM vampire damage envelope).
-        damage_modifiers: damage_modifiers_from([
-            (DamageType::Necrotic, DamageModifier::Resistance),
-            (DamageType::Poison, DamageModifier::Immunity),
-        ]),
+        // SRD 5.2: *"Resistances Necrotic"*, and that is the whole
+        // line. The Poison immunity beside it was a 2014 undead
+        // convention the 2024 vampires do not print.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Necrotic,
+            DamageModifier::Resistance,
+        )]),
         condition_immunities: HashSet::from([Condition::Poisoned, Condition::Charmed]),
         skills: HashSet::from([Skill::Perception, Skill::Stealth]),
         // 5e Vampire Spawn **Sunlight Hypersensitivity**: the same

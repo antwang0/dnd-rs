@@ -1,7 +1,9 @@
 use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::GIANT_OWL_TALONS;
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{CreatureType, Language, Size, SpecialSense};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    CreatureType, DamageModifier, DamageType, Language, Size, SpecialSense,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -94,6 +96,13 @@ pub static GIANT_OWL_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         // suppression lane in `dispatch_opportunity_attacks`, and gated
         // there on the creature actually being airborne.
         features: HashSet::from([crate::actions::class_features::FLYBY_TAG]),
+        // SRD 5.2: *"Resistances Necrotic, Radiant"*, the giant
+        // eagle's line and for the same reason — both are Celestials
+        // now.
+        damage_modifiers: damage_modifiers_from([
+            (DamageType::Necrotic, DamageModifier::Resistance),
+            (DamageType::Radiant, DamageModifier::Resistance),
+        ]),
         ..CreatureTemplate::defaults()
     }
 });

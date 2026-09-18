@@ -644,9 +644,21 @@ pub static DRACONIC_SPIRIT_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
         size: Size::Large,
         creature_type: CreatureType::Dragon,
         actions,
-        // Matches the breath it exhales, and RAW: the spirit is immune
-        // to the damage type of its chosen ancestry.
-        damage_modifiers: HashMap::from([(DamageType::Fire, DamageModifier::Immunity)]),
+        // SRD 5.2: *"Resistances Acid, Cold, Fire, Lightning,
+        // Poison"* — all five, at resistance, regardless of which
+        // breath the caster chose. This used to read "immune to the
+        // damage type of its chosen ancestry", which is the older
+        // printing and is a different creature: it made the spirit
+        // untouchable by one element and fully open to the other four,
+        // where the book makes it moderately hard to burn with
+        // anything.
+        damage_modifiers: HashMap::from([
+            (DamageType::Acid, DamageModifier::Resistance),
+            (DamageType::Cold, DamageModifier::Resistance),
+            (DamageType::Fire, DamageModifier::Resistance),
+            (DamageType::Lightning, DamageModifier::Resistance),
+            (DamageType::Poison, DamageModifier::Resistance),
+        ]),
         condition_immunities: HashSet::from([Condition::Charmed, Condition::Frightened]),
         recharge_abilities: vec![("breath_weapon", 5)],
         ..CreatureTemplate::defaults()

@@ -44,10 +44,9 @@ pub static NIGHTMARE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         mountable: true,
         creature_type: CreatureType::Fiend,
         actions,
-        damage_modifiers: HashMap::from([
-            (DamageType::Fire, DamageModifier::Immunity),
-            (DamageType::Cold, DamageModifier::Resistance),
-        ]),
+        // SRD 5.2: *"Immunities Fire"*, and nothing else. The Cold
+        // resistance beside it was a 2014 reading.
+        damage_modifiers: HashMap::from([(DamageType::Fire, DamageModifier::Immunity)]),
         ..CreatureTemplate::defaults()
     }
 });

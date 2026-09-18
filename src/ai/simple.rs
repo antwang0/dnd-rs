@@ -23728,8 +23728,14 @@ mod tests {
             );
         }
 
-        // A magmin is immune to fire and to poison, which is exactly
-        // the pair of single-typed cantrips these two replace.
+        // A magmin is immune to fire and a zombie to poison, which is
+        // exactly the pair of single-typed cantrips these two replace.
+        //
+        // Two creatures rather than one, because it used to be the
+        // magmin for both halves and SRD 5.2's magmin prints
+        // *"Immunities Fire"* and nothing else — a genie or a magmin is
+        // a person who is on fire rather than a fire, and the book
+        // stopped handing them the elementals' Poison line.
         let mut e = empty_arena();
         let caster = e
             .instantiate_creature(&SORCERER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
@@ -23737,14 +23743,17 @@ mod tests {
         let magmin = e
             .instantiate_creature(&MAGMIN_TEMPLATE, Coordinate::new(14, 2), 1, 0)
             .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(14, 6), 1, 1)
+            .unwrap();
         assert!(
             action_matchup_penalty(&e, caster, magmin, &*SORCEROUS_BURST)
                 < action_matchup_penalty(&e, caster, magmin, &*FIRE_BOLT),
             "a seven-type menu beats a fire bolt against something made of fire"
         );
         assert!(
-            action_matchup_penalty(&e, caster, magmin, &*STARRY_WISP)
-                < action_matchup_penalty(&e, caster, magmin, &*POISON_SPRAY),
+            action_matchup_penalty(&e, caster, zombie, &*STARRY_WISP)
+                < action_matchup_penalty(&e, caster, zombie, &*POISON_SPRAY),
             "and radiant beats poison against something immune to poison"
         );
     }

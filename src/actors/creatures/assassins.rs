@@ -5,8 +5,10 @@ use crate::actions::default_actions::DEFAULT_ACTIONS;
 use crate::actions::monster_attacks::{
     ASSASSIN_LIGHT_CROSSBOW, ASSASSIN_MULTI, ASSASSIN_SHORTSWORD,
 };
-use crate::actors::actor_template::CreatureTemplate;
-use crate::engine::types::{AbilityScoreType, CreatureType, Language, Size, Skill};
+use crate::actors::actor_template::{CreatureTemplate, damage_modifiers_from};
+use crate::engine::types::{
+    AbilityScoreType, CreatureType, DamageModifier, DamageType, Language, Size, Skill,
+};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -92,6 +94,12 @@ pub static ASSASSIN_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
         ]),
         features: HashSet::from([ASSASSINATE_TAG]),
         has_evasion: true,
+        // SRD 5.2: *"Resistances Poison"* — the assassin has drunk
+        // enough of it to have stopped minding.
+        damage_modifiers: damage_modifiers_from([(
+            DamageType::Poison,
+            DamageModifier::Resistance,
+        )]),
         ..CreatureTemplate::defaults()
     }
 });
