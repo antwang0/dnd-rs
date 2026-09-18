@@ -127546,3 +127546,111 @@ fn nondetection_hides_a_creature_from_magic_and_not_from_eyes() {
     );
     assert!(e.actors[&hunted].has_condition(Condition::Undetectable));
 }
+
+/// SRD 5.2's **Incapacitated** condition is three clauses in one
+/// sentence — *"can't take any action, Bonus Action, or Reaction.
+/// Concentration is broken. The creature can't speak."* — and the
+/// engine used to read the first two off two hand-kept lists with
+/// almost the same membership.
+///
+/// "Almost" is where the bugs were, and both were on the two conditions
+/// whose printed text uses the actual word: Haste's **Lethargic** and
+/// Cackle Fever's **Cackling** were on the action-economy list and
+/// forgotten on the concentration one, so a caster who could not so
+/// much as twitch kept hold of the Wall of Fire they were holding up.
+///
+/// Pinned as the relationship rather than as two lists:
+/// `breaks_concentration` *is* `is_incapacitating`, and
+/// `blocks_action_economy` is that plus the two the engine
+/// incapacitates as an approximation.
+#[test]
+fn everything_the_book_calls_incapacitated_drops_the_spell_it_was_holding() {
+    use crate::conditions::Condition;
+
+    // Every condition in the engine, asked the two questions. The list
+    // is the cohorts themselves — there is no way to enumerate an enum
+    // — so what this pins is the *shape*: nothing is incapacitating and
+    // able to concentrate, and the action-economy list is a superset
+    // that differs by exactly the argued pair.
+    const INCAPACITATING: &[Condition] = &[
+        Condition::Incapacitated,
+        Condition::Stunned,
+        Condition::Paralyzed,
+        Condition::Unconscious,
+        Condition::Asleep,
+        Condition::Petrified,
+        Condition::Mazed,
+        Condition::Banished,
+        Condition::Lethargic,
+        Condition::Cackling,
+    ];
+    for c in INCAPACITATING {
+        assert!(c.is_incapacitating(), "{c:?}");
+        assert!(
+            c.breaks_concentration(),
+            "{c:?} is Incapacitated, and RAW's Incapacitated says \
+             concentration is broken"
+        );
+        assert!(c.blocks_action_economy(), "{c:?}");
+    }
+    // The two the engine incapacitates as an approximation: on the
+    // action-economy list, off the other, argued in full on
+    // `Condition::breaks_concentration`.
+    for c in [Condition::Sphered, Condition::Surprised] {
+        assert!(!c.is_incapacitating(), "{c:?}");
+        assert!(c.blocks_action_economy(), "{c:?}");
+        assert!(
+            !c.breaks_concentration(),
+            "{c:?} is the engine's approximation and not the book's word"
+        );
+    }
+    // …and a handful that are neither, so the cohorts are not simply
+    // "every condition".
+    for c in [
+        Condition::Prone,
+        Condition::Poisoned,
+        Condition::Frightened,
+        Condition::Blinded,
+        Condition::Restrained,
+    ] {
+        assert!(!c.is_incapacitating(), "{c:?}");
+        assert!(!c.breaks_concentration(), "{c:?}");
+        assert!(!c.blocks_action_economy(), "{c:?}");
+    }
+}
+
+/// The rule the cohort above exists for, played out: a fevered wizard
+/// holding a concentration spell loses it the moment the laughter takes
+/// them.
+///
+/// SRD 5.2 **Cackle Fever**: *"the creature takes 5 (1d10) Psychic
+/// damage and has the Incapacitated condition as it laughs
+/// uncontrollably"* — and RAW's Incapacitated breaks concentration.
+#[test]
+fn a_laughing_caster_cannot_hold_the_spell() {
+    use crate::actions::spells::WEB;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::contagions::{CACKLING_ESCAPE, CACKLING_ROUNDS};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(3, 3), 0, 0)
+        .unwrap();
+    let points = vec![Coordinate::new(10, 10)];
+    for ef in WEB.side_effects(&mut e, wizard, None, Some(&points), None) {
+        ef.apply(&mut e);
+    }
+    assert!(
+        e.actors[&wizard].is_concentrating(),
+        "the fixture's own premise"
+    );
+
+    // The laughter, installed the way the fever installs it.
+    e.begin_repeat_save(wizard, wizard, 13, &CACKLING_ESCAPE, CACKLING_ROUNDS);
+    assert!(e.actors[&wizard].has_condition(Condition::Cackling));
+    e.reconcile_broken_concentration();
+    assert!(
+        !e.actors[&wizard].is_concentrating(),
+        "a creature that cannot take an action cannot hold a spell up"
+    );
+}

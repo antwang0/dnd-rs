@@ -4665,7 +4665,47 @@ impl Condition {
     ///
     /// `Mazed` and `Banished` are in, because both are RAW's demiplane
     /// and RAW's demiplane says "incapacitated" in as many words.
+    ///
+    /// The body is now [`Self::is_incapacitating`] and nothing else,
+    /// which is the whole of RAW's sentence — *"Concentration is
+    /// broken"* is a clause of the **Incapacitated condition**, so
+    /// anything that is Incapacitated breaks concentration by
+    /// definition rather than by being remembered onto a second list.
+    /// Two conditions had been forgotten onto it exactly that way; see
+    /// there.
     pub fn breaks_concentration(&self) -> bool {
+        self.is_incapacitating()
+    }
+
+    /// The conditions SRD 5.2 defines as *"the creature has the
+    /// **Incapacitated** condition"* — the cohort, rather than any one
+    /// of the clauses that follow from it.
+    ///
+    /// > **Incapacitated.** *The creature can't take any action, Bonus
+    /// > Action, or Reaction. Concentration is broken. The creature
+    /// > can't speak.*
+    ///
+    /// This exists because those clauses used to be two hand-kept lists
+    /// — `blocks_action_economy` and `breaks_concentration` — with
+    /// almost the same membership and no relationship between them, and
+    /// "almost" is where the bugs were. Both conditions whose printed
+    /// text uses the actual word *Incapacitated* had been written onto
+    /// the action-economy list and forgotten on the other:
+    ///
+    ///   - **`Lethargic`**, Haste's bill — *"the target is
+    ///     Incapacitated and has a Speed of 0"* — so a hasted wizard
+    ///     whose spell lapsed stood there unable to act and kept hold
+    ///     of the Wall of Fire they were concentrating on;
+    ///   - **`Cackling`**, Cackle Fever's laughter — *"has the
+    ///     Incapacitated condition as it laughs uncontrollably"* —
+    ///     same, one scratch later.
+    ///
+    /// Adding a third such condition now costs one row here and cannot
+    /// half-land. What stays on `blocks_action_economy` and *not* here
+    /// is the pair the engine incapacitates as an approximation rather
+    /// than because the book says so — `Sphered` and `Surprised` — and
+    /// that pair is argued in full on `breaks_concentration`.
+    pub fn is_incapacitating(&self) -> bool {
         matches!(
             self,
             Condition::Incapacitated
@@ -4674,8 +4714,17 @@ impl Condition {
                 | Condition::Unconscious
                 | Condition::Asleep
                 | Condition::Petrified
+                // RAW's two demiplanes, both of which say
+                // "incapacitated" in as many words.
                 | Condition::Mazed
                 | Condition::Banished
+                // 5e Haste's lethargy: "the target is Incapacitated and
+                // has a Speed of 0". `zeros_movement` is the second
+                // half of that sentence.
+                | Condition::Lethargic
+                // SRD 5.2 Cackle Fever: "has the Incapacitated
+                // condition as it laughs uncontrollably".
+                | Condition::Cackling
         )
     }
 
@@ -4683,37 +4732,13 @@ impl Condition {
     /// Reaction usage (5e's Incapacitated clause). Stunned and Paralyzed
     /// inherit this clause.
     pub fn blocks_action_economy(&self) -> bool {
-        matches!(
-            self,
-            Condition::Stunned
-                | Condition::Incapacitated
-                | Condition::Paralyzed
-                | Condition::Unconscious
-                | Condition::Asleep
-                | Condition::Petrified
-                | Condition::Mazed
-                | Condition::Sphered
-                // 5e Surprised: "you can't move or take an action on
-                // your first turn of the combat". The action half is
-                // this cohort; the movement half is `zeros_movement`
-                // and the reaction half `blocks_reactions`, and between
-                // the three of them the condition needs no code of its
-                // own.
-                | Condition::Surprised
-                // 5e Banishment: "while there, the target is
-                // incapacitated". The clause is the small half of the
-                // condition — see `removes_from_board` for the rest.
-                | Condition::Banished
-                // 5e Haste's lethargy: "the target is Incapacitated and
-                // has a Speed of 0". This cohort is the first half of
-                // that sentence; `zeros_movement` is the second.
-                | Condition::Lethargic
-                // SRD 5.2 Cackle Fever: "has the Incapacitated
-                // condition as it laughs uncontrollably". This cohort
-                // is the whole of that clause — the laughter takes the
-                // turn and nothing else. See `Condition::Cackling`.
-                | Condition::Cackling
-        )
+        // Everything RAW calls Incapacitated, plus the two the engine
+        // incapacitates as an approximation — see
+        // `breaks_concentration`, which argues both, and
+        // `is_incapacitating`, which is why the two lists are no longer
+        // two lists.
+        self.is_incapacitating()
+            || matches!(self, Condition::Sphered | Condition::Surprised)
     }
 
     /// True if this condition is a beneficial buff that Dispel Magic /

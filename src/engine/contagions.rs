@@ -214,6 +214,18 @@ pub struct Contagion {
     /// is a bare *"gains 1 Exhaustion level"*, and its own dawn save is
     /// what moves the number afterwards.
     pub onset_exhaustion_persists: bool,
+    /// RAW's *"A creature suffers the following effects **1d4 days
+    /// after infection**"*, which two of the three entries print and
+    /// one does not.
+    ///
+    /// Declared rather than inferred. This was read off the shape of
+    /// the row for one commit — *"an entry with a condition and no
+    /// Exhaustion has no incubation"* — which is true of the three
+    /// rows the book happens to print and is not a rule about
+    /// anything. Sight Rot's symptoms land in the round it is caught
+    /// because its entry has no incubation line, not because its
+    /// symptom is a condition.
+    pub incubates: bool,
     /// A condition the onset installs and the cure removes — Sight
     /// Rot's *"have the Blinded condition until the contagion ends"*.
     ///
@@ -385,6 +397,7 @@ pub static CACKLE_FEVER: Contagion = Contagion {
     // because that is the only one the book gives.
     exposure_dc: 10,
     susceptible: &[CreatureType::Humanoid],
+    incubates: true,
     onset_exhaustion: 1,
     onset_exhaustion_persists: true,
     onset_condition: None,
@@ -445,6 +458,7 @@ pub static SEWER_PLAGUE: Contagion = Contagion {
     name: "Sewer Plague",
     exposure_dc: 11,
     susceptible: &[CreatureType::Humanoid],
+    incubates: true,
     onset_exhaustion: 1,
     // A bare "gains 1 Exhaustion level" — no holding clause. The dawn
     // save is what moves it afterwards, in both directions.
@@ -500,6 +514,9 @@ pub static SIGHT_ROT: Contagion = Contagion {
     name: "Sight Rot",
     exposure_dc: 15,
     susceptible: &[CreatureType::Beast, CreatureType::Humanoid],
+    // The one entry with no "1d4 days after infection" line: a failed
+    // save is blind before the round is out.
+    incubates: false,
     onset_exhaustion: 0,
     onset_exhaustion_persists: false,
     onset_condition: Some(Condition::Blinded),
@@ -676,7 +693,7 @@ impl EncounterInstance {
         }
         // Sight Rot is the entry with no incubation line — its victim
         // is blind before the round is out. The other two take a night.
-        let immediate = row.onset_condition.is_some() && row.onset_exhaustion == 0;
+        let immediate = !row.incubates;
         if let Some(victim) = self.actors.get_mut(&victim_id) {
             victim.infect(kind, immediate);
         }
