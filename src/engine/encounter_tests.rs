@@ -3920,17 +3920,18 @@ fn circle_of_mortality_maxes_mass_healing_word_when_any_target_at_zero() {
         assert!(aei.validate(&e));
         e.push_action(aei);
         e.process_stack();
-        // Both allies picked up by the shared max-roll: 4 + 2 = 6 HP.
+        // Both allies picked up by the shared max-roll: RAW's 2d4,
+        // maxed, is 8, plus the cleric's +2 modifier.
         assert_eq!(
             e.actors[&downed].hitpoints(),
-            6,
-            "seed {}: downed ally must heal for exactly 4+2 = 6 HP via Circle of Mortality's max-1d4 substitution",
+            10,
+            "seed {}: downed ally must heal for exactly 8+2 = 10 HP via Circle of Mortality's max-2d4 substitution",
             seed
         );
         assert_eq!(
             e.actors[&wounded].hitpoints(),
-            1 + 6,
-            "seed {}: wounded ally (also in the burst) must pick up the same shared max-roll = 6 HP",
+            1 + 10,
+            "seed {}: wounded ally (also in the burst) must pick up the same shared max-roll = 10 HP",
             seed
         );
     }
@@ -81015,16 +81016,22 @@ fn reaper_doubles_a_necromancy_cantrip_onto_a_neighbour() {
     let mut doubled = false;
     for seed in 0..40u64 {
         let mut e = ei_with_terrain_seeded(20, 20, &[], seed);
+        // SRD 5.2's Chill Touch is a *melee* spell attack, so the
+        // cleric has to be in touch range of both goblins for Reaper to
+        // have anything to double onto: `pick_second_spell_target`
+        // measures the spell's own reach from the caster as well as the
+        // five feet between the pair.
         let cleric = e
-            .instantiate_creature(&DEATH_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .instantiate_creature(&DEATH_CLERIC_TEMPLATE, Coordinate::new(6, 8), 0, 0)
             .unwrap();
         let first = e
             .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
             .unwrap();
         // Second goblin footprint-adjacent to the first, which is
-        // RAW's "within 5 feet of each other".
+        // RAW's "within 5 feet of each other" — and, here, adjacent to
+        // the cleric too.
         let second = e
-            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 1)
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 6), 1, 1)
             .unwrap();
         let before = e.actors[&second].hitpoints();
         let targets = vec![first];
@@ -81054,13 +81061,16 @@ fn reaper_declines_a_leveled_spell_and_a_distant_second_target() {
 
     let mut e = ei_with_terrain(30, 30, &[]);
     let cleric = e
-        .instantiate_creature(&DEATH_CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .instantiate_creature(&DEATH_CLERIC_TEMPLATE, Coordinate::new(6, 8), 0, 0)
         .unwrap();
     let first = e
         .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 8), 1, 0)
         .unwrap();
-    // Well inside Chill Touch's 48-tile reach, but nowhere near the
-    // first goblin.
+    // On the board and visible, and nowhere near the first goblin —
+    // which is the gate under test. (It is out of the cantrip's own
+    // touch reach as well, and deliberately: RAW's clause is about the
+    // *pair*, and a fixture that failed both gates at once would not
+    // say which one refused.)
     e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 20), 1, 1)
         .unwrap();
     assert_eq!(
@@ -81081,7 +81091,7 @@ fn reaper_declines_a_leveled_spell_and_a_distant_second_target() {
     // Move the second goblin next door and the same call finds it —
     // then the level gate refuses the identical situation.
     let neighbour = e
-        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 8), 1, 2)
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 6), 1, 2)
         .unwrap();
     assert_eq!(
         e.consume_reaper(
@@ -129474,4 +129484,163 @@ fn every_spells_reach_is_the_range_the_book_prints() {
         "the sweep checked {checked} of {} rows",
         SRD_RANGES.len()
     );
+}
+
+/// Five spells whose dice came out of the 2014 book, pinned against
+/// SRD 5.2.
+///
+/// Each was found the same way — by reading every `Dice::new` in
+/// `spells.rs` against the dice the book prints in that spell's own
+/// description — and each is invisible from inside the file: the number
+/// is plausible, the docstring quotes it, and the only symptom is a
+/// spell that is quietly a little weaker or a little stronger than the
+/// one on the character sheet.
+///
+/// **Why this is a list of five and not a sweep.** The comparison that
+/// found them cannot be automated into a test the way the range and
+/// defence sweeps can. A spell's damage is a literal only when it does
+/// not scale: Fireball's dice are `Dice::new(6 + level, 6)`, and a
+/// source scan looking for `8d6` finds nothing at all. Writing the
+/// sweep against the literals would have meant a table full of
+/// exemptions for the spells that scale, which is most of the ones
+/// worth checking. So the sweep stays a thing a person runs, and this
+/// is the part of it that can be kept.
+#[test]
+fn five_spells_roll_the_dice_the_book_prints() {
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    /// Everything one cast logs, joined — the log is where each of
+    /// these spells writes its own dice expression out loud, which is
+    /// what makes them checkable without reaching into the resolver.
+    fn cast_log(
+        e: &mut EncounterInstance,
+        action: &'static (dyn Action + Send + Sync),
+        caster: usize,
+        targets: Option<Vec<usize>>,
+        at: Option<Vec<Coordinate>>,
+    ) -> String {
+        let before = e.messages().len();
+        for eff in action.side_effects(e, caster, targets.as_ref(), at.as_ref(), None) {
+            eff.apply(e);
+        }
+        e.messages()[before..].join("\n")
+    }
+
+    // **False Life** — RAW's "2d4 + 4 Temporary Hit Points". 1d4+4 was
+    // the 2014 printing, on a spell whose entire content is one number.
+    {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let log = cast_log(&mut e, &*crate::actions::spells::FALSE_LIFE, wizard, None, None);
+        assert!(log.contains("2d4("), "false life rolls 2d4: {log}");
+        let temp = e.actors[&wizard].temp_hp();
+        assert!(
+            (6..=12).contains(&temp),
+            "2d4+4 is between 6 and 12, got {temp}"
+        );
+    }
+
+    // **Chill Touch** — RAW's melee 1d10, not the 2014 printing's
+    // ranged 1d8. The reach is half the change and the die is the
+    // other half, so both are asserted.
+    {
+        let chill: &'static (dyn Action + Send + Sync) = &*crate::actions::spells::CHILL_TOUCH;
+        assert_eq!(
+            chill.reach_tiles(),
+            Some(crate::actions::action_template::MELEE_REACH),
+            "SRD 5.2 prints Range: Touch"
+        );
+        // Sweep seeds so a hit is observed; a miss logs no damage die.
+        let mut saw = false;
+        for seed in 0..40u64 {
+            let mut e2 = ei_with_terrain_seeded(20, 20, &[], seed);
+            let w = e2
+                .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+                .unwrap();
+            let g = e2
+                .instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(4, 2), 1, 0)
+                .unwrap();
+            let log = cast_log(&mut e2, chill, w, Some(vec![g]), None);
+            if log.contains("1d10(") {
+                saw = true;
+                break;
+            }
+            assert!(
+                !log.contains("1d8("),
+                "seed {seed}: the 2014 d8 is gone: {log}"
+            );
+        }
+        assert!(saw, "a level-1 wizard hits a skeleton somewhere in forty seeds");
+    }
+
+    // **Ice Storm** — RAW's "2d10 Bludgeoning damage and 4d6 Cold
+    // damage". The bludgeoning half was 2d8, which is the half the
+    // upcast clause scales.
+    {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let wizard = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&SKELETON_TEMPLATE, Coordinate::new(10, 10), 1, 0)
+            .unwrap();
+        let log = cast_log(
+            &mut e,
+            &*crate::actions::spells::ICE_STORM,
+            wizard,
+            None,
+            Some(vec![Coordinate::new(10, 10)]),
+        );
+        assert!(
+            log.contains("2d10(") && log.contains("4d6("),
+            "ice storm rolls 2d10 bludgeoning and 4d6 cold: {log}"
+        );
+    }
+
+    // **Mass Healing Word** — RAW's "2d4 plus your spellcasting ability
+    // modifier", on the engine's only bonus-action party heal.
+    {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hurt = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 2), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&hurt).unwrap().take_damage(20);
+        let log = cast_log(
+            &mut e,
+            &*crate::actions::spells::MASS_HEALING_WORD,
+            cleric,
+            None,
+            None,
+        );
+        assert!(log.contains("2d4("), "mass healing word rolls 2d4: {log}");
+    }
+
+    // **Mass Cure Wounds** — RAW's "5d8 plus your spellcasting ability
+    // modifier". Three dice was the 2014 printing, and across six
+    // allies the difference is most of what a fifth-level slot buys.
+    {
+        let mut e = ei_with_terrain(20, 20, &[]);
+        let cleric = e
+            .instantiate_creature(&CLERIC_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let hurt = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(6, 6), 0, 1)
+            .unwrap();
+        e.actors.get_mut(&hurt).unwrap().take_damage(30);
+        let at = e.actors[&hurt].location();
+        let log = cast_log(
+            &mut e,
+            &*crate::actions::spells::MASS_CURE_WOUNDS,
+            cleric,
+            None,
+            Some(vec![at]),
+        );
+        assert!(log.contains("5d8("), "mass cure wounds rolls 5d8: {log}");
+    }
 }

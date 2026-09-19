@@ -3427,9 +3427,16 @@ impl Action for Web {
 pub static WEB: LazyLock<Web> = LazyLock::new(|| Web {});
 
 
-/// False Life — level-1 necromancy. Self-target; gain 1d4+4 temp HP.
-/// Doesn't require concentration (it's a flat buff). Cleared by long
-/// rest with the rest of temp HP.
+/// **False Life** — SRD 5.2 level-1 necromancy (Sorcerer, Wizard),
+/// action, Self: *"You gain 2d4 + 4 Temporary Hit Points."*
+///
+/// Self-target, no concentration — it is a flat buff — and cleared by
+/// the long rest along with the rest of the temp HP pool.
+///
+/// **2d4, not 1d4.** The smaller die is the 2014 printing, and on a
+/// spell whose whole content is one number that is the difference
+/// between a first-level slot buying six and a half hit points and
+/// buying nine.
 pub struct FalseLife {}
 
 impl Action for FalseLife {
@@ -3466,11 +3473,12 @@ impl Action for FalseLife {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        let raw = encounter.roll(&Dice::new(1, 4));
+        let dice = Dice::new(2, 4);
+        let raw = encounter.roll(&dice);
         let amount = raw + 4;
         encounter.log(format!(
-            "  false life: 1d4({})+4 = {} temp HP",
-            raw, amount
+            "  false life: {}({})+4 = {} temp HP",
+            dice, raw, amount
         ));
         vec![Box::new(GainTempHp {
             actor_id: caster_id,
@@ -4617,19 +4625,30 @@ impl Action for AcidSplash {
 
 pub static ACID_SPLASH: LazyLock<AcidSplash> = LazyLock::new(|| AcidSplash {});
 
-/// Chill Touch — wizard cantrip. Ranged spell attack: d20 + INT vs AC.
-/// On hit: 1d8 necrotic (crit doubles the dice), plus RAW's "the target
-/// can't regain hit points until the start of your next turn" as the
-/// `ChillTouched` condition.
+/// **Chill Touch** — SRD 5.2 necromancy cantrip (Sorcerer, Warlock,
+/// Wizard), action, **Touch**.
 ///
-/// That second clause is the reason to cast this over Fire Bolt: it is
-/// the party's answer to a troll's regeneration, a vampire's bite-heal,
-/// or an enemy cleric who keeps topping their frontline back up — a
-/// cantrip that turns off the other side's healing for a round.
+/// > *Channeling the chill of the grave, make a melee spell attack
+/// > against a target within reach. On a hit, the target takes 1d10
+/// > Necrotic damage, and it can't regain Hit Points until the end of
+/// > your next turn.*
 ///
-/// Not shipped: the undead-only rider ("it also has disadvantage on
-/// attack rolls against you until the end of your next turn"), which
-/// needs a creature-type-gated attacker-side back-link.
+/// **It used to be the 2014 spell**, and the two printings are not the
+/// same cantrip. That one is a *ranged* spell attack at 120 feet for
+/// 1d8; this one is a melee attack at arm's length for 1d10. The
+/// revision moved it out of the wizard's back line entirely — which is
+/// the whole point of the bigger die, and the reason it now competes
+/// with Shocking Grasp for the same slot in the same fight rather than
+/// with Fire Bolt from forty feet away.
+///
+/// The second clause is what the cantrip is really for, in either
+/// printing: it is the party's answer to a troll's regeneration, a
+/// vampire's bite-heal, or an enemy cleric topping their frontline back
+/// up. A cantrip that turns off the other side's healing for a round.
+///
+/// Not shipped: the undead-only rider of the 2014 version ("it also has
+/// disadvantage on attack rolls against you until the end of your next
+/// turn"), which SRD 5.2 does not print at all.
 pub struct ChillTouch {}
 
 impl Action for ChillTouch {
@@ -4646,8 +4665,9 @@ impl Action for ChillTouch {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 120 ft = 48 tiles.
-        Some(48)
+        // RAW's "Touch" — the same one tile Shocking Grasp reaches,
+        // and not the 120 feet the 2014 printing threw it.
+        Some(crate::actions::action_template::MELEE_REACH)
     }
     fn requires_los(&self) -> bool {
         true
@@ -4677,9 +4697,12 @@ impl Action for ChillTouch {
             target_id,
             "chill touch",
             attack_bonus,
-            Dice::new(n, 8),
+            Dice::new(n, 10),
             DamageType::Necrotic,
-            false,
+            // A *melee* spell attack, which is the clause that decides
+            // whether the swing takes the underwater penalty and
+            // whether a Prone target is easier or harder to hit.
+            true,
         );
         // "The target can't regain hit points until the start of your
         // next turn." An empty effect list is a miss, and a missed
@@ -5817,7 +5840,10 @@ impl Action for MassHealingWord {
             .collect();
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
-        let dice = Dice::new(1, 4);
+        // RAW's "2d4 plus your spellcasting ability modifier". The
+        // single d4 was the 2014 printing's, on a bonus-action heal
+        // whose whole value is the number.
+        let dice = Dice::new(2, 4);
         let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
         let (raw, use_max) =
             crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
@@ -9217,7 +9243,11 @@ impl Action for MassCureWounds {
             .collect();
         candidates.sort_unstable();
         candidates.truncate(MAX_TARGETS);
-        let dice = Dice::new(3, 8);
+        // RAW's "5d8 plus your spellcasting ability modifier" — the
+        // three-die version is the 2014 printing's, and on a
+        // fifth-level slot the two dice are nine hit points a head
+        // across six allies.
+        let dice = Dice::new(5, 8);
         let targets: Vec<usize> = candidates.iter().map(|&(_, id)| id).collect();
         let (raw, use_max) =
             crate::actions::class_features::roll_heal_dice(encounter, caster_id, &targets, &dice);
@@ -9648,11 +9678,16 @@ impl Action for IceStorm {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        let bludg = encounter.roll(&Dice::new(2, 8));
-        let cold = encounter.roll(&Dice::new(4, 6));
+        // RAW's "2d10 Bludgeoning damage and 4d6 Cold damage". The
+        // bludgeoning half was 2d8 — the 2014 printing's die, on the
+        // half of the spell the upcast clause scales.
+        let bludg_dice = Dice::new(2, 10);
+        let cold_dice = Dice::new(4, 6);
+        let bludg = encounter.roll(&bludg_dice);
+        let cold = encounter.roll(&cold_dice);
         encounter.log(format!(
-            "  ice storm: 2d8({}) bludgeoning + 4d6({}) cold area",
-            bludg, cold
+            "  ice storm: {}({}) bludgeoning + {}({}) cold area",
+            bludg_dice, bludg, cold_dice, cold
         ));
         // Two passes through resolve_burst_save_damage so each damage
         // type interacts with target resistance / immunity independently.
