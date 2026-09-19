@@ -10777,11 +10777,7 @@ impl EncounterInstance {
         if !actor.is_combat_active() {
             return;
         }
-        let (team, at, span) = (
-            actor.team(),
-            actor.location(),
-            get_tiles_from_size(actor.size()),
-        );
+        let (at, span) = (actor.location(), get_tiles_from_size(actor.size()));
         let sprung: Vec<usize> = self
             .illusions
             .iter()
@@ -10789,11 +10785,15 @@ impl EncounterInstance {
                 let Some(radius) = i.armed else {
                     return false;
                 };
-                if self
-                    .actors
-                    .get(&i.owner_id)
-                    .is_none_or(|o| o.team() == team)
-                {
+                // Read through `same_side` rather than by comparing
+                // teams here, so that a caster who has left the board
+                // gets the same answer from this sweep as it gets from
+                // `believes_illusion`: nobody is on its side. The two
+                // used to disagree — a dead wizard's trap was believed
+                // by everybody and could be sprung by nobody, which is
+                // a picture on the board that no sequence of events
+                // could ever reach.
+                if self.same_side(actor_id, i.owner_id) {
                     return false;
                 }
                 i.tiles

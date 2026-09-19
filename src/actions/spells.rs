@@ -15616,7 +15616,7 @@ pub static WRATHFUL_SMITE: SmiteSpell = SmiteSpell {
     school: SpellSchool::Evocation,
 };
 
-/// Branding Smite — 2nd-level paladin evocation, bonus action,
+/// Branding Smite — 2nd-level paladin transmutation, bonus action,
 /// concentration. Primes the next melee hit with +2d6 radiant and
 /// brands the target (Outlined, 10 rounds — attackers get advantage).
 ///
@@ -15628,13 +15628,24 @@ pub static WRATHFUL_SMITE: SmiteSpell = SmiteSpell {
 /// the book's name is an alias, so a player reading the SRD can cast
 /// what they see. See
 /// `engine::prompt::tests::the_names_srd_5_2_prints_are_names_a_player_can_type`.
+///
+/// **The school is the book's and not the name's.** Shining Smite is
+/// Transmutation in SRD 5.2 where the 2014 Branding Smite was
+/// Evocation, and the row said Evocation for as long as it carried the
+/// old name — which is the wrong half of the spell to inherit along
+/// with it. Nothing on this roster reads the school of a paladin's
+/// smite today (the consumers are all wizard and cleric subclass
+/// features; see `engine::types::SpellSchool`), so the entry was wrong
+/// and inert at once. It is the rules text that is canonical here and
+/// the name that is a convenience, and every other line of this row
+/// already follows 5.2.
 pub static BRANDING_SMITE: SmiteSpell = SmiteSpell {
     display_name: "branding smite",
     aliases: &["branding", "smite-brand", "shining smite"],
     spell_slot_lvl: 2,
     prime: Condition::BrandingSmiting,
     concentration_name: "Branding Smite",
-    school: SpellSchool::Evocation,
+    school: SpellSchool::Transmutation,
 };
 
 /// Blinding Smite — 3rd-level paladin evocation, bonus action,

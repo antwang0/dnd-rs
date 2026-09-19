@@ -53671,6 +53671,50 @@ fn a_programmed_illusion_is_nothing_at_all_until_somebody_walks_near_it() {
     assert_eq!(e.illusions()[0].rounds_remaining, before - 1);
 }
 
+/// A waiting image outlives the caster that set it — it holds no
+/// concentration, so nothing takes it down — and the two questions the
+/// layer asks about its owner have to agree about a caster who is no
+/// longer there.
+///
+/// They did not. Belief reads *"is this creature on the owner's side"*
+/// and answers no when the owner is gone, so everybody was fooled; the
+/// trigger read *"is this creature hostile to the owner"* by comparing
+/// teams and answered no for the same reason, so nobody could spring
+/// it. Between them that is a picture on the board no sequence of
+/// events could ever reach.
+#[test]
+fn a_waiting_image_still_springs_after_the_caster_who_set_it_is_gone() {
+    use crate::actions::spells::PROGRAMMED_ILLUSION;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, TeleportActor};
+
+    let mut e = ei_with_terrain(60, 40, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 20), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(50, 20), 1, 0)
+        .unwrap();
+    let anchor = Coordinate::new(25, 20);
+    for ef in PROGRAMMED_ILLUSION.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+        ef.apply(&mut e);
+    }
+    // It holds no grip, so nothing about losing the caster takes it
+    // off the board.
+    e.despawn_actor(wiz, "is gone");
+    assert_eq!(e.illusions().len(), 1);
+    assert!(e.illusions()[0].is_dormant());
+
+    TeleportActor {
+        actor_id: foe,
+        dest: Coordinate::new(37, 20),
+    }
+    .apply(&mut e);
+    assert!(!e.illusions()[0].is_dormant(), "nobody is on its side now");
+    assert!(e.believes_illusion(foe, &e.illusions()[0]));
+}
+
 /// The cantrip has no concentration to keep it unique, so it says so
 /// itself — otherwise a wizard paints a fresh boulder every round for
 /// the rest of the fight.
