@@ -129211,3 +129211,252 @@ fn the_ring_outlasts_the_plague_that_takes_the_night_away() {
         party[0].hitpoints()
     );
 }
+
+
+/// **Every spell's reach is the Range the book prints.**
+///
+/// The twelfth book-conformance sweep, and the first over `spells.rs`
+/// rather than over the bestiary. It exists because the engine has one
+/// conversion for a distance — `util::tiles_from_feet`, RAW's feet on
+/// the 2.5-ft grid — and eight spells quietly did not use it.
+///
+/// What was there instead was six *different* answers to one question.
+/// Four spells print the same 300-foot Range and carried four caps
+/// between them (40, 48, 96 and 120 tiles); each cap's comment cited a
+/// neighbour for consistency and each cited a different one. Control
+/// Water's said it was *"the same 120 ft every other long-range spell
+/// in this file uses"* while Insect Plague sat at 240 and Dimension
+/// Door at 300; Freezing Sphere's said it *"matches Sunburst's
+/// pragmatic cap"* of 40 while Ice Storm, at the identical printed
+/// range, took 48. Fire Storm's said outright that *"an undocumented 40
+/// next to six documented caps reads as an error rather than as the
+/// seventh of them"* — which was the right observation about the wrong
+/// thing. Six documented caps that disagree are not a convention.
+///
+/// **The caps bought nothing**, which is what settles it. `reach_tiles`
+/// is a *comparison* everywhere it is read — `validate_input` measures
+/// one distance against it, and the AI's burst picker draws its
+/// candidate points from where enemies are standing rather than by
+/// enumerating a disc — so a bigger number costs no time and enumerates
+/// no tiles. Every cap was also at least 40 tiles, and the board the
+/// game ships is 40x20, whose longest span is 39: on the board anybody
+/// actually plays, all six caps and RAW agree. What they disagreed
+/// about was boards the tests build and boards nobody has built yet.
+///
+/// So the rule is RAW's, and this is the sweep that keeps it. One row
+/// per spell the book prints a *distance* Range for and the engine
+/// answers with a number:
+///
+///   - **"Self" and "Touch" are out.** A self-centred area answers
+///     `reach_tiles` off its own shape (see the trait default), which
+///     is the radius of who it catches rather than how far it can be
+///     thrown — a different question with a different right answer.
+///   - **"Sight", "Special", "Unlimited" and the mile-scale ranges are
+///     out** for the reason the defences sweep leaves out the four stat
+///     blocks whose lines are expressions: a row storing one number for
+///     them would assert something the book does not say.
+///   - **Spells the SRD does not print are out.** Ninety-odd entries in
+///     `spells.rs` come from XGtE and TCE, and five more are SRD spells
+///     the book files under another name (Arcane Hand for Bigby's Hand,
+///     Arcane Sword for Mordenkainen's Sword). Neither group has an SRD
+///     Range line to check against.
+#[test]
+fn every_spells_reach_is_the_range_the_book_prints() {
+    use crate::actors::creatures::pc_template_families;
+    use crate::engine::util::tiles_from_feet;
+    use crate::items::item_template::{LOOT_POOL, MAGIC_ARMOURY, STAVES};
+    use std::collections::BTreeMap;
+
+    /// `(spell, the Range line in feet)` — SRD 5.2, one row per spell.
+    const SRD_RANGES: &[(&str, u32)] = &[
+        ("acid arrow", 90),
+        ("acid splash", 60),
+        ("aid", 30),
+        ("animal friendship", 30),
+        ("bane", 30),
+        ("banishment", 30),
+        ("beacon of hope", 30),
+        ("black tentacles", 90),
+        ("blade barrier", 90),
+        ("blight", 30),
+        ("call lightning", 120),
+        ("calm emotions", 60),
+        ("chain lightning", 150),
+        ("charm monster", 30),
+        ("charm person", 30),
+        ("chromatic orb", 90),
+        ("circle of death", 150),
+        ("cloudkill", 120),
+        ("command", 60),
+        ("confusion", 90),
+        ("control water", 300),
+        ("counterspell", 60),
+        ("dancing lights", 120),
+        ("darkness", 60),
+        ("daylight", 60),
+        ("delayed blast fireball", 150),
+        ("dimension door", 500),
+        ("disintegrate", 60),
+        ("dispel magic", 120),
+        ("dissonant whispers", 60),
+        ("dominate beast", 60),
+        ("dominate monster", 60),
+        ("dominate person", 60),
+        ("earthquake", 500),
+        ("eldritch blast", 120),
+        ("entangle", 90),
+        ("faerie fire", 60),
+        ("finger of death", 60),
+        ("fire bolt", 120),
+        ("fire storm", 150),
+        ("fireball", 150),
+        ("flame strike", 60),
+        ("flaming sphere", 60),
+        ("flesh to stone", 60),
+        ("fog cloud", 120),
+        ("forcecage", 100),
+        ("freezing sphere", 300),
+        ("geas", 60),
+        ("grease", 60),
+        ("guardian of faith", 30),
+        ("guiding bolt", 120),
+        ("harm", 60),
+        ("haste", 30),
+        ("heal", 60),
+        ("heat metal", 60),
+        ("hellish rebuke", 60),
+        ("hex", 90),
+        ("hold monster", 90),
+        ("hold person", 60),
+        ("hunters mark", 90),
+        ("hypnotic pattern", 120),
+        ("ice knife", 60),
+        ("ice storm", 300),
+        ("imprisonment", 30),
+        ("incendiary cloud", 150),
+        ("insect plague", 300),
+        ("levitate", 60),
+        ("magic circle", 10),
+        ("magic missile", 120),
+        ("mass cure wounds", 60),
+        ("mass suggestion", 60),
+        ("maze", 60),
+        ("mind spike", 120),
+        ("moonbeam", 120),
+        ("passwall", 30),
+        ("phantasmal force", 60),
+        ("phantasmal killer", 120),
+        ("plant growth", 150),
+        ("polymorph", 60),
+        ("power word heal", 60),
+        ("power word kill", 60),
+        ("power word stun", 60),
+        ("prismatic wall", 60),
+        ("ray of enfeeblement", 60),
+        ("ray of frost", 60),
+        ("ray of sickness", 60),
+        ("resilient sphere", 30),
+        ("reverse gravity", 100),
+        ("sacred flame", 60),
+        ("sanctuary", 30),
+        ("scorching ray", 120),
+        ("shatter", 60),
+        ("shield of faith", 60),
+        ("silence", 120),
+        ("sleep", 60),
+        ("sleet storm", 150),
+        ("slow", 120),
+        ("sorcerous burst", 120),
+        ("spike growth", 150),
+        ("starry wisp", 60),
+        ("stinking cloud", 90),
+        ("suggestion", 30),
+        ("sunburst", 150),
+        ("telekinesis", 60),
+        ("vicious mockery", 60),
+        ("vitriolic sphere", 150),
+        ("wall of fire", 120),
+        ("wall of force", 120),
+        ("wall of ice", 120),
+        ("wall of stone", 120),
+        ("wall of thorns", 120),
+        ("web", 60),
+        ("weird", 120),
+    ];
+
+    // Every action anything in the game can take, keyed by its own
+    // name. Deliberately **not** keyed by `printed_spell_name`: a staff
+    // row and a potion are printings of a spell and forward its reach,
+    // so indexing them under the spell's name would check the same
+    // impl twice and hide the one case worth catching — a wrapper that
+    // does not forward.
+    let mut by_name: BTreeMap<String, &'static (dyn Action + Send + Sync)> = BTreeMap::new();
+    let mut templates: Vec<&'static crate::actors::actor_template::CreatureTemplate> = Vec::new();
+    for (_family, family_templates) in pc_template_families() {
+        templates.extend(family_templates);
+    }
+    templates.extend(EncounterInstance::template_pool());
+    for tpl in templates {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let Ok(id) = e.instantiate_creature(tpl, Coordinate::new(5, 5), 0, 0) else {
+            continue;
+        };
+        for action in e.actors[&id]
+            .available_actions()
+            .into_iter()
+            .chain(tpl.actions.iter().copied())
+        {
+            by_name.entry(action.name().to_string()).or_insert(action);
+        }
+    }
+    for shelf in [LOOT_POOL, STAVES, MAGIC_ARMOURY] {
+        for item in shelf {
+            for action in item.on_use {
+                by_name.entry(action.name().to_string()).or_insert(*action);
+            }
+        }
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut missing: Vec<&str> = Vec::new();
+    let mut checked = 0usize;
+    for (spell, feet) in SRD_RANGES {
+        let Some(action) = by_name.get(*spell) else {
+            missing.push(spell);
+            continue;
+        };
+        let want = tiles_from_feet(*feet) as isize;
+        match action.reach_tiles() {
+            Some(got) if got == want => checked += 1,
+            Some(got) => wrong.push(format!(
+                "{spell}: the book prints {feet} ft ({want} tiles) and the \
+                 engine reaches {got}"
+            )),
+            None => wrong.push(format!(
+                "{spell}: the book prints {feet} ft and the engine declares \
+                 no reach at all"
+            )),
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "these rows name a spell nothing in the game carries — the table has \
+         drifted from `spells.rs`:\n  {}",
+        missing.join("\n  ")
+    );
+    assert!(
+        wrong.is_empty(),
+        "{} spells reach a distance the book does not print:\n  {}",
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+    // The anti-vacuity floor every sweep in this file carries: a walk
+    // that stopped finding actions would leave the loop above with
+    // nothing to disagree with.
+    assert_eq!(
+        checked,
+        SRD_RANGES.len(),
+        "the sweep checked {checked} of {} rows",
+        SRD_RANGES.len()
+    );
+}

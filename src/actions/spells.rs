@@ -9613,8 +9613,9 @@ impl Action for IceStorm {
         }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
-        Some(48)
+        // RAW's 300 feet. Uncapped — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(300) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -11522,9 +11523,9 @@ impl Action for Sunburst {
         }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 150 ft per RAW = 60 tiles. We cap at 40 since the map is
-        // typically that wide.
-        Some(40)
+        // RAW's 150 feet. Uncapped — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(150) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -12433,8 +12434,9 @@ impl Action for DimensionDoor {
         TargetingSchema::SinglePoint
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 500 ft RAW; capped to 120 tiles for map-scale.
-        Some(120)
+        // RAW's 500 feet. Uncapped — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(500) as isize)
     }
     fn requires_los(&self) -> bool {
         // RAW: a location you can see, or a location you've visited /
@@ -12809,8 +12811,9 @@ impl Action for InsectPlague {
         }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 300 ft RAW; cap to 96 tiles (240 ft).
-        Some(96)
+        // RAW's 300 feet. Uncapped — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(300) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -14695,8 +14698,9 @@ impl Action for Earthquake {
         }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 500 ft RAW, capped to 120 tiles for our map scale.
-        Some(120)
+        // RAW's 500 feet. Uncapped — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(500) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -18999,13 +19003,10 @@ impl Action for FireStorm {
         TargetingSchema::Burst { radius: 4 }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 150 ft RAW = 60 tiles. Held at 40, the same cap Sunburst
-        // takes at the same printed range and for the same reason: the
-        // board is about that wide, and a picker that offers pins past
-        // its edge is offering nothing. Written down because an
-        // undocumented 40 next to six documented caps reads as an
-        // error rather than as the seventh of them.
-        Some(40)
+        // RAW's 150 feet. The six documented caps this one was written
+        // to match are gone — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(150) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -32081,10 +32082,9 @@ impl Action for OtilukesFreezingSphere {
         }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 300 ft RAW = 120 tiles, but the map is far smaller. Cap at
-        // 40 (matches Sunburst's pragmatic cap) so the picker still
-        // covers the full board without dangling pins off the map.
-        Some(40)
+        // RAW's 300 feet. Uncapped — see
+        // `every_spells_reach_is_the_range_the_book_prints`.
+        Some(tiles_from_feet(300) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -38965,11 +38965,10 @@ impl Action for ControlWater {
         }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 300 ft RAW, which is six times the widest board. Held at 48
-        // tiles — the same 120 ft every other long-range spell in this
-        // file uses — so the number on the sheet is one somebody can
-        // check rather than one that means "anywhere".
-        Some(48)
+        // RAW's 300 feet, converted like every other range in the
+        // file. See `every_spells_reach_is_the_range_the_book_prints`
+        // for why this is no longer held at 48.
+        Some(tiles_from_feet(300) as isize)
     }
     fn requires_los(&self) -> bool {
         true
