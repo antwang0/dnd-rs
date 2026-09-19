@@ -24439,6 +24439,30 @@ fn rest_one(actor: &mut ActorInstance, roller: &mut FastRandRoller) -> Vec<Strin
             now
         ));
     }
+    // SRD 5.2's **Ring of Regeneration**, forty-eight ticks of it, and
+    // **before** the rest rather than after. RAW's gate is *"if you
+    // have at least 1 Hit Point"*, and the only moment in the night
+    // that question has a real answer is the one before `long_rest`
+    // refills the pool: a creature that went down in the last room is
+    // at zero when the party sits, and the ring does nothing for it.
+    //
+    // The ordering is also what makes the ring worth its rarity. SRD
+    // 5.2's Sewer Plague says *"finishing a Long Rest neither restores
+    // lost Hit Points nor reduces the creature's Exhaustion level"* and
+    // says nothing about a ring; the plague branch inside `long_rest`
+    // clamps a plagued sleeper to `max(1)`, which cannot take back what
+    // has already been healed. So a plagued wearer wakes up whole.
+    let regained = actor.regenerate_on_a_ring(
+        roller,
+        crate::actors::actor_template::LONG_REST_MINUTES,
+    );
+    if regained > 0 {
+        lines.push(format!(
+            "{}'s ring of regeneration closes {} hit points' worth of wounds overnight.",
+            actor.name(),
+            regained
+        ));
+    }
     actor.long_rest();
     // SRD 5.2's *Magical Contagions*, whose entire clock is this
     // moment: the incubation ending, the nightly *Fighting the

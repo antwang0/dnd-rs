@@ -648,6 +648,27 @@ pub struct Item {
     /// equipment slots and no anatomy, so *"touch one of the horseshoes
     /// to the hoof of a horse or similar creature"* has nothing to read.
     pub skims_the_ground: bool,
+    /// True when wearing this item closes its holder's wounds on a
+    /// clock of its own — SRD 5.2's **Ring of Regeneration**, *"While
+    /// wearing this ring, you regain 1d6 Hit Points every 10 minutes if
+    /// you have at least 1 Hit Point."*
+    ///
+    /// The only item on the shelf whose whole effect happens while
+    /// nobody is fighting, which is why it is a flag here and not an
+    /// `on_use` row: there is no action to take, no charge to spend and
+    /// no turn at which taking it would be a decision. Ten minutes is a
+    /// hundred rounds — the ring is worth exactly nothing inside any
+    /// fight the engine plays, and a great deal on the walk between two
+    /// of them.
+    ///
+    /// Read by `ActorInstance::regenerate_on_a_ring`, which both rests
+    /// call and which carries RAW's *"at least 1 Hit Point"* gate.
+    /// Deliberately not a row on `passive_conditions`: a condition
+    /// would be strippable by a Dispel Magic that has no business
+    /// reaching a worn ring, and would have to be re-installed after
+    /// every long rest — the same argument the four `grants_*` flags
+    /// above make.
+    pub regenerates_its_wearer: bool,
     /// True when wearing this item turns every critical hit against the
     /// holder into an ordinary one — 5e's Adamantine Armor, and nothing
     /// else on the roster.
@@ -1019,6 +1040,7 @@ impl Item {
         grants_unfettered_breathing: false,
         grants_swim_speed: false,
         skims_the_ground: false,
+        regenerates_its_wearer: false,
         blunts_critical_hits: false,
         halves_ranged_weapon_damage: false,
         ignores_half_cover_on_spells: false,
@@ -7667,6 +7689,36 @@ pub static HORSESHOES_OF_A_ZEPHYR: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Ring of Regeneration** (Ring, Very Rare, Requires Attunement) —
+/// *"While wearing this ring, you regain 1d6 Hit Points every 10
+/// minutes if you have at least 1 Hit Point. If you lose a body part,
+/// the ring causes the missing part to regrow and return to full
+/// functionality after 1d6 + 1 days if you have at least 1 Hit Point
+/// the whole time."*
+///
+/// The only item in the file that does nothing at all during a fight,
+/// and the reason it is here anyway: this engine's party walks from one
+/// room to the next and pays for the last fight out of a pool of Hit
+/// Dice that does not come back until dawn. Six d6 on every short rest
+/// is the difference between a party that can afford the next door and
+/// one that camps.
+///
+/// **The second sentence has no body to regrow.** The engine models no
+/// limbs — a troll's own severed-limb clause is written off in
+/// `creatures::trolls` for the same reason — so what ships is the first
+/// sentence, which is the one with a number in it.
+///
+/// See `ActorInstance::regenerate_on_a_ring` for the clock, for the
+/// *"at least 1 Hit Point"* gate, and for the one contagion in the book
+/// this ring is the answer to.
+pub static RING_OF_REGENERATION: Item = Item {
+    name: "Ring of Regeneration",
+    glyph: '=',
+    regenerates_its_wearer: true,
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Wand of Wonder** (Wand, Rare, requires attunement) — *"This wand
 /// has 7 charges. While holding it, you can take a Magic action to
 /// expend 1 charge while choosing a point within 120 feet of yourself.
@@ -9328,6 +9380,9 @@ pub static LOOT_POOL: &[&Item] = &[
     // *wears*, so a mount that finds both is wearing eight shoes and
     // going ninety feet across a lake.
     &HORSESHOES_OF_A_ZEPHYR,
+    // Very Rare, one entry, and the only drop in the pool whose value
+    // is entirely outside the fight it is found in.
+    &RING_OF_REGENERATION,
     // The headband, beside the Ioun Stone of Intellect it is the other
     // reading of: a floor rather than a bonus, and Uncommon rather than
     // Very Rare, so it is the one a first-room party can actually find.
@@ -11080,6 +11135,7 @@ mod tests {
                 || item.grants_unfettered_breathing
                 || item.grants_swim_speed
                 || item.skims_the_ground
+                || item.regenerates_its_wearer
                 || item.blunts_critical_hits
                 || item.halves_ranged_weapon_damage
                 || item.ignores_half_cover_on_spells

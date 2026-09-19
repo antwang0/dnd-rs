@@ -55,6 +55,22 @@ const TEMP_HP_BOUND_CONDITIONS: &[Condition] = &[Condition::SymbioticEntity];
 /// `gain_temp_hp`, because neither of these two does.
 const NO_HEAL_CONDITIONS: &[Condition] = &[Condition::ChillTouched, Condition::Wounded];
 
+/// SRD 5.2 **Ring of Regeneration**'s *"every 10 minutes"*, in minutes.
+///
+/// The only clock in the engine that is neither a round nor a rest, and
+/// the reason the ring needs one: every other healing effect in the
+/// game is billed per turn or per night, and this is billed by the
+/// wall. Named here so the two rests that pay it out —
+/// `ActorInstance::short_rest`'s hour and `rest_one`'s night — divide
+/// by the same number rather than each hard-coding a tick count.
+pub const REGENERATION_RING_MINUTES: u32 = 10;
+
+/// Minutes in a 5e **Short Rest**, which is RAW's *"at least 1 hour"*.
+pub const SHORT_REST_MINUTES: u32 = 60;
+
+/// Minutes in a 5e **Long Rest**, which is RAW's *"at least 8 hours"*.
+pub const LONG_REST_MINUTES: u32 = 8 * 60;
+
 /// Conditions whose resistance covers every damage type — a blanket
 /// "halve all incoming damage" buff. Read by `has_condition_resistance`
 /// so a new generic damage-resistant condition (future Stoneskin /
@@ -8776,6 +8792,52 @@ impl ActorInstance {
         learned
     }
 
+    /// Hit points a carried **Ring of Regeneration** gives back over
+    /// `minutes` of not fighting — SRD 5.2's *"While wearing this ring,
+    /// you regain 1d6 Hit Points every 10 minutes if you have at least
+    /// 1 Hit Point."*
+    ///
+    /// Returns what was actually restored (0 when nobody is wearing
+    /// one, or when the wearer is at zero), so the caller can log a
+    /// line with a number in it.
+    ///
+    /// **It has no combat surface and that is the item.** Ten minutes
+    /// is a hundred rounds, so the ring is worth precisely nothing in
+    /// any fight this engine plays — what it is worth is the walk
+    /// between two rooms. A short rest is six ticks and a long one is
+    /// forty-eight, which is a party that arrives at the next door
+    /// without having spent a Hit Die or a slot on the last one.
+    ///
+    /// **The "at least 1 Hit Point" gate is the whole clause**, and it
+    /// is why this is called *before* `long_rest` rather than after: a
+    /// creature that went down in the last room is at zero when the
+    /// night starts, and RAW's ring does nothing for it. Calling it
+    /// afterwards would have read a pool the rest had already refilled
+    /// and made the gate unreachable.
+    ///
+    /// **Sewer Plague is the one place the ring is worth a Very Rare.**
+    /// SRD 5.2's contagion says *"finishing a Long Rest neither
+    /// restores lost Hit Points nor reduces the creature's Exhaustion
+    /// level"* — and says nothing about a ring. Forty-eight d6 does not
+    /// care what the night did or did not restore, so a plagued wearer
+    /// who would have woken on one hit point wakes up whole. That is
+    /// the clearest thing in the file for a ring at this rarity to be
+    /// for, and it falls out of the ordering rather than being written
+    /// as a special case.
+    pub fn regenerate_on_a_ring(&mut self, roller: &mut impl Roller, minutes: u32) -> u32 {
+        if self.hitpoints() < 1 {
+            return 0;
+        }
+        let ticks = minutes / REGENERATION_RING_MINUTES;
+        if ticks == 0 || !self.active_items().any(|i| i.regenerates_its_wearer) {
+            return 0;
+        }
+        let before = self.hitpoints();
+        let rolled = roller.roll(&Dice::new(ticks, 6));
+        self.heal(rolled);
+        self.hitpoints().saturating_sub(before)
+    }
+
     /// The stored score behind `ability_score`'s floors and bonuses —
     /// the only thing in the engine that writes one, and the reason it
     /// is private to this file.
@@ -9418,6 +9480,14 @@ impl ActorInstance {
             heal
         };
         self.heal(heal);
+        // SRD 5.2's **Ring of Regeneration**, six ticks of it — RAW's
+        // hour of sitting down, divided by RAW's ten minutes. Beside
+        // the Hit Dice heal above and deliberately not folded into it:
+        // the dice are a resource the rester spends and this is a ring
+        // that spends nothing, which is the whole of why a party with
+        // one can afford the next room. The encounter's own `short_rest`
+        // logs the pool's delta, so both arrive on one line.
+        self.regenerate_on_a_ring(roller, SHORT_REST_MINUTES);
 
         // The Battle Master maneuvers used to be chained on here as a
         // second registry. They aren't any more: they spend from

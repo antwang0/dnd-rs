@@ -129066,3 +129066,148 @@ fn the_zephyr_shoes_cross_the_water_without_going_into_it() {
         "the shoes came off over the lake, and the lake noticed"
     );
 }
+
+/// The Ring of Regeneration pays out on the clock RAW gives it, and
+/// stops for the one creature RAW stops it for.
+///
+/// Three clauses, and the middle one is the item:
+///
+///   - a **short rest** is six ticks, which arrive on top of the Hit
+///     Dice pool rather than out of it — a party with the ring spends
+///     nothing to reach the next door;
+///   - *"if you have at least 1 Hit Point"* is a real gate, and the one
+///     moment in the night at which it can be read is before the rest
+///     refills the pool;
+///   - ten minutes is a hundred rounds, so the ring is worth exactly
+///     nothing inside a fight, which is why it has no action, no charge
+///     and no turn at which wearing it is a decision.
+#[test]
+fn the_ring_of_regeneration_pays_by_the_clock_and_not_by_the_round() {
+    use crate::actors::actor_template::{
+        LONG_REST_MINUTES, REGENERATION_RING_MINUTES, SHORT_REST_MINUTES,
+    };
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::RING_OF_REGENERATION;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&fighter).unwrap().take_damage(1);
+    assert_eq!(
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .regenerate_on_a_ring(&mut e.roller, SHORT_REST_MINUTES),
+        0,
+        "nobody is wearing one"
+    );
+
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&RING_OF_REGENERATION);
+    assert!(
+        e.actors[&fighter].is_attuned_to("Ring of Regeneration"),
+        "the fixture's premise: a Very Rare ring only works while bonded"
+    );
+
+    // A round is not ten minutes, and neither are nine of them.
+    assert_eq!(
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .regenerate_on_a_ring(&mut e.roller, REGENERATION_RING_MINUTES - 1),
+        0,
+        "the tick has not come round"
+    );
+
+    // An hour is six ticks, and six d6 cannot come out at zero.
+    // Half the pool down, so six d6 has room to land in full and the
+    // wearer is still comfortably above RAW's zero-hit-point gate.
+    let half = e.actors[&fighter].max_hitpoints() / 2;
+    e.actors.get_mut(&fighter).unwrap().take_damage(half);
+    let back = e
+        .actors
+        .get_mut(&fighter)
+        .unwrap()
+        .regenerate_on_a_ring(&mut e.roller, SHORT_REST_MINUTES);
+    assert!(
+        (6..=36).contains(&back),
+        "six d6 is between 6 and 36, got {back}"
+    );
+
+    // And RAW's gate: a creature at zero gets nothing, however long it
+    // is left lying there.
+    e.actors.get_mut(&fighter).unwrap().take_damage(10_000);
+    assert_eq!(e.actors[&fighter].hitpoints(), 0, "the fixture's premise");
+    assert_eq!(
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .regenerate_on_a_ring(&mut e.roller, LONG_REST_MINUTES),
+        0,
+        "the ring closes wounds and does not raise the fallen"
+    );
+}
+
+/// Sewer Plague takes the night's healing away and cannot take the
+/// ring's.
+///
+/// SRD 5.2's contagion: *"While the creature has any Exhaustion levels,
+/// finishing a Long Rest neither restores lost Hit Points nor reduces
+/// the creature's Exhaustion level."* The engine's `long_rest` clamps a
+/// plagued sleeper to one hit point for exactly that reason. RAW says
+/// nothing about a ring, and forty-eight d6 do not care what the night
+/// did or did not restore — so this is the one situation in the book
+/// that makes a Very Rare ring worth a Very Rare slot.
+///
+/// The interaction falls out of the ordering in `rest_one` rather than
+/// being written as a special case, which is what this test is really
+/// pinning: move the ring's tick below `long_rest` and the clamp would
+/// happen first, the gate would read a refilled pool, and both halves
+/// of the rule would quietly stop being true.
+#[test]
+fn the_ring_outlasts_the_plague_that_takes_the_night_away() {
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::contagions::ContagionKind;
+    use crate::items::item_template::RING_OF_REGENERATION;
+
+    // Two identical plagued fighters, one of them wearing the ring.
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let mut party: Vec<crate::actors::actor_template::ActorInstance> = Vec::new();
+    for wears_it in [false, true] {
+        let id = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2 + party.len() as isize * 4), 0, 0)
+            .unwrap();
+        let actor = e.actors.get_mut(&id).unwrap();
+        actor.infect(ContagionKind::SewerPlague, true);
+        let down_to_three = actor.hitpoints().saturating_sub(3);
+        actor.take_damage(down_to_three);
+        if wears_it {
+            actor.pickup_item(&RING_OF_REGENERATION);
+        }
+        assert!(
+            actor.restless_with_plague(),
+            "the fixture's premise: symptomatic, and therefore restless"
+        );
+        party.push(actor.clone());
+    }
+
+    e.long_rest_party(&mut party);
+
+    assert_eq!(
+        party[0].hitpoints(),
+        3,
+        "the plague takes the night's healing: a plagued sleeper wakes on \
+         exactly the hit points it lay down with (floored at one, which is \
+         all `long_rest` guarantees a plagued creature)"
+    );
+    assert!(
+        party[1].hitpoints() > party[0].hitpoints(),
+        "and the ring closed its wearer's wounds before the night ever \
+         got the chance not to: {} vs {}",
+        party[1].hitpoints(),
+        party[0].hitpoints()
+    );
+}
