@@ -620,17 +620,25 @@ pub fn render_sideinfo(
                     Style::default().fg(Color::LightMagenta),
                 ));
             }
-            // A banished creature, said on the row for the same reason
-            // the mounted pair below is: its slot passes straight
-            // through, and it is not on the map to be looked for. The
-            // countdown is the whole reason its row is still here —
-            // the party's remaining rounds before an enemy comes back,
-            // or before their own ally does.
+            // A creature that is not on the board, said on the row for
+            // the same reason the mounted pair below is: its slot
+            // passes straight through, and it is not on the map to be
+            // looked for. The countdown is the whole reason its row is
+            // still here — the party's remaining rounds before an enemy
+            // comes back, or before their own ally does.
+            //
+            // Named by the condition rather than by the word
+            // "banished", which is what this said while a banishment
+            // and a maze were the only two ways to be absent. An
+            // ethereal traveller is somewhere on purpose and the panel
+            // should not report them as somebody's victim. See
+            // `ActorInstance::off_board_label`.
             if actor.is_off_board() {
+                let label = actor.off_board_label().unwrap_or("away");
                 spans.push(Span::styled(
                     match actor.off_board_rounds_left() {
-                        Some(n) => format!(" banished ({}r)", n),
-                        None => " banished".to_string(),
+                        Some(n) => format!(" {} ({}r)", label, n),
+                        None => format!(" {}", label),
                     },
                     Style::default().fg(Color::LightMagenta),
                 ));
@@ -3421,6 +3429,37 @@ mod tests {
             e.actor_id_at(tile),
             None,
             "…precisely because there is nothing on the map to look at"
+        );
+    }
+
+    /// …and it says *which* absence. The row read "banished" for
+    /// everything that was not on the board, which was accurate while
+    /// the only two ways off it were somebody else's spell. A wizard
+    /// who spent a seventh-level slot walking onto the Border Ethereal
+    /// is not banished, and a panel that says so is telling the player
+    /// the wrong thing about whose turn it is to do something.
+    #[test]
+    fn the_panel_says_which_plane_took_the_body_and_not_just_that_one_did() {
+        use crate::conditions::{Condition, ConditionTimer};
+
+        let mut e = encounter_with(&[(&GOBLIN_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let traveller = *e.actors.keys().max().expect("two goblins");
+        e.actors
+            .get_mut(&traveller)
+            .unwrap()
+            .add_condition(Condition::Ethereal, ConditionTimer::Rounds(3));
+        e.reconcile_board_presence();
+
+        let panel = rendered_panel(&e);
+        assert!(
+            panel.contains("ethereal") && panel.contains("3r"),
+            "the panel should name the Border Ethereal:\n{}",
+            panel
+        );
+        assert!(
+            !panel.contains("banished"),
+            "and should not call a voluntary trip somebody else's spell:\n{}",
+            panel
         );
     }
 

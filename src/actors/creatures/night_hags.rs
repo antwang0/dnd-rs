@@ -48,8 +48,17 @@ use std::sync::LazyLock;
 /// - **Change Shape** (passive shape-shift to a small / medium humanoid)
 ///   — no in-engine consumer (we don't model identity / disguise
 ///   checks).
-/// - **Etherealness** (passive Ethereal-plane access) — no in-engine
-///   consumer (we don't model multi-plane geometry).
+/// - **Etherealness** (at-will Ethereal-plane access, while she holds
+///   her heartstone) — the engine models the plane now
+///   (`Condition::Ethereal`, `spells::ETHEREALNESS` and the off-board
+///   lane in `engine::banishment`), so the old reason for this line —
+///   *"we don't model multi-plane geometry"* — has stopped being true.
+///   The clause still does not ship, for a different and sharper
+///   reason: the hag is AI-driven, and a monster with a button that
+///   takes it off the board is a monster `ai::simple` would press
+///   whenever it was losing. A fight whose loser can leave is a fight
+///   that does not end. Same decision as the Plate Armor of
+///   Etherealness' row in `NOT_FOR_THE_AI`, about the same spell.
 /// - **Nightmare Haunting** (dream-haunting from the Ethereal Plane) —
 ///   requires Etherealness; omitted as a consequence.
 /// - **Soul Bag** — the hag's signature trophy item (a captured soul

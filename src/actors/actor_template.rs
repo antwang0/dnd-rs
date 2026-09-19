@@ -5438,8 +5438,39 @@ pub struct ActorInstance {
     /// split the other two reconcile sweeps use, for the same reason.
     ///
     /// `location` is deliberately left alone while it is set — that is
-    /// the space the creature left, and RAW returns it there.
+    /// the space the creature left, and RAW returns it there. The one
+    /// exception is an ethereal traveller, who left on purpose and
+    /// picked somewhere else to come back; see [`Self::ethereal_exit`].
     off_board: bool,
+    /// The tile a body on the **Border Ethereal** will step back onto,
+    /// or `None` for a body that is off the board for somebody else's
+    /// reason.
+    ///
+    /// SRD 5.2 **Etherealness**: *"you return to the plane you left in
+    /// the spot that corresponds to your space in the Border
+    /// Ethereal."* Banishment's return clause names the space the
+    /// creature *left*, which is already what `location` holds; this
+    /// one names a space the creature walked to while it was away, and
+    /// there was nowhere to put it.
+    ///
+    /// Not a fifth member of the `condition_links` payload family, and
+    /// the reason is the lifecycle rather than the shape. Those four
+    /// tables are keyed by condition so that `remove_condition` can
+    /// drop them structurally — a payload must never outlive the
+    /// condition it qualifies. This one has to outlive it by exactly
+    /// one sweep: the condition *ending* is what sends the body home,
+    /// so it is already gone by the time
+    /// `EncounterInstance::return_actor_to_board` needs to know where
+    /// home is.
+    ///
+    /// Its lifecycle is therefore owned by the sweep instead, and it is
+    /// just as closed: [`crate::engine::side_effects::StepIntoTheEthereal`]
+    /// writes it only when the condition actually lands,
+    /// `return_actor_to_board` *takes* it on the way back, and
+    /// `reconcile_board_presence` clears it off anybody standing on the
+    /// board without the condition. Between them there is no state in
+    /// which a stale exit can be read.
+    ethereal_exit: Option<Coordinate>,
     /// 5e Abjuration Wizard **Arcane Ward** (subclass level 2) — the
     /// ward's current hit points. A separate pool from `temp_hp`: it is
     /// drained *first* (RAW "the ward takes the damage instead of you",
@@ -6519,6 +6550,7 @@ impl ActorInstance {
             altitude_ft: 0,
             // …and on this plane. Nothing starts an encounter banished.
             off_board: false,
+            ethereal_exit: None,
             arcane_ward: 0,
             arcane_ward_formed: false,
             arcane_ward_base: ct.arcane_ward_base,
@@ -6758,23 +6790,6 @@ impl ActorInstance {
         true
     }
 
-    /// The actor that applied `c` to this actor, or `None` if `c` isn't
-    /// currently held or carries no back-link.
-    ///
-    /// This is the only read path onto `condition_links`, and the
-    /// `has_condition` guard is why. Every consumer of a back-link wants
-    /// "is this creature X-ed *by that actor*" — a bare link read would
-    /// answer "yes" for a stale id whose condition had already lifted,
-    /// which is a bug the caller has no way to see. Folding the flag
-    /// check in means `linked_by(Sworn) == Some(paladin)` is the whole
-    /// question, and the seven consumers that used to spell out
-    /// `has_condition(Sworn) && sworn_by() == Some(paladin)` can no
-    /// longer write half of it.
-    ///
-    /// The pairing also keeps the two halves honest in the other
-    /// direction: `remove_condition` drops the entry, so a link can
-    /// never outlive its condition even if a future caller forgets to
-    /// clear it explicitly.
     /// True if this creature thinks in words — SRD 5.2 **Detect
     /// Thoughts**' *"creatures that know languages or are
     /// telepathic"*.
@@ -6797,6 +6812,23 @@ impl ActorInstance {
         !self.languages.is_empty()
     }
 
+    /// The actor that applied `c` to this actor, or `None` if `c` isn't
+    /// currently held or carries no back-link.
+    ///
+    /// This is the only read path onto `condition_links`, and the
+    /// `has_condition` guard is why. Every consumer of a back-link wants
+    /// "is this creature X-ed *by that actor*" — a bare link read would
+    /// answer "yes" for a stale id whose condition had already lifted,
+    /// which is a bug the caller has no way to see. Folding the flag
+    /// check in means `linked_by(Sworn) == Some(paladin)` is the whole
+    /// question, and the seven consumers that used to spell out
+    /// `has_condition(Sworn) && sworn_by() == Some(paladin)` can no
+    /// longer write half of it.
+    ///
+    /// The pairing also keeps the two halves honest in the other
+    /// direction: `remove_condition` drops the entry, so a link can
+    /// never outlive its condition even if a future caller forgets to
+    /// clear it explicitly.
     pub fn linked_by(&self, c: Condition) -> Option<usize> {
         if !self.has_condition(c) {
             return None;
@@ -14428,6 +14460,29 @@ impl ActorInstance {
             .filter(|&n| n > 0)
     }
 
+    /// What is holding this body off the board, by the name its
+    /// condition answers to, or `None` for a body that is on it.
+    ///
+    /// The panel's row for an absent creature used to say *"banished"*
+    /// unconditionally, which was true of the only two things that
+    /// could produce the state and stopped being true the moment a
+    /// third arrived. A wizard who spent a seventh-level slot stepping
+    /// onto the Border Ethereal read as somebody's victim.
+    ///
+    /// Walks `OFF_BOARD_CONDITIONS` rather than the actor's own
+    /// condition map, so the answer is stable between two runs with the
+    /// same seed — the map is a `HashMap` and a creature can hold two
+    /// of these at once (a Banishment landing on an ethereal traveller
+    /// the instant it comes back, say). The roster's order is the tie
+    /// break, and the roster is already pinned against the predicate by
+    /// `every_off_board_condition_is_on_the_roster`.
+    pub fn off_board_label(&self) -> Option<&'static str> {
+        crate::engine::banishment::OFF_BOARD_CONDITIONS
+            .iter()
+            .find(|c| self.has_condition(**c))
+            .map(|c| c.name())
+    }
+
     /// Move the actor's body on or off the board.
     ///
     /// Not public: the flag and the grid have to move together, and
@@ -14435,6 +14490,40 @@ impl ActorInstance {
     /// that owns both.
     pub(crate) fn set_off_board(&mut self, off: bool) {
         self.off_board = off;
+    }
+
+    /// Remember where this body will step off the Border Ethereal —
+    /// SRD 5.2's *"the spot that corresponds to your space"*.
+    ///
+    /// Refuses to record anything for a creature that is not actually
+    /// ethereal, which is the whole of the guard that keeps a bounced
+    /// install from leaving a destination behind for the next
+    /// Banishment to return somebody to. Callers reach it through
+    /// [`crate::engine::side_effects::StepIntoTheEthereal`], which
+    /// installs the condition and the destination in one apply so the
+    /// order cannot be got wrong.
+    pub(crate) fn set_ethereal_exit(&mut self, exit: Coordinate) -> bool {
+        if !self.has_condition(Condition::Ethereal) {
+            return false;
+        }
+        self.ethereal_exit = Some(exit);
+        true
+    }
+
+    /// Where this body is standing in the Border Ethereal, if it is
+    /// standing in the Border Ethereal at all.
+    pub fn ethereal_exit(&self) -> Option<Coordinate> {
+        self.ethereal_exit
+    }
+
+    /// Take the remembered exit, leaving nothing behind.
+    ///
+    /// A *take* rather than a read, because the spot is spent by being
+    /// arrived at: `EncounterInstance::return_actor_to_board` is the
+    /// only caller, and a body that has stepped back onto the board is
+    /// no longer standing anywhere on the Border Ethereal.
+    pub(crate) fn take_ethereal_exit(&mut self) -> Option<Coordinate> {
+        self.ethereal_exit.take()
     }
 
     pub fn death_save_record(&self) -> (u32, u32) {

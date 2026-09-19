@@ -3647,6 +3647,63 @@ pub fn install_fragile_condition(
     })]
 }
 
+/// Step one creature onto the **Border Ethereal**, and remember where
+/// it will step off again.
+///
+/// The third fused install in this file, after [`ApplyLinkedCondition`]
+/// and [`ApplyFragileCondition`], and it is fused for the reason the
+/// second one is: `ActorInstance::set_ethereal_exit` refuses to record
+/// a destination for a creature that is not ethereal, so the flag has
+/// to be on the sheet before the payload is written — and the engine's
+/// side-effect queue is a *stack*, so a returned `vec![flag, payload]`
+/// resolves payload-first. A pair would have had to be written
+/// backwards to run forwards. Fused, there is no order to get wrong.
+///
+/// The refusal is not decoration. An exit recorded against a creature
+/// that never left would sit on the sheet until the *next* thing took
+/// that creature off the board — and then a Banishment, whose whole
+/// return clause is "the space it left", would put the victim down
+/// somewhere a wizard picked three fights ago.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct StepIntoTheEthereal {
+    pub actor_id: usize,
+    /// Where on the board the traveller means to reappear — RAW's
+    /// *"the spot that corresponds to your space in the Border
+    /// Ethereal"*, chosen when the spell is cast because that is the
+    /// only turn its holder gets.
+    pub exit: Coordinate,
+    pub timer: crate::conditions::ConditionTimer,
+}
+
+impl ApplicableSideEffect for StepIntoTheEthereal {
+    /// Extended Spell reaches the timer the way it reaches every other
+    /// fused install's — by deferring to the `ApplyCondition` this is
+    /// built out of, so the metamagic cannot be made invisible by the
+    /// fusion.
+    fn extend_duration(&mut self) -> bool {
+        let mut inner = ApplyCondition {
+            actor_id: self.actor_id,
+            condition: Condition::Ethereal,
+            timer: self.timer,
+        };
+        let extended = inner.extend_duration();
+        self.timer = inner.timer;
+        extended
+    }
+
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ApplyCondition {
+            actor_id: self.actor_id,
+            condition: Condition::Ethereal,
+            timer: self.timer,
+        }
+        .apply(ei);
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.set_ethereal_exit(self.exit);
+        }
+    }
+}
+
 /// Grant `count` Mirror Image decoys to the target. Re-application
 /// overwrites the existing pool (5e: recasting refreshes the duplicates).
 /// Pair with ApplyCondition (MirroredImages) so the engine knows the

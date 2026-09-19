@@ -817,6 +817,20 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // different purchase rather than a worse Meteor Swarm. See
     // `spells::PRISMATIC_WALL` for what the seven layers became.
     actions.push(&*crate::actions::spells::PRISMATIC_WALL);
+    // lv7 **Etherealness** — the wizard's one button that is not aimed
+    // at anybody. Every other seventh-level spend on this sheet buys a
+    // thing that happens to the enemy; this one buys three rounds of
+    // not being reachable and a landing on the far side of whatever
+    // wall the fight is behind. It is the counterpart to the Prismatic
+    // Wall above — that one divides the room and this one ignores the
+    // division — and it is the only escape on the sheet that works
+    // against a grapple, a surrounded back rank and a Meteor Swarm
+    // alike, because it answers all three by not being there.
+    //
+    // The wizard carries it and the AI does not use it: see
+    // `spells::ETHEREALNESS` for why a retreat is the one rung
+    // `ai::simple` is deliberately not given.
+    actions.push(&*crate::actions::spells::ETHEREALNESS);
     // lv2 **Find Traps** — RAW puts it on the Cleric, Druid and Ranger
     // lists and not on the wizard's, and it stays off this sheet for
     // that reason. Named here because the wizard is the chassis a

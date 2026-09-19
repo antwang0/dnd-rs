@@ -68,9 +68,22 @@
 //!     would have to learn about it. `ActorInstance::phases_through_objects`
 //!     is named for the half that is here rather than for the sentence
 //!     it comes from, so no caller can read more into it than it says.
-//!   - **The Ethereal Plane.** RAW's incorporeal undead mostly also
-//!     have a way onto it; the engine has one plane and
-//!     `crate::engine::banishment` for the things that leave it.
+//!   - **The Ethereal Plane**, for *these* creatures. RAW's incorporeal
+//!     undead mostly also have a way onto it, and the engine now has
+//!     one — `Condition::Ethereal` and the off-board lane in
+//!     `crate::engine::banishment`. What stops the seven stat blocks
+//!     above reaching it is not the missing plane, which is the reason
+//!     this bullet used to give; it is that a monster who can leave the
+//!     board at will is a monster the AI would leave with, and
+//!     `ai::simple` has no model of a retreat. See the Plate Armor of
+//!     Etherealness' row in `NOT_FOR_THE_AI`, which is the same
+//!     decision about the same spell on the loot table.
+//!
+//!     Phasing and the Border Ethereal are in any case two different
+//!     rules that happen to share a flavour: this one is a spirit still
+//!     standing in the room, blocked by a Wall of Force and paying a
+//!     d10 a round for the privilege, and that one is a body that is
+//!     not in the room at all.
 //!   - **Ending inside a *creature***, which RAW charges the same 1d10
 //!     for. Same reason as the first bullet: it cannot happen here.
 

@@ -21967,6 +21967,29 @@ mod tests {
                 "use amulet of the planes",
                 "a coin flip that can remove the user's own side",
             ),
+            // The Plate Armor of Etherealness, and the reason is the
+            // spell rather than the object: `spells::ETHEREALNESS` is a
+            // *retreat*, and a retreat is a judgement about whether the
+            // fight is worth staying in, which is the one question this
+            // file has no model of. Every rung here ranks a candidate
+            // by what it does to the enemy; this one does nothing to
+            // the enemy at all and takes its user off the board for
+            // three rounds.
+            //
+            // The failure mode if it were reachable is worse than a
+            // wasted Action. The gate a rung would want is "I am
+            // losing" — and a fight in which the loser walks off the
+            // board every time it is about to lose is a fight that does
+            // not end. The Cloak of Invisibility two entries up is
+            // written off for the tamer half of the same reason.
+            //
+            // It stays entirely real for a human player, who can look
+            // at a room and decide it is not worth dying in. That
+            // judgement is the item.
+            (
+                "plate armor of etherealness: etherealness",
+                "a retreat, and no rung can price leaving the fight",
+            ),
         ];
         let exempt: BTreeMap<&str, &str> = NOT_FOR_THE_AI.iter().copied().collect();
 

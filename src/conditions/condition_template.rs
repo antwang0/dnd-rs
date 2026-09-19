@@ -3337,6 +3337,50 @@ pub enum Condition {
     /// history collapsed to an on-board `Incapacitated` because there
     /// was nowhere else to put the target.
     Banished,
+    /// SRD 5.2 **Etherealness** — *"you step into the border regions of
+    /// the Ethereal Plane, where it overlaps with your current plane …
+    /// creatures that aren't on the Ethereal Plane can't perceive or
+    /// interact with you."*
+    ///
+    /// The third member of `removes_from_board`, and the first one
+    /// nobody is doing *to* you. `Banished` and `Mazed` are things that
+    /// happen to a creature that failed a save; this is a creature
+    /// spending a seventh-level slot to leave, and the difference shows
+    /// up in exactly one place — **where the body comes back**.
+    ///
+    /// RAW's return clause is the whole spell:
+    ///
+    /// > *"When the spell ends, you return to the plane you left in the
+    /// > spot that corresponds to your space in the Border Ethereal. If
+    /// > you appear in an occupied space, you are shunted to the nearest
+    /// > unoccupied space and take Force damage equal to twice the
+    /// > number of feet you are moved."*
+    ///
+    /// A banished creature reappears where it left. An ethereal one
+    /// reappears where it *walked to while it was away*, which is a
+    /// destination chosen at cast time and carried on
+    /// `ActorInstance::ethereal_exit`. See [`crate::engine::banishment`]
+    /// for the sweep both share and for how the two return paths differ.
+    ///
+    /// **Incapacitating, and it is the one row on that cohort RAW does
+    /// not print.** An ethereal creature is perfectly capable on its own
+    /// plane; the engine has one plane, one initiative order and no
+    /// second board to fight on, so "took its turn somewhere this
+    /// encounter cannot see" and "took no turn" are the same sequence of
+    /// events. The cohort membership is what makes them the same in
+    /// code — see `nothing_acts_from_a_demiplane`, which is the contract
+    /// every off-board condition owes. The visible price is the one RAW
+    /// does not charge and this engine does: a caster who steps out of
+    /// the world drops whatever it was concentrating on, because
+    /// `breaks_concentration` is `is_incapacitating` and the Wall of
+    /// Fire is on the plane that was left behind.
+    ///
+    /// Deliberately **not** on `is_dispellable_buff`. Dispel Magic has
+    /// to be aimed at something, and `Action::validate_input` refuses
+    /// every target that is off the board — which is RAW's own answer
+    /// (*"can't perceive or interact with you"*) arriving from the
+    /// targeting lane instead of from a cohort.
+    Ethereal,
     /// 5e **Earthbind** — *"the target's flying speed (if any) becomes 0
     /// feet for the duration."*
     ///
@@ -4544,6 +4588,7 @@ impl Condition {
             Condition::Maimed => "maimed",
             Condition::Surprised => "surprised",
             Condition::Banished => "banished",
+            Condition::Ethereal => "ethereal",
             Condition::Earthbound => "earthbound",
             Condition::EnergyWarded => "warded against energy",
             Condition::Braced => "braced",
@@ -4639,6 +4684,11 @@ impl Condition {
     ///     sentence, same lane; the condition predates the lane and
     ///     spent its whole life as an inert incapacitation with a
     ///     docstring apologising for it.
+    ///   - **Ethereal** (Etherealness, Plate Armor of Etherealness) —
+    ///     RAW's Border Ethereal, and the only one of the three a
+    ///     creature walks into on purpose. Same claim about the grid,
+    ///     opposite polarity: the other two are what a failed save buys
+    ///     you, this is what a seventh-level slot buys you.
     ///
     /// Deliberately **not** on the list: `Sphered` (Otiluke's Resilient
     /// Sphere) and `Caged` (Forcecage). Both seal their holder away
@@ -4647,7 +4697,10 @@ impl Condition {
     /// walk around either. Off-board is about the grid, not about
     /// whether anyone can get at you.
     pub fn removes_from_board(&self) -> bool {
-        matches!(self, Condition::Banished | Condition::Mazed)
+        matches!(
+            self,
+            Condition::Banished | Condition::Mazed | Condition::Ethereal
+        )
     }
 
     /// True if holding this condition **breaks concentration** — SRD
@@ -4734,6 +4787,15 @@ impl Condition {
                 // "incapacitated" in as many words.
                 | Condition::Mazed
                 | Condition::Banished
+                // And the third plane, which does *not* say it: RAW's
+                // ethereal traveller is fully capable on its own side
+                // of the veil. The engine has one board and one
+                // initiative order, so a turn taken somewhere this
+                // encounter cannot see is a turn not taken — see
+                // `Condition::Ethereal`, which argues the row, and
+                // `nothing_acts_from_a_demiplane`, which requires it of
+                // everything `removes_from_board` admits.
+                | Condition::Ethereal
                 // 5e Haste's lethargy: "the target is Incapacitated and
                 // has a Speed of 0". `zeros_movement` is the second
                 // half of that sentence.
@@ -4930,9 +4992,17 @@ impl Condition {
     ///     grant when their target is true-sighted (target side).
     ///
     /// Centralizes the cohort so adding a new "illusory / invisibility-
-    /// style" concealment (e.g. a future Hide-in-Mists / Etherealness)
-    /// drops to a one-line edit instead of two scattered `matches!`
-    /// branches at the attack-mode site.
+    /// style" concealment (e.g. a future Hide-in-Mists) drops to a
+    /// one-line edit instead of two scattered `matches!` branches at the
+    /// attack-mode site.
+    ///
+    /// `Ethereal` used to be named here as a candidate and is not one.
+    /// RAW's True Seeing does *"see into the Ethereal Plane"*, but this
+    /// cohort is read at the attack-mode site and there is no attack to
+    /// take a mode: a creature on the Border Ethereal has no footprint,
+    /// is not combat-active, and is refused by name in
+    /// `Action::validate_input`. Seeing it would not make it hittable,
+    /// which is what every other row on this list is for.
     pub fn countered_by_truesight(&self) -> bool {
         matches!(
             self,
@@ -5207,6 +5277,14 @@ impl Condition {
                 // budget is asked for by things that never touch the
                 // pathfinder (a stand-up, a mount, a dismount).
                 | Condition::Banished
+                // Ditto, with a second reason of its own: RAW's
+                // ethereal traveller *does* move, and the whole of that
+                // movement is spent before the sweep ever sees it. The
+                // destination is chosen at cast time and priced out of
+                // `ETHEREAL_TRAVEL_ROUNDS` turns of Speed, so a budget
+                // already spent must not be spendable a second time
+                // here. See `Condition::Ethereal`.
+                | Condition::Ethereal
         )
     }
 

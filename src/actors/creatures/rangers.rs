@@ -667,8 +667,12 @@ pub static FEY_WANDERER_RANGER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::
 /// template — **Detect Portal** (lv3: 1/rest sense a planar portal
 /// within 1 mile; ribbon on this engine's combat surface), **Ethereal
 /// Step** (lv7: 1/rest cast Etherealness on self as a bonus action for
-/// a single turn; needs an Ethereal Plane surface the engine doesn't
-/// model), **Distant Strike** (lv11: teleport up to 10 ft before each
+/// a single turn — the plane it wanted exists now
+/// (`spells::ETHEREALNESS`), and what keeps the feature off this sheet
+/// is the chassis rather than the lane: the Horizon Walker here is a
+/// CR-1 stat block and this is a level-7 subclass feature, three tiers
+/// above the lv3 Planar Warrior that is the only thing it ships),
+/// **Distant Strike** (lv11: teleport up to 10 ft before each
 /// attack + third attack per Action against a fresh target; needs a
 /// per-attack teleport hook plus a distinct-target gate), and
 /// **Spectral Defense** (lv15: reaction to halve damage from an attack;

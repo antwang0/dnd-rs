@@ -4053,6 +4053,217 @@ impl Action for MistyStep {
 
 pub static MISTY_STEP: LazyLock<MistyStep> = LazyLock::new(|| MistyStep {});
 
+/// How many rounds a creature spends on the Border Ethereal.
+///
+/// SRD 5.2 prints *"Duration: Up to 8 hours"*, which is longer than
+/// every fight this engine has ever run put together. A spell that
+/// lasted the encounter would be a seventh-level slot spent on
+/// forfeiting: the caster would leave and the fight would end without
+/// them. So the duration is the one number on this spell that is an
+/// engine decision rather than a reading, and it is a short one.
+///
+/// Three rounds is chosen so the spell is a *trade* at every table it
+/// sits at. It is long enough that leaving costs something real — three
+/// turns of a seventh-level caster is most of a fight's worth of
+/// output, and the party fights a round down — and short enough that
+/// what you buy is worth buying: three rounds of being untouchable by
+/// anything on this plane, and a landing wherever the walk took you.
+///
+/// It is also the *price list* for the walk. RAW's only limit on how
+/// far an ethereal traveller gets is Speed × duration, so shortening
+/// the duration shortens the trip by exactly the same arithmetic — see
+/// [`ethereal_travel_tiles`], which is that multiplication and nothing
+/// else.
+pub const ETHEREAL_TRAVEL_ROUNDS: u32 = 3;
+
+/// How far, in tiles, `caster_id` can walk the Border Ethereal before
+/// [`ETHEREALNESS`] sets it down again.
+///
+/// RAW gives the traveller no range at all — only *"you can move in any
+/// direction"* for the duration — so the reach is the caster's own
+/// Speed spent over [`ETHEREAL_TRAVEL_ROUNDS`] turns, which is what a
+/// creature walking anywhere else for three rounds would cover. Read at
+/// the caster's speed *before* the condition lands, which matters: the
+/// condition zeros movement, so asking afterwards would answer zero.
+///
+/// The vertical half of RAW's clause — *"if you move up or down, every
+/// foot of movement costs an extra foot"* — has nothing to charge. The
+/// board is flat and `engine::falling` is explicit that altitude is not
+/// a third coordinate, so every ethereal walk in this engine is a walk
+/// along the floor of a room nobody else is standing in.
+pub fn ethereal_travel_tiles(encounter: &EncounterInstance, caster_id: usize) -> isize {
+    let Some(caster) = encounter.actors.get(&caster_id) else {
+        return 0;
+    };
+    let feet = caster.speed() * ETHEREAL_TRAVEL_ROUNDS as f32;
+    (feet / crate::engine::util::TILE_FEET) as isize
+}
+
+/// SRD 5.2 **Etherealness** — level-7 conjuration, self, and the only
+/// spell in the engine whose whole effect is to stop being in the
+/// fight for a while.
+///
+/// > *"You step into the border regions of the Ethereal Plane, where it
+/// > overlaps with your current plane … While on the Ethereal Plane,
+/// > you can affect and be affected only by creatures, objects, and
+/// > effects on that plane. Creatures that aren't on the Ethereal Plane
+/// > can't perceive or interact with you."*
+///
+/// Every clause of that paragraph was already implemented, for a
+/// different spell. [`crate::engine::banishment`] has carried the
+/// off-board lane since Banishment needed it — no footprint, no cover,
+/// nothing in an AoE's hit list, nothing an AI can name, and a targeting
+/// ban in `Action::validate_input` for anything that tries anyway. What
+/// Etherealness adds to that lane is not a rule; it is a *destination*.
+/// A banished creature comes back where it left. This one comes back
+/// where it walked to, and the walk is the spell:
+///
+///   - It goes through walls, because the Border Ethereal is not
+///     stopped by the stone on this side of it. The destination is
+///     checked for being on the map and for nothing else — no line of
+///     sight, no path, not even an unoccupied tile.
+///   - It is bounded by Speed, not by a range. See
+///     [`ethereal_travel_tiles`].
+///   - It is chosen *now*, on the turn the slot is spent, because that
+///     is the only turn the caster gets. Three rounds later the body
+///     arrives whether or not the room still wants it there.
+///
+/// And it is paid for on arrival, which is the clause that keeps the
+/// spell from being a free reposition into the middle of the enemy line:
+/// *"if you appear in an occupied space, you are shunted to the nearest
+/// unoccupied space and take Force damage equal to twice the number of
+/// feet you are moved."* Aim into a wall and the engine will find you
+/// the nearest floor and bill you for the difference — see
+/// `banishment::ETHEREAL_SHUNT_DAMAGE_PER_FOOT`.
+///
+/// **What is deliberately not here.**
+///
+///   - **RAW's upcast**, *"you can target up to three willing creatures
+///     for each spell slot level above 7"*. Three more bodies on the
+///     Border Ethereal is three more exits to pick and three more
+///     landings to price, and the targeting schema carries one point.
+///     `scales_with_slot` says `false` rather than saying nothing, so
+///     `every_spell_that_prices_an_upcast_declares_it` agrees with the
+///     code rather than with the book.
+///   - **The AI**, which cannot cast this and is not meant to. Walking
+///     off the board for three rounds is a retreat, and a retreat is a
+///     judgement about whether the fight is worth staying in — the one
+///     question `ai::simple` has no model of. An AI that could reach
+///     this rung would find it whenever it was losing, and a fight
+///     where the loser leaves is a fight with no end. Said out loud
+///     here rather than left to be discovered.
+pub struct Etherealness {}
+
+impl Action for Etherealness {
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Conjuration)
+    }
+    fn name(&self) -> &str {
+        "etherealness"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ethereal", "border ethereal"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    /// `None`, and it is the only interesting thing on this impl.
+    ///
+    /// The generic reach check in `validate_input` compares one number
+    /// against the distance; this spell's number is the *caster's*, not
+    /// the spell's, and a static ceiling would either refuse a legal
+    /// cast by a fast caster or wave through an illegal one by a slow
+    /// one. So the envelope is enforced in
+    /// [`Self::custom_validate_input`] instead, off
+    /// [`ethereal_travel_tiles`].
+    ///
+    /// The cost of saying `None` is that the AI's range rungs skip this
+    /// action entirely — every one of them is written `reach_tiles()?`.
+    /// That is the intended outcome and not a side effect; see the type
+    /// docs for why the AI does not cast this.
+    fn reach_tiles(&self) -> Option<isize> {
+        None
+    }
+    /// False, and this is the clause the spell is *for*: the Border
+    /// Ethereal overlaps the room without being stopped by it, so a
+    /// traveller may name a spot behind the wall they are standing
+    /// against. Every other point-target spell in this file that says
+    /// `false` says it because it throws something around a corner;
+    /// this one says it because the wall is not there.
+    fn requires_los(&self) -> bool {
+        false
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    /// No. RAW's *"up to three willing creatures for each spell slot
+    /// level above 7"* is a second, third and fourth traveller rather
+    /// than a bigger number, and the schema carries one exit point. See
+    /// the type docs.
+    fn scales_with_slot(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(7)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        let Some(point) = first_target_location(target_locations) else {
+            return false;
+        };
+        // On the map, and that is the whole of it. Deliberately *not*
+        // `can_move_to`: RAW has an answer for a traveller who
+        // materialises inside something, and the answer is a bill
+        // rather than a refusal. Refusing the aim here would delete the
+        // shunt clause and make the spell strictly safer than the book
+        // writes it.
+        if !encounter.in_bounds(point) {
+            return false;
+        }
+        let Some(dist) = encounter.footprint_distance_to_point(caster_id, point) else {
+            return false;
+        };
+        dist <= ethereal_travel_tiles(encounter, caster_id)
+    }
+    fn side_effects(
+        &self,
+        _encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        vec![Box::new(
+            crate::engine::side_effects::StepIntoTheEthereal {
+                actor_id: caster_id,
+                exit: point,
+                timer: ConditionTimer::Rounds(ETHEREAL_TRAVEL_ROUNDS),
+            },
+        )]
+    }
+}
+
+pub static ETHEREALNESS: LazyLock<Etherealness> = LazyLock::new(|| Etherealness {});
+
 /// Bane — level-1 enchantment, concentration. Symmetric counterpart to
 /// Bless: enemy targets in range each make a CHA save vs the caster's
 /// spell save DC. On fail, they're Baned for 10 rounds: -1d4 to attacks

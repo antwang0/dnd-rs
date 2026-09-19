@@ -22258,6 +22258,370 @@ fn banishing_the_last_enemy_does_not_end_the_encounter() {
     assert!(!e.is_complete());
 }
 
+/// SRD 5.2 Etherealness' return clause, and the one sentence that makes
+/// it a different spell from Banishment: *"you return to the plane you
+/// left in the spot that corresponds to your space in the Border
+/// Ethereal."* The wizard steps out at one end of the room and back in
+/// at the other, having spent three rounds nowhere.
+#[test]
+fn an_ethereal_traveller_comes_back_where_the_walk_took_it() {
+    use crate::actions::spells::{ETHEREALNESS, ETHEREAL_TRAVEL_ROUNDS};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let start = Coordinate::new(4, 4);
+    let exit = Coordinate::new(16, 4);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, start, 0, 0)
+        .unwrap();
+    // Somebody has to be left standing, or the fight is over before the
+    // timer is.
+    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    let aei = ActionExecutionInfo::new(&*ETHEREALNESS, wizard, None, Some(vec![exit]), None);
+    assert!(aei.validate(&e), "a wizard's own Speed covers twelve tiles");
+    e.push_action(aei);
+    e.process_stack();
+
+    assert!(e.actors[&wizard].has_condition(Condition::Ethereal));
+    assert!(e.actors[&wizard].is_off_board());
+    assert_eq!(
+        e.actor_id_at(start),
+        None,
+        "the body it left behind is not a body"
+    );
+    assert_eq!(e.actors[&wizard].ethereal_exit(), Some(exit));
+
+    for _ in 0..ETHEREAL_TRAVEL_ROUNDS {
+        e.round_end();
+    }
+
+    assert!(!e.actors[&wizard].has_condition(Condition::Ethereal));
+    assert!(!e.actors[&wizard].is_off_board());
+    assert_eq!(
+        e.actors[&wizard].location(),
+        exit,
+        "it steps off the Border Ethereal where it walked to, not where it left"
+    );
+    assert_eq!(e.actor_id_at(exit), Some(wizard));
+    assert_eq!(
+        e.actors[&wizard].ethereal_exit(),
+        None,
+        "and the destination is spent by being arrived at"
+    );
+}
+
+/// The clause the spell is *for*. Every other point-target spell on the
+/// wizard's sheet stops at the wall; the Border Ethereal overlaps the
+/// room without being stopped by it, so the destination is checked for
+/// being on the map and for nothing else.
+#[test]
+fn the_border_ethereal_is_not_stopped_by_the_wall_in_the_way() {
+    use crate::actions::spells::{ETHEREALNESS, MISTY_STEP};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    // A full-height wall down column 8, so nothing on one side can see
+    // anything on the other.
+    let wall: Vec<(isize, isize)> = (0..20).map(|y| (8, y)).collect();
+    let mut e = ei_with_terrain(20, 20, &wall);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(5, 5), 0, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    let behind = Coordinate::new(11, 5);
+    assert!(
+        !e.actor_has_line_of_sight_to_point(wizard, behind),
+        "the wall is really a wall"
+    );
+    assert!(
+        !ActionExecutionInfo::new(&*MISTY_STEP, wizard, None, Some(vec![behind]), None)
+            .validate(&e),
+        "Misty Step needs to see where it is going"
+    );
+    assert!(
+        ActionExecutionInfo::new(&*ETHEREALNESS, wizard, None, Some(vec![behind]), None)
+            .validate(&e),
+        "Etherealness does not: the stone is on the plane it left"
+    );
+}
+
+/// RAW gives the traveller no range, only *"you can move in any
+/// direction"* for the duration — so the envelope is the caster's own
+/// Speed spent over `ETHEREAL_TRAVEL_ROUNDS` turns, and a step past it
+/// is a step the walk could not have taken.
+#[test]
+fn an_ethereal_walk_is_bounded_by_the_walkers_own_speed() {
+    use crate::actions::spells::{ETHEREALNESS, ethereal_travel_tiles};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(80, 20, &[]);
+    let start = Coordinate::new(2, 5);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, start, 0, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    let budget = ethereal_travel_tiles(&e, wizard);
+    assert!(budget > 0, "a wizard has a Speed");
+    // Measured off the footprint's edge, the way every other envelope
+    // in the engine is — a Medium creature is two tiles across on a
+    // 2.5-ft grid, so the far edge is not the anchor tile. Found rather
+    // than assumed, so the test says what the engine measures instead
+    // of restating the arithmetic it is checking.
+    let edge_x = (start.x..)
+        .find(|&x| {
+            e.footprint_distance_to_point(wizard, Coordinate::new(x, start.y)) == Some(budget)
+        })
+        .expect("the board is wider than three rounds of walking");
+    let reachable = Coordinate::new(edge_x, start.y);
+    let one_too_far = Coordinate::new(edge_x + 1, start.y);
+
+    assert!(
+        ActionExecutionInfo::new(&*ETHEREALNESS, wizard, None, Some(vec![reachable]), None)
+            .validate(&e)
+    );
+    assert!(
+        !ActionExecutionInfo::new(
+            &*ETHEREALNESS,
+            wizard,
+            None,
+            Some(vec![one_too_far]),
+            None
+        )
+        .validate(&e),
+        "one tile past what three rounds of walking buys is refused"
+    );
+    assert!(
+        !ActionExecutionInfo::new(
+            &*ETHEREALNESS,
+            wizard,
+            None,
+            Some(vec![Coordinate::new(-1, 5)]),
+            None
+        )
+        .validate(&e),
+        "and so is a destination that is not on the map at all"
+    );
+}
+
+/// SRD 5.2: *"If you appear in an occupied space, you are shunted to the
+/// nearest unoccupied space and take Force damage equal to twice the
+/// number of feet you are moved."* The aim into the stone is legal —
+/// the spell has an answer for it, and the answer is a bill.
+#[test]
+fn a_traveller_who_steps_out_inside_the_stone_is_shunted_and_billed() {
+    use crate::actions::spells::{ETHEREALNESS, ETHEREAL_TRAVEL_ROUNDS};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    // One wall tile, standing on its own in an open room.
+    let pillar = Coordinate::new(12, 6);
+    let mut e = ei_with_terrain(30, 30, &[(pillar.x, pillar.y)]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 6), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(25, 25), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+    let before = e.actors[&wizard].hitpoints();
+
+    let aei = ActionExecutionInfo::new(&*ETHEREALNESS, wizard, None, Some(vec![pillar]), None);
+    assert!(
+        aei.validate(&e),
+        "aiming into the stone is legal — RAW prices it rather than refusing it"
+    );
+    e.push_action(aei);
+    e.process_stack();
+    for _ in 0..ETHEREAL_TRAVEL_ROUNDS {
+        e.round_end();
+    }
+
+    let landed = e.actors[&wizard].location();
+    assert_ne!(landed, pillar, "nobody stands inside a wall");
+    assert_eq!(e.actor_id_at(landed), Some(wizard));
+    let owed = (crate::engine::util::TILE_FEET
+        * landed.chebyshev_to(pillar) as f32)
+        .round() as u32
+        * crate::engine::banishment::ETHEREAL_SHUNT_DAMAGE_PER_FOOT;
+    assert!(owed > 0);
+    assert_eq!(
+        before - e.actors[&wizard].hitpoints(),
+        owed,
+        "twice the number of feet it was moved, in force"
+    );
+}
+
+/// The other half of the shunt clause, and the half that keeps it off
+/// the lane it shares. Banishment names the nearest free space too and
+/// charges nothing for it — so a creature somebody else sent away, whose
+/// space filled in while it was gone, comes back bruised by nothing.
+#[test]
+fn a_banished_creature_pays_nothing_for_a_crowded_landing() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let tile = Coordinate::new(6, 6);
+    let banished = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, tile, 1, 0)
+        .unwrap();
+    let before = e.actors[&banished].hitpoints();
+    e.actors
+        .get_mut(&banished)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(1));
+    e.reconcile_board_presence();
+    e.instantiate_creature(&GOBLIN_TEMPLATE, tile, 0, 1).unwrap();
+
+    e.actors
+        .get_mut(&banished)
+        .unwrap()
+        .remove_condition(Condition::Banished);
+    e.reconcile_board_presence();
+
+    assert_ne!(e.actors[&banished].location(), tile);
+    assert_eq!(
+        e.actors[&banished].hitpoints(),
+        before,
+        "the demiplane's return clause has no bill attached"
+    );
+}
+
+/// `ethereal_exit` has to outlive its condition by exactly one sweep,
+/// so it is the one condition payload in the engine that `remove_condition`
+/// does *not* tear down. The sweep closes the hole instead: a body
+/// standing on the board without the condition is a body with nowhere
+/// to be, and a stale destination would be read by the next thing that
+/// took it away.
+#[test]
+fn a_destination_nobody_travelled_to_does_not_outlive_the_sweep() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::{Condition, ConditionTimer};
+    use crate::engine::side_effects::{ApplicableSideEffect, StepIntoTheEthereal};
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let home = Coordinate::new(5, 5);
+    let elsewhere = Coordinate::new(12, 12);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, home, 1, 0)
+        .unwrap();
+
+    StepIntoTheEthereal {
+        actor_id: goblin,
+        exit: elsewhere,
+        timer: ConditionTimer::Rounds(3),
+    }
+    .apply(&mut e);
+    assert_eq!(e.actors[&goblin].ethereal_exit(), Some(elsewhere));
+
+    // Stripped before any sweep ran, so the body never left and the
+    // destination was never walked to.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .remove_condition(Condition::Ethereal);
+    e.reconcile_board_presence();
+    assert_eq!(
+        e.actors[&goblin].ethereal_exit(),
+        None,
+        "the sweep clears a destination nobody is standing on"
+    );
+
+    // And the proof that it mattered: a banishment now returns the
+    // goblin to the space it left, not to the wizard's old idea.
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Banished, ConditionTimer::Rounds(1));
+    e.reconcile_board_presence();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .remove_condition(Condition::Banished);
+    e.reconcile_board_presence();
+    assert_eq!(e.actors[&goblin].location(), home);
+}
+
+/// The install refuses to record a destination for a creature that is
+/// not ethereal, which is what makes the sweep above a second line of
+/// defence rather than the only one.
+#[test]
+fn a_destination_needs_a_traveller_to_belong_to() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::conditions::Condition;
+
+    let mut e = ei_with_terrain(20, 20, &[]);
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(5, 5), 1, 0)
+        .unwrap();
+    assert!(!e.actors[&goblin].has_condition(Condition::Ethereal));
+    assert!(
+        !e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .set_ethereal_exit(Coordinate::new(9, 9))
+    );
+    assert_eq!(e.actors[&goblin].ethereal_exit(), None);
+}
+
+/// A creature on the Border Ethereal is out of reach of everything on
+/// this side of it — RAW's *"creatures that aren't on the Ethereal Plane
+/// can't perceive or interact with you"*, which the off-board lane
+/// already says for Banishment and now says for one more condition.
+#[test]
+fn nothing_reaches_a_creature_on_the_border_ethereal() {
+    use crate::actions::spells::{ETHEREALNESS, MAGIC_MISSILE};
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    let mut e = ei_with_terrain(40, 40, &[]);
+    let wizard = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+        .unwrap();
+    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(8, 4), 1, 0)
+        .unwrap();
+    // The opposing caster stands thirty-odd tiles off, which is inside
+    // Magic Missile's hundred and twenty feet and well outside
+    // Counterspell's sixty — otherwise the cast below never lands and
+    // the test proves nothing about the plane it was aimed at.
+    let other = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(36, 36), 1, 0)
+        .unwrap();
+    e.pop_prompt();
+
+    // The baseline: while the wizard is standing there, the wizard
+    // across the room can aim at them.
+    assert!(
+        ActionExecutionInfo::new(&*MAGIC_MISSILE, other, Some(vec![wizard]), None, None)
+            .validate(&e)
+    );
+    let aei = ActionExecutionInfo::new(
+        &*ETHEREALNESS,
+        wizard,
+        None,
+        Some(vec![Coordinate::new(10, 10)]),
+        None,
+    );
+    assert!(aei.validate(&e));
+    e.push_action(aei);
+    e.process_stack();
+
+    assert!(
+        !ActionExecutionInfo::new(&*MAGIC_MISSILE, other, Some(vec![wizard]), None, None)
+            .validate(&e),
+        "a spell cannot be aimed at somebody who is not there"
+    );
+    assert!(
+        !e.actors[&wizard].is_combat_active(),
+        "and every sweep that asks who is in the fight has already skipped them"
+    );
+}
+
 #[test]
 fn power_word_stun_no_op_above_threshold() {
     use crate::actions::spells::POWER_WORD_STUN;
@@ -128052,3 +128416,4 @@ fn a_warded_creature_cannot_be_hunters_marked() {
         "a warded creature is not a hidden one"
     );
 }
+

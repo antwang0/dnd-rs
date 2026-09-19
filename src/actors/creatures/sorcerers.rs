@@ -524,6 +524,14 @@ pub static SORCERER_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::FAR_STEP);
     actions.push(&*crate::actions::spells::BLADE_OF_DISASTER);
     actions.push(&*crate::actions::spells::ELEMENTAL_WEAPON);
+    // lv7 **Etherealness** — on the sorcerer's RAW list as well as the
+    // wizard's, and it reads differently here. Far Step directly above
+    // is the same instinct at a fifth of the price and a tenth of the
+    // commitment: one bonus action, one hop, still in the room. This is
+    // the version that leaves, and the two together are the sorcerer's
+    // whole answer to being cornered — one for a bad square and one for
+    // a bad fight.
+    actions.push(&*crate::actions::spells::ETHEREALNESS);
     CreatureTemplate {
         name: "Sorcerer",
         // 'S' — distinct from Skeleton (lowercase 's'), Sage, etc.

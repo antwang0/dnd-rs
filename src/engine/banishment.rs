@@ -57,6 +57,43 @@
 //! `location` is deliberately **not** cleared. It is the space the
 //! creature left, and RAW sends it back there.
 //!
+//! # The traveller who left on purpose
+//!
+//! SRD 5.2 **Etherealness** shares every line of the model above and
+//! disagrees about one thing: *"you return to the plane you left in the
+//! spot that corresponds to your space in the Border Ethereal."* Not
+//! the space it left — a space it walked to, on a plane with no board
+//! in this engine, while nobody could see it.
+//!
+//! So a fourth condition joins the cohort, and the only new state on
+//! the lane is one field: [`ActorInstance::ethereal_exit`], the tile the
+//! traveller picked when it stepped out of the world. Everything else
+//! is already here. The footprint comes off through the same sweep, the
+//! turn is skipped through the same `is_combat_active`, the targeting
+//! ban is the same clause in `Action::validate_input`, and the landing
+//! walks the same [`EncounterInstance::find_return_anchor`].
+//!
+//! Two differences, and both are RAW's:
+//!
+//!   - **Where.** `return_actor_to_board` prefers the exit over
+//!     `location` when there is one. A Banishment has none and falls
+//!     through to the space it left, unchanged.
+//!   - **What a bad landing costs.** *"If you appear in an occupied
+//!     space, you are shunted to the nearest unoccupied space and take
+//!     Force damage equal to twice the number of feet you are moved."*
+//!     Banishment names the nearest free space too and charges nothing
+//!     for it, so the bill is raised only where an exit was set — see
+//!     [`ETHEREAL_SHUNT_DAMAGE_PER_FOOT`].
+//!
+//! The *duration* is where the two lanes stop resembling each other,
+//! and it is a choice rather than a reading. RAW's Etherealness lasts up
+//! to eight hours, which is longer than every fight this engine has ever
+//! run put together; a spell that lasted the encounter would be a
+//! seventh-level slot spent on forfeiting. `spells::ETHEREAL_TRAVEL_ROUNDS`
+//! is the honest translation — the traveller is gone for a few rounds
+//! and comes back — and it is also what prices the walk, since RAW's
+//! only limit on how far you get is your Speed and how long you stay.
+//!
 //! # Why a sweep and not a hook
 //!
 //! [`EncounterInstance::reconcile_board_presence`] is a reconcile in the
@@ -116,7 +153,9 @@
 use crate::conditions::Condition;
 use crate::engine::encounter::{EncounterInstance, rings_outward};
 use crate::engine::mounts::UnseatCause;
-use crate::engine::types::{Coordinate, Size};
+use crate::engine::side_effects::{ApplicableSideEffect, DealDamage};
+use crate::engine::types::{Coordinate, DamageType, Size};
+use crate::engine::util::TILE_FEET;
 
 impl EncounterInstance {
     /// Hold every actor's presence on the grid in step with whether
@@ -140,14 +179,34 @@ impl EncounterInstance {
     /// stamp-before-the-next-check discipline `reconcile_footprints`
     /// keeps for growth.
     pub fn reconcile_board_presence(&mut self) {
-        let mut pending: Vec<(usize, bool)> = self
-            .actors
-            .iter()
-            .filter_map(|(id, a)| {
-                let want = a.belongs_off_board();
-                (want != a.is_off_board()).then_some((*id, want))
-            })
-            .collect();
+        let mut pending: Vec<(usize, bool)> = Vec::new();
+        // Every body standing on the board without the condition that
+        // would put it on the Border Ethereal, holding a destination
+        // there. There is normally nobody: the exit is written by the
+        // install and taken by the return, and between those two the
+        // holder is off the board. The case this closes is an
+        // Etherealness stripped in the same breath it landed — the
+        // destination would otherwise sit on the sheet until the next
+        // Banishment read it as "the space it left". See
+        // `ActorInstance::ethereal_exit`.
+        let mut stale: Vec<usize> = Vec::new();
+        for (id, a) in self.actors.iter() {
+            let want = a.belongs_off_board();
+            if want != a.is_off_board() {
+                pending.push((*id, want));
+            } else if !want
+                && a.ethereal_exit().is_some()
+                && !a.has_condition(Condition::Ethereal)
+            {
+                stale.push(*id);
+            }
+        }
+        stale.sort_unstable();
+        for actor_id in stale {
+            if let Some(a) = self.get_actor(actor_id) {
+                a.take_ethereal_exit();
+            }
+        }
         if pending.is_empty() {
             return;
         }
@@ -222,13 +281,34 @@ impl EncounterInstance {
     /// sweep asks again; see the module docs for why waiting beats the
     /// alternatives.
     fn return_actor_to_board(&mut self, actor_id: usize) {
-        let Some((origin, size, name)) = self
+        let Some((home, size, name)) = self
             .actors
             .get(&actor_id)
             .map(|a| (a.location(), a.size(), a.name().to_string()))
         else {
             return;
         };
+        // Two return clauses, and the only difference between them is
+        // which tile counts as "where this body belongs".
+        //
+        //   - **Banishment / Maze**: *"the space it left"*, which is
+        //     `location` — the field nothing touched while the creature
+        //     was away, exactly so that it would still say this.
+        //   - **Etherealness**: *"the spot that corresponds to your
+        //     space in the Border Ethereal"*, which is somewhere the
+        //     traveller walked to and nobody else can see. That is
+        //     `ethereal_exit`, and taking it here is what spends it.
+        //
+        // The second clause also charges for a bad landing, which the
+        // first does not — see below.
+        //
+        // Read rather than taken, because a return can be *refused*:
+        // the destination has to survive a sweep that found nowhere to
+        // land, or a traveller whose exit was crowded would silently
+        // fall back to the tile it walked away from. It is spent below,
+        // once there is somewhere to spend it on.
+        let exit = self.actors.get(&actor_id).and_then(|a| a.ethereal_exit());
+        let origin = exit.unwrap_or(home);
         let Some(anchor) = self.find_return_anchor(origin, size) else {
             // Nothing said about it in the log: a body pressing against
             // a full board is not an event, and a crowded fight would
@@ -240,11 +320,43 @@ impl EncounterInstance {
         if let Some(a) = self.get_actor(actor_id) {
             a.set_off_board(false);
             a.set_location(anchor);
+            // Spent: there is a body on the board now, and nothing is
+            // standing on the Border Ethereal to have an exit.
+            a.take_ethereal_exit();
         }
         if anchor == origin {
             self.log(format!("{} reappears where it stood.", name));
         } else {
             self.log(format!("{} reappears at {}.", name, anchor));
+        }
+        // SRD 5.2 **Etherealness**: *"if you appear in an occupied
+        // space, you are shunted to the nearest unoccupied space and
+        // take Force damage equal to twice the number of feet you are
+        // moved."*
+        //
+        // The one clause on this lane that is not shared. Banishment
+        // and Maze both name the nearest free space too and neither
+        // charges for it, so the bill is raised only for a traveller
+        // who had an exit of their own — which is what `exit` being
+        // `Some` says, and why it is read rather than inferred from the
+        // tiles. A wizard who aims their own reappearance into a wall
+        // pays for it; an ogre somebody banished into a doorway that
+        // has since filled in does not.
+        if exit.is_some() && anchor != origin {
+            let feet = (anchor.chebyshev_to(origin) as f32 * TILE_FEET).round() as u32;
+            let amount = feet * ETHEREAL_SHUNT_DAMAGE_PER_FOOT;
+            if amount > 0 {
+                self.log(format!(
+                    "  {} is shunted {} ft out of the Border Ethereal: {} force.",
+                    name, feet, amount
+                ));
+                DealDamage {
+                    actor_id,
+                    amount,
+                    damage_type: DamageType::Force,
+                }
+                .apply(self);
+            }
         }
         // A creature that comes back inside a Cloudkill is standing in
         // the Cloudkill. Ordered after the flag is cleared and the
@@ -299,6 +411,20 @@ impl EncounterInstance {
 /// itself out of the fight it was pulled from.
 const RETURN_SEARCH_RADIUS: isize = 4;
 
+/// Force damage per foot a returning ethereal traveller is shunted —
+/// SRD 5.2's *"Force damage equal to twice the number of feet you are
+/// moved"*.
+///
+/// The only number on this lane that comes off a printed spell rather
+/// than out of an engine decision, which is why it is a named constant
+/// beside the search radius above rather than a `2` in the expression.
+/// It is also the reason `RETURN_SEARCH_RADIUS` is a *bound* and not a
+/// courtesy: four rings is twenty-odd feet, so the worst landing this
+/// engine can hand a traveller is around forty force damage. An
+/// unbounded ring walk would have priced a crowded board in the
+/// hundreds.
+pub const ETHEREAL_SHUNT_DAMAGE_PER_FOOT: u32 = 2;
+
 /// Condition-facing helper: every condition that would keep its holder
 /// off the board, in installation order.
 ///
@@ -307,7 +433,8 @@ const RETURN_SEARCH_RADIUS: isize = 4;
 /// `Condition::removes_from_board` or being able to drift from it — the
 /// slice is checked against the predicate by
 /// `every_off_board_condition_is_on_the_roster`.
-pub const OFF_BOARD_CONDITIONS: &[Condition] = &[Condition::Banished, Condition::Mazed];
+pub const OFF_BOARD_CONDITIONS: &[Condition] =
+    &[Condition::Banished, Condition::Mazed, Condition::Ethereal];
 
 #[cfg(test)]
 mod tests {
@@ -333,6 +460,7 @@ mod tests {
         let counted = [
             Condition::Banished,
             Condition::Mazed,
+            Condition::Ethereal,
             // Two nearby conditions that are deliberately *not* off-board
             // — see `removes_from_board`. Listed so a change of heart
             // about either one has to be a change to this test as well.

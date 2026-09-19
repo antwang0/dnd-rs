@@ -8985,6 +8985,47 @@ pub static CAPE_OF_THE_MOUNTEBANK_STEP: crate::actions::staves::StaffSpell =
 
 const CAPE_OF_THE_MOUNTEBANK_NAME: &str = "Cape of the Mountebank";
 
+/// **Plate Armor of Etherealness** — *"While you're wearing this armor,
+/// you can take a Magic action and use a command word to gain the
+/// effect of the Etherealness spell. … This property of the armor can't
+/// be used again until the next dawn."*
+///
+/// The Cape of the Mountebank's sibling one rarity band up, and the
+/// difference between them is the difference between the two spells.
+/// Dimension Door is a jump: the caster is somewhere else *this
+/// instant*, in a place they had to be able to picture, and the fight
+/// carries on around them. This is a withdrawal — three rounds where
+/// nothing on the board can reach the wearer and nothing the wearer
+/// does can reach the board, ending wherever the walk took them, walls
+/// included. See `spells::ETHEREALNESS`.
+///
+/// It is also the only way a **martial** reaches that lane. Etherealness
+/// is a seventh-level slot on the wizard's and sorcerer's sheets and
+/// nowhere else; a fighter in this plate has it once a day for the price
+/// of an attunement slot, which is exactly the trade RAW's Legendary
+/// rarity is charging for.
+///
+/// RAW's second ending — *"the spell ends immediately if you remove the
+/// armor or take a Magic action to repeat the command word"* — is not
+/// modelled, and could not be: the wearer is off the board for the
+/// duration and the engine gives an off-board creature no turn to spend
+/// on repeating anything. The clause it *would* buy is the ability to
+/// come back early, and the three-round timer is short enough that
+/// there is no fight in which that is the interesting choice. See
+/// `spells::ETHEREAL_TRAVEL_ROUNDS`.
+pub static PLATE_ARMOR_OF_ETHEREALNESS_COMMAND: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "plate armor of etherealness: etherealness",
+        action_aliases: &["command word", "phase plate", "plate-step"],
+        item_name: PLATE_ARMOR_OF_ETHEREALNESS_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 7,
+        spell: || &*crate::actions::spells::ETHEREALNESS,
+        only_targets: None,
+    };
+
+pub const PLATE_ARMOR_OF_ETHEREALNESS_NAME: &str = "Plate Armor of Etherealness";
+
 /// **Cubic Gate** (Wondrous item, Legendary) — *"The cube has 3 charges
 /// and regains 1d3 expended charges daily at dawn. As a Magic action,
 /// you can expend 1 of the cube's charges to cast one of the following

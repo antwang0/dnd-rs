@@ -3451,12 +3451,32 @@ pub static BOOTS_OF_THE_FOREST: Item = Item {
 };
 
 /// Cloak of Etherealness — passive trinket. Grants the wearer
-/// `DamageResistant` (halve all incoming damage) while worn. 5e RAW: the
-/// cloak's Etherealness ability lets the wearer enter the Ethereal Plane
-/// at will; we collapse the "shift planes to dodge damage" envelope to a
-/// flat damage-halve buff that flows through the existing condition lane.
-/// Top-of-pool defensive trinket — strictly stronger than the typed-
-/// resistance rings.
+/// `DamageResistant` (halve all incoming damage) while worn.
+///
+/// **Not the planar reading, on purpose, and no longer for want of a
+/// lane.** This docstring used to say the cloak's real ability *"lets
+/// the wearer enter the Ethereal Plane at will"* and that the engine
+/// *"collapsed the shift-planes-to-dodge-damage envelope to a flat
+/// damage-halve buff"*, which was an apology for a gap. The gap is
+/// closed — `spells::ETHEREALNESS` and `engine::banishment` carry the
+/// Border Ethereal now — and the cloak keeps the halving anyway, which
+/// makes this a decision rather than a leftover. Two reasons:
+///
+///   - **The planar version already has an item**, and it is a
+///     Legendary suit of plate with one use a day. An *at-will* walk
+///     off the board on an attunement trinket is not the same item at a
+///     different rarity; it is the strongest defensive object in the
+///     engine by a distance, because nothing on the board can answer a
+///     creature that leaves whenever it is about to be hit. See
+///     `PLATE_ARMOR_OF_ETHEREALNESS`.
+///   - **The loot table needs this rung.** `Condition::DamageResistant`
+///     — halve everything, from every source — has exactly one source
+///     on the whole table and this is it. Every other resistance in the
+///     file names a damage type.
+///
+/// The cloak is not an SRD 5.2 item (the book's two ethereal objects are
+/// the oil and the plate); it is the engine's own, and this is what it
+/// is for.
 pub static CLOAK_OF_ETHEREALNESS: Item = Item {
     name: "Cloak of Etherealness",
     glyph: '$',
@@ -5186,6 +5206,38 @@ pub static ARMOR_OF_INVULNERABILITY: Item = Item {
         crate::engine::types::DamageType::Piercing,
         crate::engine::types::DamageType::Slashing,
     ],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Plate Armor of Etherealness** (Armor, half plate or plate;
+/// Legendary, requires attunement) — one walk off the board a day.
+///
+/// The second suit of Legendary plate on the table and the opposite
+/// answer to the same question. The Armor of Invulnerability directly
+/// above halves every sword, claw and arrow in the bestiary and leaves
+/// the wearer standing in the middle of them; this one takes the wearer
+/// out of reach entirely for three rounds and puts them down on the far
+/// side of the wall. One is worn by whoever is holding the line, the
+/// other by whoever wants to stop.
+///
+/// No AC of its own, for the reason the Adamantine Armor carries none:
+/// the engine models no armour slot and no armour type, so a suit's AC
+/// is whatever its wearer's AC already was, and RAW's plate grants a
+/// number rather than a bonus. What this carries is the clause. See
+/// `item_actions::PLATE_ARMOR_OF_ETHEREALNESS_COMMAND`.
+pub static PLATE_ARMOR_OF_ETHEREALNESS: Item = Item {
+    name: crate::actions::item_actions::PLATE_ARMOR_OF_ETHEREALNESS_NAME,
+    glyph: '[',
+    on_use: &[&crate::actions::item_actions::PLATE_ARMOR_OF_ETHEREALNESS_COMMAND],
+    charges: 1,
+    // RAW's "can't be used again until the next dawn", in the cape's
+    // own vocabulary one shelf down: one charge back at the long rest,
+    // flat, because a pool of one has nothing to roll for.
+    recharge: Some(DiceExpr {
+        dice: None,
+        constant: 1,
+    }),
     requires_attunement: true,
     ..Item::DEFAULTS
 };
@@ -9954,6 +10006,11 @@ pub static LOOT_POOL: &[&Item] = &[
     &GLAMOURED_STUDDED_LEATHER,
     &SHIELD_OF_THE_CAVALIER,
     &ARMOR_OF_INVULNERABILITY,
+    // The other Legendary suit, and the only route to the Border
+    // Ethereal that does not require a seventh-level slot. One walk off
+    // the board a day, on a chassis that has no spell list to buy one
+    // with.
+    &PLATE_ARMOR_OF_ETHEREALNESS,
     // The middle rung of RAW's three-item invisibility ladder, and the
     // escape consumable the AI is deliberately not taught to drink.
     &CLOAK_OF_INVISIBILITY,
