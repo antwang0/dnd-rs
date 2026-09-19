@@ -4704,10 +4704,11 @@ impl Action for ChillTouch {
             // whether a Prone target is easier or harder to hit.
             true,
         );
-        // "The target can't regain hit points until the start of your
-        // next turn." An empty effect list is a miss, and a missed
-        // spectral hand closes nothing — same on-hit gate Guiding Bolt
-        // uses to decide whether its mark lands.
+        // RAW's "it can't regain Hit Points until the end of your next
+        // turn", as the round the engine counts in. An empty effect
+        // list is a miss, and a missed spectral hand closes nothing —
+        // the same on-hit gate Guiding Bolt uses to decide whether its
+        // mark lands.
         if !effects.is_empty() {
             effects.push(Box::new(ApplyCondition {
                 actor_id: target_id,

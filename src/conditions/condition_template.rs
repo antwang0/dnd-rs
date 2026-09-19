@@ -3041,6 +3041,16 @@ pub enum Condition {
     ///     folded into the swing's own total rather than pushed as a
     ///     negative packet.
     ///
+    /// RAW's *"all its damage rolls"* is wider than that second lane by
+    /// one case, and it is the same shape as the missing third of the
+    /// first: the penalty is summed at the two **attack** chokepoints —
+    /// the weapon lane in `engine::attack` and the spell lane in
+    /// `spells::spell_attack_outcome` — so a weakened wizard's Fire
+    /// Bolt is taxed and their Fireball is not. A save-for-damage spell
+    /// rolls its dice inside its own `side_effects` with no shared site
+    /// to hang the subtraction on, which is why it is named here rather
+    /// than reached: the fix is a chokepoint, not a row.
+    ///
     /// Both halves are new. What was here before was the archer's
     /// halving under this name, which is neither clause — see
     /// [`Condition::ArrowEnfeebled`], and the `MetallicBreathEffect::
