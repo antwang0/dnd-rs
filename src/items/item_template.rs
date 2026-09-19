@@ -3085,28 +3085,41 @@ pub static PIPES_OF_HAUNTING: Item = Item {
 /// auto-fail STR/DEX saves, melee crits land automatically), so the
 /// consumable sits in the rare half of the loot pool.
 ///
-/// **RAW's seven charges deliberately do not ship here**, and this is
-/// the item that draws the line the charge model runs along. The three
-/// wands that took RAW's count — Fireballs, Lightning Bolts, Magic
-/// Missiles — cast RAW's spell unaltered: roll damage, save for half,
-/// done. This one does not. RAW's paralysis is a level-5 Hold Monster
-/// with concentration and a save at the end of every one of the
-/// target's turns, and the engine's consumable envelope drops both for
-/// a flat ten rounds. That is already a trade of RAW's escape hatches
-/// for the simplicity of a one-shot item, and importing RAW's charge
-/// count on top of it would be compounding two divergences in the same
-/// direction: seven un-escapable ten-round paralyses is not a rules
-/// translation, it is a different item.
+/// **RAW's seven charges ship now**, and the reason they did not is
+/// worth keeping, because it is the rule the whole wand shelf runs on:
+/// *an item whose effect is RAW's, unaltered, may take RAW's charges;
+/// an item whose effect the engine strengthened to fit the consumable
+/// model keeps the one shot that paid for it.* The three wands that
+/// took RAW's count — Fireballs, Lightning Bolts, Magic Missiles —
+/// cast RAW's spell unaltered. This one did not: SRD 5.2's beam is
+/// *"Paralyzed for 1 minute. At the end of each of the target's turns,
+/// it repeats the save, ending the effect on itself on a success"*, and
+/// the engine dropped that second sentence for a flat ten rounds. Seven
+/// un-escapable ten-round paralyses is not a rules translation, it is a
+/// different item — so the wand kept its one shot, and the one shot was
+/// the price of the missing clause rather than a choice anybody made.
 ///
-/// The rule generalises to the rest of the wand shelf, which is why it
-/// is written down here rather than on each of the twenty: **an item
-/// whose effect is RAW's, unaltered, may take RAW's charges; an item
-/// whose effect the engine strengthened to fit the consumable model
-/// keeps the one shot that paid for it.**
+/// The clause is here now. `engine::repeat_saves` is the lane it
+/// needed — the ledger that exists precisely because a wand is not
+/// concentrating on anything — and `SingleSaveConditionItem::escape` is
+/// the field that carries it. With the escape restored the wand is
+/// RAW's, unaltered, so the first half of the rule applies and the
+/// charges follow: seven of them, regaining 1d6 + 1 at dawn.
+///
+/// Paralyzed is still one of the engine's hardest envelopes — zero
+/// movement, action economy blocked, auto-failed Strength and Dexterity
+/// saves, and melee hits that crit automatically. What the escape
+/// changes is who it lasts against: a target with a good Constitution
+/// save is usually out inside a turn or two, and a frail one is
+/// sometimes still stiff when the minute runs down. That spread is the
+/// thing a flat timer cannot produce, and it is why this is now an item
+/// worth seven presses rather than one.
 pub static WAND_OF_PARALYSIS: Item = Item {
     name: "Wand of Paralysis",
     glyph: ')',
     on_use: &[&crate::actions::item_actions::USE_WAND_OF_PARALYSIS],
+    charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
     requires_attunement: true,
     attunement_restriction: Some(AttunementRestriction::SPELLCASTER),
     ..Item::DEFAULTS

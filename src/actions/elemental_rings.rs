@@ -158,6 +158,7 @@ macro_rules! compulsion_row {
             // RAW's *"until the start of your next turn"*, exactly.
             timer: ConditionTimer::UntilStartOfNextTurn,
             billing: ItemUseBilling::Free,
+            escape: None,
             target_types: ELEMENTALS,
         };
     };

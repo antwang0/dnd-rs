@@ -2710,6 +2710,32 @@ pub struct SingleSaveConditionItem {
     /// from it"* has no pool at all, and on the consume-on-use lane the
     /// first cast would have taken the ring off the wearer's finger.
     pub billing: ItemUseBilling,
+    /// The escape RAW gives the victim, or `None` for the rows whose
+    /// printing gives none — SRD 5.2's Wand of Paralysis, *"at the end
+    /// of each of the target's turns, it repeats the save, ending the
+    /// effect on itself on a success."*
+    ///
+    /// The same `Option<&'static RepeatSave>` the inhaled-poison
+    /// chassis carries one file over, and installed the same way: the
+    /// clause and the condition are one rule, so a row with an escape
+    /// hands the install to `begin_repeat_save` rather than queuing an
+    /// `ApplyCondition` of its own. Splitting them would be an effect
+    /// crueller than the book wrote.
+    ///
+    /// **Why it took a lane rather than a comment.** The wand shelf has
+    /// a rule about charges, written on `WAND_OF_PARALYSIS`: *"an item
+    /// whose effect is RAW's, unaltered, may take RAW's charges; an
+    /// item whose effect the engine strengthened to fit the consumable
+    /// model keeps the one shot that paid for it."* Every row on this
+    /// chassis that drops an escape is on the wrong side of that line
+    /// and is stuck there — the one shot is not a choice somebody made,
+    /// it is the price of the missing clause. Restoring the escape is
+    /// what lets the charges follow.
+    ///
+    /// The `timer` beside it stays the cap rather than the expectation,
+    /// which is RAW too: *"after 1 minute, it succeeds automatically"*
+    /// is the shape of every escape in the book.
+    pub escape: Option<&'static crate::engine::repeat_saves::RepeatSave>,
     /// Creature types this row may be pointed at, or empty for "anyone".
     ///
     /// Two rings on the table print a bestiary clause in front of an
@@ -2876,6 +2902,19 @@ impl Action for SingleSaveConditionItem {
         let save =
             encounter.roll_save_against_caster(target_id, self.save, self.dc, caster_id);
         if save.passed() {
+            return Vec::new();
+        }
+        if let Some(clause) = self.escape {
+            // `begin_repeat_save` installs the condition itself — it has
+            // a ledger to open alongside it — so the row hands the
+            // install over rather than queuing one. See `self.escape`.
+            encounter.begin_repeat_save(
+                target_id,
+                Some(caster_id),
+                self.dc,
+                clause,
+                self.timer,
+            );
             return Vec::new();
         }
         crate::engine::side_effects::install_condition_with_link(
@@ -3091,6 +3130,28 @@ const THUNDEROUS_GREATCLUB_NAME: &str = "Thunderous Greatclub";
 /// economy blocked, auto-fail STR/DEX saves, melee crits land
 /// automatically), so the consumable sits in the rare half of the
 /// loot pool. Fires through the shared `SingleSaveConditionItem` impl.
+/// SRD 5.2's Wand of Paralysis, *"at the end of each of the target's
+/// turns, it repeats the save, ending the effect on itself on a
+/// success"* — the clause the wand's one shot used to be paying for.
+///
+/// Constitution, because that is the save the beam opened with: RAW
+/// says *repeats* the save, not *makes* one. The ten-round timer beside
+/// it is RAW's minute, which is the cap rather than the expectation —
+/// a tough target is usually out in a turn or two and a frail one is
+/// sometimes still stiff when the minute runs down, which is the whole
+/// spread a flat timer cannot produce.
+pub static PARALYSING_WAND: crate::engine::repeat_saves::RepeatSave =
+    crate::engine::repeat_saves::RepeatSave {
+        name: "wand of paralysis",
+        condition: Condition::Paralyzed,
+        ability: AbilityScoreType::Constitution,
+        escaped_flavor: "shakes the cold out of its limbs",
+        // A pure escape hatch: a failed repeat costs the turn and
+        // nothing else, and one success is out.
+        damage_on_failure: None,
+        successes_needed: 1,
+    };
+
 pub static USE_WAND_OF_PARALYSIS: SingleSaveConditionItem = SingleSaveConditionItem {
     action_name: "use wand of paralysis",
     action_aliases: &["paralysis", "paralyze"],
@@ -3102,7 +3163,11 @@ pub static USE_WAND_OF_PARALYSIS: SingleSaveConditionItem = SingleSaveConditionI
     reach: 24,
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
-    billing: ItemUseBilling::Consumed,
+    // RAW's seven charges, one apiece — see the item, and
+    // `SingleSaveConditionItem::escape` for the rule that lets them
+    // ship now and did not before.
+    billing: ItemUseBilling::Charges(1),
+    escape: Some(&PARALYSING_WAND),
     target_types: &[],
 };
 
@@ -3127,6 +3192,7 @@ pub static USE_WAND_OF_FEAR: SingleSaveConditionItem = SingleSaveConditionItem {
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -3162,6 +3228,7 @@ pub static READ_HOLD_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[crate::engine::types::CreatureType::Humanoid],
 };
 
@@ -3189,6 +3256,7 @@ pub static READ_HOLD_MONSTER_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -3608,6 +3676,7 @@ pub static READ_BLINDNESS_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -3894,6 +3963,7 @@ pub static USE_WAND_OF_SLEEP: SingleSaveConditionItem = SingleSaveConditionItem 
     condition: Condition::Asleep,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4102,6 +4172,7 @@ pub static USE_WAND_OF_BINDING: SingleSaveConditionItem = SingleSaveConditionIte
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4124,6 +4195,7 @@ pub static READ_BANISHMENT_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::Mazed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4187,6 +4259,7 @@ pub static READ_CHARM_PERSON_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[crate::engine::types::CreatureType::Humanoid],
 };
 
@@ -4207,6 +4280,7 @@ pub static USE_WAND_OF_CHARM_MONSTER: SingleSaveConditionItem = SingleSaveCondit
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4228,6 +4302,7 @@ pub static READ_TASHAS_HIDEOUS_LAUGHTER_SCROLL: SingleSaveConditionItem = Single
     condition: Condition::Incapacitated,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4251,6 +4326,7 @@ pub static READ_HEAT_METAL_SCROLL: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::HeatMetaled,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4403,6 +4479,7 @@ pub static USE_WAND_OF_SUGGESTION: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4446,6 +4523,7 @@ pub static USE_WAND_OF_BLINDNESS: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Blinded,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4601,6 +4679,7 @@ pub static READ_FLESH_TO_STONE_SCROLL: SingleSaveConditionItem = SingleSaveCondi
     condition: Condition::Petrified,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4743,6 +4822,7 @@ pub static USE_WAND_OF_HOLD_MONSTER: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Paralyzed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4890,6 +4970,7 @@ pub static READ_PHANTASMAL_KILLER_SCROLL: SingleSaveConditionItem = SingleSaveCo
     condition: Condition::Frightened,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -4981,6 +5062,7 @@ pub static USE_EYES_OF_CHARMING: SingleSaveConditionItem = SingleSaveConditionIt
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5041,6 +5123,7 @@ pub static READ_RESILIENT_SPHERE_SCROLL: SingleSaveConditionItem = SingleSaveCon
     condition: Condition::Sphered,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5064,6 +5147,7 @@ pub static READ_TELEKINESIS_SCROLL: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5084,6 +5168,7 @@ pub static USE_WAND_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5107,6 +5192,7 @@ pub static READ_EARTHEN_GRASP_SCROLL: SingleSaveConditionItem = SingleSaveCondit
     condition: Condition::EarthenGrasped,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5460,6 +5546,7 @@ pub static READ_CONTAGION_SCROLL: SingleSaveConditionItem = SingleSaveConditionI
     condition: Condition::Poisoned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5841,6 +5928,7 @@ pub static USE_WAND_OF_STUNNING: SingleSaveConditionItem = SingleSaveConditionIt
     condition: Condition::Stunned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -5865,6 +5953,7 @@ pub static USE_IRON_BANDS_OF_BILARRO: SingleSaveConditionItem = SingleSaveCondit
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -6390,6 +6479,7 @@ pub static READ_BESTOW_CURSE_SCROLL: SingleSaveConditionItem = SingleSaveConditi
     condition: Condition::Baned,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Consumed,
+    escape: None,
     target_types: &[],
 };
 
@@ -9361,6 +9451,7 @@ pub static USE_RING_OF_TELEKINESIS: SingleSaveConditionItem = SingleSaveConditio
     condition: Condition::Lifted,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Free,
+    escape: None,
     target_types: &[],
 };
 
@@ -9396,6 +9487,7 @@ pub static THROW_ROPE_OF_ENTANGLEMENT: SingleSaveConditionItem = SingleSaveCondi
     condition: Condition::Restrained,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Free,
+    escape: None,
     target_types: &[],
 };
 
@@ -9428,6 +9520,7 @@ pub static WEAR_HELM_OF_TELEPATHY: SingleSaveConditionItem = SingleSaveCondition
     condition: Condition::Charmed,
     timer: ConditionTimer::Rounds(10),
     billing: ItemUseBilling::Charges(1),
+    escape: None,
     target_types: &[],
 };
 
@@ -10335,6 +10428,7 @@ pub static OPEN_IRON_FLASK: SingleSaveConditionItem = SingleSaveConditionItem {
     // full while it is empty and empty while it is full, and nothing
     // about a night's sleep lets go of what is inside it.
     billing: ItemUseBilling::Charges(1),
+    escape: None,
     target_types: &[],
 };
 
@@ -10817,6 +10911,7 @@ pub static AIM_DECANTER_GEYSER: SingleSaveConditionItem = SingleSaveConditionIte
     // installs it with, and for the same reason.
     timer: ConditionTimer::Permanent,
     billing: ItemUseBilling::Free,
+    escape: None,
     target_types: &[],
 };
 

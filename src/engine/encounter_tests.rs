@@ -51865,9 +51865,16 @@ fn wand_of_web_rejects_without_wand() {
 }
 
 /// Wand of Paralysis: single-target, CON save vs DC 15, fail =
-/// Paralyzed for 10 rounds. Seed-swept so the probabilistic save
-/// path lands at least one Paralyzed install across the trials.
-/// The wand is consumed on every use regardless.
+/// Paralyzed for up to a minute with RAW's repeat at the end of every
+/// one of the target's turns. Seed-swept so the probabilistic save path
+/// lands at least one install across the trials.
+///
+/// **It spends a charge and survives.** The wand used to be a one-shot
+/// consumable, and that one shot was the price of the missing escape —
+/// see `WAND_OF_PARALYSIS`, which carries the rule. With the escape
+/// restored the wand is RAW's, so it takes RAW's seven charges, and
+/// this test asserts both halves of that change at once: the pool goes
+/// down by one and the object stays in the pack.
 #[test]
 fn wand_of_paralysis_installs_paralyzed_on_failed_save() {
     use crate::actions::action_template::ActionExecutionInfo;
@@ -51899,15 +51906,42 @@ fn wand_of_paralysis_installs_paralyzed_on_failed_save() {
             None,
         );
         assert!(aei.validate(&e), "wand in inventory + target in range");
+        let charges_before = e.actors[&caster].item_charges_remaining("Wand of Paralysis");
+        assert_eq!(charges_before, 7, "RAW's pool (seed {})", seed);
         e.push_action(aei);
         e.process_stack();
         assert!(
-            e.actors[&caster].items().is_empty(),
-            "wand should be consumed on use (seed {})",
+            e.actors[&caster].has_item_named("Wand of Paralysis"),
+            "a wand with six charges left is still a wand (seed {})",
+            seed
+        );
+        assert_eq!(
+            e.actors[&caster].item_charges_remaining("Wand of Paralysis"),
+            6,
+            "one press, one charge (seed {})",
             seed
         );
         if e.actors[&zombie].has_condition(Condition::Paralyzed) {
             any_paralyzed = true;
+            // …and the beam left an escape behind it, which is the
+            // clause that let the charges ship. Rolled at the end of
+            // each of the target's turns; over enough rounds the
+            // zombie gets out, where the old flat timer held it for
+            // exactly ten.
+            let mut freed = false;
+            for _ in 0..40 {
+                e.round_end();
+                if !e.actors[&zombie].has_condition(Condition::Paralyzed) {
+                    freed = true;
+                    break;
+                }
+            }
+            assert!(
+                freed,
+                "a DC 15 Constitution repeat lets a zombie out inside forty \
+                 rolls (seed {})",
+                seed
+            );
             break;
         }
     }
@@ -54809,8 +54843,8 @@ fn boots_of_speed_install_fleet_and_consume() {
 /// Wand of Paralysis aimed at a Ring-of-Free-Action wearer is a
 /// no-op: the wearer is condition-immune to Paralyzed, so the save
 /// is skipped entirely (preserving the Heightened Spell prime if
-/// one is up). Wand still consumes — the player chose to fire it.
-/// Regression test for the `SingleSaveConditionItem` immunity-skip
+/// one is up). The charge is still spent — the player chose to press
+/// it. Regression test for the `SingleSaveConditionItem` immunity-skip
 /// optimization.
 #[test]
 fn wand_of_paralysis_skips_save_on_immune_target() {
@@ -54858,10 +54892,17 @@ fn wand_of_paralysis_skips_save_on_immune_target() {
         !e.actors[&immune_target].has_condition(Condition::Paralyzed),
         "Ring of Free Action should block Paralyzed install"
     );
-    // Wand still consumes — UX matches the player's intent.
+    // The charge is still spent — UX matches the player's intent —
+    // and the wand itself stays in the pack, because RAW's wand has
+    // six more presses in it.
+    assert_eq!(
+        e.actors[&caster].item_charges_remaining("Wand of Paralysis"),
+        6,
+        "a no-op shot still costs a charge"
+    );
     assert!(
-        !e.actors[&caster].has_item_named("Wand of Paralysis"),
-        "wand should still be consumed even on a no-op shot"
+        e.actors[&caster].has_item_named("Wand of Paralysis"),
+        "…and the wand is not spent by one wasted press"
     );
 }
 
