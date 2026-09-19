@@ -3088,7 +3088,10 @@ impl Action for ShieldOfFaith {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(1)
+        // SRD 5.2: *"Casting Time: Bonus Action"*, which no printing has
+        // ever disagreed with — this one was simply wrong. A +2 AC that
+        // costs the whole turn is a first-level slot nobody spends.
+        bonus_action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -5252,7 +5255,11 @@ impl Action for LesserRestoration {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(2)
+        // SRD 5.2: *"Casting Time: Bonus Action"*. An Action was the 2014
+        // printing, and the revision's change is the whole point of the
+        // spell in a fight: the cleric un-poisons the fighter *and*
+        // still gets to do something about whatever poisoned them.
+        bonus_action_and_slot(2)
     }
     fn custom_validate_input(
         &self,
@@ -5680,7 +5687,12 @@ impl Action for Heroism {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        bonus_action_and_slot(1)
+        // SRD 5.2: *"Casting Time: Action"*. A Bonus Action was never any
+        // printing's, and it is the one row on this sweep that made a
+        // spell *cheaper* than the book: a first-level slot that hands
+        // out temporary hit points and fear immunity without costing
+        // the turn is a bard buffing and attacking every round.
+        action_and_slot(1)
     }
     fn side_effects(
         &self,
@@ -25708,7 +25720,13 @@ impl Action for DragonsBreath {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(2)
+        // SRD 5.2: *"Casting Time: Bonus Action"*, and on this spell the
+        // casting time is the design. RAW buffs an ally who then breathes
+        // on their own turn; the engine collapses that to the caster
+        // exhaling at once (see the type docs), and a bonus action is
+        // what keeps the collapse honest — the two turns RAW spends are
+        // one action and one breath, not two actions.
+        bonus_action_and_slot(2)
     }
     fn side_effects(
         &self,
@@ -28228,7 +28246,12 @@ impl Action for Barkskin {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(2)
+        // SRD 5.2: *"Casting Time: Bonus Action"*. An Action here was the
+        // 2014 printing, and it is the other half of what the revision
+        // did for this spell — see `holds_concentration` for the first
+        // half. A druid who spends their whole turn armouring somebody
+        // else has spent the turn the armour was for.
+        bonus_action_and_slot(2)
     }
     fn custom_validate_input(
         &self,
@@ -36259,7 +36282,10 @@ impl Action for DivineWord {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        action_and_slot(7)
+        // SRD 5.2: *"Casting Time: Bonus Action"*, which is most of what a
+        // seventh-level finisher is: the cleric says the word *and*
+        // swings. An Action was the 2014 printing.
+        bonus_action_and_slot(7)
     }
     fn side_effects(
         &self,

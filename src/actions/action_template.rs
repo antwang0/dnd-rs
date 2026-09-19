@@ -945,6 +945,32 @@ pub fn billing_side_effects(
 /// one line at the call site and gives us a single chokepoint for any
 /// future cross-cutting change (e.g. a "verbal-component blocked while
 /// Silenced" gate would slot in here).
+///
+/// **It is also where the long casting times land**, and that is worth
+/// saying once here rather than a dozen times in `spells.rs`. A round
+/// is six seconds, so SRD 5.2's *"Casting Time: 1 minute"*, *"10
+/// minutes"* and *"1 hour"* are ten, a hundred and six hundred rounds —
+/// every one of them longer than any fight this engine runs, and none
+/// of them a thing the action economy can express. Twelve spells on
+/// the roster print one (Glyph of Warding, Magic Circle, Symbol,
+/// Imprisonment, Geas, Forbiddance, Tsunami, Prayer of Healing, Heroes'
+/// Feast, Regenerate, and the three resurrections) and all twelve
+/// resolve here, as one Action.
+///
+/// The collapse is not free and the direction it errs in is knowable:
+/// a ritual that RAW says cannot be cast *during* a fight becomes one
+/// that can. Prayer of Healing is the clearest case — ten minutes of
+/// RAW becomes a second-level in-combat heal. The alternative is not
+/// offering the spell at all, which is worse for the same reason the
+/// bestiary ships creatures whose signature move is an hour long: an
+/// encounter engine that refuses everything the encounter cannot hold
+/// is missing most of the book.
+///
+/// What this is **not** is a licence for the *short* casting times. An
+/// Action and a Bonus Action are both things a round has, so a spell
+/// whose line reads "Bonus Action" and whose cost reads `Action` is an
+/// error rather than a translation — six of them were, and are pinned
+/// in `the_casting_times_the_book_prints_are_the_ones_the_engine_charges`.
 pub fn action_and_slot(lvl: u32) -> Vec<Resource> {
     vec![Resource::Action, Resource::SpellSlot(lvl)]
 }

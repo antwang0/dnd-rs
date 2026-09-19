@@ -22825,6 +22825,67 @@ fn the_concentration_the_book_prints_is_the_concentration_the_engine_takes() {
     }
 }
 
+/// Six spells charged the wrong half of the action economy, found by
+/// reading every `cost` in `spells.rs` against the *Casting Time* line
+/// SRD 5.2 prints. Four should have been Bonus Actions and were
+/// Actions; one was the reverse; and one — Shield of Faith — has been a
+/// Bonus Action in every printing there has ever been and was simply
+/// wrong.
+///
+/// Pinned because the two halves of a turn are not interchangeable and
+/// the difference is invisible in the diff: `action_and_slot(2)` and
+/// `bonus_action_and_slot(2)` are one word apart and the second one is
+/// a different spell. Lesser Restoration is the clearest: as an Action
+/// the cleric un-poisons the fighter *instead of* doing something about
+/// whatever poisoned them, which is the trade the revision removed.
+///
+/// The *long* casting times are deliberately not here. A round is six
+/// seconds, so RAW's "1 minute" and "1 hour" have nowhere to go and
+/// twelve spells collapse them to an Action — argued once, at
+/// `action_template::action_and_slot`, rather than twelve times.
+#[test]
+fn the_casting_times_the_book_prints_are_the_ones_the_engine_charges() {
+    use crate::actions::spells::{
+        BARKSKIN, DIVINE_WORD, DRAGONS_BREATH, HEROISM, LESSER_RESTORATION, SHIELD_OF_FAITH,
+    };
+    use crate::actions::spells::FLAMING_SPHERE;
+    use crate::engine::side_effects::Resource;
+
+    // (action, is the printed casting time a Bonus Action)
+    let rows: [(&dyn crate::actions::action_template::Action, bool); 7] = [
+        (&*BARKSKIN, true),
+        (&*DIVINE_WORD, true),
+        (&*DRAGONS_BREATH, true),
+        (&*LESSER_RESTORATION, true),
+        (&*SHIELD_OF_FAITH, true),
+        (&*HEROISM, false),
+        // The near miss, and it is on the list because it *looks* like a
+        // seventh error: Flaming Sphere's cost block mentions a bonus
+        // action and is right to. RAW casts the sphere with an Action
+        // and then moves it with a Bonus Action every turn after, which
+        // is what `steered_zone_cost` is — so the row that matters here
+        // is the first cast.
+        (&*FLAMING_SPHERE, false),
+    ];
+    let e = ei_with_terrain(15, 15, &[]);
+    for (action, bonus) in rows {
+        let costs = action.cost(&e, 0, None, None, None);
+        let charges_bonus = costs.iter().any(|c| matches!(c, Resource::BonusAction));
+        let charges_action = costs.iter().any(|c| matches!(c, Resource::Action));
+        assert_eq!(
+            charges_bonus, bonus,
+            "{} should cost {}",
+            action.name(),
+            if bonus { "a Bonus Action" } else { "an Action" }
+        );
+        assert_eq!(
+            charges_action, !bonus,
+            "{} should not charge both halves of the turn",
+            action.name()
+        );
+    }
+}
+
 #[test]
 fn power_word_stun_no_op_above_threshold() {
     use crate::actions::spells::POWER_WORD_STUN;
