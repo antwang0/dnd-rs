@@ -417,6 +417,23 @@ const ROUND_END_SAVES: &[RoundEndSave] = &[
         save_ability: crate::engine::types::AbilityScoreType::Wisdom,
         log_verb: "strains against the thickening air:",
     },
+    // SRD 5.2 **Ray of Enfeeblement** — CON at the end of each of the
+    // victim's turns: *"the target repeats the save at the end of each
+    // of its turns, ending the spell on a success."*
+    //
+    // Concentration-anchored, like every row on this table, and that
+    // filter is what keeps it off the metallic dragons' Weakening
+    // Breath — which installs the same `Enfeebled` and offers the same
+    // repeat, but is not a spell anybody is holding. The dragon's
+    // escape is a `repeat_saves` ledger entry instead, rolled against
+    // the Strength the breath opened with rather than the Constitution
+    // this spell does. Two clauses, one condition, two DCs and two
+    // abilities — which is exactly the split the two lanes exist for.
+    RoundEndSave {
+        condition: Condition::Enfeebled,
+        save_ability: crate::engine::types::AbilityScoreType::Constitution,
+        log_verb: "gathers its strength against the beam:",
+    },
 ];
 
 /// Single entry in the round-end damage-over-time table. The engine
@@ -1157,6 +1174,14 @@ const STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS: &[(Condition, RollMode)] = &[
     // on another table to finish its sentence — see
     // `CONSTITUTION_CHECK_AND_SAVE_MODE_CONDITIONS`.
     (Condition::Withered, RollMode::Disadvantage),
+    // SRD 5.2's weakening clause — the metallic dragons' Weakening
+    // Breath and Ray of Enfeeblement, which print the same sentence:
+    // *"the target has Disadvantage on Strength-based D20 Tests"*. On
+    // the shared table because the pair is what the engine can ask
+    // about; the third lane RAW's wording reaches (a Strength attack
+    // roll) is the half that does not ship, and
+    // `Condition::Enfeebled` says why.
+    (Condition::Enfeebled, RollMode::Disadvantage),
 ];
 
 /// Conditions that flip the roll mode on **Strength checks only** —

@@ -6108,6 +6108,36 @@ pub struct ActorInstance {
     /// consumer's `unwrap_or(base)` lands on the printed level rather
     /// than on a stale one.
     condition_slot_levels: HashMap<Condition, u32>,
+    /// The die *this particular install* of a condition rolls, keyed by
+    /// the condition — the fourth sibling of the three tables above,
+    /// carrying a `Dice` where those carry an actor id, a damage type
+    /// and a slot level.
+    ///
+    /// SRD 5.2's **Weakening Breath** is the clause that forced it:
+    /// *"the target has Disadvantage on Strength-based D20 Tests and
+    /// subtracts 2 (1d4) from its damage rolls"* on a young gold
+    /// dragon, `1d6` on an adult, `1d10` on an ancient — one condition,
+    /// four magnitudes, printed on the stat block rather than on the
+    /// rule. **Ray of Enfeeblement** prints the same sentence with a
+    /// `1d8`.
+    ///
+    /// A condition-keyed table could not say that. `ATTACK_DAMAGE_
+    /// PENALTY_DICE` pairs one condition with one die, which is right
+    /// for Reduce (*"1d4 less damage"*, and there is only one Reduce)
+    /// and wrong for a clause whose size is a fact about who cast it.
+    /// The alternative was four conditions that differ by a die and
+    /// share every consumer.
+    ///
+    /// Keyed by condition for the reason all three tables above are: it
+    /// makes the teardown structural. `remove_condition` drops
+    /// `condition_dice[&c]` on the same line it drops the other three,
+    /// so an ancient dragon's `1d10` cannot outlive its breath and be
+    /// inherited by the next young dragon's. The read accessor
+    /// (`dice_of`) closes the other direction by answering `None`
+    /// unless the condition is actually held, so a consumer's
+    /// `unwrap_or(default)` lands on the table's printed die rather
+    /// than on a stale one.
+    condition_dice: HashMap<Condition, crate::engine::dice::Dice>,
     /// The conditions on this actor that *this particular install* ends
     /// when the holder takes damage — the fourth sibling of the three
     /// tables above, carrying nothing at all where those carry an actor
@@ -6679,6 +6709,7 @@ impl ActorInstance {
             condition_links: HashMap::new(),
             condition_damage_types: HashMap::new(),
             condition_slot_levels: HashMap::new(),
+            condition_dice: HashMap::new(),
             fragile_conditions: HashSet::new(),
             lair_actions: ct.lair_actions,
             legendary_actions: ct.legendary_actions,
@@ -6992,6 +7023,41 @@ impl ActorInstance {
             }
             None => {
                 self.condition_slot_levels.remove(&c);
+            }
+        }
+    }
+
+    /// The die `c` was installed with, or `None` if `c` isn't currently
+    /// held or was installed by something with no die to record.
+    ///
+    /// The `has_condition` guard is `linked_by`'s, `damage_type_of`'s
+    /// and `slot_level_of`'s, for their reason: every consumer wants
+    /// "how big is the penalty this creature is *currently* under", and
+    /// a bare table read would answer off a row whose condition had
+    /// already lapsed. Consumers spell it
+    /// `dice_of(X).unwrap_or(PRINTED)`, which lands on the table's own
+    /// default whenever nothing recorded one — so an install site that
+    /// forgets the payload is a little off rather than crashing.
+    pub fn dice_of(&self, c: Condition) -> Option<crate::engine::dice::Dice> {
+        if !self.has_condition(c) {
+            return None;
+        }
+        self.condition_dice.get(&c).copied()
+    }
+
+    /// Record the die `c` was installed with (or clear it with `None`).
+    ///
+    /// Callers normally reach this through the `SetConditionDice` side
+    /// effect rather than directly, so the die travels with the
+    /// `ApplyCondition` that installs the flag — see
+    /// `engine::side_effects::install_condition_with_dice`.
+    pub fn set_condition_dice(&mut self, c: Condition, dice: Option<crate::engine::dice::Dice>) {
+        match dice {
+            Some(d) => {
+                self.condition_dice.insert(c, d);
+            }
+            None => {
+                self.condition_dice.remove(&c);
             }
         }
     }
@@ -11151,6 +11217,11 @@ impl ActorInstance {
             // a Spirit Guardians cast at 9th that has lapsed must not
             // leave a 9 behind for the next 3rd-level cast to inherit.
             self.condition_slot_levels.remove(&c);
+            // And the die table, which is the same shape a fourth time:
+            // an ancient dragon's 1d10 Weakening Breath that has lapsed
+            // must not leave a d10 behind for a young one's 1d4 to
+            // inherit.
+            self.condition_dice.remove(&c);
             // And the fragility mark, which is the same shape a fourth
             // time: a trance that has already lapsed must not leave
             // "…and damage ends this" behind for the next install of

@@ -2968,7 +2968,11 @@ const LOCKDOWNS: &[LockdownPick] = &[
     LockdownPick { name: "dominate monster", condition: Some(Condition::Dominated) },
     // --- Tier 3: the two attrition rows this cohort already had. ---
     LockdownPick { name: "cause fear", condition: Some(Condition::Frightened) },
-    LockdownPick { name: "ray of enfeeblement", condition: Some(Condition::Poisoned) },
+    // SRD 5.2's clause rather than the 2014 one: the beam no longer
+    // installs Poisoned, so the row names what it actually lands.
+    // Still tier 3 and still the bottom of it — Enfeebled takes a die
+    // off the target's swings and leaves it swinging.
+    LockdownPick { name: "ray of enfeeblement", condition: Some(Condition::Enfeebled) },
 ];
 
 /// The conditions an **item**-granted single-target control action can
@@ -7251,7 +7255,7 @@ const ARCANE_SHOT_ORDER: &[(&str, AbilityScoreType, Condition)] = &[
     (
         "enfeebling arrow",
         AbilityScoreType::Constitution,
-        Condition::Enfeebled,
+        Condition::ArrowEnfeebled,
     ),
     (
         "beguiling arrow",

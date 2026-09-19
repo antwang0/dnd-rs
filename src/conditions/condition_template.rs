@@ -2993,7 +2993,9 @@ pub enum Condition {
     /// worth attacking has gone dark.
     ArcaneShotShadow,
     /// Weapon damage dealt by this creature is halved. Installed by the
-    /// Arcane Archer's Enfeebling Arrow on a failed CON save.
+    /// Arcane Archer's Enfeebling Arrow on a failed CON save — *"the
+    /// target deals only half damage with weapon attacks that use
+    /// Strength"* (XGtE).
     ///
     /// The mirror image of `DamageResistant`, which halves damage on the
     /// way *in*; this halves it on the way *out*, and it is read at the
@@ -3001,6 +3003,50 @@ pub enum Condition {
     /// rather than at the victim's. Weapon attacks only, per RAW — a
     /// spellcaster shrugs the arrow's necrotic drain off entirely, which
     /// is the trade the shot makes for how hard it hits a multiattacker.
+    ///
+    /// **It used to be called `Enfeebled`**, and giving the name back is
+    /// what let [`Condition::Enfeebled`] mean what SRD 5.2 means by it.
+    /// The two clauses are not the same rule and cannot share a row: a
+    /// halving is proportional and this book's weakening subtracts a
+    /// flat die, which is the difference between a rule that hurts a
+    /// greatsword most and one that hurts a dagger most. The archer's
+    /// is a 2014 clause, the book's is a 2024 one, and the engine
+    /// carries both.
+    ArrowEnfeebled,
+    /// SRD 5.2's **weakened** creature: *"the target has Disadvantage on
+    /// Strength-based D20 Tests and subtracts 1dN from its damage
+    /// rolls."*
+    ///
+    /// One sentence, printed twice in the book and never with the same
+    /// die: the metallic dragons' **Weakening Breath** scales it by age
+    /// (1d4 on a young gold, 1d6 on an adult, 1d10 on an ancient), and
+    /// **Ray of Enfeeblement** prints 1d8. The die therefore rides the
+    /// *install* rather than the condition — see
+    /// `ActorInstance::condition_dice`, the payload table this clause
+    /// is the reason for.
+    ///
+    /// Two cohorts carry the whole rule:
+    ///
+    ///   - `STRENGTH_CHECK_AND_SAVE_MODE_CONDITIONS` for the
+    ///     Disadvantage half. RAW's *"Strength-based D20 Tests"* is
+    ///     wider than that pair by one lane — a Strength attack roll —
+    ///     and the engine's attack chokepoint asks which *condition*
+    ///     the attacker holds rather than which ability the swing is
+    ///     using, so that third of the sentence is the part that does
+    ///     not ship. Named rather than quietly widened: putting this on
+    ///     `imposes_attacker_disadvantage` would tax a wizard's Fire
+    ///     Bolt, which RAW does not.
+    ///   - `ATTACK_DAMAGE_PENALTY_DICE` for the subtraction, which is
+    ///     the lane Reduce already rides and the reason a *penalty* is
+    ///     folded into the swing's own total rather than pushed as a
+    ///     negative packet.
+    ///
+    /// Both halves are new. What was here before was the archer's
+    /// halving under this name, which is neither clause — see
+    /// [`Condition::ArrowEnfeebled`], and the `MetallicBreathEffect::
+    /// Weaken` docstring, which said so at the time: *"modelled as
+    /// `Enfeebled`, which halves the holder's weapon damage rather than
+    /// subtracting a die… the disadvantage half is not modelled."*
     Enfeebled,
     /// 5e Way of the Astral Self Monk **Arms of the Astral Self**
     /// (subclass level 3, TCE). Spectral arms of ki settle over the
@@ -4520,7 +4566,8 @@ impl Condition {
             Condition::ArcaneShotEnfeebling => "enfeebling arrow nocked",
             Condition::ArcaneShotGrasping => "grasping arrow nocked",
             Condition::ArcaneShotShadow => "shadow arrow nocked",
-            Condition::Enfeebled => "enfeebled",
+            Condition::ArrowEnfeebled => "enfeebled (arrow)",
+            Condition::Enfeebled => "weakened",
             Condition::AstralArms => "arms of the astral self",
             Condition::PactWeapon => "bonded to a pact weapon",
             Condition::EldritchSmiting => "primed with an eldritch smite",

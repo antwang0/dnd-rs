@@ -60807,88 +60807,82 @@ fn true_sight_suppresses_blurred_disadvantage_on_attacker() {
     );
 }
 
-/// Ray of Enfeeblement's attack roll is a real spell attack roll:
-/// it can be intercepted, and cover raises the AC it is measured
-/// against.
+/// **Ray of Enfeeblement**, out of SRD 5.2 rather than the 2014 book.
 ///
-/// The spell rolls to hit and then installs a condition rather than
-/// dealing damage, so the damage-rolling resolver couldn't serve it
-/// and it open-coded its own roll — which quietly cost it cover,
-/// Sanctuary, the reactive taxes, Bless, Multiattack Defense, the
-/// interception cohort and the hit mark. It now shares the
-/// attack-roll half with every other spell attack.
+/// The spell used to be a ranged spell attack that installed
+/// `Poisoned` — an attack roll from one printing and a payload from
+/// neither. All four of the revision's clauses are asserted here,
+/// because each of them is invisible from the other three:
+///
+///   1. it is a **Constitution save**, so a hardy target can shrug it
+///      off and no d20 is rolled to hit;
+///   2. a **success still costs the target its next swing** — RAW's
+///      one-line consolation, which is Sap's own sentence;
+///   3. a **failure subtracts 1d8** from the target's damage rolls, on
+///      the lane Reduce already rides;
+///   4. …and leaves it at **Disadvantage on Strength checks and
+///      saves**, which is the half that used to be missing from the
+///      dragons' version of this clause too.
 #[test]
-fn ray_of_enfeeblement_rolls_a_real_spell_attack() {
-    use crate::actions::spells::RAY_OF_ENFEEBLEMENT;
+fn ray_of_enfeeblement_is_a_save_and_a_die_off_every_swing() {
+    use crate::actions::spells::{RAY_OF_ENFEEBLEMENT, RAY_OF_ENFEEBLEMENT_PENALTY};
+    use crate::actors::creatures::ogres::OGRE_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
-    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
 
-    // (1) Mirror Image can eat the ray. An intercepted swing lands
-    // on a decoy, so the Poisoned condition must not install.
-    let mut deflections = 0;
-    for seed in 0..60u64 {
+    // Sweep seeds so both branches of the save are observed; each is
+    // asserted the moment it shows up.
+    let (mut saw_pass, mut saw_fail) = (false, false);
+    for seed in 0..40u64 {
         let mut e = ei_with_terrain_seeded(15, 15, &[], seed);
         let wizard = e
             .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
             .unwrap();
-        let zombie = e
-            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(5, 2), 1, 0)
+        let ogre = e
+            .instantiate_creature(&OGRE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
             .unwrap();
-        {
-            let z = e.actors.get_mut(&zombie).unwrap();
-            z.add_condition(Condition::MirroredImages, ConditionTimer::Rounds(10));
-            z.set_mirror_images(3);
-        }
-        for eff in
-            RAY_OF_ENFEEBLEMENT.side_effects(&mut e, wizard, Some(&vec![zombie]), None, None)
-        {
+        for eff in RAY_OF_ENFEEBLEMENT.side_effects(&mut e, wizard, Some(&vec![ogre]), None, None) {
             eff.apply(&mut e);
         }
-        if e.messages().iter().any(|m| m.contains("duplicate")) {
-            deflections += 1;
+        assert!(
+            !e.messages()
+                .iter()
+                .any(|m| m.contains("ray of enfeeblement: 1d20(")),
+            "seed {seed}: the 2024 spell rolls no attack roll"
+        );
+        if e.actors[&ogre].has_condition(Condition::Enfeebled) {
+            saw_fail = true;
+            assert_eq!(
+                e.actors[&ogre].dice_of(Condition::Enfeebled),
+                Some(RAY_OF_ENFEEBLEMENT_PENALTY),
+                "seed {seed}: the spell's own 1d8 travels with the install"
+            );
+            assert_eq!(
+                e.compute_save_mode(ogre, AbilityScoreType::Strength),
+                RollMode::Disadvantage,
+                "seed {seed}: Disadvantage on Strength-based D20 Tests"
+            );
             assert!(
-                !e.actors[&zombie].has_condition(Condition::Poisoned),
-                "seed {}: an intercepted ray should install nothing",
-                seed
+                !e.actors[&ogre].has_condition(Condition::Sapped),
+                "seed {seed}: the consolation clause is for a *successful* save"
+            );
+            // And the die comes off the swing. An ogre's greatclub is
+            // 2d8+4, so a penalty is always visible against the
+            // un-enfeebled floor of 6.
+            let penalty = crate::engine::attack::attack_damage_penalty(&mut e, ogre);
+            assert!(
+                (-8..=-1).contains(&penalty),
+                "seed {seed}: 1d8 off the damage roll, got {penalty}"
+            );
+        } else {
+            saw_pass = true;
+            assert!(
+                e.actors[&ogre].has_condition(Condition::Sapped),
+                "seed {seed}: a save still costs the target its next attack roll"
             );
         }
     }
-    assert!(
-        deflections > 0,
-        "Mirror Image never intercepted the ray across 60 seeds"
-    );
-
-    // (2) Cover raises the AC the ray is measured against.
-    let mut e = ei_with_terrain(15, 15, &[]);
-    let wizard = e
-        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 2), 0, 0)
-        .unwrap();
-    e.instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(4, 2), 1, 0)
-        .expect("the interposed bystander should instantiate");
-    let zombie = e
-        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(6, 2), 1, 0)
-        .unwrap();
-    let cover = e.cover_ac_bonus(wizard, zombie);
-    assert!(cover > 0, "test setup: the bystander should grant cover");
-    let bare_ac = e.actors[&zombie].armor_class() as i32;
-    for eff in RAY_OF_ENFEEBLEMENT.side_effects(&mut e, wizard, Some(&vec![zombie]), None, None)
-    {
-        eff.apply(&mut e);
-    }
-    let line = e
-        .messages()
-        .iter()
-        .find(|m| m.contains("ray of enfeeblement: 1d20("))
-        .expect("the ray should have logged a roll")
-        .clone();
-    assert!(
-        line.contains(&format!("vs AC {}", bare_ac + cover)),
-        "cover should raise the AC the ray is measured against \
-         (bare {}, cover +{}): {}",
-        bare_ac,
-        cover,
-        line
-    );
+    assert!(saw_fail, "a DC-13-ish save fails somewhere in forty seeds");
+    assert!(saw_pass, "…and an ogre's Constitution makes it sometimes");
 }
 
 /// The Rogue's shortsword is on the shared attack pipeline, so the
@@ -82676,7 +82670,7 @@ fn enfeebled_halves_weapon_damage_but_not_spell_damage() {
     e.actors
         .get_mut(&ogre)
         .unwrap()
-        .add_condition(Condition::Enfeebled, ConditionTimer::Rounds(1));
+        .add_condition(Condition::ArrowEnfeebled, ConditionTimer::Rounds(1));
     assert_eq!(
         crate::engine::attack::attacker_scoped_damage_reduction(&mut e, ogre, victim, 20, true),
         10,
@@ -82733,7 +82727,7 @@ fn a_thinned_swarm_bites_for_half_and_stacks_with_enfeeblement() {
     e.actors
         .get_mut(&swarm)
         .unwrap()
-        .add_condition(Condition::Enfeebled, ConditionTimer::Rounds(1));
+        .add_condition(Condition::ArrowEnfeebled, ConditionTimer::Rounds(1));
     assert_eq!(
         crate::engine::attack::attacker_scoped_damage_reduction(&mut e, swarm, victim, 20, true),
         5,
@@ -98600,12 +98594,21 @@ fn a_chromatic_dragon_has_no_second_breath() {
     assert!(e.actors[&dragon].find_action("fire breath").is_some());
 }
 
-/// A gold dragon's weakening breath leaves its victims swinging at half
-/// strength — RAW's damage penalty, rendered as the engine's
-/// `Enfeebled`, which is the clause it already had for the Arcane
-/// Archer's enfeebling arrow.
+/// A gold dragon's weakening breath is the clause the book prints, at
+/// the size the book prints it.
+///
+/// *"The target has Disadvantage on Strength-based D20 Tests and
+/// subtracts 5 (1d10) from its damage rolls"* — on an **ancient** gold
+/// dragon. The die is the interesting half: it is the only metallic
+/// breath whose effect scales with age at all (1d4 on a wyrmling, 1d6
+/// on a young and an adult, 1d10 here), so it rides the install rather
+/// than the condition, and a breath that forgot to record it would fall
+/// back on Ray of Enfeeblement's 1d8 and look almost right.
+///
+/// It used to install the Arcane Archer's halving instead — neither
+/// clause, and no disadvantage at all.
 #[test]
-fn a_weakening_breath_leaves_its_victims_swinging_at_half_strength() {
+fn a_weakening_breath_carries_the_die_the_stat_block_prints() {
     use crate::actors::creatures::dragons::ANCIENT_GOLD_DRAGON_TEMPLATE;
     use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
 
@@ -98637,6 +98640,18 @@ fn a_weakening_breath_leaves_its_victims_swinging_at_half_strength() {
         );
         if e.actors[&goblin].has_condition(Condition::Enfeebled) {
             weakened = true;
+            assert_eq!(
+                e.actors[&goblin].dice_of(Condition::Enfeebled),
+                Some(crate::engine::dice::Dice::new(1, 10)),
+                "an ancient gold dragon's breath prints 5 (1d10), not the \
+                 spell's 1d8 (seed {seed})"
+            );
+            assert_eq!(
+                e.compute_save_mode(goblin, AbilityScoreType::Strength),
+                RollMode::Disadvantage,
+                "…and the half of RAW's sentence that used to be missing \
+                 (seed {seed})"
+            );
             break;
         }
     }

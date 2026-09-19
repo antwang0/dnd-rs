@@ -14364,13 +14364,27 @@ pub enum MetallicBreathEffect {
     /// Strength-based D20 Tests and subtracts 1dN from its damage
     /// rolls."*
     ///
-    /// Modelled as `Enfeebled`, which halves the holder's weapon damage
-    /// rather than subtracting a die. A halving is the harsher reading
-    /// at the top of the ladder and the gentler one at the bottom, and
-    /// it is the clause the engine already has; the disadvantage half
-    /// is not modelled, because nothing in the engine rolls a
-    /// Strength-based check often enough for it to be felt.
-    Weaken,
+    /// Both halves ship, as `Condition::Enfeebled` — see that variant
+    /// for the two cohorts that carry them and for the third lane RAW's
+    /// *"D20 Tests"* reaches that the engine cannot ask about.
+    ///
+    /// **The die is on the variant because it is on the stat block.**
+    /// RAW prints the same sentence at four sizes down the age ladder —
+    /// 1d4 on a wyrmling, 1d6 on a young and an adult, 1d10 on an
+    /// ancient — so it is a fact about *this dragon* rather than about
+    /// the rule, and it travels with the install through
+    /// `ActorInstance::condition_dice`. It is the only clause on this
+    /// enum that scales with age at all; every other metallic breath
+    /// grows by DC and cone alone.
+    ///
+    /// This used to be a bare `Weaken` installing the halving the
+    /// Arcane Archer's arrow uses, under a docstring admitting both
+    /// gaps: *"a halving … is the clause the engine already has; the
+    /// disadvantage half is not modelled, because nothing in the engine
+    /// rolls a Strength-based check often enough for it to be felt."*
+    /// The engine rolls Strength for every grapple, every shove and
+    /// every escape from one.
+    Weaken { penalty: Dice },
 }
 
 impl MetallicBreathEffect {
@@ -14388,7 +14402,7 @@ impl MetallicBreathEffect {
             MetallicBreathEffect::Ladder(l) => Some(l.first),
             MetallicBreathEffect::Repulse { .. } => None,
             MetallicBreathEffect::Slow => Some(Condition::Slowed),
-            MetallicBreathEffect::Weaken => Some(Condition::Enfeebled),
+            MetallicBreathEffect::Weaken { .. } => Some(Condition::Enfeebled),
         }
     }
 }
@@ -14483,15 +14497,18 @@ impl MetallicBreath {
         }
     }
 
-    /// Gold — Weakening Breath.
-    pub const fn weakening(dc: i32, cone: isize) -> Self {
+    /// Gold — Weakening Breath. The only metallic breath whose
+    /// *effect* grows with age as well as its DC and its cone: RAW
+    /// prints 1d4 on a wyrmling, 1d6 on a young and an adult, and 1d10
+    /// on an ancient.
+    pub const fn weakening(dc: i32, cone: isize, penalty: Dice) -> Self {
         Self {
             display_name: "weakening breath",
             aliases: &["weaken", "wkb"],
             save_ability: AbilityScoreType::Strength,
             dc,
             cone,
-            effect: MetallicBreathEffect::Weaken,
+            effect: MetallicBreathEffect::Weaken { penalty },
         }
     }
 
@@ -14606,7 +14623,7 @@ impl Action for MetallicBreath {
                 MetallicBreathEffect::Ladder(l) => l.first,
                 MetallicBreathEffect::Repulse { .. } => Condition::Prone,
                 MetallicBreathEffect::Slow => Condition::Slowed,
-                MetallicBreathEffect::Weaken => Condition::Enfeebled,
+                MetallicBreathEffect::Weaken { .. } => Condition::Enfeebled,
             };
             let save = encounter.roll_save_against_caster_vs_condition(
                 tid,
@@ -14651,7 +14668,7 @@ impl Action for MetallicBreath {
                         },
                     ));
                 }
-                MetallicBreathEffect::Weaken => {
+                MetallicBreathEffect::Weaken { penalty } => {
                     // RAW: "It repeats the save at the end of each of
                     // its turns, ending the effect on itself on a
                     // success. After 1 minute, it succeeds
@@ -14680,6 +14697,21 @@ impl Action for MetallicBreath {
                         &WEAKENING_BREATH,
                         ConditionTimer::Rounds(10),
                     );
+                    // …and this dragon's own die, recorded against the
+                    // condition the line above just installed. Written
+                    // here rather than through
+                    // `install_condition_with_dice` because
+                    // `begin_repeat_save` has already applied the
+                    // condition eagerly — it has a ledger to open — so
+                    // there is nothing left to pair the payload with.
+                    // Guarded on the install having stuck: a creature
+                    // immune to the condition must not be left holding
+                    // a d10 for the next thing that weakens it.
+                    if let Some(victim) = encounter.actors.get_mut(&tid)
+                        && victim.has_condition(Condition::Enfeebled)
+                    {
+                        victim.set_condition_dice(Condition::Enfeebled, Some(penalty));
+                    }
                 }
             }
         }

@@ -3580,6 +3580,59 @@ pub fn install_condition_at_slot_level(
     ]
 }
 
+/// Record the die a condition was installed with, on the creature that
+/// is carrying it.
+///
+/// The fourth member of the payload family beside `SetConditionLink`,
+/// `SetConditionDamageType` and `SetConditionSlotLevel`, and it exists
+/// for their reason: the flag and the number that qualifies it have to
+/// be installed together or not at all. Reach it through
+/// `install_condition_with_dice` rather than emitting it by hand.
+pub struct SetConditionDice {
+    pub target_id: usize,
+    pub condition: crate::conditions::Condition,
+    pub dice: Option<crate::engine::dice::Dice>,
+}
+
+impl ApplicableSideEffect for SetConditionDice {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.target_id) {
+            actor.set_condition_dice(self.condition, self.dice);
+        }
+    }
+}
+
+/// Install a condition together with the die it rolls: an
+/// `ApplyCondition` on the target, plus the `SetConditionDice`.
+///
+/// The mirror of `install_condition_at_slot_level` one helper up, and
+/// like it there is no membership list to check against: a die is only
+/// ever recorded by the one effect that is about to be read back
+/// through it, so the caller already knows the answer.
+///
+/// Half of this one is a penalty that quietly collapses to whatever
+/// default its reader names — see `ActorInstance::dice_of`, and
+/// `attack::attack_damage_penalty`, which is where the default lives.
+pub fn install_condition_with_dice(
+    condition: crate::conditions::Condition,
+    target_id: usize,
+    dice: crate::engine::dice::Dice,
+    timer: crate::conditions::ConditionTimer,
+) -> Vec<Box<dyn ApplicableSideEffect>> {
+    vec![
+        Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition,
+            timer,
+        }),
+        Box::new(SetConditionDice {
+            target_id,
+            condition,
+            dice: Some(dice),
+        }),
+    ]
+}
+
 /// A condition and the mark that says damage ends it, installed
 /// together as one effect — the fourth member of the payload family
 /// beside `SetConditionLink`, `SetConditionDamageType` and

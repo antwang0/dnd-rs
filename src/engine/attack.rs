@@ -1998,7 +1998,7 @@ pub fn attacker_scoped_damage_reduction(
         && encounter
             .actors
             .get(&attacker_id)
-            .is_some_and(|a| a.has_condition(Condition::Enfeebled))
+            .is_some_and(|a| a.has_condition(Condition::ArrowEnfeebled))
     {
         let weakened = damage / 2;
         encounter.log(format!(
@@ -7550,12 +7550,23 @@ pub fn try_fire_charge_follow_up(
 /// *before* resistance and the floor-at-zero clamp — otherwise a Reduced
 /// creature would deal full damage and then be handed a separate
 /// negative packet the damage pipeline has no meaning for.
+/// Each row's `Dice` is the **default**, not the answer: an install
+/// that recorded a die of its own through
+/// `side_effects::install_condition_with_dice` wins, and the table's
+/// number is what a row with no recorded die falls back on. Reduce
+/// never records one because there is only one Reduce; SRD 5.2's
+/// weakening clause always does, because the book prints it at four
+/// sizes — see `ActorInstance::condition_dice`.
 const ATTACK_DAMAGE_PENALTY_DICE: &[(Condition, Dice, &str)] = &[
     // 5e Reduce (the shrink half of Enlarge / Reduce): "any attack it
     // makes deals 1d4 less damage". Any attack, so both chokepoints ask
     // — the weapon lane here and the spell lane in
     // `spells::spell_attack_outcome`.
     (Condition::Reduced, Dice::new(1, 4), "reduce"),
+    // SRD 5.2's weakening clause: *"subtracts 1dN from its damage
+    // rolls"*. The printed default is Ray of Enfeeblement's 1d8; every
+    // dragon that breathes it records its own age's die instead.
+    (Condition::Enfeebled, Dice::new(1, 8), "weakened"),
 ];
 
 /// Roll and sum every damage penalty `caster_id` is currently under.
@@ -7574,7 +7585,14 @@ pub fn attack_damage_penalty(encounter: &mut EncounterInstance, caster_id: usize
         ATTACK_DAMAGE_PENALTY_DICE
             .iter()
             .filter(|(condition, _, _)| actor.has_condition(*condition))
-            .map(|(_, dice, label)| (*dice, *label))
+            // The install's own die wins over the table's — see the
+            // table docstring. `dice_of` answers `None` for a row
+            // nobody qualified, which is every Reduce and an
+            // Enfeebled installed by something that forgot, so the
+            // fallback is the printed default rather than nothing.
+            .map(|(condition, dice, label)| {
+                (actor.dice_of(*condition).unwrap_or(*dice), *label)
+            })
             .collect()
     };
     let mut total = 0;
@@ -8982,7 +9000,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
             spends_item_charge: None,
         },
         // Enfeebling Arrow: 2d6 necrotic, then a CON save or the
-        // target's own weapon damage is halved. See `Condition::Enfeebled`.
+        // target's own weapon damage is halved. See `Condition::ArrowEnfeebled`.
         OnHitRider {
             condition: Condition::ArcaneShotEnfeebling,
             dice: Dice::new(2, 6),
@@ -8995,7 +9013,7 @@ pub(crate) const ON_HIT_RIDERS: &[OnHitRider] = &[
                 dc_ability: AbilityScoreType::Intelligence,
                 fixed_dc: None,
                 effect: FollowUpEffect::Condition {
-                    condition: Condition::Enfeebled,
+                    condition: Condition::ArrowEnfeebled,
                     timer: ConditionTimer::Rounds(1),
                 },
                 label: "enfeebling arrow enfeeble",

@@ -2336,14 +2336,15 @@ static DRAGON_SECOND_BREATHS: [Option<MetallicBreath>; 40] = [
     Some(MetallicBreath::slowing(18, 24)),
     // Ancient Copper: 90-ft Cone, DC 22 CON.
     Some(MetallicBreath::slowing(22, 36)),
-    // Wyrmling Gold: 15-ft Cone, DC 13 STR.
-    Some(MetallicBreath::weakening(13, 6)),
-    // Young Gold: 30-ft Cone, DC 17 STR.
-    Some(MetallicBreath::weakening(17, 12)),
-    // Adult Gold: 60-ft Cone, DC 21 STR.
-    Some(MetallicBreath::weakening(21, 24)),
-    // Ancient Gold: 90-ft Cone, DC 24 STR.
-    Some(MetallicBreath::weakening(24, 36)),
+    // Wyrmling Gold: 15-ft Cone, DC 13 STR, 2 (1d4) off its damage.
+    Some(MetallicBreath::weakening(13, 6, Dice::new(1, 4))),
+    // Young Gold: 30-ft Cone, DC 17 STR, 3 (1d6).
+    Some(MetallicBreath::weakening(17, 12, Dice::new(1, 6))),
+    // Adult Gold: 60-ft Cone, DC 21 STR, 3 (1d6) — the one rung of the
+    // ladder where RAW does not grow the die.
+    Some(MetallicBreath::weakening(21, 24, Dice::new(1, 6))),
+    // Ancient Gold: 90-ft Cone, DC 24 STR, 5 (1d10).
+    Some(MetallicBreath::weakening(24, 36, Dice::new(1, 10))),
     // Wyrmling Silver: 15-ft Cone, DC 13 CON.
     Some(MetallicBreath::paralyzing(13, 6)),
     // Young Silver: 30-ft Cone, DC 17 CON.

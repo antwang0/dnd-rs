@@ -29503,10 +29503,48 @@ impl Action for Infestation {
 
 pub static INFESTATION: LazyLock<Infestation> = LazyLock::new(|| Infestation {});
 
-/// Ray of Enfeeblement — level-2 necromancy, concentration. Ranged spell
-/// attack; on hit, the target deals half damage with weapon attacks that
-/// use Strength for the duration. We approximate with the Poisoned
-/// condition (disadvantage on attacks + ability checks) for 10 rounds.
+/// **Ray of Enfeeblement** — SRD 5.2 level-2 necromancy (Warlock,
+/// Wizard), action, 60 feet, concentration up to 1 minute.
+///
+/// > *A beam of enervating energy shoots from you toward a creature
+/// > within range. The target must make a Constitution saving throw. On
+/// > a successful save, the target has Disadvantage on the next attack
+/// > roll it makes until the start of your next turn.*
+/// >
+/// > *On a failed save, the target has Disadvantage on Strength-based
+/// > D20 Tests for the duration. During that time, it also subtracts
+/// > 1d8 from all its damage rolls. The target repeats the save at the
+/// > end of each of its turns, ending the spell on a success.*
+///
+/// **It was being cast out of the 2014 book**, and out of a different
+/// one from the engine's own docstring: that printing is a *ranged
+/// spell attack* whose payload is *"only half damage with weapon
+/// attacks that use Strength"*, and the docstring went on to say the
+/// engine approximated even that with `Poisoned`. So a second-level
+/// slot bought an attack roll that could miss, and on a hit installed
+/// disadvantage on every attack and every ability check — a clause from
+/// neither printing, strictly better than the 2024 spell against a
+/// caster and strictly worse against a greatsword.
+///
+/// Four things change and all four are the same change:
+///
+///   - **A Constitution save, not an attack roll.** The 2024 spell
+///     cannot miss and cannot crit; what it can do is be shrugged off
+///     by something tough, which is the axis the whole revision moved
+///     it onto.
+///   - **A success is not nothing.** *"Disadvantage on the next attack
+///     roll it makes until the start of your next turn"* is word for
+///     word the Sap weapon mastery's clause, so it is
+///     `Condition::Sapped` — already on `imposes_attacker_disadvantage`
+///     and already spent by `CONSUMED_ON_ATTACK`, with a one-round
+///     timer covering the rest of RAW's window.
+///   - **A failure is `Condition::Enfeebled`**, the clause the metallic
+///     dragons breathe, carrying this spell's own 1d8 through
+///     `install_condition_with_dice`.
+///   - **The repeat save ships.** *"The target repeats the save at the
+///     end of each of its turns"* is `ROUND_END_SAVES`' sentence and
+///     this spell concentrates, so the table can find the DC by asking
+///     who is holding it — no `repeat_saves` ledger needed.
 pub struct RayOfEnfeeblement {}
 
 impl Action for RayOfEnfeeblement {
@@ -29572,49 +29610,60 @@ impl Action for RayOfEnfeeblement {
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        let attack_mod = caster.best_spell_attack_modifier([
-            AbilityScoreType::Intelligence,
-            AbilityScoreType::Wisdom,
-        ]);
-        // Ray of Enfeeblement is a spell attack whose payload is a
-        // condition rather than damage, so the damage-rolling
-        // `spell_attack_outcome` is no use to it — but the attack roll
-        // itself is the same attack roll, and this spell used to
-        // open-code it. That cost it cover, Sanctuary, the defender-side
-        // reactive taxes, Bless and Bane, the caster's attack buffs,
-        // Multiattack Defense, the interception cohort and the
-        // hit-this-turn mark, none of which anyone chose to skip.
-        // `spell_attack_roll` is the attack-roll half on its own.
-        if !spell_attack_roll(
-            encounter,
-            caster_id,
+        let dc = caster.spellcasting_save_dc();
+        let save = encounter.roll_save_against_caster_vs_condition(
             target_id,
-            "ray of enfeeblement",
-            attack_mod,
-            false,
-        )
-        .hit
-        {
-            return Vec::new();
-        }
-        let cond = Condition::Poisoned;
-        let timer = ConditionTimer::Rounds(10);
-        vec![
-            Box::new(ApplyCondition {
+            AbilityScoreType::Constitution,
+            dc,
+            caster_id,
+            Condition::Enfeebled,
+        );
+        if save.passed() {
+            // RAW's success clause, which the 2014 printing does not
+            // have and which is most of what makes this a save-based
+            // spell rather than a gamble: the beam still costs the
+            // target its next swing. Word for word the Sap mastery's
+            // sentence — see `Condition::Sapped`, which carries it.
+            encounter.log(format!(
+                "  ray of enfeeblement: {} shrugs the beam off, but not cleanly.",
+                encounter.actor_name(target_id)
+            ));
+            return vec![Box::new(ApplyCondition {
                 actor_id: target_id,
-                condition: cond,
-                timer,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Ray of Enfeeblement",
-                    vec![(target_id, cond)],
-                ),
-            }),
-        ]
+                condition: Condition::Sapped,
+                timer: ConditionTimer::Rounds(1),
+            })];
+        }
+        encounter.log(format!(
+            "  ray of enfeeblement: {} sags; -1d8 on every damage roll.",
+            encounter.actor_name(target_id)
+        ));
+        let timer = ConditionTimer::Rounds(RAY_OF_ENFEEBLEMENT_ROUNDS);
+        let mut out = crate::engine::side_effects::install_condition_with_dice(
+            Condition::Enfeebled,
+            target_id,
+            RAY_OF_ENFEEBLEMENT_PENALTY,
+            timer,
+        );
+        out.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions(
+                "Ray of Enfeeblement",
+                vec![(target_id, Condition::Enfeebled)],
+            ),
+        }));
+        out
     }
 }
+
+/// RAW's *"subtracts 1d8 from all its damage rolls"*, and the reason
+/// `ActorInstance::condition_dice` is a table rather than a constant:
+/// the metallic dragons print the same clause at 1d4, 1d6 and 1d10.
+pub const RAY_OF_ENFEEBLEMENT_PENALTY: Dice = Dice::new(1, 8);
+
+/// RAW's *"Concentration, up to 1 minute"*, in rounds. The cap rather
+/// than the expectation — the repeat save is what usually ends it.
+const RAY_OF_ENFEEBLEMENT_ROUNDS: u32 = 10;
 
 pub static RAY_OF_ENFEEBLEMENT: LazyLock<RayOfEnfeeblement> =
     LazyLock::new(|| RayOfEnfeeblement {});
