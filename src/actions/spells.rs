@@ -8564,7 +8564,8 @@ impl Action for Invisibility {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch — 5 ft = 1 tile.
+        // Touch, which on this board is adjacency rather than a
+        // distance — see `action_template::MELEE_REACH`.
         Some(crate::actions::action_template::MELEE_REACH)
     }
     fn is_harmful(&self) -> bool {
@@ -8644,7 +8645,8 @@ impl Action for BestowCurse {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch — 5 ft = 1 tile.
+        // Touch, which on this board is adjacency rather than a
+        // distance — see `action_template::MELEE_REACH`.
         Some(crate::actions::action_template::MELEE_REACH)
     }
     fn deals_damage(&self) -> bool {
@@ -15957,9 +15959,15 @@ pub static HEAT_METAL: LazyLock<HeatMetal> = LazyLock::new(|| HeatMetal {});
 
 /// Chain Lightning — 6th-level evocation. A bolt of lightning leaps
 /// from the caster to a primary target (DEX save for half, 10d8
-/// lightning), then forks to up to 3 additional creatures within
-/// 5 tiles (25ft RAW) of the primary — each rolling its own DEX save
-/// for half. Selection of secondary targets is deterministic: the 3
+/// lightning), then forks to up to three additional creatures within
+/// thirty feet of the primary — RAW's *"up to three creatures … within
+/// 30 feet of the first"* — each rolling its own DEX save for half.
+///
+/// The fork radius used to be a bare `5` in the loop below with a
+/// comment reading "25ft RAW" beside it, which is wrong twice: the
+/// book prints thirty, and five tiles on this grid is twelve and a
+/// half. The spell's whole identity is the fork, and it was reaching
+/// less than half as far as it should. Selection of secondary targets is deterministic: the 3
 /// nearest combat-active actors (other than the primary), excluding
 /// the caster. Mixed-team — fork hits allies as well as enemies, so
 /// the AI's friendly-fire heuristic gates casting through
@@ -16040,8 +16048,12 @@ impl Action for ChainLightning {
             }));
         }
 
-        // Find the 3 nearest combat-active actors within 5 tiles of the
-        // primary — caster excluded so the bolt doesn't bite its source.
+        // SRD 5.2: *"within 30 feet of the first"*. Derived rather
+        // than asserted, so the prose and the number cannot drift
+        // apart again — see `util::tiles_from_feet`.
+        let fork_radius = tiles_from_feet(30) as isize;
+        // Find the three nearest combat-active actors inside it —
+        // caster excluded so the bolt doesn't bite its source.
         let Some(primary) = encounter.actors.get(&primary_id) else {
             return effects;
         };
@@ -16060,7 +16072,7 @@ impl Action for ChainLightning {
                     primary_loc,
                     primary_size,
                 );
-                if dist > 5 {
+                if dist > fork_radius {
                     return None;
                 }
                 Some((dist, *id))
@@ -17728,8 +17740,11 @@ impl Action for Fly {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch range — 5ft = 1 tile.
-        Some(1)
+        // Touch, which on this board is adjacency rather than a
+        // distance — see `action_template::MELEE_REACH`, whose whole
+        // job is that a reach of 1 means "arm's length" and not "two
+        // and a half feet".
+        Some(crate::actions::action_template::MELEE_REACH)
     }
     fn is_harmful(&self) -> bool {
         false
@@ -31390,8 +31405,11 @@ impl Action for SpiderClimb {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch range — 5ft = 1 tile.
-        Some(1)
+        // Touch, which on this board is adjacency rather than a
+        // distance — see `action_template::MELEE_REACH`, whose whole
+        // job is that a reach of 1 means "arm's length" and not "two
+        // and a half feet".
+        Some(crate::actions::action_template::MELEE_REACH)
     }
     fn is_harmful(&self) -> bool {
         false

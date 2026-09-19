@@ -115818,6 +115818,216 @@ fn every_weapon_deals_the_damage_its_own_docstring_quotes() {
     );
 }
 
+/// The third sibling of the sweeps above, and the one that reads the
+/// *prose* rather than the declaration.
+///
+/// A comment that writes an equation out — "12 tiles (60 ft)", "30 ft
+/// RAW = 6 tiles" — is making a checkable claim about a grid that is
+/// two and a half feet to the tile, and a surprising number of them
+/// were reading it at five. Six were found when this sweep was
+/// written, and four of the six were not cosmetic: the Search action
+/// scanned thirty feet while claiming sixty (half the envelope of the
+/// Wand of Enemy Detection, which does the same job without spending
+/// the Action), Chain Lightning forked twelve and a half feet where
+/// the book prints thirty, a pixie's sleep dust reached fifteen under
+/// a docstring saying thirty, and a dragon's magma eruption covered a
+/// quarter of the area its stat block sells.
+///
+/// None of those was visible from the declaration, which is why
+/// `every_area_radius_converts_the_feet_its_own_comment_claims` could
+/// not find them: the numbers were bare literals inside a function
+/// body or an `Option`, and the only thing that knew what they were
+/// supposed to mean was a sentence. The fix in each case was to write
+/// `tiles_from_feet(feet)` and let the compiler hold the conversion —
+/// which is the argument that helper's own docstring has been making
+/// since before there was a sweep to enforce it.
+///
+/// **Two exemptions, and both are about what a sentence is doing.**
+///
+/// A claim inside quotation marks is a *quotation*. `util.rs` quotes
+/// the wrong equations it was written to replace, and so does the
+/// comment on `LAIR_ERUPTION`; a sweep that reported those would be
+/// asking each fix to stop describing the bug it fixed.
+///
+/// A claim near the word "reach" converts by a different rule. This
+/// layer's `MELEE_REACH` is 1 and means arm's length, so a reach of 2
+/// is RAW's 10 ft and a reach of 4 is the Tarrasque's 20 — five feet
+/// to the step rather than two and a half, because what is counted is
+/// gaps between bodies rather than distance across open floor. That
+/// convention is deliberate and documented where it lives;
+/// `every_weapon_deals_the_damage_its_own_docstring_quotes` is the
+/// sweep that checks it, and here it is simply out of scope.
+#[test]
+fn every_written_out_conversion_in_a_comment_survives_the_arithmetic() {
+    use crate::engine::util::tiles_from_feet;
+
+    /// The engine's own prose plus the action files and the AI. The
+    /// bestiary's three hundred and forty stat blocks are out of scope
+    /// for the reason they are out of scope for the doc-reference
+    /// sweep: there is no way to `include_str!` a directory, and the
+    /// alternative is three hundred and forty lines of manifest.
+    const CONVERSION_SOURCES: &[(&str, &str)] = &[
+        (
+            "actions/default_actions.rs",
+            include_str!("../actions/default_actions.rs"),
+        ),
+        ("actions/spells.rs", include_str!("../actions/spells.rs")),
+        (
+            "actions/monster_attacks.rs",
+            include_str!("../actions/monster_attacks.rs"),
+        ),
+        (
+            "actions/class_features.rs",
+            include_str!("../actions/class_features.rs"),
+        ),
+        (
+            "actions/item_actions.rs",
+            include_str!("../actions/item_actions.rs"),
+        ),
+        ("ai/simple.rs", include_str!("../ai/simple.rs")),
+        ("engine/banishment.rs", include_str!("banishment.rs")),
+        ("engine/encounter.rs", include_str!("encounter.rs")),
+        ("engine/illusions.rs", include_str!("illusions.rs")),
+        ("engine/lair_actions.rs", include_str!("lair_actions.rs")),
+        ("engine/util.rs", include_str!("util.rs")),
+        ("engine/zones.rs", include_str!("zones.rs")),
+    ];
+
+    /// How far back the "is this about a reach" question looks. Three
+    /// lines covers a `fn reach_tiles` signature and the comment block
+    /// under it, which is where the convention actually shows up.
+    const REACH_LOOKBACK: usize = 3;
+
+    /// The separators that spell an equation out, and whether the tile
+    /// count is the number on the left of them.
+    ///
+    /// Literal separators rather than a general grammar, because the
+    /// sweep's job is to read the handful of shapes people actually
+    /// type and to be *certain* about them. A looser matcher reports
+    /// "12 tiles on the 2.5 ft grid" as a claim that twelve tiles is
+    /// two and a half feet, and a sweep that cries wolf is a sweep
+    /// somebody deletes.
+    const CONVERSION_FORMS: &[(&str, bool)] = &[
+        ("tiles (", true),
+        ("tile (", true),
+        ("tiles = ", true),
+        ("tile = ", true),
+        ("ft = ", false),
+        ("feet = ", false),
+        ("ft RAW = ", false),
+        ("feet RAW = ", false),
+    ];
+
+    /// The digits immediately to the left of `end`, skipping any spaces
+    /// between them and it.
+    fn number_before(s: &str, end: usize) -> Option<u32> {
+        let mut end = end;
+        while end > 0 && s.as_bytes()[end - 1] == b' ' {
+            end -= 1;
+        }
+        let start = s[..end]
+            .rfind(|c: char| !c.is_ascii_digit())
+            .map_or(0, |i| i + 1);
+        if start == end {
+            return None;
+        }
+        s[start..end].parse().ok()
+    }
+
+    /// The number at the front of `s`, and what follows it. Leading `≈`
+    /// and `~` are approximation marks rather than arithmetic and are
+    /// skipped: a comment reading "≈ 60 ft" is still claiming sixty.
+    fn number_after(s: &str) -> Option<(u32, &str)> {
+        let s = s.trim_start_matches(['≈', '~', ' ']);
+        let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+        if end == 0 {
+            return None;
+        }
+        Some((s[..end].parse().ok()?, &s[end..]))
+    }
+
+    /// Which unit `s` starts with, if either.
+    fn unit_of(s: &str) -> Option<&'static str> {
+        let s = s.strip_prefix(' ').unwrap_or(s);
+        if s.starts_with("tile") {
+            Some("tiles")
+        } else if s.starts_with("ft") || s.starts_with("feet") {
+            Some("ft")
+        } else {
+            None
+        }
+    }
+
+    /// `(tiles, feet)` for the equation `line` writes out around the
+    /// separator at `at`, or `None` when what is there is not one.
+    fn claim_at(line: &str, at: usize, sep: &str, tiles_left: bool) -> Option<(u32, u32)> {
+        let left = number_before(line, at)?;
+        let (right, rest) = number_after(&line[at + sep.len()..])?;
+        let want = if tiles_left { "ft" } else { "tiles" };
+        if unit_of(rest)? != want {
+            return None;
+        }
+        Some(if tiles_left { (left, right) } else { (right, left) })
+    }
+
+    let mut wrong: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+    for (file, text) in CONVERSION_SOURCES {
+        let lines: Vec<&str> = text.lines().collect();
+        for (n, line) in lines.iter().enumerate() {
+            if !line.trim_start().starts_with("//") {
+                continue;
+            }
+            // The reach convention counts gaps between bodies rather
+            // than distance across floor. Out of scope — see above.
+            if lines[n.saturating_sub(REACH_LOOKBACK)..=n]
+                .iter()
+                .any(|l| l.to_lowercase().contains("reach"))
+            {
+                continue;
+            }
+            for (sep, tiles_left) in CONVERSION_FORMS {
+                for (at, _) in line.match_indices(sep) {
+                    // A quotation is somebody else's sentence,
+                    // including this crate's own quotations of the
+                    // equations it was written to replace.
+                    if line[..at].matches('"').count() % 2 == 1 {
+                        continue;
+                    }
+                    let Some((tiles, feet)) = claim_at(line, at, sep, *tiles_left) else {
+                        continue;
+                    };
+                    checked += 1;
+                    if tiles != tiles_from_feet(feet) {
+                        wrong.push(format!(
+                            "{}:{}: says {} tiles is {} ft — the grid makes it {}",
+                            file,
+                            n + 1,
+                            tiles,
+                            feet,
+                            tiles_from_feet(feet)
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        checked > 40,
+        "only {checked} written-out conversions swept — the walk has \
+         stopped finding them, which is how a sweep passes without \
+         looking at anything"
+    );
+    assert!(
+        wrong.is_empty(),
+        "the grid is 2.5 ft to the tile. A comment that writes the \
+         conversion out is making a claim nothing else can see, and \
+         these ones are wrong — which is how four live range bugs got \
+         in. Write `tiles_from_feet(feet)` and delete the claim:\n{}",
+        wrong.join("\n")
+    );
+}
+
 /// Radii only. A comment naming a wall's *length* or a spell's *range*
 /// is not making a claim about a Chebyshev radius, and a sweep that
 /// compared the two would be inventing a rule rather than checking one.

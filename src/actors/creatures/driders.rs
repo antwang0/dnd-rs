@@ -21,8 +21,9 @@ use std::sync::LazyLock;
 ///   or moving in.
 /// - **drider longbow** (standalone) — 1d8+DEX piercing ranged. The
 ///   hit-and-run alternative when an enemy is out of melee reach;
-///   range 12 tiles (≈60ft normal, 100ft max — under the RAW long-
-///   range threshold for indoor maps).
+///   the standard longbow envelope — 12 tiles of normal range (30 ft)
+///   out to a 20-tile cap (50 ft), sized for a board rather than for
+///   the 150/600 the stat block prints.
 /// - **drider bite** (standalone) — 1d4+STR piercing + 4d8 poison rider
 ///   (CON 13 save for half). The signature spider-half lethality —
 ///   even on a save the target eats 2d8 poison damage.

@@ -13947,7 +13947,10 @@ impl Action for CarrionCrawlerTentacles {
         TargetingSchema::SingleActor
     }
     fn reach_tiles(&self) -> Option<isize> {
-        // 10 ft RAW = 2 tiles. Tentacles are longer than the bite below.
+        // RAW's 10 ft reach, which on this board is a gap of 2 —
+        // one tile past arm's length, because `MELEE_REACH` of 1
+        // is already the ordinary 5 ft swing. Longer than the
+        // bite below.
         Some(2)
     }
     fn damage_types(&self) -> Vec<DamageType> {
@@ -16691,7 +16694,7 @@ pub static HELMED_HORROR_MULTI: LazyLock<Multiattack> = LazyLock::new(|| Multiat
 // ─── Pixie ───────────────────────────────────────────────────────────
 
 /// Pixie Sleep Dust — burst-1 (5 ft) save-burst centered on a chosen tile
-/// within 6 tiles (30 ft). Every creature in the burst makes a DC 12 WIS
+/// within thirty feet. Every creature in the burst makes a DC 12 WIS
 /// save; on fail they fall Asleep for 10 rounds (1 minute RAW). Mirrors
 /// the chosen-tile + small radius shape of the bulette's earth tremor
 /// or the orcish javelin's drop — single Action cost, no recharge
@@ -16716,7 +16719,11 @@ impl Action for PixieSleepDust {
         TargetingSchema::Burst { radius: 1 }
     }
     fn reach_tiles(&self) -> Option<isize> {
-        Some(6)
+        // Thirty feet, derived rather than asserted. It was a bare `6`
+        // under a docstring reading "(30 ft)", which is fifteen — so
+        // the pixie's one crowd-control button reached half as far as
+        // the sheet said it did. See `util::tiles_from_feet`.
+        Some(crate::engine::util::tiles_from_feet(30) as isize)
     }
     fn requires_los(&self) -> bool {
         true
@@ -17199,9 +17206,10 @@ pub static DRIDER_LONGSWORD: SimpleWeapon = SimpleWeapon::melee(
 
 /// Drider Longbow — DEX-based 1d8+DEX piercing ranged. The ranged half
 /// of the drider's kit; pairs with the bite for a hit-and-run profile
-/// at mid-range. Range 12 tiles (≈ 60ft normal, well under the 80/320
-/// RAW long-range threshold; the drider's longbow stat reads "+5 to
-/// hit, range 150/600" — the engine caps reach at 20 for indoor maps).
+/// at mid-range. The standard `LONGBOW` envelope: 12 tiles of normal
+/// range (30 ft) out to a 20-tile cap (50 ft), well under the 150/600
+/// the drider's stat block prints, and sized for a board rather than
+/// for a field. See `LONGBOW`, whose numbers these are.
 pub static DRIDER_LONGBOW: SimpleWeapon = SimpleWeapon::ranged(
     "drider longbow",
     &["dlb", "drider-bow"],

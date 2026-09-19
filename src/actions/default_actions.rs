@@ -10,6 +10,7 @@ use crate::{
         action_overrides::ActionOverride,
         encounter::EncounterInstance,
         side_effects::{MoveActor, Resource, SkipTurn},
+        util::tiles_from_feet,
     },
 };
 
@@ -1663,10 +1664,12 @@ pub static HIDE: LazyLock<Hide> = LazyLock::new(|| Hide {});
 /// creature holding `Hidden` because something installed it directly,
 /// and the `Invisible` branch, which is a spell rather than a check.
 ///
-/// Range is bounded by a footprint-Chebyshev gap of 12 (60 ft) — a
-/// reasonable in-combat "scan the room" envelope. The Perception check
-/// itself routes through `roll_ability_check` so racial / passive
-/// bonuses (Keen Senses, etc.) stack on top cleanly.
+/// Range is bounded by a footprint-Chebyshev gap of sixty feet — a
+/// reasonable in-combat "scan the room" envelope, and the same one the
+/// Wand of Enemy Detection covers, which is the item that does this
+/// job without spending the Action. The Perception check itself routes
+/// through `roll_ability_check` so racial / passive bonuses (Keen
+/// Senses, etc.) stack on top cleanly.
 pub struct Search {}
 
 impl Action for Search {
@@ -1696,20 +1699,30 @@ impl Action for Search {
         use crate::conditions::Condition;
         use crate::engine::types::{AbilityScoreType, Skill};
         use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
-        const SEARCH_RANGE: isize = 12;
+        // Sixty feet, derived rather than asserted. It used to be a
+        // bare `12` with a comment reading "(60 ft)" beside it, which
+        // is thirty — and the gap had a symptom: the Wand of Enemy
+        // Detection does the same job across the same board and its
+        // reach is 24, so the Action was half the envelope of the item
+        // that replaces it, for no reason anybody had chosen.
+        //
+        // Written through `tiles_from_feet` for exactly that reason.
+        // The helper's own docstring makes the argument: a conversion
+        // spelled out in prose at the call site is a conversion nothing
+        // checks, and this is what that looks like when it drifts.
+        let search_range = tiles_from_feet(60) as isize;
         // The floor is looked at from much closer than a room is
         // scanned. RAW's trap entries say "examine the trapped area" and
-        // "a creature within 5 feet of the statue"; four tiles is ten
-        // feet on the 2.5-ft grid, which is the tile you are standing on
-        // and the ring around it — the ground a creature could actually
-        // crouch down and read.
+        // "a creature within 5 feet of the statue"; ten feet is the tile
+        // you are standing on and the ring around it — the ground a
+        // creature could actually crouch down and read.
         //
-        // Deliberately much shorter than `SEARCH_RANGE`. A search that
-        // found every pressure plate in the room from thirty feet away
-        // would make the Action the answer to the whole trap layer, and
-        // there would be no reason ever to walk anywhere without
-        // spending it first.
-        const TRAP_SEARCH_RANGE: isize = 4;
+        // Deliberately much shorter than the room scan above. A search
+        // that found every pressure plate in the room from sixty feet
+        // away would make the Action the answer to the whole trap
+        // layer, and there would be no reason ever to walk anywhere
+        // without spending it first.
+        let trap_search_range = tiles_from_feet(10) as isize;
 
         let Some(searcher) = encounter.actors.get(&caster_id) else {
             return Vec::new();
@@ -1753,7 +1766,7 @@ impl Action for Search {
                     a.location(),
                     get_tiles_from_size(a.size()),
                 );
-                if dist > SEARCH_RANGE {
+                if dist > search_range {
                     return None;
                 }
                 Some(*id)
@@ -1833,7 +1846,7 @@ impl Action for Search {
         // `reveal_zone` is a change to the board rather than to an
         // actor, the same reason `add_light_source` is called inline by
         // the spells that light one.
-        for (zone_id, dc) in encounter.concealed_zones_near(caster_id, TRAP_SEARCH_RANGE) {
+        for (zone_id, dc) in encounter.concealed_zones_near(caster_id, trap_search_range) {
             if perception < dc {
                 continue;
             }

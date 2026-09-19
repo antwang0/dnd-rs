@@ -19,10 +19,11 @@ use std::sync::LazyLock;
 /// dinos. Pteranodon (CR ¼) fills the flying-dino spot.
 ///
 /// Action lanes:
-/// - **plesiosaurus bite** — STR-based 3d6+STR piercing melee at reach
-///   2 tiles (10 ft — the long neck lets the plesiosaurus bite from
-///   outside normal melee range, mirroring the Giant Constrictor
-///   Snake's reach lane). Vanilla `SimpleWeapon::reach_melee` — no
+/// - **plesiosaurus bite** — STR-based 3d6+STR piercing melee at a
+///   reach of 2, which is RAW's 10 ft: one tile past the ordinary
+///   swing, because the long neck lets the plesiosaurus bite from
+///   outside normal melee range — the same lane the Giant Constrictor
+///   Snake uses. Vanilla `SimpleWeapon::reach_melee` — no
 ///   rider; the load-bearing combat clause is the per-Action damage
 ///   budget on a huge HP bar.
 ///

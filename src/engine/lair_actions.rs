@@ -76,13 +76,21 @@ const LAIR_DC_FLOOR: i32 = 15;
 
 /// Radius, in tiles, of a lair effect that catches "each creature in
 /// the lair". The board is the lair, so this is deliberately larger
-/// than any spell radius — 20 tiles is 100 ft, which covers a generated
-/// map end to end.
+/// than any spell radius — twenty tiles is fifty feet, which covers a
+/// generated map end to end. (It used to claim a hundred, which is the
+/// grid read at five feet a tile rather than two and a half; the
+/// number was never wrong, only the sentence beside it.)
 const LAIR_WIDE: isize = 20;
 
-/// Radius of a lair effect that erupts at a point. 4 tiles = 20 ft,
-/// the radius RAW prints for a dragon's magma eruption.
-const LAIR_ERUPTION: isize = 4;
+/// Radius of a lair effect that erupts at a point — the twenty feet RAW
+/// prints for a dragon's magma eruption, derived rather than asserted.
+///
+/// It was `4` under a comment reading "4 tiles = 20 ft", which is ten:
+/// the eruption covered a quarter of the area the stat block sells and
+/// the lair's one aimed effect was reliably catching a single creature.
+/// See `util::tiles_from_feet` for why this is now a conversion rather
+/// than a claim.
+const LAIR_ERUPTION: isize = crate::engine::util::tiles_from_feet(20) as isize;
 
 /// Centre of a lair effect that erupts *somewhere*. RAW lets the
 /// resident pick a point it can see; the lair picks the enemy cluster

@@ -404,8 +404,9 @@ impl EncounterInstance {
 /// How far from its remembered space a returning creature will look for
 /// room, in tiles.
 ///
-/// Four rings is a little over 20 feet — far enough to clear the body
-/// that walked into the space and the wall somebody conjured across it,
+/// Four rings is ten feet, and a little over fourteen on the diagonal —
+/// far enough to clear the body that walked into the space and the wall
+/// somebody conjured across it,
 /// and short enough that "the nearest unoccupied space" still means
 /// something. Beyond this the creature waits rather than teleporting
 /// itself out of the fight it was pulled from.
