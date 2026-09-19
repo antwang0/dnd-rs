@@ -10635,6 +10635,36 @@ fn try_wall_off_approach(
 /// on the picture never raised the aspect at all — which is the
 /// concrete shape of "worth less than every concentration buff on the
 /// sheet".
+///
+/// **What that placement costs, measured.** Across twenty-four AI-vs-AI
+/// fights the rung was *offered* on about four percent of a bard's
+/// decisions and *taken* on none of them: on every turn where two
+/// enemies were closing inside the window, something above it — a
+/// concentration buff, a lockdown, a blast — was also available and
+/// was the better play. So this is a last-resort lane in the same
+/// sense `try_sunder_a_wall` is, and it is written down here rather
+/// than left to be rediscovered, because a rung nobody reaches looks
+/// exactly like a rung nobody needed.
+///
+/// It is not the half of the layer the AI is judged on. The half that
+/// matters against a *player* is `try_study_an_illusion`, which is
+/// what answers a screen the party puts up, and that one fires on the
+/// turn it is needed.
+///
+/// **The obvious fix was tried and abandoned**, and the reason is
+/// worth a sentence. Moving the rung up beside the real walls needs a
+/// gate that only fires where a picture actually closes the way
+/// through — the enemy can walk round a screen on open floor for the
+/// price of two tiles, and then the caster's turn bought that and
+/// nothing. A counterfactual flood fill can ask exactly that question,
+/// and the answer it gives is not usable: `anchor_set_touches` reads
+/// "within arm's length" through `footprint_chebyshev`, which for two
+/// 2-tile bodies counts a two-tile gap as adjacency, so a screen one
+/// tile thick never separates anybody from anybody. A gate built on it
+/// says *"the enemy still reaches you"* about a corridor that is
+/// genuinely sealed. Making it honest means either a thicker screen or
+/// a reach model that measures edges, and neither is this rung's to
+/// change.
 fn try_raise_a_screen(
     encounter: &EncounterInstance,
     actor_id: usize,
