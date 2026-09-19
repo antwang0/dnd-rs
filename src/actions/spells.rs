@@ -6001,6 +6001,13 @@ pub static SHATTER: LazyLock<Shatter> = LazyLock::new(|| Shatter {});
 pub struct Sleep {}
 
 impl Action for Sleep {
+    /// Queues a `StartConcentration`. Declared so the AI's summon and
+    /// area-control rungs can price this cast before trading a landed
+    /// concentration effect for an unlanded one — and so the assertion
+    /// in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
     }
@@ -6083,6 +6090,15 @@ impl Action for Sleep {
             Condition::Exhausted,
         );
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // SRD 5.2: *"Duration: Concentration, up to 1 minute"*. The
+        // 2014 printing had none, and this carried the 2014 shape —
+        // which on a spell whose whole content is "these creatures are
+        // Unconscious for ten rounds" is the difference between a
+        // first-level slot and a fourth-level one. Every sleeper is
+        // registered on the concentration so a hit on the caster wakes
+        // the room, which is the counterplay the spell is priced
+        // around.
+        let mut asleep: Vec<(usize, Condition)> = Vec::new();
         for id in hit {
             effects.push(Box::new(ApplyCondition {
                 actor_id: id,
@@ -6095,7 +6111,17 @@ impl Action for Sleep {
                 condition: Condition::Prone,
                 timer: ConditionTimer::Permanent,
             }));
+            asleep.push((id, Condition::Asleep));
         }
+        // The Prone is deliberately absent from the rollback list: a
+        // creature that wakes because the wizard was hit wakes up *on
+        // the floor*, and standing is its own Action. RAW's own
+        // Unconscious clause drops what you are holding and does not
+        // pick it back up.
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Sleep", asleep),
+        }));
         effects
     }
 }
@@ -7468,10 +7494,25 @@ pub static FIREBALL: LazyLock<Fireball> = LazyLock::new(|| Fireball {});
 pub struct MagicWeapon {}
 
 impl Action for MagicWeapon {
-    /// Queues a `StartConcentration`. Declared so the AI's
-    /// summon and area-control rungs can price this cast before
-    /// trading a landed concentration effect for an unlanded one
-    /// — and so the assertion in `Action::execute` stays quiet.
+    /// **Yes, and SRD 5.2 says it should not be.** The book prints
+    /// *"Duration: 1 hour"* with no Concentration on the line; the 2014
+    /// printing had one and this is it, still here on purpose.
+    ///
+    /// The blocker is the buff lane rather than the reading. This spell
+    /// pays out through `AdjustAttackBuff` / `AdjustDamageBuff`, which
+    /// are raw deltas on the holder's sheet with **no timer and no
+    /// teardown of their own** — the only thing in the engine that ever
+    /// takes one back is the concentration they were registered
+    /// against. Dropping the concentration here would not make the
+    /// spell match the book; it would leave a permanent `+1 to hit and +1 to damage` on
+    /// whoever received it, for the rest of the dungeon run.
+    ///
+    /// Barkskin and Foresight are the same mistake and were dropped,
+    /// because the whole of each is a *condition*, and a condition has
+    /// a timer. The fix for this pair is a timed buff — an
+    /// `AdjustAttackBuff` that expires the way `ConditionTimer::Rounds`
+    /// does — and until there is one, the wrong duration is the safer
+    /// of the two wrong answers.
     fn holds_concentration(&self) -> bool {
         true
     }
@@ -7974,10 +8015,25 @@ pub static HYPNOTIC_PATTERN: LazyLock<HypnoticPattern> = LazyLock::new(|| Hypnot
 pub struct DivineFavor {}
 
 impl Action for DivineFavor {
-    /// Queues a `StartConcentration`. Declared so the AI's
-    /// summon and area-control rungs can price this cast before
-    /// trading a landed concentration effect for an unlanded one
-    /// — and so the assertion in `Action::execute` stays quiet.
+    /// **Yes, and SRD 5.2 says it should not be.** The book prints
+    /// *"Duration: 1 minute"* with no Concentration on the line; the 2014
+    /// printing had one and this is it, still here on purpose.
+    ///
+    /// The blocker is the buff lane rather than the reading. This spell
+    /// pays out through `AdjustAttackBuff` / `AdjustDamageBuff`, which
+    /// are raw deltas on the holder's sheet with **no timer and no
+    /// teardown of their own** — the only thing in the engine that ever
+    /// takes one back is the concentration they were registered
+    /// against. Dropping the concentration here would not make the
+    /// spell match the book; it would leave a permanent `+2 to hit` on
+    /// whoever received it, for the rest of the dungeon run.
+    ///
+    /// Barkskin and Foresight are the same mistake and were dropped,
+    /// because the whole of each is a *condition*, and a condition has
+    /// a timer. The fix for this pair is a timed buff — an
+    /// `AdjustAttackBuff` that expires the way `ConditionTimer::Rounds`
+    /// does — and until there is one, the wrong duration is the safer
+    /// of the two wrong answers.
     fn holds_concentration(&self) -> bool {
         true
     }
@@ -14691,6 +14747,13 @@ pub static WISH: LazyLock<Wish> = LazyLock::new(|| Wish {});
 pub struct Forcecage {}
 
 impl Action for Forcecage {
+    /// Queues a `StartConcentration`. Declared so the AI's summon and
+    /// area-control rungs can price this cast before trading a landed
+    /// concentration effect for an unlanded one — and so the assertion
+    /// in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "forcecage"
     }
@@ -14742,11 +14805,27 @@ impl Action for Forcecage {
         if save.passed() {
             return Vec::new();
         }
-        vec![Box::new(ApplyCondition {
-            actor_id: target_id,
-            condition: Condition::Caged,
-            timer: ConditionTimer::Rounds(10),
-        })]
+        // SRD 5.2: *"Duration: Concentration, up to 1 hour"*. The 2014
+        // printing had none, and that is the whole reason Forcecage was
+        // the most complained-about spell of its edition: a seventh-
+        // level slot removed one creature from the fight outright, with
+        // no save against the cage itself and nothing the removed
+        // creature's side could do about it. The revision did not
+        // weaken the cage; it gave the party a caster to hit.
+        vec![
+            Box::new(ApplyCondition {
+                actor_id: target_id,
+                condition: Condition::Caged,
+                timer: ConditionTimer::Rounds(10),
+            }),
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::with_conditions(
+                    "Forcecage",
+                    vec![(target_id, Condition::Caged)],
+                ),
+            }),
+        ]
     }
 }
 
@@ -17003,12 +17082,18 @@ pub static HOLY_AURA: LazyLock<HolyAura> = LazyLock::new(|| HolyAura {});
 pub struct Foresight {}
 
 impl Action for Foresight {
-    /// Queues a `StartConcentration`. Declared so the AI's
-    /// summon and area-control rungs can price this cast before
-    /// trading a landed concentration effect for an unlanded one
-    /// — and so the assertion in `Action::execute` stays quiet.
+    /// **No.** SRD 5.2 prints *"Duration: 8 hours"*, with no
+    /// Concentration on the line — as with Barkskin two lanes over,
+    /// the 2014 printing had none either and this one was invented
+    /// here.
+    ///
+    /// It matters more on this spell than on any other row of the
+    /// mistake, because of what a ninth-level slot is for: a wizard who
+    /// had to concentrate on Foresight could never cast anything else
+    /// worth holding for the rest of the fight, which turns the game's
+    /// best buff into a choice nobody makes.
     fn holds_concentration(&self) -> bool {
-        true
+        false
     }
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Divination)
@@ -17045,7 +17130,7 @@ impl Action for Foresight {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        caster_id: usize,
+        _caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -17054,20 +17139,14 @@ impl Action for Foresight {
             return Vec::new();
         };
         encounter.log("  foresight: glimpse of the future settles over them.".to_string());
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Foreseen,
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Foresight",
-                    vec![(target_id, Condition::Foreseen)],
-                ),
-            }),
-        ]
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Foreseen,
+            // RAW: 8 hours, which outlasts everything, so the ten
+            // rounds is the fight rather than a cap on a concentration
+            // that would end it sooner. See `holds_concentration`.
+            timer: ConditionTimer::Rounds(10),
+        })]
     }
 }
 
@@ -23102,7 +23181,14 @@ pub static SNILLOCS_SNOWBALL_SWARM: LazyLock<SnillocsSnowballSwarm> =
 /// target makes a WIS save vs the caster's spell DC: pass = half, fail
 /// = full. 3d8 psychic damage. RAW also lets the caster sense the
 /// target's location for 1 hour; we skip the tracking rider since the
-/// engine doesn't model fog-of-war. The single-target save-for-half
+/// engine doesn't model fog-of-war.
+///
+/// **And so it holds no concentration**, although SRD 5.2 prints
+/// *"Concentration, up to 1 hour"* on it. The concentration is what
+/// holds the tracking rider, and the tracking rider is the half that is
+/// not here — the damage is instantaneous in every printing. A
+/// `StartConcentration` on this cast would cost the caster whatever
+/// they were holding and buy nothing back. The single-target save-for-half
 /// shape slots cleanly next to Mind Sliver (cantrip, save-for-flat-
 /// debuff) and Psychic Lance (lv4, save-for-half + Incapacitated rider).
 pub struct MindSpike {}
@@ -25557,6 +25643,12 @@ pub static ARMS_OF_HADAR: LazyLock<ArmsOfHadar> = LazyLock::new(|| ArmsOfHadar {
 /// the immediate self-burst at cast time — the caster exhales directly,
 /// since the spell's load-bearing portion is the burst itself.
 ///
+/// **And so it holds no concentration**, although SRD 5.2 prints
+/// *"Concentration, up to 1 minute"* on it. What RAW's concentration
+/// holds is the *permission to breathe again next turn*, which is
+/// exactly the half this collapse removed. One burst at cast time is a
+/// Fireball-shaped spell, and a Fireball does not concentrate.
+///
 /// Self-centered 15-ft cone modeled as a 2-tile burst from the caster.
 /// Every enemy in the area makes a DEX save vs the caster's INT/CHA-based
 /// spell DC: pass = half, fail = full. Damage type is picked by the
@@ -27061,7 +27153,10 @@ pub static HARM: LazyLock<Harm> = LazyLock::new(|| Harm {});
 /// Delayed Blast Fireball — level-7 evocation. A bead of fire is hurled
 /// to a tile within 150 ft (60 tiles), where it detonates immediately —
 /// our engine doesn't model the multi-round "delay" RAW, so we collapse
-/// the delay window to a single-action burst at full base damage. Every
+/// the delay window to a single-action burst at full base damage.
+/// SRD 5.2's *"Concentration, up to 1 minute"* goes with it: the
+/// concentration is what holds the bead in the air, and a bead that
+/// detonates on the turn it is thrown has nothing left to hold. Every
 /// creature in the 20-ft (4-tile) radius makes a DEX save vs the
 /// caster's spell save DC: fail = 12d6 fire, success = half. Friend-or-
 /// foe agnostic — neutral_burst routes catch caster's allies too. Sits
@@ -27292,6 +27387,13 @@ pub static INCENDIARY_CLOUD: LazyLock<IncendiaryCloud> = LazyLock::new(|| Incend
 pub struct Weird {}
 
 impl Action for Weird {
+    /// Queues a `StartConcentration`. Declared so the AI's summon and
+    /// area-control rungs can price this cast before trading a landed
+    /// concentration effect for an unlanded one — and so the assertion
+    /// in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn spares_allies(&self) -> bool {
         // Resolved through the enemy-scoped area helpers, so the
         // caster's own side is never in the blast to begin with. The
@@ -27356,6 +27458,14 @@ impl Action for Weird {
             DamageType::Psychic
         ));
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
+        // SRD 5.2: *"Duration: Concentration, up to 1 minute"*, and
+        // this had none. The damage is instantaneous and would not have
+        // missed it; the fear is not, and ten rounds of unbreakable
+        // Frightened on everything in a sixty-foot sphere is most of
+        // what a ninth-level slot bought here. Every frightened
+        // creature is registered so a hit on the caster clears the
+        // whole sphere at once.
+        let mut afraid: Vec<(usize, Condition)> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, 6) {
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
@@ -27372,7 +27482,12 @@ impl Action for Weird {
                 caster_id,
                 ConditionTimer::Rounds(10),
             ));
+            afraid.push((tid, Condition::Frightened));
         }
+        effects.push(Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::with_conditions("Weird", afraid),
+        }));
         effects
     }
 }
@@ -28065,12 +28180,24 @@ pub static WALL_OF_THORNS: LazyLock<WallOfThorns> = LazyLock::new(|| WallOfThorn
 pub struct Barkskin {}
 
 impl Action for Barkskin {
-    /// Queues a `StartConcentration`. Declared so the AI's
-    /// summon and area-control rungs can price this cast before
-    /// trading a landed concentration effect for an unlanded one
-    /// — and so the assertion in `Action::execute` stays quiet.
+    /// **No.** SRD 5.2 prints *"Duration: 1 hour"* on this spell, with
+    /// no Concentration on the line at all — the 2014 printing had it
+    /// and the revision took it off, which is most of what made the
+    /// spell worth a slot again.
+    ///
+    /// The default answer is `false`, so this override exists only to
+    /// say that the omission is a reading rather than a gap: the druid
+    /// who armours the fighter can go on to hold a Spike Growth, and
+    /// nothing the party does to the druid takes the bark off.
+    ///
+    /// Clean to drop because the whole effect is one timed condition.
+    /// The two spells beside it on this lane whose concentration is
+    /// *also* wrong and which are still holding it — Magic Weapon and
+    /// Divine Favor — are not clean, for the reason each of them gives:
+    /// a flat attack or damage buff has no teardown in this engine
+    /// except the concentration.
     fn holds_concentration(&self) -> bool {
-        true
+        false
     }
     fn name(&self) -> &str {
         "barkskin"
@@ -28127,7 +28254,7 @@ impl Action for Barkskin {
     fn side_effects(
         &self,
         _encounter: &mut EncounterInstance,
-        caster_id: usize,
+        _caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -28135,23 +28262,15 @@ impl Action for Barkskin {
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        vec![
-            Box::new(ApplyCondition {
-                actor_id: target_id,
-                condition: Condition::Barkskinned,
-                // RAW: 1 hour. Capped to 10 rounds in line with other
-                // concentration buffs — concentration drop is the load-
-                // bearing termination path anyway.
-                timer: ConditionTimer::Rounds(10),
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Barkskin",
-                    vec![(target_id, Condition::Barkskinned)],
-                ),
-            }),
-        ]
+        vec![Box::new(ApplyCondition {
+            actor_id: target_id,
+            condition: Condition::Barkskinned,
+            // RAW: 1 hour, which is longer than any fight the engine
+            // runs, so the ten rounds is the whole clock now rather
+            // than a cap on a concentration that would usually end it
+            // first. See `holds_concentration`.
+            timer: ConditionTimer::Rounds(10),
+        })]
     }
 }
 
@@ -34020,6 +34139,13 @@ impl Silence {
 }
 
 impl Action for Silence {
+    /// Queues a `StartConcentration`. Declared so the AI's summon and
+    /// area-control rungs can price this cast before trading a landed
+    /// concentration effect for an unlanded one — and so the assertion
+    /// in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
     fn name(&self) -> &str {
         "silence"
     }
@@ -34085,11 +34211,23 @@ impl Action for Silence {
                     Condition::Silenced,
                     ConditionTimer::UntilStartOfNextTurn,
                 )),
-                // 10 rounds ~ 1 minute RAW. No concentration, matching
-                // the shape this spell already had here — so the hush
-                // outlives whatever else the caster is holding.
+                // SRD 5.2: *"Duration: Concentration, up to 10
+                // minutes"*. This read `false` under a comment saying
+                // so out loud — *"no concentration, matching the shape
+                // this spell already had here — so the hush outlives
+                // whatever else the caster is holding"* — which is an
+                // accurate description of a bug. A second-level slot
+                // that shuts every caster in a sphere up for ten
+                // rounds, free and unbreakable, is the strongest
+                // anti-caster effect in the engine and it had no
+                // counterplay at all: the party could not end it by
+                // hurting the cleric who cast it, because nothing
+                // linked the two.
+                //
+                // Ten rounds is still the clock; concentration is what
+                // can cut it short.
                 rounds_remaining: 10,
-                concentration: false,
+                concentration: true,
                 motion: ZoneMotion::Fixed,
                 revealed: false,
             },
@@ -34098,6 +34236,10 @@ impl Action for Silence {
             // the top of their next turn, when the zone renews it if
             // they are still inside.
             catch_present: true,
+        }),
+        Box::new(StartConcentration {
+            caster_id,
+            data: ConcentrationData::new("Silence"),
         })]
     }
 }

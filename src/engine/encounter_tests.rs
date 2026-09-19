@@ -22730,6 +22730,101 @@ fn the_damage_pools_the_revision_changed_are_the_ones_the_engine_rolls() {
     }
 }
 
+/// Twelve spells disagreed with SRD 5.2's *Duration* line about whether
+/// they take the caster's Concentration, found by reading every
+/// `holds_concentration` in `spells.rs` against the book. Seven are
+/// fixed and five are deliberate; all twelve are pinned here, because
+/// the difference between the two groups is a judgement and a judgement
+/// that is not written down is indistinguishable from an oversight —
+/// which is how eleven of these survived in the first place.
+///
+/// **Seven now match the book.** Five gained the Concentration they
+/// were printed with (Silence, Sleep, Forcecage, Weird — and the fifth
+/// is not on this list because the change is a zone flag rather than a
+/// trait), and two lost one nobody printed (Barkskin, Foresight).
+/// Forcecage is the one worth naming twice: an unbreakable seventh-level
+/// removal with no save against the cage itself is the most complained-
+/// about spell of its edition, and the revision's answer was not to
+/// weaken the cage but to give the party a caster to hit.
+///
+/// **Five stay wrong on purpose**, in two kinds. Three collapse the
+/// half of the spell the Concentration was holding — Mind Spike's
+/// tracking rider, Dragon's Breath's permission to breathe again,
+/// Delayed Blast Fireball's bead in the air — so a concentration here
+/// would cost the caster whatever they were holding and buy nothing.
+/// Two more, Magic Weapon and Divine Favor, pay out through
+/// `AdjustAttackBuff`, which has no timer and no teardown except the
+/// concentration it is registered against; dropping it would leave a
+/// permanent bonus on the sheet, which is the worse of the two wrong
+/// answers. Each of the five argues itself at its own site.
+#[test]
+fn the_concentration_the_book_prints_is_the_concentration_the_engine_takes() {
+    use crate::actions::spells::{
+        BARKSKIN, DELAYED_BLAST_FIREBALL, DIVINE_FAVOR, DRAGONS_BREATH, FORCECAGE, FORESIGHT,
+        MAGIC_WEAPON, MIND_SPIKE, SILENCE, SLEEP, WEIRD,
+    };
+
+    // (action, does it take the caster's concentration here, does SRD
+    //  5.2 print Concentration on its Duration line)
+    let rows: [(&dyn crate::actions::action_template::Action, bool, bool); 11] = [
+        // Fixed: the five that gained what the book prints.
+        (&*SILENCE, true, true),
+        (&*SLEEP, true, true),
+        (&*FORCECAGE, true, true),
+        (&*WEIRD, true, true),
+        // Fixed: the two that lost what nobody printed.
+        (&*BARKSKIN, false, false),
+        (&*FORESIGHT, false, false),
+        // Deliberate: the collapsed half is the half that concentrated.
+        (&*MIND_SPIKE, false, true),
+        (&*DRAGONS_BREATH, false, true),
+        (&*DELAYED_BLAST_FIREBALL, false, true),
+        // Deliberate: the buff lane has no teardown but this one.
+        (&*MAGIC_WEAPON, true, false),
+        (&*DIVINE_FAVOR, true, false),
+    ];
+    // The five rows that are allowed to disagree with the book, and
+    // the only five: a sixth would be a spell nobody argued.
+    const ARGUED: &[&str] = &[
+        "mind spike",
+        "dragon's breath",
+        "delayed blast fireball",
+        "magic weapon",
+        "divine favor",
+    ];
+    for (action, here, in_the_book) in rows {
+        assert_eq!(
+            action.holds_concentration(),
+            here,
+            "{} should {}take the caster's concentration",
+            action.name(),
+            if here { "" } else { "not " },
+        );
+        if here != in_the_book {
+            assert!(
+                ARGUED.contains(&action.name()),
+                "{} disagrees with the book's Duration line and is not one of the five \
+                 deviations this engine argues for",
+                action.name()
+            );
+        }
+    }
+    // And the other direction: nothing is listed as argued that has
+    // quietly come back into line, which would leave a paragraph in
+    // `spells.rs` defending a decision nobody is making any more.
+    for name in ARGUED {
+        let row = rows
+            .iter()
+            .find(|(a, _, _)| a.name() == *name)
+            .expect("every argued row is on the table above");
+        assert_ne!(
+            row.1, row.2,
+            "{} is listed as a deliberate deviation and no longer deviates",
+            name
+        );
+    }
+}
+
 #[test]
 fn power_word_stun_no_op_above_threshold() {
     use crate::actions::spells::POWER_WORD_STUN;
@@ -44879,11 +44974,17 @@ fn wall_of_thorns_installs_concentration() {
     );
 }
 
-/// Barkskin: lv2 druid touch concentration buff. Verifies the lv2
-/// slot cost, the Barkskinned condition installs on the target,
-/// the AC floor of 16 lifts a soft-armored ally's AC, the caster
-/// picks up concentration, and a re-cast against the same target
-/// fails the custom_validate gate.
+/// Barkskin: lv2 druid touch buff. Verifies the lv2 slot cost, the
+/// Barkskinned condition installs on the target, the AC floor of 16
+/// lifts a soft-armored ally's AC, the caster is left **free to
+/// concentrate on something else**, and a re-cast against the same
+/// target fails the custom_validate gate.
+///
+/// The concentration assertion used to read the other way. SRD 5.2
+/// prints *"Duration: 1 hour"* with no Concentration on the line —
+/// that is the 2024 revision's change and most of what made the spell
+/// worth a slot again — and the engine was holding the 2014 printing's.
+/// See `spells::Barkskin::holds_concentration`.
 #[test]
 fn barkskin_installs_buff_and_lifts_ac_floor() {
     use crate::actions::spells::BARKSKIN;
@@ -44911,7 +45012,10 @@ fn barkskin_installs_buff_and_lifts_ac_floor() {
         ef.apply(&mut e);
     }
     assert!(e.actors[&wiz].has_condition(Condition::Barkskinned));
-    assert!(e.actors[&dr].is_concentrating());
+    assert!(
+        !e.actors[&dr].is_concentrating(),
+        "the druid armours the fighter and keeps their concentration free"
+    );
     let ac_after = e.actors[&wiz].armor_class();
     assert!(
         ac_after >= 16,

@@ -6455,15 +6455,20 @@ fn try_warding_bond(
 
 /// Foresight — level-9 single-target ally buff. Pick the highest-HP
 /// combat-active ally (likely a frontliner) and lay the apex buff on
-/// them. Concentration-gated.
+/// them.
+///
+/// **Not concentration-gated**, and the bail that used to be here is
+/// gone with the concentration it was guarding. SRD 5.2 prints
+/// *"Duration: 8 hours"* with no Concentration on the line; the engine
+/// held one anyway, and the rung refused to cast at all while the
+/// wizard was holding anything else. Between them that made the game's
+/// best buff a spell a caster would essentially never reach — the only
+/// wizard who could afford it was one with nothing else up.
 fn try_foresight(
     encounter: &EncounterInstance,
     actor_id: usize,
 ) -> Option<ActionExecutionInfo> {
     let actor = encounter.actors.get(&actor_id)?;
-    if actor.is_concentrating() {
-        return None;
-    }
     let action = actor.find_action("foresight")?;
     let team = actor.team();
     let mut best: Option<(u32, ActionExecutionInfo)> = None;
@@ -17212,7 +17217,12 @@ mod tests {
         // Now hand the wizard a concentration and re-ask. What is left
         // is the non-concentration half of the list — which the old
         // up-front bail made unreachable entirely — and the earliest row
-        // on it that the archmage carries is Forcecage.
+        // on it that the wizard carries is Power Word Stun.
+        //
+        // It was Forcecage until that spell was given the
+        // concentration SRD 5.2 prints on it, which moved it out of
+        // this half of the list and is exactly the movement this
+        // assertion is here to notice.
         e.actors
             .get_mut(&wizard)
             .unwrap()
@@ -17224,7 +17234,7 @@ mod tests {
             "a concentrating caster must not be offered a second concentration spell, got {}",
             pick.action().name()
         );
-        assert_eq!(pick.action().name(), "forcecage");
+        assert_eq!(pick.action().name(), "power word stun");
     }
 
     /// The lockdown lane picks the beast out of a mixed line, because
