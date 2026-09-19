@@ -11736,13 +11736,38 @@ impl Action for MassHeal {
 
 pub static MASS_HEAL: LazyLock<MassHeal> = LazyLock::new(|| MassHeal {});
 
-/// Power Word Kill — level-9 enchantment. Single target with 100 HP or
-/// fewer is killed outright (no save, no attack roll). Targets above
-/// 100 HP are unaffected. We model "killed outright" as a direct
-/// damage hit of `current_hp` necrotic so the standard death path runs
-/// (death save start for PCs that die outright per RAW; instant Dead
-/// for monsters). Range 60 ft.
+/// Power Word Kill — level-9 enchantment, 60 ft, and SRD 5.2's whole
+/// text is two sentences:
+///
+/// > *"Choose a creature that you can see within range. If it has 100
+/// > Hit Points or fewer, it dies. Otherwise, it takes 12d12 Psychic
+/// > damage."*
+///
+/// **Both of them are here now.** The second was not, and without it
+/// the spell was a coin flip with one side blank: a ninth-level slot
+/// aimed at anything over a hundred hit points bought a log line
+/// reading "unaffected". That is the 2014 printing, where the spell
+/// genuinely did nothing to a healthy target — and the number that
+/// decides it is one the caster cannot see, so the revision's
+/// consolation clause is what makes the gamble a spell rather than a
+/// guess. Twelve d12 averages seventy-eight, which is a Meteor Swarm's
+/// worth of damage on one creature and about the right size for having
+/// missed with a ninth.
+///
+/// This docstring used to say the kill was *"a direct damage hit of
+/// `current_hp` necrotic"*, which had not been true since `SlayActor`
+/// arrived: the kill names no damage and no type, and routing it
+/// through the damage pipeline handed four creatures an out the spell
+/// does not offer. See the comment at the kill itself.
 pub struct PowerWordKill {}
+
+impl PowerWordKill {
+    /// SRD 5.2's *"if it has 100 Hit Points or fewer, it dies"*. Named
+    /// because the spell reads it twice and prints it in both log
+    /// lines, and because it is the one number the whole spell turns
+    /// on.
+    const KILL_THRESHOLD: u32 = 100;
+}
 
 impl Action for PowerWordKill {
     fn school(&self) -> Option<SpellSchool> {
@@ -11764,8 +11789,12 @@ impl Action for PowerWordKill {
     fn requires_los(&self) -> bool {
         true
     }
+    /// Psychic, and it is the only damage this spell can deal: the
+    /// kill names none at all (see `SlayActor` at the site), so the
+    /// only roll here is SRD 5.2's consolation 12d12 against a target
+    /// too healthy to drop. This read `Necrotic`, which was neither.
     fn damage_types(&self) -> Vec<DamageType> {
-        vec![DamageType::Necrotic]
+        vec![DamageType::Psychic]
     }
     fn cost(
         &self,
@@ -11780,7 +11809,7 @@ impl Action for PowerWordKill {
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,
-        _caster_id: usize,
+        caster_id: usize,
         target_ids: Option<&Vec<usize>>,
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
@@ -11792,16 +11821,27 @@ impl Action for PowerWordKill {
             return Vec::new();
         };
         let hp = target.hitpoints();
-        if hp > 100 {
+        if hp > Self::KILL_THRESHOLD {
+            // SRD 5.2's second sentence: *"Otherwise, it takes 12d12
+            // Psychic damage."* The engine logged "unaffected" and
+            // returned nothing, which is the 2014 text.
+            let raw = encounter.roll_empowered_sum(caster_id, 12, 12);
             encounter.log(format!(
-                "  power word kill: target has {} HP (>100) \u{2014} unaffected",
-                hp
+                "  power word kill: {} HP is over {} \u{2014} 12d12({}) psychic instead",
+                hp,
+                Self::KILL_THRESHOLD,
+                raw
             ));
-            return Vec::new();
+            return vec![Box::new(DealDamage {
+                actor_id: target_id,
+                amount: raw,
+                damage_type: DamageType::Psychic,
+            })];
         }
         encounter.log(format!(
-            "  power word kill: target has {} HP \u{2264} 100 \u{2014} struck down",
-            hp
+            "  power word kill: {} HP is at or under {} \u{2014} struck down",
+            hp,
+            Self::KILL_THRESHOLD
         ));
         // `SlayActor`, not a necrotic `DealDamage` sized to the
         // target's hit points. The spell's RAW is "the target dies" —
@@ -11821,9 +11861,10 @@ impl Action for PowerWordKill {
 
 pub static POWER_WORD_KILL: LazyLock<PowerWordKill> = LazyLock::new(|| PowerWordKill {});
 
-/// Meteor Swarm — level-9 evocation. 20-ft radius burst (radius 4 in
-/// tile-gap; RAW it's four 40-ft spheres, we collapse to one big sphere
-/// for engine simplicity). Every creature in the area makes a DEX save
+/// Meteor Swarm — level-9 evocation. RAW's four 40-foot Spheres,
+/// collapsed to one — see `Self::RADIUS` for the conversion, and note
+/// that collapsing four spheres into one is already the conservative
+/// end of the translation. Every creature in the area makes a DEX save
 /// vs the caster's spell DC: 20d6 fire + 20d6 bludgeoning on fail, half
 /// on save. The two damage rolls share a single save outcome (RAW: one
 /// save vs both packets), but they apply independently so resistance to
@@ -28419,6 +28460,24 @@ impl Action for WallOfThorns {
                     radius: Self::RADIUS,
                     // `clinging` is difficult ground plus a contact
                     // clause — the two sentences the spell is.
+                    // SRD 5.2 prints **two** damage lines on this
+                    // wall and the layer has one clause to put them
+                    // in: 7d8 Piercing *"when the wall appears"* and
+                    // 7d8 Slashing *"the first time a creature enters
+                    // a space in the wall on a turn or ends its turn
+                    // there"*. The contact clause is a single
+                    // `(dice, type)` pair — a zone does not know which
+                    // of its triggers fired — so the appearance's type
+                    // carries both, and the entry damage is Piercing
+                    // where RAW makes it Slashing.
+                    //
+                    // Named rather than silently collapsed because the
+                    // two types are not interchangeable against the
+                    // bestiary: a skeleton halves the Slashing and
+                    // eats the Piercing in full, which on this spell
+                    // is the wrong way round for nine rounds out of
+                    // ten. A second `ZoneContact` keyed on the trigger
+                    // is what would fix it.
                     effect: ZoneEffect::clinging(ZoneContact::save_for_half(
                         AbilityScoreType::Dexterity,
                         dc,

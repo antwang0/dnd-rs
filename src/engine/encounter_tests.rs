@@ -23833,8 +23833,15 @@ fn disintegrate_does_no_damage_on_passed_save() {
     // spell does nothing.
 }
 
-/// Power Word Kill: targets with HP >100 are unaffected by the
-/// spell. Pump a troll past 100 HP and verify it's still standing.
+/// Power Word Kill: a target over 100 HP does not die — it takes SRD
+/// 5.2's consolation 12d12 Psychic instead.
+///
+/// This test used to assert the target's hit points were *unchanged*,
+/// which is the 2014 printing: there, the spell genuinely did nothing
+/// to a healthy target and a ninth-level slot bought a log line. The
+/// revision's second sentence is what makes the gamble a spell, and
+/// the shape of the assertion is the whole difference — "still
+/// standing, and hurt" rather than "still standing, and fine".
 #[test]
 fn power_word_kill_no_op_above_threshold() {
     use crate::actions::spells::POWER_WORD_KILL;
@@ -23860,9 +23867,18 @@ fn power_word_kill_no_op_above_threshold() {
     for ef in effects {
         ef.apply(&mut e);
     }
-    // Target still alive at unchanged HP.
+    // Still standing — and billed for it.
     assert!(e.actors.contains_key(&big));
-    assert_eq!(e.actors[&big].hitpoints(), pre_hp);
+    let taken = pre_hp - e.actors[&big].hitpoints();
+    assert!(
+        (12..=144).contains(&taken),
+        "12d12 psychic lands somewhere in 12..=144, got {}",
+        taken
+    );
+    assert!(
+        e.actors[&big].hitpoints() > 0,
+        "a troll this healthy survives an average 12d12"
+    );
 }
 
 /// Power Word Kill: targets at or below 100 HP take damage equal to
