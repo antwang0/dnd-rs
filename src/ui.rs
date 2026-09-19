@@ -334,6 +334,24 @@ pub fn render_map(
                         .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD),
                 ));
+            } else if let Some((glyph, color)) =
+                illusion_glyph(encounter, coord, active_actor_id)
+            {
+                // An image draws above every other layer on the ground,
+                // which is the one place in this renderer where drawing
+                // order is a rule rather than a taste. A picture of a
+                // slab of rock hides the web that is really on the tile
+                // from the creature looking at it, and a map that drew
+                // the web through the rock would be handing the player
+                // the answer the Study action is for. See
+                // `illusion_glyph`.
+                row.push(Span::styled(
+                    glyph.to_string(),
+                    match color {
+                        Some(c) => Style::default().fg(c),
+                        None => Style::default(),
+                    },
+                ));
             } else if let Some(glyph) = zone_glyph(encounter, coord) {
                 // A persistent magical area draws over bare ground —
                 // above terrain (the fog is what matters about the tile
@@ -441,6 +459,52 @@ pub fn render_map(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Map")),
         area,
     );
+}
+
+/// What to draw on a tile an image is standing on, seen through the
+/// eyes of the creature currently being prompted — or `None` for a tile
+/// with no image on it.
+///
+/// Two answers, and the difference between them is the whole of what
+/// the illusion layer is:
+///
+///   - **The viewer is fooled** — a wall's own `█`, in a wall's own
+///     colour, with no tell of any kind. That is not a rendering
+///     shortcut; it is the spell. A map that marked an illusory wall
+///     as illusory would hand the player, for free, the exact fact the
+///     Study action costs an Action to buy, and a Minor Illusion would
+///     be worth nothing the moment it was drawn.
+///   - **The viewer knows better** — `◌`, dim. The picture is still
+///     there, still standing between the party and whatever is behind
+///     it, and the one thing the player now needs from the map is
+///     which tiles to ignore.
+///
+/// Asked of `viewer` rather than of the player's side, for the reason
+/// the lighting pass in the same loop is: the map is drawn from the
+/// eyes of whoever is being prompted, and belief is exactly as personal
+/// as darkvision. A party whose rogue has seen through the screen and
+/// whose fighter has not gets two different maps, which is the truth.
+///
+/// With nobody being prompted — an AI turn resolving, the fight over —
+/// there is no viewer to be fooled, so every image falls to the known
+/// answer. The alternative would be a map that lies to a player who is
+/// not currently anybody.
+fn illusion_glyph(
+    encounter: &EncounterInstance,
+    coord: Coordinate,
+    viewer: Option<usize>,
+) -> Option<(char, Option<Color>)> {
+    let mut known = None;
+    for image in encounter.illusions() {
+        if !image.covers(coord) {
+            continue;
+        }
+        if viewer.is_some_and(|v| encounter.believes_illusion(v, image)) {
+            return Some(('█', None));
+        }
+        known = Some(('◌', Some(Color::DarkGray)));
+    }
+    known
 }
 
 /// The character to draw for a tile under one or more persistent
@@ -751,9 +815,22 @@ pub fn render_sideinfo(
     // a wall, which is the point — so the map is the one thing that
     // *cannot* tell a player that the corridor they are looking at is
     // going to reopen in four rounds.
+    // Whose ledger this block is. The prompted creature's side when
+    // there is one, and team 0 — the player's side by convention, the
+    // same one `util::get_colored_span` paints differently — when there
+    // is not. Only the image rows read it, because they are the only
+    // rows whose content depends on which side is looking; see the
+    // comment above that loop.
+    let viewer_team = match stack_state {
+        StackState::AwaitingPrompt(id) => {
+            encounter.actors.get(&id).map(|a| a.team()).unwrap_or(0)
+        }
+        _ => 0,
+    };
     if !encounter.zones().is_empty()
         || !encounter.conjured_terrain().is_empty()
         || !encounter.hovering_blades().is_empty()
+        || !encounter.illusions().is_empty()
     {
         initiative_lines.push(Line::from(""));
         let mut layer_line = |glyph: char, name: &str, detail: String| {
@@ -818,6 +895,46 @@ pub fn render_sideinfo(
                 ),
             };
             layer_line('▚', patch.name, detail);
+        }
+        // The image layer, and the only rows on this block that are
+        // not simply *there*. The panel is the player's own ledger, so
+        // it lists what the player's side knows about: an image they
+        // cast, and an image of somebody else's that one of them has
+        // seen through. An enemy's screen that still has everybody
+        // fooled is not on the list, for the same reason an unfound
+        // trap is not — a line reading "silent image (14, 9) — 6r" is
+        // the answer the Study action exists to buy. See
+        // `illusion_glyph`, which draws the same distinction one tile
+        // at a time.
+        for image in encounter.illusions() {
+            let mine = encounter
+                .actors
+                .get(&image.owner_id)
+                .is_some_and(|o| o.team() == viewer_team);
+            let rumbled = !mine
+                && encounter
+                    .actors
+                    .iter()
+                    .any(|(id, a)| a.team() == viewer_team && image.is_known_to(*id));
+            if !mine && !rumbled {
+                continue;
+            }
+            // Whose it is, because the two are opposite facts. A screen
+            // of the party's own is a resource with a clock on it; an
+            // enemy's that the party has rumbled is a patch of board to
+            // walk straight through, and the only thing worth printing
+            // about it is that it is fake.
+            let detail = if mine {
+                format!(
+                    " {} — {}r — {}",
+                    image.origin(),
+                    image.rounds_remaining,
+                    image.guise
+                )
+            } else {
+                format!(" {} — {} (seen through)", image.origin(), image.guise)
+            };
+            layer_line('◌', image.name, detail);
         }
         // And the blades, which carry one column the other two layers
         // don't: a Dancing Sword ends on a count of swings rather than

@@ -115696,6 +115696,7 @@ fn every_qualified_name_a_doc_comment_cites_still_exists() {
         ("engine/falling.rs", include_str!("falling.rs")),
         ("engine/footing.rs", include_str!("footing.rs")),
         ("engine/hovering_blade.rs", include_str!("hovering_blade.rs")),
+        ("engine/illusions.rs", include_str!("illusions.rs")),
         ("engine/incorporeal.rs", include_str!("incorporeal.rs")),
         ("engine/jumping.rs", include_str!("jumping.rs")),
         ("engine/lair_actions.rs", include_str!("lair_actions.rs")),

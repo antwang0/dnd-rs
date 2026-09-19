@@ -2242,6 +2242,35 @@ impl ApplicableSideEffect for ConjureTerrain {
     }
 }
 
+/// Paint an image onto the board that nothing is really wearing — see
+/// [`crate::engine::illusions`].
+///
+/// The third of the map-layer install effects, and shaped like the
+/// other two down to the Extended Spell clause: an image is a duration
+/// on the board, and a sorcerer who doubles one has doubled how long
+/// the enemy is walking the long way round.
+pub struct InstallIllusion {
+    pub image: crate::engine::illusions::Illusion,
+}
+
+impl ApplicableSideEffect for InstallIllusion {
+    fn extend_duration(&mut self) -> bool {
+        if self.image.rounds_remaining < EXTENDED_SPELL_MIN_ROUNDS {
+            return false;
+        }
+        self.image.rounds_remaining = self
+            .image
+            .rounds_remaining
+            .saturating_mul(2)
+            .min(EXTENDED_SPELL_MAX_ROUNDS);
+        true
+    }
+
+    fn apply(&self, ei: &mut EncounterInstance) {
+        ei.install_illusion(self.image.clone());
+    }
+}
+
 /// Walk a persistent magical area that is already on the board to a new
 /// centre — the steered half of `crate::engine::zones::ZoneMotion`.
 ///

@@ -1788,6 +1788,17 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 5b'. Paint a screen across the approach, when there was no
+        //      wall to raise. The bottom of the "put something across
+        //      that line" lane that rung 3a'''' is the top of, and it
+        //      is this far down for one reason: an image is worth less
+        //      than every concentration buff, every lockdown and every
+        //      blast above it, because it stops only the creatures that
+        //      have not looked at it properly. See `try_raise_a_screen`.
+        if let Some(aei) = try_raise_a_screen(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 5c. Shove — knock an adjacent enemy prone when at least one
         //     ally is also adjacent (the prone condition gives them
         //     advantage on melee attacks). Only fires when the target
@@ -1937,6 +1948,25 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 7c'''. Look properly at the thing in the way, when the thing
+        //        in the way is not there. Fourth and last of the "the
+        //        board is what is stopping this turn" family, and
+        //        below the other three because it is the only one that
+        //        can fail: a jump, a tunnel and an axe all do what they
+        //        say, and an Intelligence (Investigation) check against
+        //        a caster's spell save DC does not.
+        //
+        //        Its placement under every attack rung is what makes
+        //        that acceptable. A creature that can still shoot at
+        //        something shoots at it — blind and at disadvantage, but
+        //        shooting — and only one that has declined every
+        //        offensive lane on the sheet gets here with an Action
+        //        left and a picture of a wall in front of it. See
+        //        `try_study_an_illusion`.
+        if let Some(aei) = try_study_an_illusion(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 8. No one in reach — close on the lowest-HP enemy.
         if let Some(aei) = try_step_toward_lowest_hp(encounter, actor_id) {
             return ControllerDecision::Act(aei);
@@ -2049,6 +2079,51 @@ fn try_sunder_a_wall(
         actor_id,
         None,
         Some(vec![coord]),
+        None,
+    );
+    aei.validate(encounter).then_some(aei)
+}
+
+/// Spend the Action looking properly at the wall that is not there —
+/// SRD 5.2's **Study**, from the wrong side of a Silent Image.
+///
+/// The fourth sibling of `try_sunder_a_wall` and the two rungs above
+/// it, and the only one whose obstacle is a disagreement rather than an
+/// object. The other three are about a board a creature genuinely
+/// cannot cross; this one is about a board it genuinely can, and has
+/// declined to, because it believes something is in the way. See
+/// [`crate::engine::illusions`].
+///
+/// Two gates, and between them they are the whole rung:
+///
+///   - `EncounterInstance::an_image_is_in_the_way` — an image this
+///     creature still believes in stands between it and somebody it is
+///     fighting. Not merely *"there is an image somewhere"*: a screen
+///     across an empty corner is not worth an Action, and a rung that
+///     could not tell the two apart would spend one on it every round
+///     for the rest of the fight.
+///   - The `study` action's own validator, which asks the sharper
+///     question underneath — is any believed image close enough and
+///     visible enough to examine at all. A screen thrown up at the far
+///     end of a Major Image's 120 feet has to be approached before it
+///     can be disbelieved, and walking is the rung below.
+///
+/// The check can fail, and a failed one costs the whole Action. That is
+/// RAW — the book gives no retry discount — and it is survivable here
+/// only because of where the rung sits: everything above it has already
+/// declined, so the Action it spends had nothing better to buy.
+fn try_study_an_illusion(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if !encounter.an_image_is_in_the_way(actor_id) {
+        return None;
+    }
+    let aei = ActionExecutionInfo::new(
+        &*crate::actions::default_actions::STUDY,
+        actor_id,
+        None,
+        None,
         None,
     );
     aei.validate(encounter).then_some(aei)
@@ -10453,8 +10528,8 @@ fn try_attack_aoe(
 /// The wall spells the AI will raise to cut a line, in the order it
 /// reaches for them.
 ///
-/// All three write terrain (`crate::engine::conjured_terrain`) and all
-/// three target a single point whose *orientation* the spell derives —
+/// All four write terrain (`crate::engine::conjured_terrain`) and all
+/// four target a single point whose *orientation* the spell derives —
 /// which is why they need a lane of their own rather than falling out
 /// of the burst picker. A burst is aimed at a creature; a wall is aimed
 /// at a gap.
@@ -10485,6 +10560,32 @@ const WALL_SPELLS: &[&str] = &[
     "prismatic wall",
 ];
 
+/// The image spells the AI will paint across an approach when it has no
+/// real wall to raise — see [`crate::engine::illusions`].
+///
+/// A separate list from [`WALL_SPELLS`] rather than four more rows on
+/// the end of it, and the separation is the whole of what this cohort
+/// has to say. The two do the same thing to a creature that has not
+/// looked properly and nothing alike to one that has: stone stops a
+/// truesighted devil and a picture does not, stone stops a goblin that
+/// spent its Action studying the picture and a picture does not, and
+/// stone cannot be walked through by anybody who is merely *pushed*
+/// into it. A screen is therefore worth strictly less than a wall,
+/// which is exactly why it cannot share the wall's rung: that one sits
+/// above the entire buff stack, on the argument that "+3 AC does not
+/// answer a hill giant and a wall does", and a picture of a wall does
+/// not answer one either. See `try_raise_a_screen` for where it sits
+/// instead and why.
+///
+/// **Widest first**, which inverts `WALL_SPELLS`' cost ordering and is
+/// right for the same reason that one is right: the list is preference,
+/// and what a caster wants from a screen is that the enemy cannot walk
+/// round the end of it. Major Image's seven tiles closes a corridor;
+/// Minor Illusion's two plugs a doorway, which is worth an Action only
+/// when there is nothing wider on the sheet — and is exactly where a
+/// cantrip belongs.
+const SCREEN_SPELLS: &[&str] = &["major image", "silent image", "minor illusion"];
+
 /// How far along the line to the threat the wall goes up. Two tiles is
 /// close enough that a wall aimed at an enemy eight tiles out still
 /// lands between them and the caster rather than beside them, and far
@@ -10502,13 +10603,62 @@ const WALL_STANDOFF: isize = 2;
 /// caster and somebody who wants to reach them, and picking that floor
 /// takes a rule of its own.
 ///
+/// The gates live in `raise_something_across_the_approach`, which is
+/// also what the screen rung below is built on; this rung is that
+/// picker handed `WALL_SPELLS` and asked high up the ladder.
+fn try_wall_off_approach(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    raise_something_across_the_approach(encounter, actor_id, WALL_SPELLS)
+}
+
+/// Paint a screen across the line an enemy is closing down, when there
+/// was no wall to raise — [`SCREEN_SPELLS`] through the same picker the
+/// real walls use.
+///
+/// The decision is identical and the placement is not, which is the
+/// only reason this is a second rung rather than three more rows on
+/// `WALL_SPELLS`. A wall is self-preservation worth the whole
+/// concentration budget and sits above the buff stack on that
+/// argument. A picture of a wall is worth less than every concentration
+/// buff on every sheet in the roster — it stops nobody with truesight,
+/// nobody who spends an Action looking, and nobody who is pushed
+/// through it — so it sits *below* them all, and below the lockdown and
+/// blast lanes too. What is left above it is the melee scramble and
+/// focus-fire, and choosing a closed corridor over one more attack roll
+/// against two enemies who are about to arrive is the same call the
+/// wall rung makes at the top of the ladder.
+///
+/// The Glamour Bard is the case that fixed the placement. Major Image
+/// and Mantle of Majesty both cost the grip, and a bard that spent it
+/// on the picture never raised the aspect at all — which is the
+/// concrete shape of "worth less than every concentration buff on the
+/// sheet".
+fn try_raise_a_screen(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    raise_something_across_the_approach(encounter, actor_id, SCREEN_SPELLS)
+}
+
+/// The shared body of the two rungs above: find the approach worth
+/// cutting, then put the first affordable thing in `cohort` across it.
+///
+/// One picker for both cohorts because the *question* is one question —
+/// is there a line worth closing, and is this caster the one to close
+/// it — and the two rungs differ only in what they have to close it
+/// with and in where on the ladder they are asked. Splitting the gate
+/// as well would have been two copies of a forty-line threat walk that
+/// could drift.
+///
 /// Fires when all of:
 ///
-///   - the caster owns one of `WALL_SPELLS` that it can actually afford
-///     right now — a caster already concentrating keeps only the walls
-///     that cost no concentration, because casting one of the others
-///     would drop whatever is up, and everything the AI puts up above
-///     this rung it put up on purpose;
+///   - the caster owns something in `cohort` that it can actually
+///     afford right now — a caster already concentrating keeps only the
+///     entries that cost no concentration, because casting one of the
+///     others would drop whatever is up, and everything the AI puts up
+///     above either rung it put up on purpose;
 ///   - `MIN_THREATS` hostiles or more are closing and about to arrive:
 ///     further than melee reach, no further than `MAX_THREAT_GAP`. Both
 ///     halves matter. A wall does nothing about a creature already
@@ -10523,12 +10673,12 @@ const WALL_STANDOFF: isize = 2;
 ///     a front line therefore never walls, which is right: the front
 ///     line is the wall.
 ///
-/// The wall is aimed at the nearest qualifying threat, ties by lowest
-/// id, which is the same deterministic tie-break every other picker
-/// uses.
-fn try_wall_off_approach(
+/// It is aimed at the nearest qualifying threat, ties by lowest id,
+/// which is the same deterministic tie-break every other picker uses.
+fn raise_something_across_the_approach(
     encounter: &EncounterInstance,
     actor_id: usize,
+    cohort: &[&str],
 ) -> Option<ActionExecutionInfo> {
     use crate::engine::util::{footprint_chebyshev, get_tiles_from_size};
 
@@ -10551,7 +10701,7 @@ fn try_wall_off_approach(
     // would have made the free wall as expensive as the two that are
     // not.
     let already_concentrating = actor.is_concentrating();
-    let walls: Vec<&'static (dyn Action + Send + Sync)> = WALL_SPELLS
+    let walls: Vec<&'static (dyn Action + Send + Sync)> = cohort
         .iter()
         .filter_map(|name| find_printing(actor, name))
         .filter(|wall| !already_concentrating || !wall.holds_concentration())
@@ -24884,6 +25034,14 @@ mod tests {
             ("wall of stone", true),
             ("wall of ice", true),
             ("prismatic wall", false),
+            // …and the three that only look like walls. Minor Illusion
+            // is the odd one out of the trio and has to be: it is the
+            // one image with no concentration to keep it unique, which
+            // is why its own validator carries the "not twice" gate the
+            // other two get for free. See `SCREEN_SPELLS`.
+            ("major image", true),
+            ("silent image", true),
+            ("minor illusion", false),
             ("crown of thorns", true),
             ("slow", true),
         ];
@@ -24931,7 +25089,7 @@ mod tests {
         // nothing to raise. A wall with a wrong answer is either a
         // caster that silently drops its Hypnotic Pattern to raise a
         // pane of stone, or one that never raises the free wall at all.
-        for name in WALL_SPELLS {
+        for name in WALL_SPELLS.iter().chain(SCREEN_SPELLS.iter()) {
             assert!(
                 expected.iter().any(|(e, _)| e == name),
                 "{name} is on the wall registry without an answer pinned here"

@@ -262,6 +262,21 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // has it on the warlock list, where it reads as the escape hatch a
     // class with one slot needs.
     actions.push(&*crate::actions::spells::GASEOUS_FORM);
+    // The image spells, and with them the board's first layer that is
+    // only true for some of the creatures looking at it — see
+    // `engine::illusions`. Minor Illusion is a cantrip that paints a
+    // boulder; Silent Image (lv1) and Major Image (lv3) paint a screen
+    // across the room. None of them does any damage or imposes any
+    // condition: what they buy is that an enemy who has not spent an
+    // Action studying the picture will not walk through it and cannot
+    // see past it, which turns a corridor into a detour and a back rank
+    // into a blind one. The counterplay is the `study` action, which
+    // every creature on the board has.
+    // No Silent Image: RAW puts that one on the bard, sorcerer and
+    // wizard lists and not on the warlock's. The cantrip and the
+    // level-3 slot are both on it.
+    actions.push(&*crate::actions::spells::MINOR_ILLUSION);
+    actions.push(&*crate::actions::spells::MAJOR_IMAGE);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

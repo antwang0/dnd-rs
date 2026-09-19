@@ -1850,6 +1850,80 @@ impl Action for Search {
 
 pub static SEARCH: LazyLock<Search> = LazyLock::new(|| Search {});
 
+/// SRD 5.2 **Study** action, narrowed to the one thing on this board
+/// worth studying: an image that isn't there.
+///
+/// RAW's Study is the broad "make an Intelligence check to recall or
+/// work something out" action, and most of what it covers — a book, a
+/// memory, a clue — is outside a fight. What is inside one is the
+/// disbelief clause every image spell prints: *"a creature that uses
+/// its Study action to examine the image can determine that it is an
+/// illusion with a successful Intelligence (Investigation) check
+/// against your spell save DC."* That is the whole of what this action
+/// does, and it is the counterplay the illusion layer is worth nothing
+/// without — see [`crate::engine::illusions`].
+///
+/// Deliberately the sibling of `Search` rather than a variant of it,
+/// and the two are not interchangeable. Search is a Wisdom (Perception)
+/// check that finds things which are *there* and hiding; this is an
+/// Intelligence (Investigation) check that unfinds things which are
+/// not. A creature good at one is routinely bad at the other, which is
+/// exactly the choice RAW means a player to be making when a screen
+/// goes up across the corridor.
+///
+/// Refuses to be spent on a board with nothing to study, which is what
+/// keeps a whole Action from disappearing into a shrug — see
+/// `EncounterInstance::studyable_illusions` for the candidate gate
+/// (range, line of sight, and whether this creature is fooled at all).
+pub struct Study {}
+
+impl Action for Study {
+    fn name(&self) -> &str {
+        "study"
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["st", "examine", "disbelieve"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::NoArgs
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        !encounter.studyable_illusions(caster_id).is_empty()
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn crate::engine::side_effects::ApplicableSideEffect>> {
+        // Resolved inline rather than as a queued effect, for the
+        // reason `Search`'s zone reveal is: seeing through an image is
+        // a change to a board layer rather than to an actor, and the
+        // side-effect stack is the actors' queue.
+        if encounter.study_illusions(caster_id) == 0 {
+            encounter.log("  study: whatever is over there looks solid enough.".to_string());
+        }
+        Vec::new()
+    }
+}
+
+pub static STUDY: LazyLock<Study> = LazyLock::new(|| Study {});
+
 /// Wipe Acid — universal cleanse action. Spends an Action to scrape off
 /// the lingering acid from 5e Tasha's Caustic Brew (the `CausticBrewed`
 /// condition). RAW: "as an action, a creature can use a wet rag or a
@@ -2824,6 +2898,7 @@ pub static DEFAULT_ACTIONS: LazyLock<Vec<&'static (dyn Action + Send + Sync)>> =
             &*GRAPPLE_ESCAPE,
             &*HIDE,
             &*SEARCH,
+            &*STUDY,
             &*WIPE_ACID,
             &*DROP_AND_ROLL,
             &*SUNDER,

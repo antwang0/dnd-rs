@@ -311,15 +311,18 @@ use crate::engine::terrain_gen::{TerrainGenParams, generate_terrain};
 use crate::engine::conjured_terrain::ConjuredTerrain;
 use crate::engine::objects::{ObjectDamageOutcome, ObjectProfile};
 use crate::engine::hovering_blade::{BladeProfile, HoveringBlade};
+use crate::engine::illusions::Illusion;
 use crate::engine::lighting::{AmbientLight, LightAnchor, LightLevel, LightSource};
 use crate::engine::weather::Weather;
 use crate::engine::zones::{BarredTeleport, Zone};
 use crate::engine::triggers::TriggerEvent;
 use crate::engine::types::{
-    AbilityScoreType, Coordinate, CreatureType, DamageType, Size, SpellSchool,
+    AbilityScoreType, Coordinate, CreatureType, DamageType, Size, Skill, SpellSchool,
 };
 use crate::engine::jumping;
-use crate::engine::util::{TILE_FEET, footprint_chebyshev, footprint_tiles, get_tiles_from_size};
+use crate::engine::util::{
+    TILE_FEET, footprint_chebyshev, footprint_tiles, footprint_tiles_of_span, get_tiles_from_size,
+};
 use fastrand::Rng;
 use std::cmp::Ordering;
 use crate::engine::dice::{Dice, FastRandRoller, RollMode, RollModeTally, Roller};
@@ -2682,6 +2685,14 @@ pub struct EncounterInstance {
     /// about the tile under it, and it is not a body anybody can hit.
     hovering_blades: Vec<HoveringBlade>,
     hovering_blade_id_next: usize,
+    /// Images standing on tiles that are not really wearing them — see
+    /// `crate::engine::illusions`. The fifth board layer, and the only
+    /// one whose every question is asked of a *creature*: the other
+    /// four are facts about the board and this one is a disagreement
+    /// about it, so a believer routes around a tile a disbeliever walks
+    /// straight through.
+    illusions: Vec<Illusion>,
+    illusion_id_next: usize,
     /// The light the board has before anybody lights anything — see
     /// `crate::engine::lighting`. `BrightLight` by default, which is
     /// the fully-lit board every encounter behaved as before the
@@ -5563,21 +5574,34 @@ impl EncounterInstance {
         })
     }
 
-    /// True if the *environment* — fog or the dark — stops `viewer_id`
+    /// True if the *environment* — the fog, the dark, or something
+    /// painted across the line that isn't there — stops `viewer_id`
     /// seeing `subject_id`, with neither's own conditions considered.
     ///
-    /// The two clauses are genuinely different rules and are kept as
+    /// The three clauses are genuinely different rules and are kept as
     /// separate predicates (`obscurement_blinds` walks the whole line
     /// and ignores darkvision; `darkness_blinds` reads one tile and
-    /// respects it), but every caller wants both, and there are three:
-    /// `viewer_can_see`, and the two polarities of the attack-mode
-    /// sweep. Folding the `||` into one named helper is what stops a
-    /// fourth caller picking up one of the two and silently missing the
-    /// other — which is exactly how the darkness half would have gone
-    /// in if the fog half had not already been there to copy.
+    /// respects it; `illusion_blinds` walks the line and reads it
+    /// differently for each viewer), but every caller wants all three,
+    /// and there are three callers: `viewer_can_see`, and the two
+    /// polarities of the attack-mode sweep. Folding the `||` into one
+    /// named helper is what stops a fourth caller picking up one of
+    /// them and silently missing the others — which is exactly how the
+    /// darkness half would have gone in if the fog half had not already
+    /// been there to copy.
+    ///
+    /// The illusion clause is the one that breaks the helper's own
+    /// symmetry, and it breaks it correctly. Fog and darkness are
+    /// facts about the board, so they answer the same for both
+    /// polarities of the sweep and two creatures inside the same cloud
+    /// cancel to Normal. An image is a fact about the *viewer*: the
+    /// wizard behind their own Silent Image shoots out of it at no
+    /// penalty while the orc shooting back does so blind, and the
+    /// asymmetry is the whole of what the spell buys.
     pub fn sight_denied_between(&self, viewer_id: usize, subject_id: usize) -> bool {
         self.obscurement_blinds(viewer_id, subject_id)
             || self.darkness_blinds(viewer_id, subject_id)
+            || self.illusion_blinds(viewer_id, subject_id)
     }
 
     /// The ambient light this encounter was set up with.
@@ -10472,6 +10496,409 @@ impl EncounterInstance {
         }
     }
 
+    /// Every image standing on the board, in install order — see
+    /// [`crate::engine::illusions`].
+    pub fn illusions(&self) -> &[Illusion] {
+        &self.illusions
+    }
+
+    /// Paint an image onto the board and return the handle the teardown
+    /// paths key off.
+    ///
+    /// Tiles off the map are dropped at install rather than carried and
+    /// skipped later, which is the one respect in which this is simpler
+    /// than `conjure_terrain`: nothing was taken from the map, so there
+    /// is no ledger of what was there before and no reason to remember
+    /// a tile the image could never stand on.
+    ///
+    /// Anybody already standing in the painted tiles learns immediately.
+    /// That is RAW's physical-interaction clause arriving at the only
+    /// moment [`Self::touch_ground`] cannot catch it: the creature did
+    /// not arrive anywhere — the image arrived around *them*.
+    pub fn install_illusion(&mut self, mut image: Illusion) -> usize {
+        let id = self.illusion_id_next;
+        self.illusion_id_next += 1;
+        image.id = id;
+        image.tiles.retain(|c| self.in_bounds(*c));
+        let (name, guise, origin, taken) =
+            (image.name, image.guise, image.origin(), image.tiles.len());
+        self.illusions.push(image);
+        self.log(format!(
+            "  {} paints {} across {} tiles at {}.",
+            name, guise, taken, origin
+        ));
+        for actor_id in self.sorted_actor_ids() {
+            self.touch_illusions(actor_id);
+        }
+        id
+    }
+
+    /// Is `owner_id` already sustaining an image cast under `name`?
+    ///
+    /// The uniqueness gate for the one image spell that has no
+    /// concentration to keep it unique — see `MinorIllusion`'s
+    /// validator. Matched on `(owner, name)` rather than on a
+    /// remembered id for the reason `zone_sustained_by` is: the caller
+    /// is a zero-sized static with nowhere to keep one.
+    pub fn has_illusion_named(&self, owner_id: usize, name: &str) -> bool {
+        self.illusions
+            .iter()
+            .any(|i| i.owner_id == owner_id && i.name == name)
+    }
+
+    /// Take an image off the board. Returns true if one was there.
+    ///
+    /// No ledger to unwind, unlike its terrain-layer sibling: an image
+    /// never owned a tile, so there is nothing to hand back and no way
+    /// for two images over the same tile to undo each other.
+    pub fn dispel_illusion(&mut self, id: usize) -> bool {
+        let Some(index) = self.illusions.iter().position(|i| i.id == id) else {
+            return false;
+        };
+        self.illusions.remove(index);
+        true
+    }
+
+    /// Expire one round off every image and sweep the ones that ran
+    /// out. Called from `round_end`, beside `tick_zones` and
+    /// `tick_conjured_terrain`.
+    fn tick_illusions(&mut self) {
+        let mut expired: Vec<(usize, String, &'static str)> = Vec::new();
+        // The image-layer twin of `tick_zones`'s bereaved list.
+        let mut bereaved: Vec<usize> = Vec::new();
+        for image in self.illusions.iter_mut() {
+            image.rounds_remaining = image.rounds_remaining.saturating_sub(1);
+            if image.rounds_remaining == 0 {
+                expired.push((image.id, image.name.to_string(), image.guise));
+                if image.concentration {
+                    bereaved.push(image.owner_id);
+                }
+            }
+        }
+        for (id, name, guise) in expired {
+            self.dispel_illusion(id);
+            self.log(format!("The {} ends; {} was never there.", name, guise));
+        }
+        self.pending_concentration_review.append(&mut bereaved);
+    }
+
+    /// Take down every concentration-held image `actor_id` is
+    /// sustaining. The image-layer twin of
+    /// `remove_concentration_zones_of`, called from the same chokepoint
+    /// and for the same reason.
+    fn remove_concentration_illusions_of(&mut self, actor_id: usize) {
+        let doomed: Vec<(usize, String, &'static str)> = self
+            .illusions
+            .iter()
+            .filter(|i| i.concentration && i.owner_id == actor_id)
+            .map(|i| (i.id, i.name.to_string(), i.guise))
+            .collect();
+        for (id, name, guise) in doomed {
+            self.dispel_illusion(id);
+            self.log(format!("The {} winks out; {} was never there.", name, guise));
+        }
+    }
+
+    /// **Is this creature still fooled by this image?** — the one
+    /// predicate every consumer of the illusion layer asks, and the
+    /// only place the standing exemptions live.
+    ///
+    /// Five ways to be out of its reach, and they divide into two
+    /// kinds. The ledger is what a creature has *learned* (it studied
+    /// the image, or it walked into one); the four below are facts
+    /// about the creature that are re-read every time, because a
+    /// truesight creature that joins the fight after the image went up
+    /// is not fooled by it and a ledger written at install could not
+    /// have known that.
+    ///
+    ///   - **The caster's side.** RAW excuses only the caster; the
+    ///     engine excuses the team, because the alternative is a
+    ///     wizard's own fighter refusing to charge through the screen
+    ///     the wizard raised to hide the charge. See the module header.
+    ///   - **Truesight**, which RAW says *"automatically detects visual
+    ///     illusions"* — no check and no action.
+    ///   - **Blindsight** reaching the image: *"perceive its
+    ///     surroundings without relying on sight"* is exactly the sense
+    ///     a picture of a boulder has nothing to say to.
+    ///
+    ///     Blindsight and not the rest of the nonvisual cohort
+    ///     `obscurement_blinds` reads. Tremorsense feels creatures
+    ///     moving on the ground and would not notice a boulder that is
+    ///     not vibrating; the rogue's Blindsense and the Blind Fighting
+    ///     style are both written about *creatures* ("aware of the
+    ///     location of any hidden or invisible creature"), and an image
+    ///     is not one. Passing a fog-layer cohort through here would
+    ///     have let a rogue see through a wall of briars by standing
+    ///     near it.
+    ///   - **You are standing in it.** The physical-interaction clause,
+    ///     asked as a live fact rather than trusted to the ledger, so
+    ///     that the answer is right even on the frame before
+    ///     [`Self::touch_illusions`] has written it down. That is what
+    ///     makes the ledger an optimisation and a log line rather than
+    ///     a correctness dependency on sweep timing.
+    pub fn believes_illusion(&self, actor_id: usize, image: &Illusion) -> bool {
+        if image.is_known_to(actor_id) || actor_id == image.owner_id {
+            return false;
+        }
+        let Some(viewer) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        if self
+            .actors
+            .get(&image.owner_id)
+            .is_some_and(|owner| owner.team() == viewer.team())
+        {
+            return false;
+        }
+        if viewer.has_truesight() {
+            return false;
+        }
+        let span = get_tiles_from_size(viewer.size()) as isize;
+        let at = viewer.location();
+        if footprint_tiles_of_span(at, span).any(|t| image.covers(t)) {
+            return false;
+        }
+        let blindsight = viewer.blindsight_tiles();
+        if blindsight > 0
+            && image
+                .tiles
+                .iter()
+                .any(|&t| footprint_chebyshev(at, span as usize, t, 1) <= blindsight)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Write `actor_id` into an image's ledger and say so. Returns true
+    /// when this is news, which is what keeps one reveal to one line.
+    ///
+    /// `how` is the clause that earned it — *"walks straight through
+    /// it"*, *"studies it"* — and is the only part of the line that
+    /// differs between the two ways to learn.
+    pub fn reveal_illusion_to(&mut self, actor_id: usize, illusion_id: usize, how: &str) -> bool {
+        let Some(image) = self.illusions.iter_mut().find(|i| i.id == illusion_id) else {
+            return false;
+        };
+        if !image.disbelieve(actor_id) {
+            return false;
+        }
+        let (name, guise) = (image.name, image.guise);
+        let who = self.actor_name(actor_id);
+        self.log(format!(
+            "  {} sees through the {}: {} was never there ({}).",
+            who, name, guise, how
+        ));
+        true
+    }
+
+    /// RAW's *"physical interaction with the image reveals it to be an
+    /// illusion, because things can pass through it"*, charged at the
+    /// one chokepoint that knows a creature has arrived somewhere.
+    ///
+    /// Called from [`Self::touch_ground`], beside the zone contact and
+    /// the footing test, for the reason that helper exists at all: a
+    /// creature arrives in nine different ways and a layer added as a
+    /// second line at each of the nine is a list to keep in step by
+    /// hand. A body that ends up inside an image got there by being
+    /// shoved, pulled, teleported, dropped or ordered there — a
+    /// believer's own pathfinder will not route it through one — and
+    /// every one of those routes through here.
+    fn touch_illusions(&mut self, actor_id: usize) {
+        if self.illusions.is_empty() {
+            return;
+        }
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return;
+        };
+        let span = get_tiles_from_size(actor.size()) as isize;
+        let at = actor.location();
+        let touched: Vec<usize> = self
+            .illusions
+            .iter()
+            .filter(|i| {
+                !i.is_known_to(actor_id)
+                    && footprint_tiles_of_span(at, span).any(|t| i.covers(t))
+            })
+            .map(|i| i.id)
+            .collect();
+        for id in touched {
+            self.reveal_illusion_to(actor_id, id, "walks straight through it");
+        }
+    }
+
+    /// **Would this creature refuse to step here, because it thinks
+    /// something is in the way?**
+    ///
+    /// The pathfinder's half of the layer, and a sibling of
+    /// [`Self::barrier_bars_step`] in shape but not in kind: a magic
+    /// circle's ward is a rule that stops a creature, and this is a
+    /// creature declining to walk into what it believes is a rock. The
+    /// difference is visible in what happens when the step is taken
+    /// anyway — a barred step cannot be taken, and this one can, by
+    /// anything that moves a body without asking it (a shove, a pull, a
+    /// teleport) and by a player who knows better than their character
+    /// does. Whatever takes it arrives in [`Self::touch_ground`] and the
+    /// belief ends there.
+    ///
+    /// Measured over the mover's whole footprint at the destination,
+    /// because a Large creature that would clip the image with one
+    /// flank is a Large creature walking into a rock.
+    pub fn illusion_bars_step(&self, actor_id: usize, to: Coordinate) -> bool {
+        if self.illusions.is_empty() {
+            return false;
+        }
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        let span = get_tiles_from_size(actor.size()) as isize;
+        self.illusions.iter().any(|i| {
+            footprint_tiles_of_span(to, span).any(|t| i.covers(t))
+                && self.believes_illusion(actor_id, i)
+        })
+    }
+
+    /// **Does an image this viewer believes in stand between it and the
+    /// subject?** — the sight half of the layer.
+    ///
+    /// A picture of a slab of rock is an opaque thing in the way, and a
+    /// creature that has not seen through it cannot see past it either.
+    /// Folded into [`Self::sight_denied_between`] beside the fog and
+    /// the dark, which is what carries it to the two gates that already
+    /// read those: `viewer_can_see` and the attack-mode sweep.
+    ///
+    /// The subject's own tile counts and the viewer's cannot: a
+    /// creature standing inside an image is hidden by it, and a viewer
+    /// standing inside one has already stopped believing it (see
+    /// [`Self::believes_illusion`]).
+    fn illusion_blinds(&self, viewer_id: usize, subject_id: usize) -> bool {
+        // The common case is a board with no images on it, and the walk
+        // below is wasted work there.
+        if self.illusions.is_empty() {
+            return false;
+        }
+        let (Some(viewer), Some(subject)) =
+            (self.actors.get(&viewer_id), self.actors.get(&subject_id))
+        else {
+            return false;
+        };
+        let (from, to) = (viewer.location(), subject.location());
+        let believed: Vec<&Illusion> = self
+            .illusions
+            .iter()
+            .filter(|i| self.believes_illusion(viewer_id, i))
+            .collect();
+        if believed.is_empty() {
+            return false;
+        }
+        let hidden = |tile: Coordinate| believed.iter().any(|i| i.covers(tile));
+        hidden(to) || tiles_between(from, to).any(hidden)
+    }
+
+    /// Every image `actor_id` still believes in and could plausibly
+    /// walk over and examine — the candidate list the Study action
+    /// rolls against, and the gate that keeps it off the menu on a
+    /// board with nothing to study.
+    ///
+    /// Bounded by [`Self::STUDY_RANGE`] and by line of sight, because
+    /// RAW's verb is *"examine"*: a screen across a corridor two rooms
+    /// away is not something a creature can squint at, and one on the
+    /// far side of a real wall is not something it can see at all.
+    pub fn studyable_illusions(&self, actor_id: usize) -> Vec<usize> {
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return Vec::new();
+        };
+        let span = get_tiles_from_size(actor.size());
+        let at = actor.location();
+        self.illusions
+            .iter()
+            .filter(|i| self.believes_illusion(actor_id, i))
+            .filter(|i| {
+                i.tiles.iter().any(|&t| {
+                    footprint_chebyshev(at, span, t, 1) <= Self::STUDY_RANGE
+                        && self.actor_has_line_of_sight_to_point(actor_id, t)
+                })
+            })
+            .map(|i| i.id)
+            .collect()
+    }
+
+    /// **Is a picture the reason this creature cannot see what it is
+    /// fighting?** — the gate the AI's study rung is built on.
+    ///
+    /// True when at least one combat-active hostile is behind an image
+    /// this creature still believes in. The narrow question on purpose:
+    /// *"do I believe an image"* would be true of a screen across an
+    /// empty corner of the room, and spending an Action on that is the
+    /// failure mode a rung like this has.
+    ///
+    /// The sibling of `a_breach_would_open_a_route` one layer over, and
+    /// the same first line for the same reason: most fights have no
+    /// images in them, and the whole thing has to collapse to a scan of
+    /// an empty vector before anything else is asked.
+    pub fn an_image_is_in_the_way(&self, actor_id: usize) -> bool {
+        if self.illusions.is_empty() {
+            return false;
+        }
+        let Some(me) = self.actors.get(&actor_id) else {
+            return false;
+        };
+        let team = me.team();
+        self.sorted_actor_ids().into_iter().any(|other| {
+            other != actor_id
+                && self
+                    .actors
+                    .get(&other)
+                    .is_some_and(|a| a.team() != team && a.is_combat_active())
+                && self.illusion_blinds(actor_id, other)
+        })
+    }
+
+    /// 60 ft on the 2.5-ft grid — the envelope a creature can examine an
+    /// image across.
+    ///
+    /// The image spells reach 30 ft (Minor Illusion) to 120 ft (Major
+    /// Image), so an envelope in the middle is the one that makes the
+    /// counterplay a *choice*: a screen dropped at the caster's own
+    /// range limit has to be approached before it can be disbelieved,
+    /// and one dropped across the middle of the room can be studied
+    /// from where you stand.
+    pub const STUDY_RANGE: isize = 24;
+
+    /// SRD 5.2's disbelief check, rolled once for the whole board.
+    ///
+    /// *"A creature that uses its Study action to examine the image can
+    /// determine that it is an illusion with a successful Intelligence
+    /// (Investigation) check against your spell save DC."* One roll
+    /// compared against every image in range, which is the same shape
+    /// the Search action's single Perception check has against every
+    /// hider — and right for the same reason: the creature spent one
+    /// Action looking around, not one per thing it looked at.
+    ///
+    /// Returns how many images the roll saw through, which is what the
+    /// action logs.
+    pub fn study_illusions(&mut self, actor_id: usize) -> usize {
+        let candidates = self.studyable_illusions(actor_id);
+        if candidates.is_empty() {
+            return 0;
+        }
+        let roll = self.roll_ability_check(
+            actor_id,
+            AbilityScoreType::Intelligence,
+            Some(Skill::Investigation),
+        );
+        let beaten: Vec<usize> = self
+            .illusions
+            .iter()
+            .filter(|i| candidates.contains(&i.id) && roll >= i.save_dc)
+            .map(|i| i.id)
+            .collect();
+        for id in &beaten {
+            self.reveal_illusion_to(actor_id, *id, "studies it");
+        }
+        beaten.len()
+    }
+
     /// Every spectral weapon in the air, in the order it was conjured.
     pub fn hovering_blades(&self) -> &[HoveringBlade] {
         &self.hovering_blades
@@ -11182,6 +11609,7 @@ impl EncounterInstance {
         self.remove_concentration_zones_of(actor_id);
         self.remove_concentration_terrain_of(actor_id);
         self.remove_concentration_blades_of(actor_id);
+        self.remove_concentration_illusions_of(actor_id);
     }
 
     fn remove_concentration_zones_of(&mut self, actor_id: usize) {
@@ -11247,6 +11675,15 @@ impl EncounterInstance {
     pub fn touch_ground(&mut self, actor_id: usize) {
         self.touch_zones(actor_id);
         self.test_footing(actor_id);
+        // The third layer, and the one whose trigger is the *absence*
+        // of anything on the tile: SRD 5.2's *"physical interaction
+        // with the image reveals it to be an illusion, because things
+        // can pass through it"*. Last of the three because it neither
+        // rolls nor drops anybody — a creature the web already
+        // flattened has still walked through the picture of the
+        // boulder, and learning so costs it nothing. See
+        // `touch_illusions`.
+        self.touch_illusions(actor_id);
     }
 
     /// `touch_zones` for exactly one creature. The body of the old
@@ -15390,6 +15827,13 @@ impl EncounterInstance {
                 if self.barrier_bars_step(actor_id, coord, next) {
                     continue;
                 }
+                // …and the image of one, refused here for the same
+                // reason: a creature that thinks there is a rock in the
+                // corridor walks around the rock rather than up to it.
+                // See `illusion_bars_step`.
+                if self.illusion_bars_step(actor_id, next) {
+                    continue;
+                }
                 parent.insert(next, coord);
                 queue.push_back(next);
             }
@@ -15529,6 +15973,17 @@ impl EncounterInstance {
                 .barrier
                 .is_some_and(|b| b.bars_walk_by(body.creature_type()))
         });
+        // …and the same question one layer over: is there anything
+        // *painted* on this board that this creature would refuse to
+        // walk into? Hoisted for the reason the ward above is — the
+        // belief predicate is not a field read, and the inner loop runs
+        // eight times per expanded tile — and hoisted as the cheap half
+        // only. Whether the body believes a given image can change per
+        // tile (a blindsight envelope is measured from where the
+        // creature *is*, not from where it is thinking of stepping), so
+        // the hoist asks only whether there is an image on the board at
+        // all. See `illusion_bars_step`.
+        let images_on_the_board = !self.illusions.is_empty();
         // SRD 5.2 **Long Jump**, resolved once per path for the reason
         // every other waiver above is: neither number can change while a
         // single search is running, and the jump lane below is inside
@@ -15716,6 +16171,17 @@ impl EncounterInstance {
                     {
                         continue;
                     }
+                    // …and the picture of a wall, which stops only the
+                    // creature that has not seen through it. Beside the
+                    // ward above rather than folded into it, because
+                    // the two are opposite kinds of refusal: the ward
+                    // is a rule nobody can break and this is a walker
+                    // declining to walk into a rock. Anything that
+                    // moves a body without asking it still can, and the
+                    // belief ends when it lands — see `touch_ground`.
+                    if images_on_the_board && self.illusion_bars_step(body_id, next) {
+                        continue;
+                    }
                     let waived = if tile.is_some_and(|t| t.is_water()) {
                         swims
                     } else {
@@ -15888,6 +16354,12 @@ impl EncounterInstance {
                         {
                             continue;
                         }
+                        // Nobody leaps into a boulder they believe in
+                        // either. The walk lane's refusal, at the
+                        // landing tile rather than the next one.
+                        if images_on_the_board && self.illusion_bars_step(body_id, land) {
+                            continue;
+                        }
                         let Ok(land_idx) = self.idx(land) else {
                             continue;
                         };
@@ -16030,6 +16502,8 @@ impl EncounterInstance {
             conjured_terrain_id_next: 0,
             hovering_blades: Vec::new(),
             hovering_blade_id_next: 0,
+            illusions: Vec::new(),
+            illusion_id_next: 0,
             ambient_light: AmbientLight::default(),
             weather: Weather::default(),
             light_sources: Vec::new(),
@@ -22636,6 +23110,7 @@ impl EncounterInstance {
         self.tick_zones();
         self.tick_conjured_terrain();
         self.tick_hovering_blades();
+        self.tick_illusions();
         self.tick_light_sources();
         // Every timer has now ticked, so this is the first moment at
         // which "does this caster still have a spell up" has a stable
@@ -22743,6 +23218,10 @@ impl EncounterInstance {
                 .hovering_blades
                 .iter()
                 .any(|b| b.concentration && b.owner_id == actor_id)
+            || self
+                .illusions
+                .iter()
+                .any(|i| i.concentration && i.owner_id == actor_id)
     }
 
     /// Move `actor_id`'s stamp on the occupancy grid from wherever it is

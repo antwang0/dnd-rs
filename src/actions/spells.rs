@@ -31815,6 +31815,377 @@ impl Action for PhantasmalForce {
 
 pub static PHANTASMAL_FORCE: LazyLock<PhantasmalForce> = LazyLock::new(|| PhantasmalForce {});
 
+/// The three image spells share everything but their numbers, so they
+/// share one builder. See [`crate::engine::illusions`] for the layer
+/// they install onto and for what believing one costs.
+///
+/// Every one of them is the same sentence with a different budget: a
+/// picture of something solid goes up at a point the caster can see,
+/// it is worth nothing to anybody who knows better, and it is worth a
+/// wall to everybody else until they spend an Action finding out. What
+/// differs is how wide the picture is, how long it lasts, and whether
+/// the caster has to hold on to it — which is exactly the three
+/// arguments below.
+fn install_image(
+    encounter: &EncounterInstance,
+    caster_id: usize,
+    name: &'static str,
+    guise: &'static str,
+    tiles: Vec<Coordinate>,
+    rounds: u32,
+    concentration: bool,
+) -> Option<Box<dyn ApplicableSideEffect>> {
+    let caster = encounter.actors.get(&caster_id)?;
+    // Wizard (INT) and bard / sorcerer / warlock (CHA) all print these
+    // on their lists, so the DC is resolved best-of rather than pinned
+    // to one ability — the same resolver Phantasmal Force next door
+    // uses, and for the same reason.
+    let dc = caster.best_spell_save_dc([
+        AbilityScoreType::Intelligence,
+        AbilityScoreType::Charisma,
+    ]);
+    Some(Box::new(
+        crate::engine::side_effects::InstallIllusion {
+            image: crate::engine::illusions::Illusion::new(
+                name,
+                guise,
+                caster_id,
+                tiles,
+                dc,
+                rounds,
+                concentration,
+            ),
+        },
+    ))
+}
+
+/// Minor Illusion — illusion cantrip (bard / sorcerer / warlock /
+/// wizard), 1 minute, no concentration.
+///
+/// RAW's *"an object … no larger than a 5-foot cube"*, which on this
+/// grid is exactly a Medium creature's footprint: a 2×2 block anchored
+/// at the tile the caster aimed at. That mapping is not an
+/// approximation — 5 feet is two tiles, and the engine already draws
+/// an object of that size every time it draws a person.
+///
+/// The cheapest thing in the game that can close a corridor. It closes
+/// it for one creature at a time and only until that creature looks
+/// properly, which is the whole difference between this and the
+/// fifth-level slot that raises real stone — but a goblin that walks
+/// the long way round has spent its movement on the long way round,
+/// and the cantrip cost nothing.
+///
+/// Not modelled: RAW's *"or a sound"* mode. The engine has no hearing
+/// layer for a noise to act on, so an illusory sound would be a log
+/// line with no consumer; see the [`crate::engine::illusions`] header.
+pub struct MinorIllusion {}
+
+impl MinorIllusion {
+    /// 5 ft on the 2.5-ft grid — RAW's cube, exactly.
+    const SPAN: isize = 2;
+    /// 1 minute RAW.
+    const ROUNDS: u32 = 10;
+}
+
+impl Action for MinorIllusion {
+    fn name(&self) -> &str {
+        "minor illusion"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["mi", "minor-illusion"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 30 ft RAW = 12 tiles.
+        Some(12)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    // Cantrip — uses the default `cost()` (single Action, no slot).
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // The one gate a no-concentration image needs, and the reason
+        // the two spells below don't need it: nothing else stops a
+        // caster painting a second boulder beside the first every round
+        // for the rest of the fight. A concentration image is kept
+        // unique by the concentration; this one has to say so.
+        !encounter.has_illusion_named(caster_id, "minor illusion")
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let tiles = crate::engine::util::footprint_tiles_of_span(point, Self::SPAN).collect();
+        install_image(
+            encounter,
+            caster_id,
+            "minor illusion",
+            "a boulder",
+            tiles,
+            Self::ROUNDS,
+            false,
+        )
+        .into_iter()
+        .collect()
+    }
+}
+
+pub static MINOR_ILLUSION: LazyLock<MinorIllusion> = LazyLock::new(|| MinorIllusion {});
+
+/// Silent Image — level-1 illusion (bard / sorcerer / wizard),
+/// concentration.
+///
+/// RAW's 15-foot cube, spent the way a caster actually spends it: as a
+/// screen standing *across* the line the caster aimed along, through
+/// the same [`wall_tiles`] helper every wall spell in the engine uses.
+/// A cube drawn as a blob would be five tiles of picture in the middle
+/// of a room; a cube drawn as a face is five tiles of picture between
+/// two people, which is what the spell is for and what the targeting
+/// schema can express without asking the caster for an angle.
+///
+/// Five tiles is 12.5 ft against RAW's 15 — the odd width is what lets
+/// the screen be centred on the tile the caster picked, and a sixth
+/// tile would have to be added to one side or the other for no reason
+/// the rules give.
+///
+/// The level-1 slot's difference from the cantrip above is width and
+/// nothing else, which is the honest reading: a boulder blocks a
+/// corridor and a screen blocks a room.
+pub struct SilentImage {}
+
+impl SilentImage {
+    /// Two tiles either side of the anchor — five across, ~12.5 ft.
+    const REACH: isize = 2;
+    /// Concentration anchors the real lifetime; the timer is the cap.
+    const ROUNDS: u32 = 10;
+}
+
+impl Action for SilentImage {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "silent image"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["si", "silent-image"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 60 ft RAW = 24 tiles.
+        Some(24)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(1)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster_at) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let Some(image) = install_image(
+            encounter,
+            caster_id,
+            "silent image",
+            "a slab of rock",
+            wall_tiles(caster_at, point, Self::REACH),
+            Self::ROUNDS,
+            true,
+        ) else {
+            return Vec::new();
+        };
+        vec![
+            image,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Silent Image"),
+            }),
+        ]
+    }
+}
+
+pub static SILENT_IMAGE: LazyLock<SilentImage> = LazyLock::new(|| SilentImage {});
+
+/// Major Image — level-3 illusion (bard / sorcerer / warlock /
+/// wizard), concentration.
+///
+/// The same screen as Silent Image, two tiles wider and thrown twice as
+/// far: RAW's 20-foot cube at 120 feet against the level-1 slot's
+/// 15-foot cube at 60. What RAW adds beyond the size — sound, smell and
+/// temperature — has nothing in the engine to act on, so the level-3
+/// slot buys reach and width here and the extra senses are named in the
+/// [`crate::engine::illusions`] header as deliberately absent rather
+/// than quietly dropped.
+///
+/// Seven tiles is 17.5 ft against RAW's 20, odd for the reason Silent
+/// Image's five is: the screen is centred on the tile the caster picked.
+pub struct MajorImage {}
+
+impl MajorImage {
+    /// Three tiles either side of the anchor — seven across, ~17.5 ft.
+    const REACH: isize = 3;
+    const ROUNDS: u32 = 10;
+}
+
+impl Action for MajorImage {
+    /// Queues a `StartConcentration`. Declared so the AI's
+    /// summon and area-control rungs can price this cast before
+    /// trading a landed concentration effect for an unlanded one
+    /// — and so the assertion in `Action::execute` stays quiet.
+    fn holds_concentration(&self) -> bool {
+        true
+    }
+    fn name(&self) -> &str {
+        "major image"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["maji", "major-image"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(3)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        encounter.caster_can_concentrate(caster_id)
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let Some(caster_at) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let Some(image) = install_image(
+            encounter,
+            caster_id,
+            "major image",
+            "a curtain of flame",
+            wall_tiles(caster_at, point, Self::REACH),
+            Self::ROUNDS,
+            true,
+        ) else {
+            return Vec::new();
+        };
+        vec![
+            image,
+            Box::new(StartConcentration {
+                caster_id,
+                data: ConcentrationData::new("Major Image"),
+            }),
+        ]
+    }
+}
+
+pub static MAJOR_IMAGE: LazyLock<MajorImage> = LazyLock::new(|| MajorImage {});
+
 /// Wall of Light — level-5 evocation (sorcerer / warlock / wizard),
 /// concentration. The caster summons a wall of radiant light. We collapse
 /// the 60ft line / 10ft tall wall to the load-bearing combat hook: every

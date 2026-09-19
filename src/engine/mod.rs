@@ -17,6 +17,7 @@ pub mod errors;
 pub mod falling;
 pub mod footing;
 pub mod hovering_blade;
+pub mod illusions;
 pub mod incorporeal;
 pub mod jumping;
 pub mod lair_actions;

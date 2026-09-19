@@ -256,6 +256,19 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // class knows; the ladder is what it can pay for. See
     // `spells::PRISMATIC_WALL`.
     actions.push(&*crate::actions::spells::PRISMATIC_WALL);
+    // The image spells, and with them the board's first layer that is
+    // only true for some of the creatures looking at it — see
+    // `engine::illusions`. Minor Illusion is a cantrip that paints a
+    // boulder; Silent Image (lv1) and Major Image (lv3) paint a screen
+    // across the room. None of them does any damage or imposes any
+    // condition: what they buy is that an enemy who has not spent an
+    // Action studying the picture will not walk through it and cannot
+    // see past it, which turns a corridor into a detour and a back rank
+    // into a blind one. The counterplay is the `study` action, which
+    // every creature on the board has.
+    actions.push(&*crate::actions::spells::MINOR_ILLUSION);
+    actions.push(&*crate::actions::spells::SILENT_IMAGE);
+    actions.push(&*crate::actions::spells::MAJOR_IMAGE);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',
