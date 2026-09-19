@@ -615,6 +615,39 @@ pub struct Item {
     /// natural and granted swim speeds already on that cohort rather
     /// than being asked separately at the two sites that care.
     pub grants_swim_speed: bool,
+    /// True when wearing this item keeps its holder a few inches off
+    /// whatever they are walking over — SRD 5.2's **Horseshoes of a
+    /// Zephyr**, *"they allow the creature to move normally while
+    /// floating 4 inches above a surface. This effect means the creature
+    /// can cross or stand above nonsolid or unstable surfaces, such as
+    /// water or lava. The creature leaves no tracks and ignores
+    /// Difficult Terrain."*
+    ///
+    /// One sentence and three lanes, which is why it is a flag rather
+    /// than a row on `passive_conditions`: the clause reaches
+    /// `DIFFICULT_TERRAIN_IMMUNITIES`, `WATER_SURCHARGE_IMMUNITIES` and
+    /// `ActorInstance::rides_above_the_surface`, and no single condition
+    /// in the engine means all three. `Condition::Footloose` (Freedom of
+    /// Movement) is the nearest and is much more — it also hands out
+    /// dynamic immunity to Paralyzed, Restrained and Grappled, none of
+    /// which a horseshoe has any business granting. `WaterWalking`
+    /// covers two of the three lanes and not the rubble.
+    ///
+    /// **Four inches is not flight**, and keeping the two apart is the
+    /// whole of what the flag buys over reusing `is_airborne`. A flier
+    /// crosses a chasm, is missed by tremorsense, falls when the magic
+    /// stops and is out of a halberd's reach; a horse with these on is
+    /// standing on the floor for every one of those questions and
+    /// merely not touching it. The chasm is the sharpest of them: RAW's
+    /// examples are *water or lava*, which are surfaces, and a rift is
+    /// the absence of one — so the wearer walks around a hole exactly
+    /// as they did without the shoes.
+    ///
+    /// **The hoof clause is not modeled**, for the reason
+    /// [`HORSESHOES_OF_SPEED`]'s docstring gives: the engine has no
+    /// equipment slots and no anatomy, so *"touch one of the horseshoes
+    /// to the hoof of a horse or similar creature"* has nothing to read.
+    pub skims_the_ground: bool,
     /// True when wearing this item turns every critical hit against the
     /// holder into an ordinary one — 5e's Adamantine Armor, and nothing
     /// else on the roster.
@@ -985,6 +1018,7 @@ impl Item {
         shiftable_bonus: 0,
         grants_unfettered_breathing: false,
         grants_swim_speed: false,
+        skims_the_ground: false,
         blunts_critical_hits: false,
         halves_ranged_weapon_damage: false,
         ignores_half_cover_on_spells: false,
@@ -7602,6 +7636,37 @@ pub static HORSESHOES_OF_SPEED: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Horseshoes of a Zephyr** (Wondrous item, Very Rare) — *"While all
+/// four shoes are affixed to the hooves of a horse or similar creature,
+/// they allow the creature to move normally while floating 4 inches
+/// above a surface. This effect means the creature can cross or stand
+/// above nonsolid or unstable surfaces, such as water or lava. The
+/// creature leaves no tracks and ignores Difficult Terrain."*
+///
+/// The other set of shoes, one rarity up, and the pair that is worth
+/// finding on a different kind of board. [`HORSESHOES_OF_SPEED`] is
+/// thirty feet on an open floor and nothing at all in a corridor; this
+/// is nothing at all on an open floor and the difference between a
+/// route and a detour anywhere the generator drew rubble or a lake.
+///
+/// One sentence, three lanes, and the third is the one that makes it
+/// more than a movement bonus. A wearer crossing water is *on* it: the
+/// underwater rules stop applying, which means no swimming surcharge,
+/// no Disadvantage on the swing, and no drowning clock. That is the
+/// same clause Water Walk buys with a level-3 slot, and the shoes buy
+/// it standing. See [`Item::skims_the_ground`] for the three cohorts
+/// and for why four inches is deliberately not flight.
+///
+/// **No attunement**, which is RAW and the other half of the appeal:
+/// like their Rare siblings they cost their wearer nothing they were
+/// saving for a ring.
+pub static HORSESHOES_OF_A_ZEPHYR: Item = Item {
+    name: "Horseshoes of a Zephyr",
+    glyph: 'n',
+    skims_the_ground: true,
+    ..Item::DEFAULTS
+};
+
 /// **Wand of Wonder** (Wand, Rare, requires attunement) — *"This wand
 /// has 7 charges. While holding it, you can take a Magic action to
 /// expend 1 charge while choosing a point within 120 feet of yourself.
@@ -9258,6 +9323,11 @@ pub static LOOT_POOL: &[&Item] = &[
     // worth picking up at all once the ceiling starts to bite.
     &RING_OF_WARMTH,
     &HORSESHOES_OF_SPEED,
+    // Their Very Rare sibling, at the same single-entry weight. The two
+    // never compete: nothing in the engine limits what a creature
+    // *wears*, so a mount that finds both is wearing eight shoes and
+    // going ninety feet across a lake.
+    &HORSESHOES_OF_A_ZEPHYR,
     // The headband, beside the Ioun Stone of Intellect it is the other
     // reading of: a floor rather than a bonus, and Uncommon rather than
     // Very Rare, so it is the one a first-room party can actually find.
@@ -11008,6 +11078,8 @@ mod tests {
                 || item.grants_magical_attacks
                 || item.grants_silvered_attacks
                 || item.grants_unfettered_breathing
+                || item.grants_swim_speed
+                || item.skims_the_ground
                 || item.blunts_critical_hits
                 || item.halves_ranged_weapon_damage
                 || item.ignores_half_cover_on_spells

@@ -9013,13 +9013,11 @@ impl EncounterInstance {
         let Some(actor) = self.actors.get(&self.movement_body(actor_id)) else {
             return false;
         };
-        // Off the surface, or on top of it. Flight was the only way out
-        // of the water until Water Walk; RAW's "as if it were harmless
-        // solid ground" puts the holder on the lake rather than in it,
-        // which is what makes the spell more than a swimming speed —
-        // the surcharge waiver alone would leave them swinging at
-        // disadvantage and resisting fire while standing on the water.
-        if actor.is_airborne() || actor.has_condition(Condition::WaterWalking) {
+        // Off the surface, or on top of it — see
+        // `actor_template::SURFACE_RIDERS`, which is the list of ways
+        // to be over a lake rather than in one. Flight was the only
+        // entry until Water Walk, and the horseshoes are the third.
+        if actor.rides_above_the_surface() {
             return false;
         }
         self.footprint_is_water(actor.location(), actor.size())

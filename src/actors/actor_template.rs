@@ -1928,6 +1928,14 @@ const DIFFICULT_TERRAIN_IMMUNITIES: &[ActorFlagRow] = &[
     ActorFlagRow {
         flag: |a| a.has_passive_feature(crate::actions::class_features::LANDS_STRIDE_TAG),
     },
+    // **Horseshoes of a Zephyr** — RAW's last clause, *"the creature
+    // … ignores Difficult Terrain"*, and the first row on this cohort
+    // that comes out of the pack rather than off a sheet. See
+    // `Item::skims_the_ground` for why four inches of clearance is not
+    // the flight row above.
+    ActorFlagRow {
+        flag: ActorInstance::skims_the_ground,
+    },
 ];
 
 /// Sources of "this actor pays no movement surcharge for
@@ -1982,6 +1990,55 @@ const WATER_SURCHARGE_IMMUNITIES: &[ActorFlagRow] = &[
     // one thing separating this row from the swimming speed above it.
     ActorFlagRow {
         flag: |a| a.has_condition(Condition::WaterWalking),
+    },
+    // **Horseshoes of a Zephyr** — *"the creature can cross or stand
+    // above nonsolid or unstable surfaces, such as water or lava"*,
+    // which is Water Walk's sentence with hooves on. On this cohort
+    // for the same reason the row above it is, and on
+    // `SURFACE_RIDERS` for the other half of the same clause: a
+    // wearer crossing a lake is on top of it, not in it.
+    ActorFlagRow {
+        flag: ActorInstance::skims_the_ground,
+    },
+];
+
+/// Sources of *"this creature is on top of the water rather than in
+/// it"* — read by `ActorInstance::rides_above_the_surface` and, through
+/// it, by `EncounterInstance::is_immersed`.
+///
+/// The fourth water cohort, and the one the other three could not
+/// answer for. `WATER_SURCHARGE_IMMUNITIES` says what crossing a lake
+/// *costs*; this says whether the crosser is wet, which is a different
+/// question with a different membership — a Reef Shark pays nothing to
+/// swim and is as immersed as anything in the game.
+///
+/// It existed as a two-clause `if` inside `is_immersed` until the
+/// horseshoes arrived, under a comment explaining that flight had been
+/// the only way out of the water until Water Walk. A third source is
+/// where a pair of clauses becomes a list: the alternative was a
+/// three-term boolean at a site whose own docstring is about something
+/// else.
+///
+/// Entries (in order):
+///   - **Flight** (`is_airborne`) — deliberately the same predicate
+///     `WATER_SURCHARGE_IMMUNITIES` reads, so the two lanes cannot
+///     disagree about what counts as being in the air.
+///   - **Water Walk** (`Condition::WaterWalking`) — RAW's *"as if it
+///     were harmless solid ground"*, which is what makes the spell
+///     more than a swimming speed: the surcharge waiver alone would
+///     leave its holder swinging at disadvantage and resisting fire
+///     while standing on the lake.
+///   - **Horseshoes of a Zephyr** — the same sentence, bought rather
+///     than cast. See [`crate::items::item_template::Item::skims_the_ground`].
+const SURFACE_RIDERS: &[ActorFlagRow] = &[
+    ActorFlagRow {
+        flag: ActorInstance::is_airborne,
+    },
+    ActorFlagRow {
+        flag: |a| a.has_condition(Condition::WaterWalking),
+    },
+    ActorFlagRow {
+        flag: ActorInstance::skims_the_ground,
     },
 ];
 
@@ -12512,6 +12569,27 @@ impl ActorInstance {
     /// branch here or — worse — in the pathfinder's inner loop.
     pub fn ignores_difficult_terrain(&self) -> bool {
         self.matches_any(DIFFICULT_TERRAIN_IMMUNITIES)
+    }
+
+    /// True while a carried item holds this actor a few inches clear of
+    /// whatever it is walking over — SRD 5.2's Horseshoes of a Zephyr,
+    /// and nothing else on the loot table.
+    ///
+    /// Read from three cohorts rather than from three call sites, which
+    /// is the point of it being one predicate: RAW writes the effect as
+    /// one sentence with three consequences (no surcharge for rubble,
+    /// none for water, and not being *in* the water), and a flag read
+    /// separately at each would be three chances for a future item to
+    /// join two of them.
+    pub fn skims_the_ground(&self) -> bool {
+        self.active_items().any(|i| i.skims_the_ground)
+    }
+
+    /// True when this actor is on top of a liquid surface rather than
+    /// in it — the question `EncounterInstance::is_immersed` asks
+    /// before it looks at the tile at all. See [`SURFACE_RIDERS`].
+    pub fn rides_above_the_surface(&self) -> bool {
+        self.matches_any(SURFACE_RIDERS)
     }
 
     /// True if any row in `cohort` holds for this actor — the shared

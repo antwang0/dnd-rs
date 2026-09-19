@@ -128996,3 +128996,73 @@ fn the_potion_of_animal_friendship_calms_a_beast_and_not_a_goblin() {
          nothing, which is what keeps a mis-click from emptying a pack"
     );
 }
+
+/// The Horseshoes of a Zephyr buy all three halves of RAW's one
+/// sentence, and deliberately not a fourth.
+///
+/// *"…move normally while floating 4 inches above a surface. This
+/// effect means the creature can cross or stand above nonsolid or
+/// unstable surfaces, such as water or lava. The creature leaves no
+/// tracks and ignores Difficult Terrain."*
+///
+/// Three lanes fall out of that — the rubble surcharge, the water
+/// surcharge, and being in the water at all — and they are three
+/// different cohorts, so a pair of shoes that joined two of them would
+/// look exactly like a pair that joined three. What the test is really
+/// asserting is that they are not a cheap Fly: four inches of clearance
+/// leaves its wearer on the floor for every question flight answers,
+/// and the drowning clock is the sharpest of them — RAW's shoes say
+/// nothing about breathing, so a wearer dragged under still has a
+/// lungful of air and a countdown.
+#[test]
+fn the_zephyr_shoes_cross_the_water_without_going_into_it() {
+    use crate::items::item_template::HORSESHOES_OF_A_ZEPHYR;
+
+    let (mut e, swimmer, bystander) = swimmer_and_bystander();
+    assert!(e.is_immersed(swimmer), "the fixture's premise");
+    assert!(
+        !e.actors[&swimmer].ignores_difficult_terrain(),
+        "…and an unshod fighter pays for rubble"
+    );
+    assert!(!e.actors[&swimmer].swims_freely());
+
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .pickup_item(&HORSESHOES_OF_A_ZEPHYR);
+
+    assert!(
+        e.actors[&swimmer].ignores_difficult_terrain(),
+        "RAW's last clause: the wearer ignores Difficult Terrain"
+    );
+    assert!(
+        e.actors[&swimmer].swims_freely(),
+        "and crosses water at no surcharge, which is Water Walk's own clause"
+    );
+    assert!(
+        !e.is_immersed(swimmer),
+        "standing *above* the lake rather than in it — the half a bare \
+         surcharge waiver would have missed"
+    );
+    assert!(
+        !e.actors[&swimmer].is_airborne(),
+        "four inches is not flight, and the chasm lane reads this"
+    );
+    assert!(
+        !e.actors[&swimmer].breathes_underwater(),
+        "RAW's shoes say nothing about air"
+    );
+
+    // And the clause is the object's, not the board's: the fighter on
+    // the bank is unchanged, and taking them off puts the wearer back
+    // in the water.
+    assert!(!e.actors[&bystander].ignores_difficult_terrain());
+    e.actors
+        .get_mut(&swimmer)
+        .unwrap()
+        .remove_item_by_name("Horseshoes of a Zephyr");
+    assert!(
+        e.is_immersed(swimmer),
+        "the shoes came off over the lake, and the lake noticed"
+    );
+}
