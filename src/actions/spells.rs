@@ -5917,6 +5917,19 @@ pub static SHOCKING_GRASP: LazyLock<ShockingGrasp> = LazyLock::new(|| ShockingGr
 /// identical pattern to Burning Hands but spherical instead of a cone.
 pub struct Shatter {}
 
+impl Shatter {
+    /// RAW's 10-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(10);
+}
+
 impl Action for Shatter {
     /// Its "At Higher Levels" clause is implemented: `side_effects`
     /// reads the resolved slot and scales with it. See
@@ -5935,7 +5948,9 @@ impl Action for Shatter {
     }
     fn targeting_schema(&self) -> TargetingSchema {
         // 10ft radius = 2-tile burst on the 2.5ft grid.
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         Some(24)
@@ -5993,7 +6008,7 @@ impl Action for Shatter {
             encounter,
             caster_id,
             point,
-            2,
+            Self::RADIUS,
             AbilityScoreType::Constitution,
             dc,
             raw,
@@ -7405,6 +7420,19 @@ pub static COMMAND: LazyLock<Command> = LazyLock::new(|| Command {});
 /// for the future leveled-cast UI but defaults to 8d6 for now.
 pub struct Fireball {}
 
+impl Fireball {
+    /// RAW's 20-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(20);
+}
+
 impl Action for Fireball {
     /// Its "At Higher Levels" clause is implemented: `side_effects`
     /// reads the resolved slot and scales with it. See
@@ -7422,7 +7450,9 @@ impl Action for Fireball {
         vec!["fb-spell", "fire-ball"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150ft = 60 tiles.
@@ -7481,7 +7511,7 @@ impl Action for Fireball {
             encounter,
             caster_id,
             point,
-            4,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             raw,
@@ -9554,6 +9584,19 @@ pub static GREATER_INVISIBILITY: LazyLock<GreaterInvisibility> =
 /// spell distinct from Fireball / Lightning Bolt at the same level slot.
 pub struct IceStorm {}
 
+impl IceStorm {
+    /// RAW's 20-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(20);
+}
+
 impl Action for IceStorm {
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
@@ -9565,7 +9608,9 @@ impl Action for IceStorm {
         vec!["is", "icestorm"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 300 ft RAW; we cap to a map-realistic 48 tiles (120 ft).
@@ -9617,7 +9662,7 @@ impl Action for IceStorm {
             encounter,
             caster_id,
             point,
-            4,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             bludg,
@@ -9627,7 +9672,7 @@ impl Action for IceStorm {
             encounter,
             caster_id,
             point,
-            4,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             cold,
@@ -11127,6 +11172,19 @@ pub static WORD_OF_RADIANCE: LazyLock<WordOfRadiance> = LazyLock::new(|| WordOfR
 /// which gives the cleric a tool against enemy fear/charm spells.
 pub struct CalmEmotions {}
 
+impl CalmEmotions {
+    /// RAW's 20-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(20);
+}
+
 impl Action for CalmEmotions {
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Enchantment)
@@ -11138,7 +11196,9 @@ impl Action for CalmEmotions {
         vec!["ce", "calm"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60 ft = 24 tiles.
@@ -11181,7 +11241,6 @@ impl Action for CalmEmotions {
             return Vec::new();
         };
         let dc = caster.spell_save_dc(AbilityScoreType::Wisdom);
-        const RADIUS: isize = 4;
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.sorted_actor_ids() {
@@ -11197,7 +11256,7 @@ impl Action for CalmEmotions {
                 point,
                 1,
             );
-            if dist > RADIUS {
+            if dist > Self::RADIUS {
                 continue;
             }
             // 5e: no save = no effect. The save is *against* the cleanse
@@ -11418,6 +11477,16 @@ pub static MASS_SUGGESTION: LazyLock<MassSuggestion> = LazyLock::new(|| MassSugg
 pub struct Sunburst {}
 
 impl Sunburst {
+    /// RAW's 60-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(60);
     /// RAW's "undead and oozes" — the two creature types that flinch
     /// from daylight as a category rather than by individual trait.
     ///
@@ -11448,7 +11517,9 @@ impl Action for Sunburst {
         vec!["sun", "sunb"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 12 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft per RAW = 60 tiles. We cap at 40 since the map is
@@ -11488,7 +11559,6 @@ impl Action for Sunburst {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        const RADIUS: isize = 12;
         // Empowered Spell metamagic — sorcerer can reroll low dice on
         // the shared sunburst pool. Same hook as Fireball / Cone of Cold.
         let full = encounter.roll_empowered_sum(caster_id, 12, 6);
@@ -11511,7 +11581,7 @@ impl Action for Sunburst {
                 point,
                 1,
             );
-            if dist > RADIUS {
+            if dist > Self::RADIUS {
                 continue;
             }
             // RAW: "undead and oozes have disadvantage on this saving
@@ -11760,6 +11830,19 @@ pub static POWER_WORD_KILL: LazyLock<PowerWordKill> = LazyLock::new(|| PowerWord
 /// one type (a fire-resistant elemental) still eats the other half.
 pub struct MeteorSwarm {}
 
+impl MeteorSwarm {
+    /// RAW's 40-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(40);
+}
+
 impl Action for MeteorSwarm {
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
@@ -11771,7 +11854,15 @@ impl Action for MeteorSwarm {
         vec!["ms", "meteor"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        // SRD 5.2: *"a 40-foot-radius Sphere centered on each of those
+        // points"*, which is 8 by the conversion rule on
+        // `AreaShape::Burst`. Note *each*: RAW drops four of these and
+        // the engine models one, so 8 is already the conservative end
+        // of that collapse. A 4 made the ninth-level finisher exactly
+        // as wide as a Fireball.
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 1 mile per RAW; we cap at the map edge (40 tiles).
@@ -11810,7 +11901,6 @@ impl Action for MeteorSwarm {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        const RADIUS: isize = 4;
         // Empowered Spell metamagic — RAW says "When you roll damage for
         // a spell, you can reroll a number of the damage dice." Meteor
         // Swarm rolls fire then bludgeoning; our `roll_empowered`
@@ -11838,7 +11928,7 @@ impl Action for MeteorSwarm {
                 point,
                 1,
             );
-            if dist > RADIUS {
+            if dist > Self::RADIUS {
                 continue;
             }
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
@@ -12788,7 +12878,19 @@ impl Daylight {
     /// three places that need it — the targeting schema, the ally
     /// sweep, and the light source — because a radius that disagrees
     /// with itself lights a different area than it buffs.
-    const RADIUS: isize = 6;
+    ///
+    /// SRD 5.2: *"sunlight spreads from a point within range and fills
+    /// a 60-foot-radius Sphere"*, which is 24 tiles on the 2.5-ft grid
+    /// the whole lighting lane is measured in — the same conversion
+    /// `lighting::TORCH_BRIGHT_TILES` makes of a torch's twenty feet.
+    ///
+    /// This read **6**, under a comment calling it *"≈ 30 ft"*, which
+    /// is not what six tiles is either. At that radius a third-level
+    /// spell lit fifteen feet: less than a torch, less than the Light
+    /// cantrip, and less than the glow an azer gives off without
+    /// trying. The one spell in the book whose entire purpose is to
+    /// make a room bright was the dimmest light source in the engine.
+    const RADIUS: isize = 24;
     /// RAW's duration is an hour; ten rounds is the engine's standing
     /// stand-in for "longer than the fight", shared by the condition
     /// timer and the light source so the two lapse together.
@@ -12808,7 +12910,10 @@ impl Action for Daylight {
         vec!["day", "sunlight"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // Sphere of radius 6 (≈ 30 ft); anchored to a tile within range.
+        // RAW's 60-ft sphere, anchored to a tile within range. The
+        // radius is the light's own — see `Self::RADIUS`, and see
+        // `AreaShape::Burst` for why a spell that lays something on the
+        // *map* is sized at RAW while a thrown burst is not.
         TargetingSchema::Burst {
             radius: Self::RADIUS,
         }
@@ -14493,6 +14598,19 @@ pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| Crusad
 /// against the book will not find the die anywhere.
 pub struct Earthquake {}
 
+impl Earthquake {
+    /// RAW's 100-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(100);
+}
+
 impl Action for Earthquake {
     fn spares_allies(&self) -> bool {
         // Resolved through the enemy-scoped area helpers, so the
@@ -14526,7 +14644,14 @@ impl Action for Earthquake {
         vec!["eq", "quake"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        // SRD 5.2: *"a 100-foot-radius circle"*, which the conversion
+        // rule on `AreaShape::Burst` would make 20 — a disc forty-one
+        // tiles across, on boards the generator builds twenty to forty
+        // wide. Held at `BOARD_BURST_CAP`, which is a statement about
+        // the board rather than a private opinion about this spell.
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 500 ft RAW, capped to 120 tiles for our map scale.
@@ -14559,7 +14684,6 @@ impl Action for Earthquake {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const RADIUS: isize = 4;
         let raw = encounter.roll_empowered_sum(caster_id, 5, 6);
         encounter.log(format!(
             "  earthquake: 5d6({}) shared bludgeoning",
@@ -14570,7 +14694,7 @@ impl Action for Earthquake {
         };
         let dc = caster.spellcasting_save_dc();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+        for tid in encounter.enemy_burst_targets(caster_id, point, Self::RADIUS) {
             // SRD 5.2: *"each creature on the ground in the area makes
             // a **Dexterity** saving throw. On a failed save, a
             // creature has the Prone condition"*. This rolled Strength,
@@ -15549,6 +15673,16 @@ pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&ENSNARING_STRIKE, &ZEPHY
 pub struct FlameStrike {}
 
 impl FlameStrike {
+    /// RAW's 10-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(10);
     /// SRD 5.2: *"taking **5d6** Fire damage and **5d6** Radiant damage
     /// on a failed save"* — one pool, spelled once, because the spell
     /// rolls it twice and prints it twice.
@@ -15573,7 +15707,9 @@ impl Action for FlameStrike {
         vec!["fs", "fstrike"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 2 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 60ft RAW = 24 tiles.
@@ -15627,7 +15763,7 @@ impl Action for FlameStrike {
             encounter,
             caster_id,
             point,
-            2,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             fire_raw,
@@ -15637,7 +15773,7 @@ impl Action for FlameStrike {
             encounter,
             caster_id,
             point,
-            2,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             rad_raw,
@@ -16570,6 +16706,19 @@ pub static SYMBOL: LazyLock<Symbol> = LazyLock::new(|| Symbol {});
 /// installed so dispel can lift the gravity column.
 pub struct ReverseGravity {}
 
+impl ReverseGravity {
+    /// RAW's 50-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(50);
+}
+
 impl Action for ReverseGravity {
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
@@ -16588,7 +16737,9 @@ impl Action for ReverseGravity {
         vec!["rg", "reverse"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 10 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 100 ft = 40 tiles.
@@ -16633,14 +16784,13 @@ impl Action for ReverseGravity {
             "  reverse gravity: 8d6({}) bludgeoning fall damage",
             raw
         ));
-        const RADIUS: isize = 10;
 
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
         // RAW makes no ally/enemy distinction — every creature in the
         // column rolls a save. Caster is excluded (they cast it; they
         // brace themselves).
-        for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
+        for tid in encounter.neutral_burst_targets(caster_id, point, Self::RADIUS) {
             // SRD 5.2: *"a creature can make a **Dexterity** saving
             // throw to grab a fixed object it can reach, thus avoiding
             // the fall upward."* This rolled Strength, which is the
@@ -17355,6 +17505,19 @@ pub static CREATE_UNDEAD: SummonSpell = SummonSpell {
 /// from every target it landed on.
 pub struct Confusion {}
 
+impl Confusion {
+    /// RAW's 10-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(10);
+}
+
 impl Action for Confusion {
     /// Confused, and nothing else — see `FaerieFire::installs_condition`
     /// for what the declaration buys the AoE picker.
@@ -17386,7 +17549,14 @@ impl Action for Confusion {
         vec!["conf", "scramble"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        // SRD 5.2: *"a 10-foot-radius Sphere"*, which is 2 by the
+        // conversion rule on `AreaShape::Burst`. This read 4 —
+        // Fireball's number, for a twenty-foot Sphere — so a
+        // fourth-level lockdown covered four times the ground the book
+        // gives it.
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 90 ft = 36 tiles.
@@ -17423,10 +17593,9 @@ impl Action for Confusion {
             return Vec::new();
         };
         let dc = caster.spellcasting_save_dc();
-        const RADIUS: isize = 4;
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut applied: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+        for tid in encounter.enemy_burst_targets(caster_id, point, Self::RADIUS) {
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
@@ -17620,6 +17789,28 @@ pub static LEVITATE: LazyLock<Levitate> = LazyLock::new(|| Levitate {});
 /// untouched via the `enemy_burst_targets` partition.
 pub struct PlantGrowth {}
 
+impl PlantGrowth {
+    /// The overgrowth, in tiles — and the widest deliberate narrowing
+    /// in the file after Stinking Cloud's, for the same kind of reason.
+    ///
+    /// SRD 5.2's Overgrowth is *"a 100-foot-radius Sphere"*, which is
+    /// **40 tiles** on the 2.5-ft grid, twenty by the thrown-burst
+    /// halving in `AreaShape::Burst`, and still twelve at
+    /// `areas::BOARD_BURST_CAP` — a disc twenty-five tiles across, on
+    /// boards the generator builds twenty to forty wide. A third-level slot that turns most of the
+    /// arena into difficult terrain for the rest of the fight is not
+    /// the spell the book prices at third level; it is that spell cast
+    /// on a battlefield ten times this one's size.
+    ///
+    /// Four is the number the spell shipped with, kept on purpose and
+    /// now said out loud. It is also the number `side_effects` used to
+    /// hold as a second, local `const RADIUS` — two copies that agreed
+    /// by luck, where the picker's preview and the ground it actually
+    /// tangles are the one thing about this spell that must not
+    /// disagree.
+    const RADIUS: isize = 4;
+}
+
 impl Action for PlantGrowth {
     /// Entangled, and nothing else — see `FaerieFire::installs_condition`
     /// for what the declaration buys the AoE picker.
@@ -17644,7 +17835,9 @@ impl Action for PlantGrowth {
         vec!["pg", "vines", "entangle"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft = 60 tiles.
@@ -17677,9 +17870,8 @@ impl Action for PlantGrowth {
         let Some(point) = first_target_location(target_locations) else {
             return Vec::new();
         };
-        const RADIUS: isize = 4;
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
+        for tid in encounter.enemy_burst_targets(caster_id, point, Self::RADIUS) {
             effects.push(Box::new(ApplyCondition {
                 actor_id: tid,
                 condition: Condition::Entangled,
@@ -22921,6 +23113,19 @@ pub static MAXIMILIANS_EARTHEN_GRASP: LazyLock<MaximiliansEarthenGrasp> =
 /// immediate, no drip).
 pub struct VitriolicSphere {}
 
+impl VitriolicSphere {
+    /// RAW's 20-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(20);
+}
+
 impl Action for VitriolicSphere {
     fn school(&self) -> Option<SpellSchool> {
         Some(SpellSchool::Evocation)
@@ -22933,7 +23138,9 @@ impl Action for VitriolicSphere {
     }
     fn targeting_schema(&self) -> TargetingSchema {
         // 20ft RAW radius ≈ 4-tile Chebyshev burst.
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150ft RAW = 60 tiles — caps at our typical map size.
@@ -22980,7 +23187,7 @@ impl Action for VitriolicSphere {
             encounter,
             caster_id,
             point,
-            4,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             Dice::new(10, 4),
@@ -27001,6 +27208,19 @@ pub static BLIGHT: LazyLock<Blight> = LazyLock::new(|| Blight {});
 /// Sunbeam (lv6 radiant).
 pub struct CircleOfDeath {}
 
+impl CircleOfDeath {
+    /// RAW's 60-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(60);
+}
+
 impl Action for CircleOfDeath {
     fn name(&self) -> &str {
         "circle of death"
@@ -27012,7 +27232,15 @@ impl Action for CircleOfDeath {
         vec!["cod", "circle"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 6 }
+        // SRD 5.2: *"a 60-foot-radius Sphere"*, which is 12 by the
+        // conversion rule on `AreaShape::Burst` and is what Sunburst
+        // already used for the same printed radius. A 6 made the
+        // sixth-level burst half again the width of a Fireball rather
+        // than three times it, which is most of what the extra three
+        // slot levels buy.
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft RAW = 60 tiles.
@@ -27057,7 +27285,7 @@ impl Action for CircleOfDeath {
             encounter,
             caster_id,
             point,
-            6,
+            Self::RADIUS,
             AbilityScoreType::Constitution,
             dc,
             // SRD 5.2: *"taking **8d8** Necrotic damage on a failed
@@ -27182,6 +27410,19 @@ pub static HARM: LazyLock<Harm> = LazyLock::new(|| Harm {});
 /// multi-burst) as the wizard's high-tier fire AoE.
 pub struct DelayedBlastFireball {}
 
+impl DelayedBlastFireball {
+    /// RAW's 20-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(20);
+}
+
 impl Action for DelayedBlastFireball {
     fn name(&self) -> &str {
         "delayed blast fireball"
@@ -27193,7 +27434,9 @@ impl Action for DelayedBlastFireball {
         vec!["dbf", "delayed", "dblast"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 4 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 150 ft RAW = 60 tiles.
@@ -27238,7 +27481,7 @@ impl Action for DelayedBlastFireball {
             encounter,
             caster_id,
             point,
-            4,
+            Self::RADIUS,
             AbilityScoreType::Dexterity,
             dc,
             Dice::new(12, 6),
@@ -27404,6 +27647,19 @@ pub static INCENDIARY_CLOUD: LazyLock<IncendiaryCloud> = LazyLock::new(|| Incend
 /// that with a flat Rounds(10) timer.
 pub struct Weird {}
 
+impl Weird {
+    /// RAW's 30-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(30);
+}
+
 impl Action for Weird {
     /// Queues a `StartConcentration`. Declared so the AI's summon and
     /// area-control rungs can price this cast before trading a landed
@@ -27430,7 +27686,9 @@ impl Action for Weird {
         vec!["wd", "fear9"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        TargetingSchema::Burst { radius: 6 }
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 120 ft RAW = 48 tiles.
@@ -27484,7 +27742,7 @@ impl Action for Weird {
         // creature is registered so a hit on the caster clears the
         // whole sphere at once.
         let mut afraid: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, point, 6) {
+        for tid in encounter.enemy_burst_targets(caster_id, point, Self::RADIUS) {
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Wisdom, dc, caster_id);
             if save.passed() {
                 continue;
@@ -31729,6 +31987,19 @@ pub static INVESTITURE_OF_WIND: LazyLock<InvestitureOfWind> =
 /// that Cone of Cold / Fireball / Sunburst use.
 pub struct OtilukesFreezingSphere {}
 
+impl OtilukesFreezingSphere {
+    /// RAW's 60-foot radius, converted once for this spell and
+    /// read by both the targeting schema and the resolution below.
+    /// See `areas::thrown_burst_tiles` for the conversion and
+    /// `AreaShape::Burst` for why the thrown family halves.
+    ///
+    /// One name rather than two literals, because the two used to be
+    /// two literals and they are the one thing about an area spell
+    /// that must never disagree: the picker draws the first and the
+    /// blast reads the second.
+    const RADIUS: isize = crate::engine::areas::thrown_burst_tiles(60);
+}
+
 impl Action for OtilukesFreezingSphere {
     fn name(&self) -> &str {
         "freezing sphere"
@@ -31740,9 +32011,15 @@ impl Action for OtilukesFreezingSphere {
         vec!["ofs", "otiluke", "sphere"]
     }
     fn targeting_schema(&self) -> TargetingSchema {
-        // 60ft-radius sphere → burst radius 6 on this 2.5ft grid.
-        // Matches Cone of Cold's footprint at the same blast tier.
-        TargetingSchema::Burst { radius: 6 }
+        // SRD 5.2: *"it explodes in a 60-foot-radius Sphere"*, which is
+        // 12 by the conversion rule on `AreaShape::Burst`. The 6 that
+        // was here came with a comment matching it to Cone of Cold's
+        // footprint "at the same blast tier" — a fair instinct on the
+        // wrong axis, since a cone and a sphere are different shapes
+        // and the sphere's size is printed.
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
     }
     fn reach_tiles(&self) -> Option<isize> {
         // 300 ft RAW = 120 tiles, but the map is far smaller. Cap at
@@ -31799,7 +32076,7 @@ impl Action for OtilukesFreezingSphere {
             encounter,
             caster_id,
             point,
-            6,
+            Self::RADIUS,
             AbilityScoreType::Constitution,
             dc,
             raw,

@@ -82,11 +82,54 @@
 //! wholesale — RAW excludes the origin, and a creature standing inside
 //! its own breath is not a rule anybody wants.
 
+
 use crate::engine::types::{Coordinate, Size};
 use crate::engine::util::{
     feet_from_tiles, footprint_chebyshev, footprint_tiles_of_span as footprint_tiles,
     get_tiles_from_size,
 };
+
+/// The widest a **thrown** burst gets, in tiles.
+///
+/// Twelve is not round-number arithmetic: it is the largest radius the
+/// thrown family reaches by its own conversion — SRD's 60-foot Spheres,
+/// which Sunburst, Circle of Death and Freezing Sphere all print — and
+/// so it is the widest thrown area the engine already believed in
+/// before anything needed capping. A disc of radius 12 catches
+/// everything within thirty-odd feet of the aim point, which is most of
+/// a board and is meant to be at a sixth- or eighth-level slot.
+///
+/// One spell needs it. Earthquake's hundred-foot radius halves to
+/// twenty, a disc forty-one tiles across; holding it here keeps the cap
+/// a statement about *the board* rather than a second, unwritten
+/// opinion about that spell. It deliberately does not reach the
+/// map-layer family, whose areas are sized at RAW and none of which
+/// exceeds it.
+pub const BOARD_BURST_CAP: isize = 12;
+
+/// The radius, in tiles, of a burst that is **thrown and resolves on
+/// the spot** — RAW's radius in feet, halved, and capped at
+/// [`BOARD_BURST_CAP`].
+///
+/// The whole of the thrown family's conversion, in one place, because
+/// it was in fourteen places as a bare literal and four of those
+/// fourteen were wrong. A `Burst { radius: 6 }` on a sixty-foot Sphere
+/// looks like arithmetic; `thrown_burst_tiles(60)` is arithmetic, and
+/// it cannot be written for the wrong number of feet without saying so.
+///
+/// See [`AreaShape::Burst`] for why this family halves and the map
+/// layer does not, and `every_area_radius_converts_the_feet_its_own_comment_claims`
+/// for the sweep that holds the *other* half of the rule — a named
+/// `RADIUS` constant converts at `feet / 2.5` or names the tile count
+/// it is narrower than.
+pub const fn thrown_burst_tiles(feet: isize) -> isize {
+    let raw = feet / 5;
+    if raw > BOARD_BURST_CAP {
+        BOARD_BURST_CAP
+    } else {
+        raw
+    }
+}
 
 /// Chebyshev distance between two tiles — the board's metric, used here
 /// for the cone's length cap so a cone reaches exactly as far as every
@@ -284,6 +327,58 @@ pub enum AreaShape {
     /// where 5e's Sphere, Cube, Cylinder and Emanation all land on a
     /// grid this fine. The caster's own position is not read at all: a
     /// Fireball is wherever it was thrown.
+    ///
+    /// # What the number means, and the two answers the file gives
+    ///
+    /// `radius` is in tiles and the test is
+    /// `footprint_chebyshev(target, aim) <= radius`, which measures
+    /// from the *edge* of the target's box. Empirically — and this is
+    /// pinned by `the_burst_radii_the_book_prints_are_the_ones_the_engine_throws`
+    /// — a burst of radius `r` catches a Medium creature anchored up to
+    /// `r + 1` tiles from the aim point, which is `(r + 1) * 2.5` feet.
+    /// [`crate::engine::zones::Zone`]'s own radius reaches exactly the
+    /// same distance, so the two layers share one unit and always have.
+    ///
+    /// What they do **not** share is the conversion from the book, and
+    /// pretending otherwise is how four spells ended up on neither
+    /// line. The roster sorts cleanly into two families:
+    ///
+    ///   - **Anything laid on the map** — a zone, a light source, a
+    ///     patch of conjured terrain — is sized at **RAW**, `feet /
+    ///     2.5`. Cloudkill, Fog Cloud, Sleet Storm, Silence, Insect
+    ///     Plague and Incendiary Cloud all print a 20-foot Sphere and
+    ///     all read `8`; Darkness' fifteen feet is `6`; Moonbeam's five
+    ///     is `2`. `lighting::TORCH_BRIGHT_TILES` makes the same
+    ///     conversion of a torch's twenty feet, and Daylight's
+    ///     sixty-foot sphere is `24`.
+    ///   - **Anything thrown and resolved on the spot** is sized at
+    ///     **half** of RAW, `feet / 5`. Fireball, Ice Storm, Vitriolic
+    ///     Sphere, Delayed Blast Fireball and Calm Emotions all print
+    ///     twenty feet and all read `4`; Shatter, Flame Strike and
+    ///     Confusion's ten feet is `2`; Weird's thirty is `6`; Reverse
+    ///     Gravity's fifty is `10`; Sunburst, Circle of Death and
+    ///     Freezing Sphere's sixty is `12`.
+    ///
+    /// The thrown family's half is [`thrown_burst_tiles`], which is the
+    /// conversion written down once instead of fourteen times, and each
+    /// of those fourteen spells now holds its own `RADIUS` constant
+    /// built from it — because the schema and the blast used to be two
+    /// separate literals, and on five spells they had drifted apart.
+    ///
+    /// The split is a board-scale judgement rather than an accident.
+    /// A cloud is a thing the fight moves through, so its footprint is
+    /// the whole point and RAW's is affordable; a Fireball at RAW's
+    /// footprint catches most of a twenty-tile arena from any aim point
+    /// on it, and a burst that cannot miss is not a burst.
+    ///
+    /// # Where the rule stops
+    ///
+    /// At [`BOARD_BURST_CAP`], for the thrown family. Earthquake prints
+    /// a hundred-foot radius, which halves to twenty — still a disc
+    /// forty-one tiles across. Plant Growth prints the same hundred
+    /// feet and takes a narrower answer still, argued at its own site
+    /// beside Stinking Cloud's and Spike Growth's: those three are the
+    /// file's deliberate narrowings, and each says so where it is.
     Burst { radius: isize },
     /// 5e's Cone, thrown from the caster's own body toward the aim
     /// point. See the module docstring.

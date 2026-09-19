@@ -128690,3 +128690,102 @@ fn a_warded_creature_cannot_be_hunters_marked() {
     );
 }
 
+
+/// The two conversions `AreaShape::Burst` describes, pinned — the unit
+/// itself, and every spell that uses it.
+///
+/// Four spells were on neither line and nothing could have told you:
+/// a bare `Burst { radius: 6 }` on a 60-foot Sphere reads as
+/// arithmetic, and three of the four were guesses. Circle of Death and
+/// Freezing Sphere were half the width their ten instantaneous peers
+/// give the same printed radius, Meteor Swarm's ninth-level finisher
+/// was exactly as wide as a Fireball, and Confusion was four times the
+/// ground the book gives it.
+///
+/// Daylight is the fifth and the worst, because it is not in the
+/// thrown family at all: it lays a light source on the map, where the
+/// conversion is RAW, and at radius 6 the one spell whose entire
+/// purpose is to make a room bright lit fifteen feet — less than a
+/// torch, less than the Light cantrip, less than an azer standing
+/// there.
+#[test]
+fn the_burst_radii_the_book_prints_are_the_ones_the_engine_throws() {
+    use crate::actions::spells::{
+        CALM_EMOTIONS, CIRCLE_OF_DEATH, CLOUDKILL, CONFUSION, DARKNESS, DAYLIGHT,
+        DELAYED_BLAST_FIREBALL, FIREBALL, FOG_CLOUD, ICE_STORM, METEOR_SWARM,
+        OTILUKES_FREEZING_SPHERE, REVERSE_GRAVITY, SHATTER, SILENCE, SUNBURST, WEIRD,
+    };
+    use crate::engine::areas::AreaShape;
+    use crate::engine::types::Size;
+
+    // The unit, measured rather than asserted from a formula: a burst
+    // of radius `r` catches a Medium creature anchored `r + 1` tiles
+    // out. Everything below is written against this.
+    for r in 1..=12isize {
+        let aim = Coordinate::new(20, 20);
+        let reach = (0..40isize)
+            .filter(|d| {
+                AreaShape::Burst { radius: r }.catches_footprint(
+                    Coordinate::new(0, 0),
+                    Size::Medium,
+                    aim,
+                    Coordinate::new(20 + d, 20),
+                    2,
+                )
+            })
+            .max()
+            .expect("a burst catches the tile it is centred on");
+        assert_eq!(reach, r + 1, "a burst of radius {} should reach {} tiles", r, r + 1);
+    }
+
+    let radius_of = |action: &dyn crate::actions::action_template::Action| match action
+        .targeting_schema()
+        .area_shape()
+    {
+        Some(AreaShape::Burst { radius }) => radius,
+        other => panic!("{} is not a burst: {:?}", action.name(), other),
+    };
+
+    // Thrown and resolved on the spot: half of RAW, `feet / 5`.
+    let thrown: [(&dyn crate::actions::action_template::Action, isize); 12] = [
+        (&*SHATTER, 10),
+        (&*CONFUSION, 10),
+        (&*FIREBALL, 20),
+        (&*ICE_STORM, 20),
+        (&*CALM_EMOTIONS, 20),
+        (&*DELAYED_BLAST_FIREBALL, 20),
+        (&*WEIRD, 30),
+        (&*METEOR_SWARM, 40),
+        (&*REVERSE_GRAVITY, 50),
+        (&*SUNBURST, 60),
+        (&*CIRCLE_OF_DEATH, 60),
+        (&*OTILUKES_FREEZING_SPHERE, 60),
+    ];
+    for (action, feet) in thrown {
+        assert_eq!(
+            radius_of(action),
+            feet / 5,
+            "{} prints a {}-foot radius; the thrown family halves it",
+            action.name(),
+            feet
+        );
+    }
+
+    // Laid on the map — a zone or a light source: RAW, `feet / 2.5`.
+    let on_the_map: [(&dyn crate::actions::action_template::Action, isize); 5] = [
+        (&*DARKNESS, 15),
+        (&*FOG_CLOUD, 20),
+        (&*CLOUDKILL, 20),
+        (&*SILENCE, 20),
+        (&*DAYLIGHT, 60),
+    ];
+    for (action, feet) in on_the_map {
+        assert_eq!(
+            radius_of(action),
+            (feet as f32 / crate::engine::util::TILE_FEET) as isize,
+            "{} lays a {}-foot area on the map, which is sized at RAW",
+            action.name(),
+            feet
+        );
+    }
+}
