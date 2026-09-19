@@ -128805,3 +128805,194 @@ fn the_burst_radii_the_book_prints_are_the_ones_the_engine_throws() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// The two items that listen, and the bottle that befriends.
+//
+// SRD 5.2 prints three objects the loot table did not have. Two of them
+// are printings of Detect Thoughts and differ in exactly one clause —
+// whether the use holds concentration — and the third is the Beast
+// charm handed to somebody who cannot cast it.
+// ---------------------------------------------------------------------
+
+/// The Potion of Mind Reading opens the sense, and leaves the drinker's
+/// concentration alone.
+///
+/// The second half is the whole of what the Rare rarity buys. RAW's
+/// potion prints *"(no Concentration required)"* where the spell holds
+/// it, so a wizard holding up a Web can drink this and still be holding
+/// up the Web — which is what makes the bottle worth more than the slot
+/// to the one creature who could have cast it anyway.
+#[test]
+fn the_potion_of_mind_reading_opens_a_sense_without_spending_a_hold() {
+    use crate::actions::item_actions::DRINK_POTION_OF_MIND_READING;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+    use crate::items::item_template::POTION_OF_MIND_READING;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    let wolf = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(2, 8), 1, 1)
+        .unwrap();
+    for hidden in [goblin, wolf] {
+        e.actors
+            .get_mut(&hidden)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    }
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&POTION_OF_MIND_READING);
+    assert!(
+        !e.viewer_can_see(fighter, goblin),
+        "the fixture's premise: the fighter is blind to both"
+    );
+
+    let action: &dyn Action = &DRINK_POTION_OF_MIND_READING;
+    assert!(action.validate_input(&e, fighter, None, None, None));
+    for ef in action.execute(&mut e, fighter, None, None, None) {
+        ef.apply(&mut e);
+    }
+
+    assert!(
+        e.viewer_can_see(fighter, goblin),
+        "a goblin has Common and Goblin to think in"
+    );
+    assert!(
+        !e.viewer_can_see(fighter, wolf),
+        "and the wolf beside it has nothing — the potion is the spell, \
+         filter and all"
+    );
+    assert!(
+        !e.actors[&fighter].is_concentrating(),
+        "RAW's parenthetical: no Concentration required"
+    );
+    assert!(
+        !e.actors[&fighter].has_item_named("Potion of Mind Reading"),
+        "the bottle is the price"
+    );
+    // And a second bottle is not thrown away on a timer that has not
+    // run down — the same refusal the spell's own validator makes.
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&POTION_OF_MIND_READING);
+    assert!(
+        !action.validate_input(&e, fighter, None, None, None),
+        "the sense is already up; a second cork buys nothing"
+    );
+}
+
+/// The Medallion of Thoughts casts the spell — charge, concentration
+/// and all — which is the clause that separates it from the potion.
+///
+/// RAW's row is *"expend 1 charge to cast Detect Thoughts from it"*
+/// with no parenthetical waiving anything, so this one is the spell
+/// unmodified. The two items disagreeing about concentration is not
+/// drift between them; it is the two sentences the book prints.
+#[test]
+fn the_medallion_of_thoughts_casts_the_spell_and_holds_it() {
+    use crate::actions::item_actions::LISTEN_WITH_MEDALLION;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::items::item_template::MEDALLION_OF_THOUGHTS;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&goblin)
+        .unwrap()
+        .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&MEDALLION_OF_THOUGHTS);
+
+    let before = e.actors[&fighter].item_charges_remaining("Medallion of Thoughts");
+    assert_eq!(before, 5, "RAW's pool");
+
+    let action: &dyn Action = &LISTEN_WITH_MEDALLION;
+    assert!(action.validate_input(&e, fighter, None, None, None));
+    for ef in action.execute(&mut e, fighter, None, None, None) {
+        ef.apply(&mut e);
+    }
+
+    assert!(
+        e.viewer_can_see(fighter, goblin),
+        "the medallion is the spell, and the spell finds a goblin"
+    );
+    assert!(
+        e.actors[&fighter].is_concentrating(),
+        "and the spell holds concentration, which the potion does not"
+    );
+    assert_eq!(
+        e.actors[&fighter].item_charges_remaining("Medallion of Thoughts"),
+        before - 1,
+        "one listen, one charge"
+    );
+    assert!(
+        e.actors[&fighter].has_item_named("Medallion of Thoughts"),
+        "a medallion whose charges are spent is still a medallion"
+    );
+}
+
+/// The Potion of Animal Friendship charms a Beast and refuses everybody
+/// else.
+///
+/// The filter is the spell's own — the potion is a
+/// [`crate::actions::staves::StaffSpell`] wrapping
+/// `spells::ANIMAL_FRIENDSHIP`, so what a drinker may aim it at is
+/// whatever that spell accepts, and the wrapper adds nothing. What the
+/// bottle adds is the drinker: a fighter has no slot and no list, and a
+/// wolf pack is most of what the bestiary throws at one.
+#[test]
+fn the_potion_of_animal_friendship_calms_a_beast_and_not_a_goblin() {
+    use crate::actions::item_actions::DRINK_POTION_OF_ANIMAL_FRIENDSHIP;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+    use crate::items::item_template::POTION_OF_ANIMAL_FRIENDSHIP;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let wolf = e
+        .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(6, 2), 1, 0)
+        .unwrap();
+    let goblin = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(2, 6), 1, 1)
+        .unwrap();
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&POTION_OF_ANIMAL_FRIENDSHIP);
+
+    let action: &dyn Action = &DRINK_POTION_OF_ANIMAL_FRIENDSHIP;
+    assert!(
+        !action.validate_input(&e, fighter, Some(&vec![goblin]), None, None),
+        "a goblin is a person, and RAW's target line is one Beast"
+    );
+    assert!(
+        action.validate_input(&e, fighter, Some(&vec![wolf]), None, None),
+        "a wolf is a Beast"
+    );
+    assert!(
+        e.actors[&fighter].has_item_named("Potion of Animal Friendship"),
+        "…and neither gate above drank the bottle: a refused aim costs \
+         nothing, which is what keeps a mis-click from emptying a pack"
+    );
+}

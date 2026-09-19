@@ -8960,6 +8960,49 @@ pub static MAGIC_ARMOURY: &[&Item] = &[
     &ROD_OF_LORDLY_MIGHT,
 ];
 
+/// **Potion of Mind Reading** (Potion, Rare) — Detect Thoughts for ten
+/// minutes, no slot and no concentration. See
+/// [`crate::actions::item_actions::DRINK_POTION_OF_MIND_READING`] for
+/// RAW and for why the sense is worth more in a bottle than it is in a
+/// spellbook.
+pub static POTION_OF_MIND_READING: Item = Item {
+    name: "Potion of Mind Reading",
+    glyph: 'p',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_MIND_READING],
+    ..Item::DEFAULTS
+};
+
+/// **Medallion of Thoughts** (Wondrous Item, Uncommon, Requires
+/// Attunement) — the same sense as the potion above, five times, and
+/// back at dawn. See
+/// [`crate::actions::item_actions::LISTEN_WITH_MEDALLION`].
+pub static MEDALLION_OF_THOUGHTS: Item = Item {
+    name: "Medallion of Thoughts",
+    glyph: 'm',
+    on_use: &[&crate::actions::item_actions::LISTEN_WITH_MEDALLION],
+    charges: 5,
+    // RAW's "regains 1d4 expended charges daily at dawn" — the only
+    // recharge line in the file that is a bare die with no constant, so
+    // it is written out rather than sharing one of the two named
+    // `DiceExpr` constants above.
+    recharge: Some(DiceExpr {
+        dice: Some(crate::engine::dice::Dice::new(1, 4)),
+        constant: 0,
+    }),
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Potion of Animal Friendship** (Potion, Uncommon) — the Beast
+/// charm, uncorked. See
+/// [`crate::actions::item_actions::DRINK_POTION_OF_ANIMAL_FRIENDSHIP`].
+pub static POTION_OF_ANIMAL_FRIENDSHIP: Item = Item {
+    name: "Potion of Animal Friendship",
+    glyph: 'p',
+    on_use: &[&crate::actions::item_actions::DRINK_POTION_OF_ANIMAL_FRIENDSHIP],
+    ..Item::DEFAULTS
+};
+
 /// Pool of items that can be dropped as random loot. Order is irrelevant;
 /// the encounter picks uniformly. Add new specials here to put them in
 /// rotation without touching call sites. Some entries appear multiple
@@ -10137,6 +10180,21 @@ pub static LOOT_POOL: &[&Item] = &[
     // and not what it wears, and this ring asks for no bond at all.
     &RING_OF_ANIMAL_INFLUENCE,
     &RING_OF_ANIMAL_INFLUENCE,
+    // The two items that listen, at one entry each. Both answer the
+    // same question — "where is the thing I cannot see" — and the pool
+    // has no rarity axis to separate an Uncommon medallion from a Rare
+    // potion on, so the separation is left where it is legible: the
+    // medallion costs an attunement slot and the potion costs the
+    // bottle.
+    &POTION_OF_MIND_READING,
+    &MEDALLION_OF_THOUGHTS,
+    // Uncommon, and the loot table's cheapest answer to a wolf pack.
+    // Two entries rather than one for the reason the healing potions
+    // have three: it is a consumable a party actually spends, and a
+    // bestiary this full of Beasts gives it something to be spent on in
+    // most rooms.
+    &POTION_OF_ANIMAL_FRIENDSHIP,
+    &POTION_OF_ANIMAL_FRIENDSHIP,
 ];
 
 #[cfg(test)]

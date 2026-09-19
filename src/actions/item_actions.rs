@@ -13479,3 +13479,141 @@ pub static ANIMAL_RING_FEAR: AreaSaveConditionItem = AreaSaveConditionItem {
     billing: ItemUseBilling::Charges(1),
     target_types: &[crate::engine::types::CreatureType::Beast],
 };
+
+// ---------------------------------------------------------------------
+// The two items that listen
+// ---------------------------------------------------------------------
+
+/// **Potion of Mind Reading** (Potion, Rare) — *"When you drink this
+/// potion, you gain the effect of the Detect Thoughts spell (save DC
+/// 13) for 10 minutes (no Concentration required)."*
+///
+/// `spells::DETECT_THOUGHTS`' own docstring calls that spell *"the
+/// cheapest answer in the engine to the two things that are otherwise
+/// very expensive to answer — darkness and invisibility"*, and then
+/// names the reason nobody at the table ever benefits from it: it is a
+/// level-2 divination, so the only creature who can reach it is a
+/// caster who would rather be casting something else, and the AI is not
+/// taught to want it at all. A potion is the shape that fixes both. It
+/// puts a thirty-foot sense on a fighter's belt, it costs no slot and
+/// no concentration, and the drinker does not have to be able to cast.
+///
+/// **No concentration, and that is RAW rather than a simplification.**
+/// The spell holds concentration and this does not — the parenthetical
+/// is printed on the potion — which means a wizard can drink it while
+/// holding up a Web and still see the drow creeping down the corridor.
+/// That is the whole of what the Rare rarity is buying, and it is why
+/// the row is a bare [`SelfConditionItem`] rather than a
+/// [`crate::actions::staves::StaffSpell`] wrapping the real spell: the
+/// wrapper would have queued the spell's own `StartConcentration` and
+/// dropped the Web.
+///
+/// **RAW's save DC 13 has nothing to bite on.** Detect Thoughts in SRD
+/// 5.2 offers a save only on its *second* half — the Read Thoughts
+/// probe a creature can shut out with a Wisdom save — and that half is
+/// deliberately absent from the engine; see [`Condition::MindReading`],
+/// which argues it. What ships here is the Sense Thoughts half, which
+/// nobody rolls against, so the printed DC is a number with no roll to
+/// modify. Named rather than quietly dropped.
+///
+/// **Ten minutes is a hundred rounds**, which outlasts every fight, so
+/// the timer is the honest transcription rather than a cap. Contrast
+/// the spell's `Rounds(10)`: that one is RAW's own minute.
+const POTION_OF_MIND_READING_NAME: &str = "Potion of Mind Reading";
+
+pub static DRINK_POTION_OF_MIND_READING: SelfConditionItem = SelfConditionItem {
+    action_name: "drink potion of mind reading",
+    action_aliases: &["mind reading", "read minds"],
+    item_name: POTION_OF_MIND_READING_NAME,
+    log_text: "{actor} drinks a potion of mind reading; the room fills with voices.",
+    condition: Condition::MindReading,
+    // RAW's ten minutes.
+    timer: ConditionTimer::Rounds(100),
+    bonus_action: false,
+    // Re-drinking refreshes a timer that has not run down in any fight
+    // this engine plays, so the second bottle is thrown away. The
+    // spell's own validator refuses the same re-cast for the same
+    // reason.
+    reject_when_active: true,
+    temp_hp: None,
+    ward: TypedWard::None,
+    billing: ItemUseBilling::Consumed,
+};
+
+/// **Medallion of Thoughts** (Wondrous Item, Uncommon, Requires
+/// Attunement) — *"The medallion has 5 charges. While wearing it, you
+/// can expend 1 charge to cast Detect Thoughts (save DC 13) from it.
+/// The medallion regains 1d4 expended charges daily at dawn."*
+///
+/// The same sense as [`DRINK_POTION_OF_MIND_READING`] one shelf up, on
+/// the other side of the trade the loot table draws over and over: the
+/// potion is Rare, is gone when it is drunk, and asks for no attunement
+/// slot; the medallion is Uncommon, comes back at dawn, and wants one
+/// of the wearer's three bonds. A party that finds both is choosing
+/// between a sense for one fight and a sense for five.
+///
+/// **It casts the spell, and the spell concentrates.** RAW's row is
+/// *"cast Detect Thoughts from it"* with no parenthetical waiving
+/// concentration — unlike the potion, whose printed text does waive it
+/// — so this one is a [`crate::actions::staves::StaffSpell`] wrapping
+/// `spells::DETECT_THOUGHTS` and inherits everything the spell says,
+/// concentration included. The two rows disagreeing about that is not
+/// drift: it is the two sentences the book prints.
+const MEDALLION_OF_THOUGHTS_NAME: &str = "Medallion of Thoughts";
+
+pub static LISTEN_WITH_MEDALLION: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "medallion: detect thoughts",
+        action_aliases: &["medallion", "listen"],
+        item_name: MEDALLION_OF_THOUGHTS_NAME,
+        billing: ItemUseBilling::Charges(1),
+        spell_level: 2,
+        spell: || &*crate::actions::spells::DETECT_THOUGHTS,
+        only_targets: None,
+    };
+
+/// **Potion of Animal Friendship** (Potion, Uncommon) — *"When you
+/// drink this potion, you can cast the level 3 version of the Animal
+/// Friendship spell (save DC 13)."*
+///
+/// The Beast charm, uncorked. `spells::ANIMAL_FRIENDSHIP` is a druid
+/// and ranger spell and the bestiary is full of wolves, bears, giant
+/// spiders and dire wolves — which is to say the spell is worth a great
+/// deal to the half of the bench that cannot cast it. This is the
+/// bottle that hands it to them, and it is the cheapest answer on the
+/// shelf to a wolf pack: one Uncommon potion takes a body out of the
+/// initiative order without a scratch on it, and puts it back the
+/// moment anybody swings.
+///
+/// **The upcast is a label.** RAW's *"level 3 version"* is the spell's
+/// own *"one additional Beast for each spell slot level above 1"*, and
+/// that clause is absent from the engine — `TargetingSchema::SingleActor`
+/// is one actor by construction, which the spell's own docstring already
+/// says. `spell_level: 3` is still the honest number to stamp on the
+/// cast frame: it is what the book prints, it is what every level-gated
+/// feature downstream reads, and writing `1` here to match what the
+/// spell actually does would make the frame lie about the item.
+///
+/// **RAW's flat DC 13 is not carried**, for the reason
+/// [`ANIMAL_RING_ANIMAL_FRIENDSHIP`] does not carry it either: the
+/// wrapper is the real spell, and the real spell rolls against the
+/// drinker's own `spellcasting_save_dc`. Restating the charm on a
+/// hand-written chassis to pin one number is what the ring's Fear row
+/// had to do and this one does not — the difference there was that the
+/// cone's Beast filter could not survive the wrapper, and nothing here
+/// is lost. What it costs is that a fighter's bottle is weaker than a
+/// druid's, which is backwards; it is the standing divergence
+/// `WIND_FAN_GUST` names, and one number in one direction is a smaller
+/// lie than a second copy of the spell.
+const POTION_OF_ANIMAL_FRIENDSHIP_NAME: &str = "Potion of Animal Friendship";
+
+pub static DRINK_POTION_OF_ANIMAL_FRIENDSHIP: crate::actions::staves::StaffSpell =
+    crate::actions::staves::StaffSpell {
+        action_name: "drink potion of animal friendship",
+        action_aliases: &["animal friendship", "befriend beast"],
+        item_name: POTION_OF_ANIMAL_FRIENDSHIP_NAME,
+        billing: ItemUseBilling::Consumed,
+        spell_level: 3,
+        spell: || &*crate::actions::spells::ANIMAL_FRIENDSHIP,
+        only_targets: None,
+    };

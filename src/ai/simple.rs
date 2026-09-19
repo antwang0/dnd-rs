@@ -1181,6 +1181,19 @@ impl Controller for SimpleAi {
             return ControllerDecision::Act(aei);
         }
 
+        // 3k'''. The narrowest of the three "where is my enemy" rungs —
+        //        the loot table's two printings of Detect Thoughts.
+        //        Below the dwarf's stone-reading because it finds less:
+        //        tremorsense answers for anything standing on the floor
+        //        and this answers only for something that thinks in
+        //        words, which loses the wolves and finds the drow
+        //        driving them. See `try_sense_thoughts` for the two
+        //        gates, which are Stonecunning's read against this
+        //        spell's own envelope and filter.
+        if let Some(aei) = try_sense_thoughts(encounter, actor_id) {
+            return ControllerDecision::Act(aei);
+        }
+
         // 3l. The concentration self-buff cohort, lower half — the four
         //     Investitures, Wind Wall, Shadow Blade, Antilife Shell, the
         //     two paladin auras, Holy Weapon and Pass Without Trace. See
@@ -4424,6 +4437,76 @@ fn try_stonecunning(
     try_self_action(encounter, actor_id, "stonecunning")
 }
 
+/// The loot table's two printings of Detect Thoughts, in the order a
+/// holder of both would reach for them.
+///
+/// The medallion first, and the ordering is the whole of the table.
+/// Both rows buy the same thirty-foot sense; what separates them is
+/// what one use costs. The medallion spends a charge out of five that
+/// come back at dawn and holds the caster's concentration, which is
+/// RAW's own row — *"cast Detect Thoughts from it"*, with no
+/// parenthetical waiving anything. The potion is gone when it is drunk
+/// and waives concentration, because its printed text says so.
+///
+/// So the medallion is the one to try first (it is reusable) and the
+/// potion is the one that still works when the first is refused: a
+/// wearer already concentrating on something fails the spell's own
+/// validator and falls through to the bottle, which is exactly the
+/// creature the bottle is worth the most to. Neither ordering needs a
+/// gate here — the refusal is the spell's.
+const THOUGHT_SENSES: &[&str] = &[
+    "medallion: detect thoughts",
+    "drink potion of mind reading",
+];
+
+/// Listen for the thing that cannot be seen.
+///
+/// The third rung on this stretch that answers *"where is my enemy"*,
+/// beneath the Wand of Enemy Detection and Stonecunning, and the
+/// narrowest of the three. Its two gates are Stonecunning's, read
+/// against the envelope and the filter SRD 5.2 prints on this spell
+/// rather than on that trait:
+///
+///   - **Nothing hostile is visible.** A sense is worth nothing to a
+///     creature that can already see what it is fighting, and every
+///     rung below this one ranks a candidate it has to be able to see.
+///   - **Something that thinks in words is inside thirty feet.** The
+///     sharper half, and the one that makes this rung different from
+///     the two above it: Detect Thoughts finds *"creatures that know
+///     languages or are telepathic"* and nothing else, so a creature
+///     ambushed in the dark by a wolf pack must not spend its turn
+///     listening for minds that are not there. See
+///     `ActorInstance::knows_a_language`, which is the same predicate
+///     the sense gate itself reads — so the rung can never want a
+///     bottle the envelope would not have opened for.
+///
+/// `spells::DETECT_THOUGHTS`' own docstring says the AI *"has no rung to
+/// hang it on: nothing in the picker asks whether the creature it wants
+/// to attack can be found"*. That was true of the spell and is not true
+/// of the shelf: two items print it, and `try_reveal_hidden_enemies`
+/// had already built the rung the note said was missing. The spell
+/// itself stays out of reach, for the reason named there — it is a
+/// level-2 slot, and this file's casters have better ones.
+fn try_sense_thoughts(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+) -> Option<ActionExecutionInfo> {
+    if encounter.can_see_any_hostile(actor_id) {
+        return None;
+    }
+    if !enemy_within_matching(
+        encounter,
+        actor_id,
+        crate::engine::encounter::DETECT_THOUGHTS_TILES,
+        |a| a.knows_a_language(),
+    ) {
+        return None;
+    }
+    THOUGHT_SENSES
+        .iter()
+        .find_map(|name| try_self_action(encounter, actor_id, name))
+}
+
 /// The pack's **primes** — the item actions that sharpen or shield their
 /// own user and are not a bottle, in the order a holder would reach for
 /// them.
@@ -6638,6 +6721,32 @@ fn enemy_of_type_within(
     max_gap: isize,
     accepts: fn(crate::engine::types::CreatureType) -> bool,
 ) -> bool {
+    enemy_within_matching(encounter, actor_id, max_gap, |a| {
+        accepts(a.creature_type())
+    })
+}
+
+/// `any_enemy_within`, narrowed by an arbitrary fact about the enemy.
+///
+/// The general shape [`enemy_of_type_within`] one rung up is the
+/// commonest case of. That helper asks about the creature *type*, which
+/// is what every self-buff's `enemy_type` gate wants; this one is handed
+/// the whole `ActorInstance`, which is what a gate about anything else
+/// needs. `try_sense_thoughts` is the first such gate — Detect Thoughts'
+/// envelope only opens for a creature that *knows a language*, and a
+/// language is not a type.
+///
+/// Takes `impl Fn` rather than the `fn` pointer its caller above uses,
+/// so a predicate can close over the question being asked. That is the
+/// only reason the two are not one function: a `fn(CreatureType) -> bool`
+/// cannot be widened to a `fn(&ActorInstance) -> bool` without a
+/// closure, and a closure is not a `fn`.
+fn enemy_within_matching(
+    encounter: &EncounterInstance,
+    actor_id: usize,
+    max_gap: isize,
+    accepts: impl Fn(&crate::actors::actor_template::ActorInstance) -> bool,
+) -> bool {
     let Some(actor) = encounter.actors.get(&actor_id) else {
         return false;
     };
@@ -6648,7 +6757,7 @@ fn enemy_of_type_within(
         *id != actor_id
             && a.is_combat_active()
             && a.team() != my_team
-            && accepts(a.creature_type())
+            && accepts(a)
             && footprint_chebyshev(
                 my_loc,
                 my_size,
@@ -22022,6 +22131,7 @@ mod tests {
             .chain(SLOT_RESTORING_ITEMS.iter().copied())
             .chain(ITEM_PRIMES.iter().copied())
             .chain(HIDDEN_ENEMY_FINDERS.iter().copied())
+            .chain(THOUGHT_SENSES.iter().copied())
             // The escape rung, which is matched on the *spell* a row is
             // a printing of rather than on the row's own name — see
             // `find_printing_of`. Both item escapes on the table answer
@@ -26164,5 +26274,100 @@ mod tests {
             try_burrow(&e, ankheg).is_some(),
             "and tunnels once the run would not have arrived"
         );
+    }
+    /// The AI listens only when it cannot see, and only for something
+    /// with a mind to hear.
+    ///
+    /// Two gates and a fall-through, which between them are the whole
+    /// rung:
+    ///
+    ///   - a creature that can see its enemy has nothing to buy;
+    ///   - a creature blind to a *wolf* has nothing to buy either, and
+    ///     that is the gate this rung has and the two above it do not —
+    ///     Detect Thoughts finds what knows a language and the bestiary
+    ///     is half animals;
+    ///   - the medallion is preferred while it has a charge, and the
+    ///     potion answers when the spell's own validator refuses the
+    ///     medallion.
+    #[test]
+    fn the_ai_listens_only_when_it_is_blind_and_something_can_think() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wolves::WOLF_TEMPLATE;
+        use crate::conditions::{Condition, ConditionTimer};
+        use crate::engine::types::Coordinate;
+        use crate::items::item_template::{MEDALLION_OF_THOUGHTS, POTION_OF_MIND_READING};
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        for item in [&POTION_OF_MIND_READING, &MEDALLION_OF_THOUGHTS] {
+            e.actors.get_mut(&fighter).unwrap().pickup_item(item);
+        }
+
+        assert!(
+            try_sense_thoughts(&e, fighter).is_none(),
+            "the goblin is standing in plain sight"
+        );
+
+        // Blind to it, and the rung opens.
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        let aei = try_sense_thoughts(&e, fighter).expect("an enemy it cannot see, inside thirty feet");
+        assert_eq!(
+            aei.action().name(),
+            "medallion: detect thoughts",
+            "the reusable printing is the one to try first"
+        );
+
+        // A wolf in the goblin's place is a room with nothing to hear.
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let wolf = e
+            .instantiate_creature(&WOLF_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        for item in [&POTION_OF_MIND_READING, &MEDALLION_OF_THOUGHTS] {
+            e.actors.get_mut(&fighter).unwrap().pickup_item(item);
+        }
+        e.actors
+            .get_mut(&wolf)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        assert!(
+            try_sense_thoughts(&e, fighter).is_none(),
+            "a wolf has nothing to think in, so the sense would find it \
+             no better than the eyes already do"
+        );
+
+        // And a wearer whose hold is already spoken for falls through to
+        // the bottle, which is the clause the bottle is printed with.
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+            .unwrap();
+        let goblin = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(8, 2), 1, 0)
+            .unwrap();
+        for item in [&POTION_OF_MIND_READING, &MEDALLION_OF_THOUGHTS] {
+            e.actors.get_mut(&fighter).unwrap().pickup_item(item);
+        }
+        e.actors
+            .get_mut(&goblin)
+            .unwrap()
+            .add_condition(Condition::Invisible, ConditionTimer::Permanent);
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .start_concentration(crate::actors::actor_template::ConcentrationData::new("Web"));
+        let aei = try_sense_thoughts(&e, fighter).expect("the bottle needs no hold");
+        assert_eq!(aei.action().name(), "drink potion of mind reading");
     }
 }
