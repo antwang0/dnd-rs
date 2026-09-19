@@ -299,34 +299,6 @@ impl AttackParams<'_> {
     }
 }
 
-/// An extra clause a specific action layers onto its own swing, run at
-/// the end of `resolve_attack_outcome` once the shared pipeline has
-/// finished with the hit.
-///
-/// The three cohort tables above it — `ON_HIT_RIDERS`,
-/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, `ON_HIT_CONDITION_MARKS` — cover
-/// riders that belong to the *attacker* and fire on any swing they make.
-/// This covers the other kind: a rider that belongs to one action and
-/// needs context those rows can't carry. Sneak Attack is the case that
-/// motivated it — its die count scales with level and is negotiable
-/// (Cunning Strike trades dice for effects), its eligibility depends on
-/// the attack's `RollMode` and on who is standing next to the target,
-/// and it emits side effects of its own. None of that fits a
-/// `{tag, dice, target_gate}` row.
-///
-/// Riders return the extra damage they added so the caller's
-/// `damage_dealt` figure stays honest, and push their own side effects
-/// onto the swing's vec.
-///
-/// The alternative was for such an action to open-code the whole attack
-/// roll, and the reason not to is what the Rogue's shortsword
-/// demonstrated for as long as it did: an open-coded roll silently opts
-/// out of cover, Bless and Bane, the caster's attack buffs, the
-/// one-shot advantage riders (and their clearing), Multiattack Defense,
-/// the reactive attack taxes, Sanctuary, the interception cohort, the
-/// hit-this-turn mark, the reactive damage clamps, Hunter's Mark, Hex,
-/// and every smite prime. Every one of those is a rule the action's
-/// author never decided to skip.
 /// What the swing turned out to be, handed to an `ActionOnHitRider` so
 /// its clause can read the hit it is riding.
 ///
@@ -356,6 +328,34 @@ pub struct HitContext {
     pub damage: u32,
 }
 
+/// An extra clause a specific action layers onto its own swing, run at
+/// the end of `resolve_attack_outcome` once the shared pipeline has
+/// finished with the hit.
+///
+/// The three cohort tables above it — `ON_HIT_RIDERS`,
+/// `ONCE_PER_TURN_WEAPON_DIE_RIDERS`, `ON_HIT_CONDITION_MARKS` — cover
+/// riders that belong to the *attacker* and fire on any swing they make.
+/// This covers the other kind: a rider that belongs to one action and
+/// needs context those rows can't carry. Sneak Attack is the case that
+/// motivated it — its die count scales with level and is negotiable
+/// (Cunning Strike trades dice for effects), its eligibility depends on
+/// the attack's `RollMode` and on who is standing next to the target,
+/// and it emits side effects of its own. None of that fits a
+/// `{tag, dice, target_gate}` row.
+///
+/// Riders return the extra damage they added so the caller's
+/// `damage_dealt` figure stays honest, and push their own side effects
+/// onto the swing's vec.
+///
+/// The alternative was for such an action to open-code the whole attack
+/// roll, and the reason not to is what the Rogue's shortsword
+/// demonstrated for as long as it did: an open-coded roll silently opts
+/// out of cover, Bless and Bane, the caster's attack buffs, the
+/// one-shot advantage riders (and their clearing), Multiattack Defense,
+/// the reactive attack taxes, Sanctuary, the interception cohort, the
+/// hit-this-turn mark, the reactive damage clamps, Hunter's Mark, Hex,
+/// and every smite prime. Every one of those is a rule the action's
+/// author never decided to skip.
 pub trait ActionOnHitRider {
     /// Called on a landed swing, after the shared pipeline's own riders.
     fn apply(
@@ -10151,6 +10151,19 @@ pub static ROD_PARALYSIS: crate::engine::repeat_saves::RepeatSave =
         successes_needed: 1,
     };
 
+/// Every caster-side condition `ON_HIT_RIDERS` keys a row off, read back
+/// out of the private table.
+///
+/// Exists so a feature that *installs* one of these markers can pin that
+/// something reads it. The magic armoury is what needed it: a magic
+/// weapon there is an item in one file and a rider row in another, and
+/// an item whose marker no row reads is a sword that does nothing and
+/// looks exactly like a sword that works. See
+/// `items::item_template::tests::every_weapon_in_the_armoury_is_wired_to_a_rider`.
+pub fn on_hit_rider_conditions() -> Vec<Condition> {
+    ON_HIT_RIDERS.iter().map(|r| r.condition).collect()
+}
+
 /// Every once-per-turn ledger key `ON_HIT_RIDERS` writes through, read
 /// back out of the private table.
 ///
@@ -10166,19 +10179,6 @@ pub static ROD_PARALYSIS: crate::engine::repeat_saves::RepeatSave =
 /// used to be twenty hand-written `contains` assertions plus a length,
 /// which is twenty lines to edit for every new rider and no invariant
 /// at all for the tags nobody remembered to add.
-/// Every caster-side condition `ON_HIT_RIDERS` keys a row off, read back
-/// out of the private table.
-///
-/// Exists so a feature that *installs* one of these markers can pin that
-/// something reads it. The magic armoury is what needed it: a magic
-/// weapon there is an item in one file and a rider row in another, and
-/// an item whose marker no row reads is a sword that does nothing and
-/// looks exactly like a sword that works. See
-/// `items::item_template::tests::every_weapon_in_the_armoury_is_wired_to_a_rider`.
-pub fn on_hit_rider_conditions() -> Vec<Condition> {
-    ON_HIT_RIDERS.iter().map(|r| r.condition).collect()
-}
-
 pub fn on_hit_rider_ledger_tags() -> Vec<&'static str> {
     ON_HIT_RIDERS
         .iter()

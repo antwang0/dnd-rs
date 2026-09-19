@@ -22622,6 +22622,114 @@ fn nothing_reaches_a_creature_on_the_border_ethereal() {
     );
 }
 
+/// Six ranges in `spells.rs` were the **2014** book's, found by reading
+/// every `reach_tiles` in the file against the range line SRD 5.2
+/// prints for the same spell. Five were wrong and the sixth was an
+/// undocumented cap that read like a seventh mistake.
+///
+/// Pinned as a table rather than left to the next sweep, because the
+/// failure is invisible from inside the code: a `Some(24)` under a
+/// comment reading *"60 ft = 24 tiles"* is arithmetically perfect and
+/// says nothing at all about whether 60 is the number the book prints.
+/// Every row here is a spell whose two printings disagree, which is
+/// exactly the set a reader cannot check by looking.
+///
+/// The three deliberate map-scale caps in the file — Ice Storm, Control
+/// Water, Dimension Door and their neighbours — are **not** here on
+/// purpose: their deviation is a decision, it is argued at the site,
+/// and pinning it would turn an argued choice into a second place to
+/// edit.
+#[test]
+fn the_ranges_the_revision_changed_are_the_ones_the_engine_prints() {
+    use crate::actions::spells::{BANISHMENT, MIND_SPIKE, POWER_WORD_HEAL, SANCTUARY, SLEEP};
+
+    // (action, SRD 5.2 feet, the 2014 feet this used to carry)
+    let rows: [(&dyn crate::actions::action_template::Action, isize, isize); 5] = [
+        (&*SLEEP, 60, 90),
+        (&*BANISHMENT, 30, 60),
+        (&*MIND_SPIKE, 120, 60),
+        (&*SANCTUARY, 30, 5),
+        (&*POWER_WORD_HEAL, 60, 5),
+    ];
+    for (action, srd_feet, old_feet) in rows {
+        let want = (srd_feet as f32 / crate::engine::util::TILE_FEET) as isize;
+        assert_eq!(
+            action.reach_tiles(),
+            Some(want),
+            "{} should reach SRD 5.2's {} ft ({} tiles), not the 2014 printing's {} ft",
+            action.name(),
+            srd_feet,
+            want,
+            old_feet,
+        );
+    }
+}
+
+/// Three damage pools in `spells.rs` were the **2014** book's, found by
+/// reading every `Dice::new` in the file against the damage line SRD 5.2
+/// prints for the same spell: Flame Strike's two halves (4d6 → 5d6),
+/// Circle of Death (8d6 → 8d8) and every Prismatic Spray ray (10d6 →
+/// 12d6).
+///
+/// Pinned through the **log**, which is deliberate and is half of the
+/// fix. Each of these three now formats its own `Dice` into the line it
+/// prints instead of restating the number as text — see
+/// `FlameStrike::HALF` and `PrismaticSpray::RAY` — so a line that says
+/// `5d6` cannot be rolling 4d6, and this test reads what a player
+/// reads. Circle of Death needed no change of shape: its resolver has
+/// always printed the `Dice` it was handed.
+///
+/// Circle of Death is the sharpest of the three to have got wrong: the
+/// revision changed its *die* and left the count alone, which is the
+/// one shape of edition drift that still looks right at a glance.
+#[test]
+fn the_damage_pools_the_revision_changed_are_the_ones_the_engine_rolls() {
+    use crate::actions::spells::{CIRCLE_OF_DEATH, FLAME_STRIKE, PRISMATIC_SPRAY};
+    use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::actors::creatures::zombies::ZOMBIE_TEMPLATE;
+
+    // (action, caster template, aim, the notation the log must carry,
+    //  the 2014 notation it must not)
+    let rows: [(
+        &dyn crate::actions::action_template::Action,
+        &std::sync::LazyLock<crate::actors::actor_template::CreatureTemplate>,
+        &str,
+        &str,
+    ); 3] = [
+        (&*FLAME_STRIKE, &CLERIC_TEMPLATE, "5d6", "4d6"),
+        (&*CIRCLE_OF_DEATH, &WIZARD_TEMPLATE, "8d8", "8d6"),
+        (&*PRISMATIC_SPRAY, &WIZARD_TEMPLATE, "12d6", "10d6"),
+    ];
+    for (action, template, want, stale) in rows {
+        let mut e = ei_with_terrain(30, 30, &[]);
+        let caster = e
+            .instantiate_creature(template, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        let aim = Coordinate::new(9, 4);
+        e.instantiate_creature(&ZOMBIE_TEMPLATE, aim, 1, 0).unwrap();
+        e.pop_prompt();
+        for effect in action.side_effects(&mut e, caster, None, Some(&vec![aim]), None) {
+            effect.apply(&mut e);
+        }
+        let log = e.messages().join("\n");
+        assert!(
+            log.contains(want),
+            "{} should roll SRD 5.2's {}:\n{}",
+            action.name(),
+            want,
+            log
+        );
+        assert!(
+            !log.contains(stale),
+            "{} should not still be rolling the 2014 printing's {}:\n{}",
+            action.name(),
+            stale,
+            log
+        );
+    }
+}
+
 #[test]
 fn power_word_stun_no_op_above_threshold() {
     use crate::actions::spells::POWER_WORD_STUN;

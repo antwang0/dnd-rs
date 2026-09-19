@@ -1242,15 +1242,6 @@ fn neutral_burst_save_for_half(
     )
 }
 
-/// Cantrip-flavored neutral burst: every combat-active actor in the
-/// burst (caster excluded) makes a save against `dc` using `save_ability`.
-/// Failed save = full damage from a *shared* roll, success = no damage.
-/// Used by Thunderclap, Acid Splash, Sword Burst, Earth Tremor, etc.
-///
-/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveDamagePolicy::NoneOnSave`
-/// over the shared `burst_save_damage` resolver — distinct from
-/// `neutral_burst_save_for_half` because cantrips canonically don't
-/// half-on-save (a passed save is a clean miss).
 /// Enemy-only sibling of `neutral_burst_save_only`: every combat-active
 /// *hostile* in the burst saves against `dc` using `save_ability`, and
 /// a failed save takes full damage from a shared roll while a passed
@@ -1289,6 +1280,15 @@ fn enemy_burst_save_only(
     )
 }
 
+/// Cantrip-flavored neutral burst: every combat-active actor in the
+/// burst (caster excluded) makes a save against `dc` using `save_ability`.
+/// Failed save = full damage from a *shared* roll, success = no damage.
+/// Used by Thunderclap, Acid Splash, Sword Burst, Earth Tremor, etc.
+///
+/// Thin wrapper that picks `BurstTargets::Neutral` + `SaveDamagePolicy::NoneOnSave`
+/// over the shared `burst_save_damage` resolver — distinct from
+/// `neutral_burst_save_for_half` because cantrips canonically don't
+/// half-on-save (a passed save is a clean miss).
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn neutral_burst_save_only(
     encounter: &mut EncounterInstance,
@@ -6013,9 +6013,17 @@ impl Action for Sleep {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SinglePoint
     }
+    /// SRD 5.2 **Sleep**: *"Range: 60 feet"*, which is 24 tiles.
+    ///
+    /// This read 36 for 90 feet, which is the **2014** printing's
+    /// range. The 2024 revision cut it by a third at the same time it
+    /// turned the spell from a hit-point pool into a save — the two
+    /// changes are the same rebalance, and taking only the second one
+    /// left a first-level slot buying a save-or-sleep at a range the
+    /// book gives to Chromatic Orb.
     fn reach_tiles(&self) -> Option<isize> {
-        // 90ft = 36 tiles.
-        Some(36)
+        // 60 ft = 24 tiles.
+        Some(24)
     }
     fn requires_los(&self) -> bool {
         true
@@ -10261,9 +10269,17 @@ impl Action for Banishment {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
+    /// SRD 5.2 **Banishment**: *"Range: 30 feet"*, which is 12 tiles.
+    ///
+    /// This read 24 for 60 feet, which is the **2014** printing. The
+    /// halving is the revision's answer to the spell being the best
+    /// single-target removal in the game: it still is, and now the
+    /// caster has to come within one move of the thing they are
+    /// removing. Thrown from the back rank it was a fourth-level slot
+    /// with no exposure attached.
     fn reach_tiles(&self) -> Option<isize> {
-        // 60 ft = 24 tiles.
-        Some(24)
+        // 30 ft = 12 tiles.
+        Some(12)
     }
     fn requires_los(&self) -> bool {
         true
@@ -12118,9 +12134,18 @@ impl Action for PowerWordHeal {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
+    /// SRD 5.2 **Power Word Heal**: *"Range: 60 feet"*, which is 24
+    /// tiles.
+    ///
+    /// Touch was the **2014** printing, and it is the same mistake
+    /// Sanctuary carried one file-section down: a word of power that
+    /// has to be whispered with a hand on the patient. The 2024
+    /// revision put it at sixty feet precisely because a ninth-level
+    /// slot that restores every hit point is spent on somebody the
+    /// caster cannot reach.
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch.
-        Some(crate::actions::action_template::MELEE_REACH)
+        // 60 ft = 24 tiles.
+        Some(24)
     }
     fn is_harmful(&self) -> bool {
         false
@@ -13163,9 +13188,17 @@ impl Action for Sanctuary {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
+    /// SRD 5.2 **Sanctuary**: *"Range: 30 feet"*, which is 12 tiles.
+    ///
+    /// This shipped as Touch, which no printing of the spell has ever
+    /// said, and the cost of it was the whole point of a bonus-action
+    /// ward: the cleric had to be standing *next to* whoever needed
+    /// protecting. The creature that needs Sanctuary is the one at zero
+    /// hit points on the floor across the room, and a cleric who could
+    /// walk to them could have picked them up instead.
     fn reach_tiles(&self) -> Option<isize> {
-        // Touch.
-        Some(crate::actions::action_template::MELEE_REACH)
+        // 30 ft = 12 tiles.
+        Some(12)
     }
     fn is_harmful(&self) -> bool {
         false
@@ -14368,12 +14401,28 @@ impl Action for CrusadersMantle {
 pub static CRUSADERS_MANTLE: LazyLock<CrusadersMantle> = LazyLock::new(|| CrusadersMantle {});
 
 /// Earthquake — level-8 transmutation, concentration. Burst at a point within
-/// 500ft; every enemy in a 20ft radius (= 4-tile gap) makes a STR save vs
+/// 500ft; every enemy in a 20ft radius (= 4-tile gap) makes RAW's DEX save vs
 /// the caster's spell DC: fail = knocked Prone and takes 5d6 bludgeoning,
 /// pass = no damage / no prone. Allies are spared (caster picks the safe
 /// arc, per the spell's RAW "ground rupture" flavor). Damage is rolled
 /// once and shared across all victims (matches 5e shared-roll AoE
 /// semantics). Concentration so re-casting drops cleanly.
+///
+/// **The 5d6 is the engine's, not the book's**, and it is the one number
+/// on this spell that no printing prints. SRD 5.2's main save costs a
+/// failed creature the Prone condition and its Concentration and
+/// nothing else; the damage is all in the three optional clauses —
+/// *Fissures* (1d10 × 10 feet deep, fall damage), *Structures* (12d6 to
+/// buildings) and the rubble of a collapsing one. None of those has a
+/// surface here: the board is flat, so a fissure is a hole with no
+/// depth, and the engine has no buildings to shake down.
+///
+/// So the 5d6 stands in for all three at once, at a level a
+/// concentration spell can carry for the several rounds it lasts.
+/// Removing it instead would leave an eighth-level slot buying the
+/// Prone condition in a radius, which is a first-level Grease with a
+/// bigger circle. Said out loud here because a reader checking this
+/// against the book will not find the die anywhere.
 pub struct Earthquake {}
 
 impl Action for Earthquake {
@@ -14454,7 +14503,17 @@ impl Action for Earthquake {
         let dc = caster.spellcasting_save_dc();
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         for tid in encounter.enemy_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
+            // SRD 5.2: *"each creature on the ground in the area makes
+            // a **Dexterity** saving throw. On a failed save, a
+            // creature has the Prone condition"*. This rolled Strength,
+            // which no printing of the spell asks for and which is the
+            // wrong axis twice over: the save is about keeping your
+            // feet on ground that is moving, and a Strength save is the
+            // one the heavily-armoured front line is *best* at — so the
+            // eighth-level earth-shaker was hardest to knock down the
+            // creatures it is aimed at.
+            let save =
+                encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -15392,11 +15451,25 @@ pub static ALL_RANGED_SMITE_SPELLS: &[&SmiteSpell] = &[&ENSNARING_STRIKE, &ZEPHY
 /// Flame Strike — 5th-level evocation. A column of divine fire descends
 /// on a tile within 60ft (24 tiles); every creature whose footprint is
 /// within a 2-tile (10ft) radius of the point makes a DEX save vs the
-/// caster's WIS-based DC. On fail: 4d6 fire + 4d6 radiant. On success:
+/// caster's WIS-based DC. On fail: 5d6 fire + 5d6 radiant. On success:
 /// half. The mixed damage type is the spell's signature — it slips past
 /// fire-resistant fiends (radiant lands) and undead with radiant
 /// resistance (fire lands), making it the cleric's go-to AoE.
 pub struct FlameStrike {}
+
+impl FlameStrike {
+    /// SRD 5.2: *"taking **5d6** Fire damage and **5d6** Radiant damage
+    /// on a failed save"* — one pool, spelled once, because the spell
+    /// rolls it twice and prints it twice.
+    ///
+    /// A constant rather than two literals and a hardcoded `"5d6"` in
+    /// the log line, which is what this was: the two halves read `4d6`
+    /// (the 2014 printing) under a log string that could be corrected
+    /// on its own and leave the dice behind. One name is the only shape
+    /// in which the number a reader checks against the book and the
+    /// number the engine rolls cannot disagree.
+    const HALF: Dice = Dice::new(5, 6);
+}
 
 impl Action for FlameStrike {
     fn school(&self) -> Option<SpellSchool> {
@@ -15450,11 +15523,14 @@ impl Action for FlameStrike {
         // resistance / immunity lookup applies independently — a fire-
         // immune efreet still eats the radiant half, and a radiant-
         // resistant celestial still takes full fire.
-        let fire_raw = encounter.roll(&Dice::new(4, 6));
-        let rad_raw = encounter.roll(&Dice::new(4, 6));
+        let fire_raw = encounter.roll(&Self::HALF);
+        let rad_raw = encounter.roll(&Self::HALF);
         encounter.log(format!(
-            "  flame strike: 4d6({}) fire + 4d6({}) radiant",
-            fire_raw, rad_raw
+            "  flame strike: {}({}) fire + {}({}) radiant",
+            Self::HALF,
+            fire_raw,
+            Self::HALF,
+            rad_raw
         ));
         let mut effects = crate::actions::action_template::resolve_burst_save_damage(
             encounter,
@@ -16396,8 +16472,9 @@ pub static SYMBOL: LazyLock<Symbol> = LazyLock::new(|| Symbol {});
 /// Reverse Gravity — 5e level-7 transmutation, concentration. Gravity
 /// reverses in a wide column; creatures inside fall *up*, then crash
 /// back down when concentration drops. We model the cast's load-bearing
-/// half: a STR save (failure = thrown around, Prone) plus 8d6 bludgeoning
-/// to fallen creatures (the fall damage). Allies in the column are
+/// half: RAW's Dexterity save to grab something fixed (failure = thrown
+/// around, Prone) plus 8d6 bludgeoning to fallen creatures (the fall
+/// damage). Allies in the column are
 /// included — RAW makes no friend/foe distinction. Concentration is
 /// installed so dispel can lift the gravity column.
 pub struct ReverseGravity {}
@@ -16473,7 +16550,15 @@ impl Action for ReverseGravity {
         // column rolls a save. Caster is excluded (they cast it; they
         // brace themselves).
         for tid in encounter.neutral_burst_targets(caster_id, point, RADIUS) {
-            let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Strength, dc, caster_id);
+            // SRD 5.2: *"a creature can make a **Dexterity** saving
+            // throw to grab a fixed object it can reach, thus avoiding
+            // the fall upward."* This rolled Strength, which is the
+            // same substitution Earthquake carried and is wrong here
+            // for a sharper reason — the save is a grab made in the
+            // half-second before the floor stops being the floor, and
+            // RAW spends a whole clause saying so.
+            let save =
+                encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             if save.passed() {
                 continue;
             }
@@ -18148,7 +18233,7 @@ pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
 /// rays. Each enemy in the area rolls 1d8 to determine
 /// which colored ray strikes them; the ray's damage type is fixed by the
 /// roll. Then they make a DEX save against the caster's INT-based DC:
-/// on fail, take 10d6 of the rolled type; on save, half. The 8th color
+/// on fail, take 12d6 of the rolled type; on save, half. The 8th color
 /// (white/multi) deals all rolled types together — we collapse the rare
 /// "force + blinded" rider into the 7-roll table and skip the reroll
 /// branch for simplicity.
@@ -18160,6 +18245,19 @@ pub static HOLY_WORD: LazyLock<HolyWord> = LazyLock::new(|| HolyWord {});
 /// color, and this matches the chaos of the spell. Enemy-only filter:
 /// the caster controls the cone's aim, so allies in it are spared.
 pub struct PrismaticSpray {}
+
+impl PrismaticSpray {
+    /// SRD 5.2's Prismatic Rays table: every coloured ray reads
+    /// *"Failed Save: **12d6** <type> damage"*, so one pool answers all
+    /// eight.
+    ///
+    /// A constant rather than a literal and a hardcoded `"12d6"` in the
+    /// log line, for `FlameStrike::HALF`'s reason: this read `10d6`
+    /// (the 2014 printing) beside a log string that says the number
+    /// out loud, and two places to write a number are two places for
+    /// them to disagree.
+    const RAY: Dice = Dice::new(12, 6);
+}
 
 impl Action for PrismaticSpray {
     fn spares_allies(&self) -> bool {
@@ -18246,20 +18344,21 @@ impl Action for PrismaticSpray {
             };
             // Bare `roll`, deliberately, for the same reason
             // Sickening Radiance keeps one: RAW gives each target its
-            // own ray *and* its own 10d6, so this is a per-target roll
+            // own ray *and* its own 12d6, so this is a per-target roll
             // rather than a shared one. `roll_empowered_sum` carries
             // per-cast bonuses (Empowered Evocation, Potent
             // Spellcasting) and a per-cast metamagic reroll, all of
             // which would be paid once per victim from inside this
             // loop. The two per-target bursts are the file's only two
             // exceptions and both say so here.
-            let raw = encounter.roll(&Dice::new(10, 6));
+            let raw = encounter.roll(&Self::RAY);
             let save = encounter.roll_save_against_caster(tid, AbilityScoreType::Dexterity, dc, caster_id);
             let dmg = if save.passed() { raw / 2 } else { raw };
             encounter.log(format!(
-                "  prismatic spray: 1d8({}) {} ray \u{2014} 10d6({}) {:?} ({}{})",
+                "  prismatic spray: 1d8({}) {} ray \u{2014} {}({}) {:?} ({}{})",
                 ray,
                 name,
+                Self::RAY,
                 raw,
                 dtype,
                 dmg,
@@ -18576,6 +18675,12 @@ impl Action for FireStorm {
         TargetingSchema::Burst { radius: 4 }
     }
     fn reach_tiles(&self) -> Option<isize> {
+        // 150 ft RAW = 60 tiles. Held at 40, the same cap Sunburst
+        // takes at the same printed range and for the same reason: the
+        // board is about that wide, and a picker that offers pins past
+        // its edge is offering nothing. Written down because an
+        // undocumented 40 next to six documented caps reads as an
+        // error rather than as the seventh of them.
         Some(40)
     }
     fn requires_los(&self) -> bool {
@@ -23015,9 +23120,17 @@ impl Action for MindSpike {
     fn targeting_schema(&self) -> TargetingSchema {
         TargetingSchema::SingleActor
     }
+    /// SRD 5.2 **Mind Spike**: *"Range: 120 feet"*, which is 48 tiles.
+    ///
+    /// This read 24 for 60 feet, which is the **2014** printing, and it
+    /// is the one range error in this file that made a spell *worse*
+    /// than the book. The spell is a tracker — its clause is that the
+    /// caster always knows where the target is — so a range that stops
+    /// at sixty feet is a tracker confined to the distance at which the
+    /// quarry could be seen anyway.
     fn reach_tiles(&self) -> Option<isize> {
-        // 60ft = 24 tiles.
-        Some(24)
+        // 120 ft = 48 tiles.
+        Some(48)
     }
     fn requires_los(&self) -> bool {
         true
@@ -26771,7 +26884,7 @@ pub static BLIGHT: LazyLock<Blight> = LazyLock::new(|| Blight {});
 /// Circle of Death — level-6 necromancy. Wave of negative energy bursts
 /// from a point within 150 ft (60 tiles). Every creature in the 30-ft
 /// (6-tile) radius makes a CON save vs the caster's spell save DC: fail
-/// = 8d6 necrotic, success = half. Friend-or-foe agnostic by RAW; we
+/// = 8d8 necrotic, success = half. Friend-or-foe agnostic by RAW; we
 /// route through the neutral-burst helper so allies caught in the wave
 /// take the hit too — encourages careful placement. The signature 6th-
 /// level necromancy AoE; slots between Chain Lightning (lv6 force) and
@@ -26837,7 +26950,11 @@ impl Action for CircleOfDeath {
             6,
             AbilityScoreType::Constitution,
             dc,
-            Dice::new(8, 6),
+            // SRD 5.2: *"taking **8d8** Necrotic damage on a failed
+            // save"*. 8d6 was the 2014 printing; the revision changed
+            // the die and left the count alone, which is the one shape
+            // of edition drift that looks right at a glance.
+            Dice::new(8, 8),
             DamageType::Necrotic,
             "circle of death",
         );

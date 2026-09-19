@@ -6258,6 +6258,26 @@ impl EncounterInstance {
         self.concealment_piercing_of(viewer_id, subject_id) == ConcealmentPiercing::All
     }
 
+    /// True when `actor_id` is carrying an outline that burns its own
+    /// invisibility off — 5e's *"the affected creature can't benefit
+    /// from the Invisible condition"*, which Faerie Fire and Starry
+    /// Wisp both print.
+    ///
+    /// The undirected counterpart of `concealment_piercing_of`, and
+    /// deliberately not a `ConcealmentPiercing` tier: piercing is a
+    /// property of a viewer's senses and this is a property of the
+    /// subject's own skin. Nobody is doing the seeing, so there is no
+    /// (viewer, subject) pair to hand it. See
+    /// `Condition::suppresses_invisibility` for the cohort and for what
+    /// the engine did before it existed.
+    pub fn concealment_burned_off(&self, actor_id: usize) -> bool {
+        self.actors.get(&actor_id).is_some_and(|a| {
+            a.conditions()
+                .keys()
+                .any(Condition::suppresses_invisibility)
+        })
+    }
+
     /// How much of `subject`'s concealment `viewer` sees through.
     /// Unifies every "sees through illusion" source in the engine into
     /// one directed lookup, tiered by how much RAW lets each one see:
@@ -6294,26 +6314,6 @@ impl EncounterInstance {
     /// at the call site (both angles matter in `compute_attack_mode`):
     /// this helper takes an already-directed (viewer, subject) pair
     /// and stays polarity-neutral.
-    /// True when `actor_id` is carrying an outline that burns its own
-    /// invisibility off — 5e's *"the affected creature can't benefit
-    /// from the Invisible condition"*, which Faerie Fire and Starry
-    /// Wisp both print.
-    ///
-    /// The undirected counterpart of `concealment_piercing_of`, and
-    /// deliberately not a `ConcealmentPiercing` tier: piercing is a
-    /// property of a viewer's senses and this is a property of the
-    /// subject's own skin. Nobody is doing the seeing, so there is no
-    /// (viewer, subject) pair to hand it. See
-    /// `Condition::suppresses_invisibility` for the cohort and for what
-    /// the engine did before it existed.
-    pub fn concealment_burned_off(&self, actor_id: usize) -> bool {
-        self.actors.get(&actor_id).is_some_and(|a| {
-            a.conditions()
-                .keys()
-                .any(Condition::suppresses_invisibility)
-        })
-    }
-
     pub fn concealment_piercing_of(
         &self,
         viewer_id: usize,
@@ -14645,13 +14645,6 @@ impl EncounterInstance {
         self.critical_depth > 0
     }
 
-    /// Run `body` with the critical-hit guard up.
-    ///
-    /// The scope is exactly one `DealDamage::apply`, which is where
-    /// every consumer of the bit lives — the fortitude save fires from
-    /// inside that call, not from the attack resolver that queued the
-    /// effect, so a guard set at the attack site would have come down
-    /// long before it mattered.
     /// Whether the damage instance currently resolving is a punch its
     /// thrower is pulling — SRD 5.2's *Knocking Out a Creature*. The
     /// read side of `within_subduing_blow`; see `subduing_depth`.
@@ -14696,6 +14689,13 @@ impl EncounterInstance {
         out
     }
 
+    /// Run `body` with the critical-hit guard up.
+    ///
+    /// The scope is exactly one `DealDamage::apply`, which is where
+    /// every consumer of the bit lives — the fortitude save fires from
+    /// inside that call, not from the attack resolver that queued the
+    /// effect, so a guard set at the attack site would have come down
+    /// long before it mattered.
     pub fn within_critical_hit<R>(&mut self, body: impl FnOnce(&mut Self) -> R) -> R {
         self.critical_depth += 1;
         let out = body(self);
