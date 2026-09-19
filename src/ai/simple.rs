@@ -23366,6 +23366,120 @@ mod tests {
         );
     }
 
+    /// The screen rung is the wall rung's answer for a caster with no
+    /// wall, and it picks the widest picture the sheet can pay for.
+    ///
+    /// The bard is the case worth pinning. It reaches
+    /// `try_wall_off_approach` and is offered nothing — its only real
+    /// wall is ninth-level and its ladder stops at four — so before the
+    /// image spells existed a bard watching two goblins close had no
+    /// way to close the line at all.
+    #[test]
+    fn a_caster_with_no_wall_to_raise_paints_the_widest_one_it_can_afford() {
+        use crate::actors::creatures::bards::BARD_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        let mut e = empty_arena();
+        let bard = e
+            .instantiate_creature(&BARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 12), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&bard)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+
+        assert!(
+            super::try_wall_off_approach(&e, bard).is_none(),
+            "no real wall on the sheet it can pay for"
+        );
+        assert_eq!(
+            super::try_raise_a_screen(&e, bard)
+                .expect("but it can paint one")
+                .action()
+                .name(),
+            "major image",
+            "widest first — a screen is worth what the enemy cannot walk round"
+        );
+
+        // …and a caster already holding something keeps only the
+        // picture that costs no grip, exactly as the wall lane does.
+        e.actors
+            .get_mut(&bard)
+            .unwrap()
+            .start_concentration(crate::actors::actor_template::ConcentrationData::new(
+                "Hypnotic Pattern",
+            ));
+        assert_eq!(
+            super::try_raise_a_screen(&e, bard).map(|a| a.action().name().to_string()),
+            Some("minor illusion".to_string()),
+            "the two leveled images would have cost the spell it is holding"
+        );
+    }
+
+    /// A creature staring at a picture of a wall spends the Action
+    /// looking properly at it — and only once the picture is actually
+    /// in the way of something it wants to hit.
+    #[test]
+    fn the_study_rung_fires_on_a_screen_in_the_way_and_not_on_one_in_a_corner() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::illusions::Illusion;
+
+        let mut e = empty_arena();
+        let wiz = e
+            .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        let gob = e
+            .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(14, 10), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&gob)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+
+        // A screen off to one side. The goblin believes it, it is well
+        // inside Study range, and it is in the way of nothing.
+        e.install_illusion(Illusion::new(
+            "silent image",
+            "a slab of rock",
+            wiz,
+            vec![Coordinate::new(14, 4), Coordinate::new(14, 5)],
+            15,
+            10,
+            true,
+        ));
+        assert!(
+            !e.studyable_illusions(gob).is_empty(),
+            "close enough and visible enough to examine"
+        );
+        assert!(
+            super::try_study_an_illusion(&e, gob).is_none(),
+            "but an Action spent on scenery is an Action thrown away"
+        );
+
+        // The same picture, across the line to the wizard.
+        e.install_illusion(Illusion::new(
+            "silent image",
+            "a slab of rock",
+            wiz,
+            (8..13).map(|y| Coordinate::new(9, y)).collect(),
+            15,
+            10,
+            true,
+        ));
+        assert_eq!(
+            super::try_study_an_illusion(&e, gob)
+                .expect("now it is worth a turn")
+                .action()
+                .name(),
+            "study"
+        );
+    }
+
     /// The two gates that keep the lane from firing on its own side or
     /// on a fight it can't affect.
     #[test]

@@ -2914,6 +2914,115 @@ mod tests {
         );
     }
 
+    /// The map tells a believer the same lie the spell does.
+    ///
+    /// Asked of `illusion_glyph` directly rather than through
+    /// `rendered_map`, because the whole answer turns on *who is
+    /// looking* and the rendered-map helper draws with nobody being
+    /// prompted. That fallback is the second half of what this checks:
+    /// with no viewer there is nobody to fool, and the image falls to
+    /// the known glyph.
+    #[test]
+    fn a_believed_image_is_drawn_as_the_rock_it_claims_to_be() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::illusions::Illusion;
+
+        let mut e = encounter_with(&[(&WIZARD_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let ids = e.actors.keys().copied().collect::<Vec<_>>();
+        let (wiz, gob) = (ids[0], ids[1]);
+        let tile = Coordinate::new(3, 3);
+        e.install_illusion(Illusion::new(
+            "silent image",
+            "a slab of rock",
+            wiz,
+            vec![tile],
+            1,
+            10,
+            true,
+        ));
+
+        assert_eq!(
+            illusion_glyph(&e, tile, Some(gob)),
+            Some(('█', None)),
+            "a wall's own glyph in a wall's own colour, with no tell"
+        );
+        assert_eq!(
+            illusion_glyph(&e, tile, Some(wiz)),
+            Some(('◌', Some(Color::DarkGray))),
+            "its own caster was never fooled"
+        );
+        assert_eq!(
+            illusion_glyph(&e, tile, None),
+            Some(('◌', Some(Color::DarkGray))),
+            "and with nobody being prompted there is nobody to fool"
+        );
+        assert_eq!(illusion_glyph(&e, Coordinate::new(9, 9), Some(gob)), None);
+
+        // The lie ends exactly where the Study action does.
+        assert_eq!(e.study_illusions(gob), 1);
+        assert_eq!(
+            illusion_glyph(&e, tile, Some(gob)),
+            Some(('◌', Some(Color::DarkGray)))
+        );
+    }
+
+    /// The panel is the player's own ledger, so an enemy's screen that
+    /// still has everybody fooled is not on it — the same rule that
+    /// keeps an unfound trap off the list, and for the same reason: the
+    /// line would be the answer the Study action is for.
+    #[test]
+    fn the_panel_lists_an_image_the_party_owns_and_not_one_it_has_not_rumbled() {
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+        use crate::engine::illusions::Illusion;
+
+        let mut e = encounter_with(&[(&WIZARD_TEMPLATE, 0), (&GOBLIN_TEMPLATE, 1)]);
+        let ids = e.actors.keys().copied().collect::<Vec<_>>();
+        let (wiz, gob) = (ids[0], ids[1]);
+        e.install_illusion(Illusion::new(
+            "minor illusion",
+            "a boulder",
+            wiz,
+            vec![Coordinate::new(3, 3)],
+            15,
+            10,
+            false,
+        ));
+        e.install_illusion(Illusion::new(
+            "major image",
+            "a curtain of flame",
+            gob,
+            vec![Coordinate::new(7, 7)],
+            1,
+            10,
+            true,
+        ));
+
+        let panel = rendered_panel_tall(&e, 60);
+        assert!(
+            panel.contains("minor illusion"),
+            "the party's own screen is a resource with a clock on it:\n{panel}"
+        );
+        assert!(
+            !panel.contains("major image"),
+            "and the goblin's is the answer to a question they have not asked:\n{panel}"
+        );
+
+        // Once somebody on the party's side has looked properly, the
+        // row appears — and says the one thing worth saying about it.
+        assert_eq!(e.study_illusions(wiz), 1);
+        let panel = rendered_panel_tall(&e, 60);
+        assert!(
+            panel.contains("major image"),
+            "rumbled, so it goes on the ledger:\n{panel}"
+        );
+        assert!(
+            panel.contains("seen through"),
+            "labelled as a patch of board to walk straight through:\n{panel}"
+        );
+    }
+
     /// Water is drawn, and drawn as something other than the shade ramp
     /// the other five terrain types share.
     ///

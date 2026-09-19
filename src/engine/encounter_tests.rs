@@ -53250,6 +53250,330 @@ fn wall_of_stone_puts_stone_on_the_map_and_takes_it_back() {
     assert!(e.viewer_can_see(wiz, foe));
 }
 
+/// A picture of a slab of rock, and what believing one costs: a goblin
+/// that has not looked properly cannot see through the image and will
+/// not walk into it, and the wizard who painted it is unaffected by
+/// either clause. The asymmetry is the whole spell.
+#[test]
+fn an_image_stops_the_eyes_of_everyone_who_has_not_looked_properly() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::illusions::Illusion;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    assert!(e.viewer_can_see(foe, wiz), "clear line before the image");
+
+    let screen: Vec<Coordinate> = (3..8).map(|y| Coordinate::new(12, y)).collect();
+    let anchor = screen[2];
+    e.install_illusion(Illusion::new(
+        "silent image",
+        "a slab of rock",
+        wiz,
+        screen,
+        15,
+        10,
+        true,
+    ));
+
+    assert!(
+        !e.viewer_can_see(foe, wiz),
+        "the goblin believes the rock and cannot see past it"
+    );
+    assert!(
+        e.viewer_can_see(wiz, foe),
+        "the wizard painted it and shoots straight through"
+    );
+    assert!(
+        e.illusion_bars_step(foe, anchor),
+        "and it will not walk into what it thinks is stone"
+    );
+    assert!(
+        !e.illusion_bars_step(wiz, anchor),
+        "while its own side walks through"
+    );
+    // The tile itself never changed, which is the difference between
+    // this and every wall spell above: nothing was written to the map,
+    // so `can_move_to` — the objective question — still says yes.
+    assert!(
+        e.can_move_to(foe, anchor),
+        "the floor is still floor; the refusal is a belief, not a rule"
+    );
+}
+
+/// RAW's "physical interaction with the image reveals it to be an
+/// illusion, because things can pass through it" — reached here the way
+/// a believer can only ever reach it, by being put there rather than by
+/// walking there.
+#[test]
+fn walking_into_an_image_is_how_a_believer_learns_it_is_one() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::illusions::Illusion;
+    use crate::engine::side_effects::{ApplicableSideEffect, TeleportActor};
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    let screen: Vec<Coordinate> = (3..8).map(|y| Coordinate::new(12, y)).collect();
+    let id = e.install_illusion(Illusion::new(
+        "silent image",
+        "a slab of rock",
+        wiz,
+        screen,
+        30,
+        10,
+        true,
+    ));
+    assert!(e.believes_illusion(foe, &e.illusions()[0]));
+
+    TeleportActor {
+        actor_id: foe,
+        dest: Coordinate::new(12, 5),
+    }
+    .apply(&mut e);
+
+    assert!(
+        e.illusions()[0].is_known_to(foe),
+        "a body that ends up inside the picture has walked through it"
+    );
+    assert!(
+        e.messages().iter().any(|m| m.contains("was never there")),
+        "and the log says so"
+    );
+    // Written into the ledger rather than re-derived, so it survives
+    // the goblin walking back out again.
+    TeleportActor {
+        actor_id: foe,
+        dest: Coordinate::new(20, 5),
+    }
+    .apply(&mut e);
+    assert!(!e.believes_illusion(foe, &e.illusions()[0]));
+    assert_eq!(e.illusions()[0].id, id);
+}
+
+/// The two senses RAW hands the answer to for free, and the one that
+/// has to buy it with an Action.
+#[test]
+fn truesight_and_blindsight_are_never_fooled_and_a_goblin_has_to_look() {
+    use crate::actors::creatures::bats::BAT_TEMPLATE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::nothics::NOTHIC_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::illusions::Illusion;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let gob = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    // Truesight 120 — no check, no action, no range worth measuring.
+    let nothic = e
+        .instantiate_creature(&NOTHIC_TEMPLATE, Coordinate::new(20, 10), 1, 1)
+        .unwrap();
+    // Blindsight 60, parked beside the screen so the envelope is
+    // unambiguously reaching it.
+    let bat = e
+        .instantiate_creature(&BAT_TEMPLATE, Coordinate::new(14, 5), 1, 2)
+        .unwrap();
+
+    let screen: Vec<Coordinate> = (3..8).map(|y| Coordinate::new(12, y)).collect();
+    e.install_illusion(Illusion::new(
+        "silent image",
+        "a slab of rock",
+        wiz,
+        screen,
+        // Unreachable, so the goblin's Study below cannot pass by luck.
+        40,
+        10,
+        true,
+    ));
+    assert!(e.believes_illusion(gob, &e.illusions()[0]));
+    assert!(!e.believes_illusion(nothic, &e.illusions()[0]), "truesight");
+    assert!(!e.believes_illusion(bat, &e.illusions()[0]), "blindsight");
+
+    // A Study the goblin cannot pass leaves it exactly where it was,
+    // and costs it the Action anyway — which is RAW.
+    assert_eq!(e.study_illusions(gob), 0);
+    assert!(e.believes_illusion(gob, &e.illusions()[0]));
+}
+
+/// The counterplay, on a picture crude enough for anybody to see
+/// through: one Intelligence (Investigation) check, one image off the
+/// goblin's board, and the eyes and the feet both come back at once.
+#[test]
+fn a_study_that_beats_the_dc_gives_a_believer_back_its_eyes_and_its_feet() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::illusions::Illusion;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let gob = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    let screen: Vec<Coordinate> = (3..8).map(|y| Coordinate::new(12, y)).collect();
+    let anchor = screen[2];
+    e.install_illusion(Illusion::new(
+        "silent image",
+        "a slab of rock",
+        wiz,
+        screen,
+        // A DC of 1 is beaten by the worst roll a goblin can make, so
+        // the test is about the plumbing rather than about the die.
+        1,
+        10,
+        true,
+    ));
+    assert!(!e.viewer_can_see(gob, wiz));
+    assert!(e.an_image_is_in_the_way(gob), "the AI's gate agrees");
+
+    assert_eq!(e.study_illusions(gob), 1);
+
+    assert!(e.viewer_can_see(gob, wiz), "it can see past it now");
+    assert!(!e.illusion_bars_step(gob, anchor), "and walk through it");
+    assert!(!e.an_image_is_in_the_way(gob), "the gate closes behind it");
+    // Still standing, and still fooling everybody who hasn't looked.
+    assert_eq!(e.illusions().len(), 1);
+}
+
+/// The Study action itself: gated on there being something to study,
+/// and bounded by how far away a creature can squint.
+#[test]
+fn the_study_action_refuses_a_board_with_nothing_on_it_to_study() {
+    use crate::actions::default_actions::STUDY;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::illusions::Illusion;
+
+    let mut e = ei_with_terrain(90, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let gob = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    assert!(
+        !STUDY.validate_input(&e, gob, None, None, None),
+        "nothing painted anywhere: the Action is not on offer"
+    );
+
+    // Beyond `STUDY_RANGE`: the image exists, the goblin believes it,
+    // and it is still too far away to examine.
+    e.install_illusion(Illusion::new(
+        "major image",
+        "a curtain of flame",
+        wiz,
+        vec![Coordinate::new(80, 5)],
+        15,
+        10,
+        true,
+    ));
+    assert!(e.believes_illusion(gob, &e.illusions()[0]));
+    assert!(
+        !STUDY.validate_input(&e, gob, None, None, None),
+        "too far to squint at — walking is the rung below"
+    );
+
+    e.install_illusion(Illusion::new(
+        "silent image",
+        "a slab of rock",
+        wiz,
+        vec![Coordinate::new(24, 5)],
+        15,
+        10,
+        true,
+    ));
+    assert!(STUDY.validate_input(&e, gob, None, None, None));
+}
+
+/// An image comes down with its caster's grip, like every other layer
+/// on the board — and, unlike the terrain layer, leaves nothing behind
+/// to hand back, because it never took anything.
+#[test]
+fn an_image_ends_with_the_grip_that_held_it_and_leaves_the_map_alone() {
+    use crate::actions::spells::SILENT_IMAGE;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::engine::terrain::TerrainType;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+        .unwrap();
+    let anchor = Coordinate::new(12, 5);
+    let costs = SILENT_IMAGE.cost(&e, wiz, None, Some(&vec![anchor]), None);
+    assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(1))));
+
+    for ef in SILENT_IMAGE.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.illusions().len(), 1);
+    // Aimed straight down the row, so it stands across it — the same
+    // orientation rule every wall spell uses, and the reason a
+    // single-point schema is enough.
+    assert!(e.illusions()[0].covers(Coordinate::new(12, 7)));
+    assert!(!e.viewer_can_see(foe, wiz));
+    // And the map is untouched, which a Wall of Stone at the same tile
+    // could not say.
+    assert_eq!(
+        e.terrain_at(anchor).map(|t| t.terrain_type),
+        Some(TerrainType::Floor)
+    );
+
+    e.drop_concentration(wiz);
+    assert!(e.illusions().is_empty(), "the grip was what held it up");
+    assert!(e.viewer_can_see(foe, wiz));
+}
+
+/// The cantrip has no concentration to keep it unique, so it says so
+/// itself — otherwise a wizard paints a fresh boulder every round for
+/// the rest of the fight.
+#[test]
+fn minor_illusion_refuses_to_paint_a_second_boulder() {
+    use crate::actions::spells::MINOR_ILLUSION;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+
+    let mut e = ei_with_terrain(30, 30, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+        .unwrap();
+    let anchor = Coordinate::new(8, 5);
+    assert!(MINOR_ILLUSION.validate_input(&e, wiz, None, Some(&vec![anchor]), None));
+    for ef in MINOR_ILLUSION.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+        ef.apply(&mut e);
+    }
+    // RAW's 5-foot cube is exactly a Medium creature's footprint on
+    // this grid, and the engine draws it as one.
+    assert_eq!(e.illusions()[0].tiles.len(), 4);
+    assert!(e.illusions()[0].covers(Coordinate::new(9, 6)));
+    assert!(
+        !MINOR_ILLUSION.validate_input(&e, wiz, None, Some(&vec![Coordinate::new(14, 5)]), None),
+        "one boulder per wizard"
+    );
+    // It holds no grip, so nothing about the caster's concentration
+    // takes it down — only its own clock, ten rounds out.
+    e.drop_concentration(wiz);
+    assert_eq!(e.illusions().len(), 1);
+}
+
 /// Wall of Force is the other corner of the terrain layer: solid,
 /// and transparent. That asymmetry is the whole spell — you put one
 /// between the party and the thing killing them, and keep shooting.
