@@ -844,6 +844,15 @@ pub static WIZARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::MINOR_ILLUSION);
     actions.push(&*crate::actions::spells::SILENT_IMAGE);
     actions.push(&*crate::actions::spells::MAJOR_IMAGE);
+    // …and the two the layer grew for. Hallucinatory Terrain (lv4)
+    // is the wide one: a quarter of the room painted as a crevasse,
+    // and no concentration, so the wizard's grip stays on whatever it
+    // was already holding. Programmed Illusion (lv6) is the one that
+    // is not there yet — imperceptible until something hostile comes
+    // within thirty feet of it, which is a corridor closing behind a
+    // warband rather than a screen they can walk around.
+    actions.push(&*crate::actions::spells::HALLUCINATORY_TERRAIN);
+    actions.push(&*crate::actions::spells::PROGRAMMED_ILLUSION);
     // lv2 **Find Traps** — RAW puts it on the Cleric, Druid and Ranger
     // lists and not on the wizard's, and it stays off this sheet for
     // that reason. Named here because the wizard is the chassis a

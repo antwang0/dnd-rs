@@ -31844,6 +31844,12 @@ pub static PHANTASMAL_FORCE: LazyLock<PhantasmalForce> = LazyLock::new(|| Phanta
 /// differs is how wide the picture is, how long it lasts, and whether
 /// the caster has to hold on to it — which is exactly the three
 /// arguments below.
+///
+/// `armed` is the trigger radius of an image that is not there yet —
+/// `None` for the four that simply appear, and `Some(tiles)` for
+/// Programmed Illusion, which is the one whole point of the sixth-level
+/// slot. See [`crate::engine::illusions::Illusion::armed`].
+#[allow(clippy::too_many_arguments)]
 fn install_image(
     encounter: &EncounterInstance,
     caster_id: usize,
@@ -31852,6 +31858,7 @@ fn install_image(
     tiles: Vec<Coordinate>,
     rounds: u32,
     concentration: bool,
+    armed: Option<isize>,
 ) -> Option<Box<dyn ApplicableSideEffect>> {
     let caster = encounter.actors.get(&caster_id)?;
     // Wizard (INT) and bard / sorcerer / warlock (CHA) all print these
@@ -31862,19 +31869,21 @@ fn install_image(
         AbilityScoreType::Intelligence,
         AbilityScoreType::Charisma,
     ]);
-    Some(Box::new(
-        crate::engine::side_effects::InstallIllusion {
-            image: crate::engine::illusions::Illusion::new(
-                name,
-                guise,
-                caster_id,
-                tiles,
-                dc,
-                rounds,
-                concentration,
-            ),
-        },
-    ))
+    let mut image = crate::engine::illusions::Illusion::new(
+        name,
+        guise,
+        caster_id,
+        tiles,
+        dc,
+        rounds,
+        concentration,
+    );
+    if let Some(radius) = armed {
+        image = image.armed_within(radius);
+    }
+    Some(Box::new(crate::engine::side_effects::InstallIllusion {
+        image,
+    }))
 }
 
 /// Minor Illusion — illusion cantrip (bard / sorcerer / warlock /
@@ -31967,6 +31976,7 @@ impl Action for MinorIllusion {
             tiles,
             Self::ROUNDS,
             false,
+            None,
         )
         .into_iter()
         .collect()
@@ -32078,6 +32088,7 @@ impl Action for SilentImage {
             wall_tiles(caster_at, point, Self::REACH),
             Self::ROUNDS,
             true,
+            None,
         ) else {
             return Vec::new();
         };
@@ -32189,6 +32200,7 @@ impl Action for MajorImage {
             wall_tiles(caster_at, point, Self::REACH),
             Self::ROUNDS,
             true,
+            None,
         ) else {
             return Vec::new();
         };
@@ -32203,6 +32215,262 @@ impl Action for MajorImage {
 }
 
 pub static MAJOR_IMAGE: LazyLock<MajorImage> = LazyLock::new(|| MajorImage {});
+
+/// Hallucinatory Terrain — level-4 illusion (bard / druid / warlock /
+/// wizard), 24 hours, no concentration.
+///
+/// The image spells' big brother, and the one whose RAW text names the
+/// counterplay in so many words: *"a creature examining the illusion
+/// can take the Study action to make an Intelligence (Investigation)
+/// check against your spell save DC to disbelieve it"*. It is the same
+/// rule as Silent Image's and reaches it through the same layer — see
+/// [`crate::engine::illusions`].
+///
+/// What the level-4 slot buys over the level-3 one is the two things a
+/// screen cannot have: **width**, laid as a block rather than as a
+/// line, and **no concentration**, so the caster's grip stays free for
+/// whatever they were going to hold anyway. A Major Image is seven
+/// tiles across and costs the wizard its Haste; this is a quarter of
+/// the room and costs nothing but the slot.
+///
+/// **The area is nine tiles of radius, not RAW's 150-foot cube.** A
+/// cube 150 feet on a side is a half-width of 75 feet, which is 30
+/// tiles here — a square sixty-one tiles across, which on a standard
+/// board is not an area but *the map*. Held at nine for the reason
+/// Forbiddance is held at twelve: an area with no edge is an area with
+/// no placement decision behind it, and the whole of what a caster
+/// does with this spell is decide which ground to lie about.
+///
+/// **What it pretends to be is impassable ground**, which is the one
+/// choice RAW leaves open and the engine has to make. The book's
+/// examples run both ways — *"open fields or a road can be made to
+/// resemble a swamp, hill, crevasse"*, and also *"a pond can be made
+/// to seem like a grassy meadow"* — and the two are opposite spells on
+/// this layer. A picture of safe ground would have to make believers
+/// walk *into* the real hazard, which is not something an image can
+/// do: the layer's whole contract is that an image changes nobody's
+/// tiles. A picture of a crevasse is the half that the layer can carry
+/// honestly, and it is also the half a caster casts.
+pub struct HallucinatoryTerrain {}
+
+impl HallucinatoryTerrain {
+    /// Nine tiles of Chebyshev radius — a square nineteen across, a
+    /// good quarter of a standard board. See the type docstring.
+    const RADIUS: isize = 9;
+    /// RAW's 24 hours, which outlasts any fight — the same round count
+    /// Forbiddance's day collapses to.
+    const ROUNDS: u32 = 100;
+}
+
+impl Action for HallucinatoryTerrain {
+    fn name(&self) -> &str {
+        "hallucinatory terrain"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["ht", "hallucinatory", "fake-terrain"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // RAW's 300 ft is 120 tiles, wider than any board the generator
+        // makes. Capped at 48, which is the cap every other
+        // engine-scale range in this file takes and is still the whole
+        // of a standard map.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(4)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        // No concentration to keep it unique, so it says so itself —
+        // the same gate Minor Illusion carries, and for the same
+        // reason: nothing else stops a caster laying a second false
+        // crevasse beside the first every round for the rest of the
+        // fight.
+        !encounter.has_illusion_named(caster_id, "hallucinatory terrain")
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        install_image(
+            encounter,
+            caster_id,
+            "hallucinatory terrain",
+            "a crevasse",
+            block_tiles(point, Self::RADIUS),
+            Self::ROUNDS,
+            false,
+            None,
+        )
+        .into_iter()
+        .collect()
+    }
+}
+
+pub static HALLUCINATORY_TERRAIN: LazyLock<HallucinatoryTerrain> =
+    LazyLock::new(|| HallucinatoryTerrain {});
+
+/// Programmed Illusion — level-6 illusion (bard / wizard), until
+/// dispelled, no concentration.
+///
+/// The image that is not there yet. *"You create an illusion … that
+/// activates when a specific trigger occurs. The illusion is
+/// imperceptible until then."* Everything else about it is an ordinary
+/// image — a believer will not walk into it, cannot see past it, and
+/// buys its way out with the Study action — and the whole of the
+/// level-6 slot is the word *imperceptible*, which is a state the layer
+/// had no way to be in until this spell needed it. See
+/// [`crate::engine::illusions::Illusion::armed`].
+///
+/// **The trigger is a hostile creature coming within thirty feet**,
+/// which is RAW's *"visual or audible phenomena that occur within 30
+/// feet of the area"* read as the only phenomenon the engine has a
+/// chokepoint for. Hostile rather than anybody, because the caster's
+/// own side walking past the trap they set is not the phenomenon the
+/// spell is for, and because the side that set it is the side the image
+/// never fools — a friendly trip would spend the whole spell on
+/// nobody.
+///
+/// **What it buys over a Major Image three slots cheaper** is that the
+/// enemy cannot route around what it cannot see. A screen raised in
+/// front of an approaching warband is a screen they walk around; one
+/// that appears when they are already inside it is a corridor closing
+/// behind them, and they are believing it from a tile they cannot
+/// simply decline to have reached.
+///
+/// Not modelled: the scripted performance, the sounds, and the ten
+/// minutes RAW gives it to go dormant again — see the
+/// [`crate::engine::illusions`] header for why the last of those is a
+/// field nothing could read.
+pub struct ProgrammedIllusion {}
+
+impl ProgrammedIllusion {
+    /// RAW's 30-ft cube is a half-width of 15 ft, which is 6 tiles —
+    /// the one image in the family whose printed size fits the board
+    /// without being narrowed.
+    const RADIUS: isize = 6;
+    /// RAW's *"within 30 feet of the area"*.
+    const TRIGGER_FEET: u32 = 30;
+    /// RAW's five minutes of performance, once it has sprung. The clock
+    /// does not run while the image is still waiting — see
+    /// `Illusion::armed`.
+    const ROUNDS: u32 = 50;
+}
+
+impl Action for ProgrammedIllusion {
+    fn name(&self) -> &str {
+        "programmed illusion"
+    }
+    fn school(&self) -> Option<SpellSchool> {
+        Some(SpellSchool::Illusion)
+    }
+    fn aliases(&self) -> Vec<&str> {
+        vec!["pi", "programmed", "illusion-trap"]
+    }
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::Burst {
+            radius: Self::RADIUS,
+        }
+    }
+    fn reach_tiles(&self) -> Option<isize> {
+        // 120 ft RAW = 48 tiles.
+        Some(48)
+    }
+    fn requires_los(&self) -> bool {
+        true
+    }
+    fn is_harmful(&self) -> bool {
+        false
+    }
+    fn deals_damage(&self) -> bool {
+        false
+    }
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        action_and_slot(6)
+    }
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        _target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        !encounter.has_illusion_named(caster_id, "programmed illusion")
+    }
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _target_ids: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _overrides: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        install_image(
+            encounter,
+            caster_id,
+            "programmed illusion",
+            "a wall of grinding stone",
+            block_tiles(point, Self::RADIUS),
+            Self::ROUNDS,
+            false,
+            Some(tiles_from_feet(Self::TRIGGER_FEET) as isize),
+        )
+        .into_iter()
+        .collect()
+    }
+}
+
+pub static PROGRAMMED_ILLUSION: LazyLock<ProgrammedIllusion> =
+    LazyLock::new(|| ProgrammedIllusion {});
+
 
 /// Wall of Light — level-5 evocation (sorcerer / warlock / wizard),
 /// concentration. The caster summons a wall of radiant light. We collapse

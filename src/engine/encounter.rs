@@ -10533,6 +10533,18 @@ impl EncounterInstance {
         id
     }
 
+    /// Are these two creatures on the same side?
+    ///
+    /// `false` when either is unknown, which is the right answer for
+    /// both callers: a viewer who is not in the table is nobody, and a
+    /// board layer whose owner has left it behind belongs to nobody.
+    pub fn same_side(&self, a_id: usize, b_id: usize) -> bool {
+        match (self.actors.get(&a_id), self.actors.get(&b_id)) {
+            (Some(a), Some(b)) => a.team() == b.team(),
+            _ => false,
+        }
+    }
+
     /// Is `owner_id` already sustaining an image cast under `name`?
     ///
     /// The uniqueness gate for the one image spell that has no
@@ -10567,6 +10579,12 @@ impl EncounterInstance {
         // The image-layer twin of `tick_zones`'s bereaved list.
         let mut bereaved: Vec<usize> = Vec::new();
         for image in self.illusions.iter_mut() {
+            // A trigger that has not fired is not running down; RAW's
+            // Programmed Illusion waits *"until dispelled"* and only
+            // then performs for its five minutes. See `Illusion::armed`.
+            if image.is_dormant() {
+                continue;
+            }
             image.rounds_remaining = image.rounds_remaining.saturating_sub(1);
             if image.rounds_remaining == 0 {
                 expired.push((image.id, image.name.to_string(), image.guise));
@@ -10637,17 +10655,21 @@ impl EncounterInstance {
     ///     makes the ledger an optimisation and a log line rather than
     ///     a correctness dependency on sweep timing.
     pub fn believes_illusion(&self, actor_id: usize, image: &Illusion) -> bool {
+        // An image that has not sprung yet is imperceptible, and
+        // imperceptible is not a weak kind of visible: there is nothing
+        // there to be fooled by. First, because it is the cheapest
+        // answer and because every other clause below would be reading
+        // a picture nobody is looking at. See `Illusion::armed`.
+        if image.is_dormant() {
+            return false;
+        }
         if image.is_known_to(actor_id) || actor_id == image.owner_id {
             return false;
         }
         let Some(viewer) = self.actors.get(&actor_id) else {
             return false;
         };
-        if self
-            .actors
-            .get(&image.owner_id)
-            .is_some_and(|owner| owner.team() == viewer.team())
-        {
+        if self.same_side(actor_id, image.owner_id) {
             return false;
         }
         if viewer.has_truesight() {
@@ -10717,13 +10739,79 @@ impl EncounterInstance {
             .illusions
             .iter()
             .filter(|i| {
-                !i.is_known_to(actor_id)
+                !i.is_dormant()
+                    && !i.is_known_to(actor_id)
                     && footprint_tiles_of_span(at, span).any(|t| i.covers(t))
             })
             .map(|i| i.id)
             .collect();
         for id in touched {
             self.reveal_illusion_to(actor_id, id, "walks straight through it");
+        }
+    }
+
+    /// Fire any waiting image this creature has just walked close
+    /// enough to — SRD 5.2's Programmed Illusion, whose trigger is
+    /// *"visual or audible phenomena that occur within 30 feet of the
+    /// area"*.
+    ///
+    /// Read as *a hostile creature arriving inside the envelope*, which
+    /// is the only phenomenon this engine has a chokepoint for. Hostile
+    /// rather than anybody, because the caster's own side walking past
+    /// the trap they set is not the phenomenon the spell is for — and
+    /// because the side that set it is the side that is never fooled by
+    /// it, so a friendly trip would spend the whole spell on nothing.
+    ///
+    /// Called from [`Self::touch_ground`] beside the contact reveal,
+    /// which is the same argument that helper makes for itself: a
+    /// creature arrives in nine different ways, and the top of its own
+    /// turn is one of them, so a creature that was already standing
+    /// inside the envelope when the image was set still springs it.
+    fn spring_armed_illusions(&mut self, actor_id: usize) {
+        if !self.illusions.iter().any(|i| i.is_dormant()) {
+            return;
+        }
+        let Some(actor) = self.actors.get(&actor_id) else {
+            return;
+        };
+        if !actor.is_combat_active() {
+            return;
+        }
+        let (team, at, span) = (
+            actor.team(),
+            actor.location(),
+            get_tiles_from_size(actor.size()),
+        );
+        let sprung: Vec<usize> = self
+            .illusions
+            .iter()
+            .filter(|i| {
+                let Some(radius) = i.armed else {
+                    return false;
+                };
+                if self
+                    .actors
+                    .get(&i.owner_id)
+                    .is_none_or(|o| o.team() == team)
+                {
+                    return false;
+                }
+                i.tiles
+                    .iter()
+                    .any(|&t| footprint_chebyshev(at, span, t, 1) <= radius)
+            })
+            .map(|i| i.id)
+            .collect();
+        for id in sprung {
+            let Some(image) = self.illusions.iter_mut().find(|i| i.id == id) else {
+                continue;
+            };
+            image.armed = None;
+            let (name, guise, origin) = (image.name, image.guise, image.origin());
+            self.log(format!(
+                "  the {} springs: {} is suddenly standing at {}.",
+                name, guise, origin
+            ));
         }
     }
 
@@ -11675,6 +11763,13 @@ impl EncounterInstance {
     pub fn touch_ground(&mut self, actor_id: usize) {
         self.touch_zones(actor_id);
         self.test_footing(actor_id);
+        // …and the waiting half of the same layer, which has to run
+        // before the contact reveal below: a creature can walk into the
+        // tiles of an image that its own approach is what conjured, and
+        // an image that springs after the reveal sweep is an image
+        // somebody is standing in without knowing it. See
+        // `spring_armed_illusions`.
+        self.spring_armed_illusions(actor_id);
         // The third layer, and the one whose trigger is the *absence*
         // of anything on the tile: SRD 5.2's *"physical interaction
         // with the image reveals it to be an illusion, because things

@@ -277,6 +277,11 @@ pub static WARLOCK_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // level-3 slot are both on it.
     actions.push(&*crate::actions::spells::MINOR_ILLUSION);
     actions.push(&*crate::actions::spells::MAJOR_IMAGE);
+    // …and the wide one, which RAW puts on the warlock's list where it
+    // leaves Silent Image off: a quarter of the room painted as a
+    // crevasse, at no cost to the grip. Programmed Illusion is bard
+    // and wizard only.
+    actions.push(&*crate::actions::spells::HALLUCINATORY_TERRAIN);
     CreatureTemplate {
         name: "Warlock",
         // 'L' (uppercase) — distinct from 'l' (Lich), 'W' (Wolf glyph),

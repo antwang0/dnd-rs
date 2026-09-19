@@ -101,6 +101,12 @@
 //! The object mode is the whole of what is modelled, and
 //! [`Illusion::guise`] is what it says the object is.
 //!
+//! **A re-arming trigger.** A [`Illusion::armed`] image that has fired
+//! is an ordinary image from then on. RAW's Programmed Illusion goes
+//! dormant again after ten minutes, which is a hundred rounds — longer
+//! than any fight this engine runs — so the field that would carry it
+//! is a field nothing could read.
+//!
 //! **Illusory creatures.** An image shaped like an ogre would need to
 //! be in the actor table to be attacked, and an entry in the actor
 //! table is a creature — with hit points, a turn, and a place in
@@ -149,6 +155,30 @@ pub struct Illusion {
     pub rounds_remaining: u32,
     /// True if the owner's concentration holds it up.
     pub concentration: bool,
+    /// The radius, in tiles, inside which something has to happen
+    /// before this image exists at all — or `None` for an image that is
+    /// simply there.
+    ///
+    /// SRD 5.2's Programmed Illusion: *"the illusion is imperceptible
+    /// until then"*, and imperceptible is not a weak kind of visible.
+    /// A dormant image is believed by nobody, blocks nobody's sight,
+    /// stops nobody's feet, cannot be walked into, cannot be studied,
+    /// and does not spend its clock. It is a *trigger* that happens to
+    /// know what it will draw.
+    ///
+    /// That makes it the one field on this struct that every consumer
+    /// has to ask about, and the reason it is a radius rather than a
+    /// bool: what springs it is a hostile creature arriving inside the
+    /// envelope, which is RAW's *"visual or audible phenomena that
+    /// occur within 30 feet of the area"* read as the only phenomenon
+    /// this engine has a chokepoint for. Cleared to `None` the moment
+    /// it fires, which is what makes the image ordinary from then on.
+    ///
+    /// Not modelled: the ten minutes RAW gives it to go dormant again
+    /// afterwards. Ten minutes is a hundred rounds and no fight in this
+    /// engine lasts that long, so a re-arm would be a field nothing
+    /// could ever read.
+    pub armed: Option<isize>,
     /// Everyone who knows. Ids rather than teams, because disbelief is
     /// earned one creature at a time: the goblin that walked into the
     /// boulder knows, and the goblin behind it does not.
@@ -184,8 +214,27 @@ impl Illusion {
             save_dc,
             rounds_remaining,
             concentration,
+            armed: None,
             disbelieved: HashSet::new(),
         }
+    }
+
+    /// Declare that this image is a trigger rather than a picture until
+    /// something hostile comes within `radius` tiles of it.
+    ///
+    /// A builder rather than a constructor argument, for the reason
+    /// `ConjuredTerrain::breakable` is one: every image in the engine
+    /// predates this and none of them should have to say it is already
+    /// visible.
+    pub fn armed_within(mut self, radius: isize) -> Self {
+        self.armed = Some(radius);
+        self
+    }
+
+    /// True while this image is still waiting for its trigger — see
+    /// [`Self::armed`].
+    pub fn is_dormant(&self) -> bool {
+        self.armed.is_some()
     }
 
     /// True if the image stands on `coord`.

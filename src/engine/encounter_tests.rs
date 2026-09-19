@@ -53543,6 +53543,134 @@ fn an_image_ends_with_the_grip_that_held_it_and_leaves_the_map_alone() {
     assert!(e.viewer_can_see(foe, wiz));
 }
 
+/// The level-4 slot's two differences from the level-3 one, both
+/// visible from outside the spell: it is a block rather than a line,
+/// and it costs the caster nothing to hold.
+#[test]
+fn hallucinatory_terrain_paints_a_block_and_leaves_the_grip_alone() {
+    use crate::actions::spells::HALLUCINATORY_TERRAIN;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::engine::terrain::TerrainType;
+
+    let mut e = ei_with_terrain(60, 40, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 20), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(45, 20), 1, 0)
+        .unwrap();
+    let anchor = Coordinate::new(25, 20);
+    let costs = HALLUCINATORY_TERRAIN.cost(&e, wiz, None, Some(&vec![anchor]), None);
+    assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(4))));
+    assert!(e.viewer_can_see(foe, wiz), "clear line before the lie");
+
+    for ef in HALLUCINATORY_TERRAIN.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+        ef.apply(&mut e);
+    }
+    // A block, not a screen: the corners are painted too, which is
+    // what a line-shaped image cannot say.
+    assert!(e.illusions()[0].covers(Coordinate::new(25 - 9, 20 - 9)));
+    assert!(e.illusions()[0].covers(Coordinate::new(25 + 9, 20 + 9)));
+    assert!(!e.illusions()[0].covers(Coordinate::new(25 + 10, 20)));
+    assert!(!e.viewer_can_see(foe, wiz), "and the goblin is looking at it");
+    assert!(e.illusion_bars_step(foe, anchor));
+    // Nothing was taken from the map, and nothing was taken from the
+    // wizard's concentration either.
+    assert_eq!(
+        e.terrain_at(anchor).map(|t| t.terrain_type),
+        Some(TerrainType::Floor)
+    );
+    assert!(
+        !e.actors[&wiz].is_concentrating(),
+        "the level-4 slot buys a lie the caster does not have to hold"
+    );
+    e.drop_concentration(wiz);
+    assert_eq!(e.illusions().len(), 1, "so a broken grip does not end it");
+    assert!(
+        !HALLUCINATORY_TERRAIN.validate_input(
+            &e,
+            wiz,
+            None,
+            Some(&vec![Coordinate::new(35, 20)]),
+            None
+        ),
+        "one crevasse per wizard — nothing else would stop a second"
+    );
+}
+
+/// An image that is not there yet. Nobody believes it, nobody is
+/// blinded by it, nothing walks into it and its clock does not run —
+/// until something hostile gets close enough, and then it is an
+/// ordinary image from the tile the goblin is already standing on.
+#[test]
+fn a_programmed_illusion_is_nothing_at_all_until_somebody_walks_near_it() {
+    use crate::actions::spells::PROGRAMMED_ILLUSION;
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::side_effects::{ApplicableSideEffect, Resource, TeleportActor};
+
+    let mut e = ei_with_terrain(60, 40, &[]);
+    let wiz = e
+        .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 20), 0, 0)
+        .unwrap();
+    let foe = e
+        .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(50, 20), 1, 0)
+        .unwrap();
+    let anchor = Coordinate::new(25, 20);
+    let costs = PROGRAMMED_ILLUSION.cost(&e, wiz, None, Some(&vec![anchor]), None);
+    assert!(costs.iter().any(|c| matches!(c, Resource::SpellSlot(6))));
+
+    for ef in PROGRAMMED_ILLUSION.side_effects(&mut e, wiz, None, Some(&vec![anchor]), None) {
+        ef.apply(&mut e);
+    }
+    assert!(e.illusions()[0].is_dormant());
+    assert!(
+        !e.believes_illusion(foe, &e.illusions()[0]),
+        "imperceptible is not a weak kind of visible"
+    );
+    assert!(e.viewer_can_see(foe, wiz), "it blinds nobody while it waits");
+    assert!(!e.illusion_bars_step(foe, anchor), "and stops nobody's feet");
+
+    // The clock is not running either. Ten rounds of waiting would
+    // have spent a fifth of RAW's performance on nothing happening.
+    let before = e.illusions()[0].rounds_remaining;
+    for _ in 0..3 {
+        e.round_end();
+    }
+    assert_eq!(e.illusions()[0].rounds_remaining, before);
+
+    // The caster's own side walking past does not spring it: they are
+    // the side it never fools, so a friendly trip would spend the
+    // whole spell on nobody.
+    TeleportActor {
+        actor_id: wiz,
+        dest: Coordinate::new(28, 20),
+    }
+    .apply(&mut e);
+    assert!(e.illusions()[0].is_dormant());
+
+    // A hostile inside the trigger envelope is a different matter.
+    TeleportActor {
+        actor_id: foe,
+        dest: Coordinate::new(37, 20),
+    }
+    .apply(&mut e);
+    assert!(!e.illusions()[0].is_dormant(), "sprung");
+    assert!(
+        e.messages().iter().any(|m| m.contains("springs")),
+        "and the log says so"
+    );
+    assert!(e.believes_illusion(foe, &e.illusions()[0]));
+    assert!(!e.viewer_can_see(foe, wiz), "from a tile it already reached");
+    assert!(e.illusion_bars_step(foe, anchor));
+
+    // …and the clock runs from here.
+    e.round_end();
+    assert_eq!(e.illusions()[0].rounds_remaining, before - 1);
+}
+
 /// The cantrip has no concentration to keep it unique, so it says so
 /// itself — otherwise a wizard paints a fresh boulder every round for
 /// the rest of the fight.

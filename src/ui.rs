@@ -499,6 +499,19 @@ fn illusion_glyph(
         if !image.covers(coord) {
             continue;
         }
+        // An image that has not sprung yet is imperceptible, so it is
+        // drawn for the side that set it and for nobody else — the
+        // same rule, and the same '◈', the zone layer uses for an armed
+        // Glyph of Warding. A caster who cannot see where they laid
+        // their own trap cannot decide where to stand relative to it,
+        // and an enemy who can see it would be reading the trigger off
+        // the map. See `engine::illusions::Illusion::armed`.
+        if image.is_dormant() {
+            if viewer.is_some_and(|v| encounter.same_side(v, image.owner_id)) {
+                known = Some(('◈', Some(Color::Cyan)));
+            }
+            continue;
+        }
         if viewer.is_some_and(|v| encounter.believes_illusion(v, image)) {
             return Some(('█', None));
         }
@@ -924,17 +937,28 @@ pub fn render_sideinfo(
             // enemy's that the party has rumbled is a patch of board to
             // walk straight through, and the only thing worth printing
             // about it is that it is fake.
-            let detail = if mine {
-                format!(
-                    " {} — {}r — {}",
-                    image.origin(),
-                    image.rounds_remaining,
-                    image.guise
+            // An armed image waits. Its round count is a number nobody
+            // is counting down — the same column a Glyph of Warding
+            // leaves blank, and for the same reason.
+            let (glyph, detail) = if image.is_dormant() {
+                ('◈', format!(" {} — armed — {}", image.origin(), image.guise))
+            } else if mine {
+                (
+                    '◌',
+                    format!(
+                        " {} — {}r — {}",
+                        image.origin(),
+                        image.rounds_remaining,
+                        image.guise
+                    ),
                 )
             } else {
-                format!(" {} — {} (seen through)", image.origin(), image.guise)
+                (
+                    '◌',
+                    format!(" {} — {} (seen through)", image.origin(), image.guise),
+                )
             };
-            layer_line('◌', image.name, detail);
+            layer_line(glyph, image.name, detail);
         }
         // And the blades, which carry one column the other two layers
         // don't: a Dancing Sword ends on a count of swings rather than

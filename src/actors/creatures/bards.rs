@@ -269,6 +269,14 @@ pub static BARD_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     actions.push(&*crate::actions::spells::MINOR_ILLUSION);
     actions.push(&*crate::actions::spells::SILENT_IMAGE);
     actions.push(&*crate::actions::spells::MAJOR_IMAGE);
+    // …and the two the layer grew for. Hallucinatory Terrain (lv4)
+    // is the wide one: a quarter of the room painted as a crevasse,
+    // and no concentration, so the bard's grip stays on whatever it
+    // was already holding. Programmed Illusion (lv6) is the one that
+    // is not there yet — imperceptible until something hostile comes
+    // within thirty feet of it.
+    actions.push(&*crate::actions::spells::HALLUCINATORY_TERRAIN);
+    actions.push(&*crate::actions::spells::PROGRAMMED_ILLUSION);
     CreatureTemplate {
         name: "Bard",
         glyph: 'B',

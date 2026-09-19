@@ -434,6 +434,14 @@ pub static DRUID_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(|| {
     // for why it switches off every caster it lands on, and why that is
     // the spell rather than a bug in it.
     actions.push(&*crate::actions::spells::ANIMAL_SHAPES);
+    // lv4 **Hallucinatory Terrain** — the druid's one entry in the
+    // image family, and RAW puts it there rather than on the rest of
+    // the illusion list because it is a lie about *ground*. A quarter
+    // of the room painted as a crevasse, at no cost to the grip, which
+    // is what a druid holding a Spike Growth or a Call Lightning
+    // needs. See `engine::illusions` for what believing it costs and
+    // the `study` action for what it costs to stop.
+    actions.push(&*crate::actions::spells::HALLUCINATORY_TERRAIN);
     CreatureTemplate {
         name: "Druid",
         glyph: 'D',
