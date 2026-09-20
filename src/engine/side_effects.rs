@@ -117,7 +117,6 @@ pub struct ConcentrationPayload<'a> {
     pub conditions: &'a [(usize, Condition)],
     pub attack_buffs: &'a [(usize, i32)],
     pub save_buffs: &'a [(usize, i32)],
-    pub damage_buffs: &'a [(usize, i32)],
 }
 
 /// Merge a doubled cast's second `StartConcentration` into the first,
@@ -164,7 +163,6 @@ pub fn fold_doubled_concentration(
             payload.conditions.to_vec(),
             payload.attack_buffs.to_vec(),
             payload.save_buffs.to_vec(),
-            payload.damage_buffs.to_vec(),
         )
     };
     let extra = ConcentrationPayload {
@@ -172,7 +170,6 @@ pub fn fold_doubled_concentration(
         conditions: &owned.1,
         attack_buffs: &owned.2,
         save_buffs: &owned.3,
-        damage_buffs: &owned.4,
     };
     let merged = primary.iter_mut().any(|se| {
         se.concentration_payload()
@@ -2064,7 +2061,6 @@ impl ApplicableSideEffect for StartConcentration {
             conditions: &self.data.conditions,
             attack_buffs: &self.data.attack_buffs,
             save_buffs: &self.data.save_buffs,
-            damage_buffs: &self.data.damage_buffs,
         })
     }
 
@@ -2089,11 +2085,6 @@ impl ApplicableSideEffect for StartConcentration {
         for entry in extra.save_buffs {
             if !self.data.save_buffs.contains(entry) {
                 self.data.save_buffs.push(*entry);
-            }
-        }
-        for entry in extra.damage_buffs {
-            if !self.data.damage_buffs.contains(entry) {
-                self.data.damage_buffs.push(*entry);
             }
         }
         true
@@ -2853,6 +2844,41 @@ impl ApplicableSideEffect for AdjustAttackBuff {
     }
 }
 
+/// Install a flat roll-lane buff that ends on **its own clock** rather
+/// than on somebody's concentration — see
+/// `ActorInstance::timed_buffs`.
+///
+/// The timed sibling of `AdjustAttackBuff` and the two beside it. Those
+/// three are raw deltas: they go on and stay on, and the only thing
+/// that ever takes one back is the `ConcentrationData` it was
+/// registered against. That is right for Bless, whose duration RAW
+/// spends on concentration anyway, and wrong for the two spells SRD 5.2
+/// gives a flat duration and no Concentration line — Divine Favor and
+/// Magic Weapon, both of which carried a concentration they should not
+/// have precisely because there was nowhere else to hang the ending.
+///
+/// Emitted instead of `AdjustAttackBuff` + `StartConcentration`, not
+/// beside them: a spell on this lane is one that costs its caster no
+/// grip at all, and queuing both would give it two endings.
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
+pub struct InstallTimedBuff {
+    pub actor_id: usize,
+    /// The spell, as the log prints it and as the re-cast rule keys on
+    /// it. See `ActorInstance::install_timed_buff`.
+    pub source: &'static str,
+    pub lane: crate::actors::actor_template::BuffLane,
+    pub delta: i32,
+    pub rounds: u32,
+}
+
+impl ApplicableSideEffect for InstallTimedBuff {
+    fn apply(&self, ei: &mut EncounterInstance) {
+        if let Some(actor) = ei.get_actor(self.actor_id) {
+            actor.install_timed_buff(self.source, self.lane, self.delta, self.rounds);
+        }
+    }
+}
+
 /// Same as AdjustAttackBuff but for the save-roll buff lane.
 #[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
 pub struct AdjustSaveBuff {
@@ -2868,24 +2894,14 @@ impl ApplicableSideEffect for AdjustSaveBuff {
     }
 }
 
-/// Same shape as `AdjustAttackBuff` but for the damage-roll buff lane.
-/// Used by Magic Weapon / Elemental Weapon-style spells that install a
-/// flat `+N damage` buff alongside their attack buff. Pair with
-/// concentration registration so the buff drops cleanly when the spell
-/// ends; negative deltas remove the buff on cleanup.
-#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq)]
-pub struct AdjustDamageBuff {
-    pub actor_id: usize,
-    pub delta: i32,
-}
-
-impl ApplicableSideEffect for AdjustDamageBuff {
-    fn apply(&self, ei: &mut EncounterInstance) {
-        if let Some(actor) = ei.get_actor(self.actor_id) {
-            actor.add_damage_bonus_buff(self.delta);
-        }
-    }
-}
+// There is no `AdjustDamageBuff` beside the two above, and there used
+// to be. Its two callers — Magic Weapon and the Oil of Sharpness — both
+// moved to `InstallTimedBuff`, because SRD 5.2 gives each of them a
+// flat duration and neither of them should be spending a caster's grip
+// to have an ending. A raw damage delta with no teardown is the one
+// shape of this lane the engine has no honest use for: the attack and
+// save deltas above are Bless's, whose duration RAW spends on
+// concentration anyway.
 
 /// Forced-movement direction relative to an anchor point. `Toward` pulls
 /// the actor closer (Thorn Whip, Telekinesis pull); `Away` pushes them

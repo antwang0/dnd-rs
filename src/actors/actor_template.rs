@@ -3276,10 +3276,12 @@ pub struct ConcentrationData {
     /// Attack-roll buff deltas to roll back on drop.
     pub attack_buffs: Vec<(usize, i32)>,
     pub save_buffs: Vec<(usize, i32)>,
-    /// Damage-roll buff deltas to roll back on drop. Mirrors `attack_buffs`
-    /// for the damage lane (Magic Weapon's `+1` damage, Elemental Weapon's
-    /// `+1/+2/+3` flame, etc.).
-    pub damage_buffs: Vec<(usize, i32)>,
+    // There is no `damage_buffs` lane here and there used to be. Magic
+    // Weapon was its only writer, and Magic Weapon does not take the
+    // caster's concentration in SRD 5.2 — see
+    // `ActorInstance::timed_buffs`, which is where every flat damage
+    // buff in the engine now keeps its ending. A third vec that nothing
+    // could put anything into was a lane a reader had to prove empty.
     /// 5e: making an attack ends Invisibility but not Greater Invisibility.
     /// Set true for concentration data whose effect ends when the caster
     /// makes any attack roll (clear_attack_advantage_riders consumes it).
@@ -3331,6 +3333,44 @@ pub struct ConcentrationData {
     pub grants_damage_escape: bool,
 }
 
+/// Which of the three flat roll-lane buffs a [`TimedBuff`] moves.
+///
+/// An enum rather than three parallel ledgers, because everything about
+/// a timed buff except *which integer it adds to* is identical across
+/// the three, and the tick has to walk all of them in one pass to
+/// report expiries in one order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BuffLane {
+    /// `attack_bonus_buff` — Divine Favor's stand-in for `+1d4` on a
+    /// hit, Magic Weapon's `+1` to hit.
+    Attack,
+    /// `damage_bonus_buff` — Magic Weapon's `+1` to damage.
+    Damage,
+    /// `save_bonus_buff` — no timed caller today, and here because the
+    /// three fields are one family and a lane the ledger could not
+    /// reach would be the next thing somebody had to add.
+    Save,
+}
+
+/// One flat buff that ends on its own clock — see
+/// [`ActorInstance::timed_buffs`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimedBuff {
+    /// The spell that installed it, as the log and the re-cast rule
+    /// read it. `&'static str` because every caller is a spell name
+    /// written in the source, which is also what makes it a usable key.
+    pub source: &'static str,
+    pub lane: BuffLane,
+    /// How much it added. Refunded verbatim when the clock runs out, so
+    /// the field is the *whole* of what a teardown needs to know.
+    pub delta: i32,
+    /// Rounds left, ticked down by
+    /// [`ActorInstance::tick_timed_buffs`] at round end — the same
+    /// clock `tick_condition_timers` runs on, and ticked in the same
+    /// pass so an expiry logs beside the conditions that ended with it.
+    pub rounds_remaining: u32,
+}
+
 /// 5e Help grant — a snapshot of "actor X has helped actor Y get
 /// advantage against enemy Z." Stored on the recipient actor; consumed
 /// by their next attack against `against`.
@@ -3359,7 +3399,6 @@ impl ConcentrationData {
             conditions,
             attack_buffs: Vec::new(),
             save_buffs: Vec::new(),
-            damage_buffs: Vec::new(),
             breaks_on_attack: false,
             grants_round_end_escape: true,
             grants_damage_escape: false,
@@ -3411,13 +3450,6 @@ impl ConcentrationData {
         self
     }
 
-    /// Chainable builder setter for `damage_buffs`. Mirrors
-    /// `with_attack_buffs` on the damage-roll lane (Magic Weapon /
-    /// Elemental Weapon-style installs).
-    pub fn with_damage_buffs(mut self, damage_buffs: Vec<(usize, i32)>) -> Self {
-        self.damage_buffs = damage_buffs;
-        self
-    }
 }
 
 /// The `min_roll` that means *"this does not come back during the
@@ -5825,13 +5857,45 @@ pub struct ActorInstance {
     /// `Blessed` condition flag for stacking flexibility.
     attack_bonus_buff: i32,
     save_bonus_buff: i32,
-    /// Spell-installed flat damage-roll bonus (Magic Weapon, Elemental
-    /// Weapon). Symmetric with `attack_bonus_buff` on the to-hit lane —
-    /// concentration installs delta via `AdjustDamageBuff` and rolls it
-    /// back on drop. Independent of `ItemBonuses.damage_bonus` (which is
-    /// the passive carried-item lane); both sources sum at the damage-
-    /// roll site via `caster_damage_buffs`.
+    /// Spell- and oil-installed flat damage-roll bonus (Magic Weapon,
+    /// the Oil of Sharpness). Symmetric with `attack_bonus_buff` on the
+    /// to-hit lane, and unlike it in the one way that matters: every
+    /// writer of this field goes through `InstallTimedBuff`, so every
+    /// delta on it has a clock. Independent of
+    /// `ItemBonuses.damage_bonus` (which is the passive carried-item
+    /// lane); both sources sum at the damage-roll site via
+    /// `caster_damage_buffs`.
     damage_bonus_buff: i32,
+    /// Deltas on the three fields above that end on **a clock of their
+    /// own**, with the spell that put them there and how long is left.
+    ///
+    /// The three buff fields are raw integers with no timer and no
+    /// teardown: the only thing in the engine that ever took one back
+    /// was the concentration it had been registered against. That works
+    /// for Bless, whose duration RAW spends on concentration anyway, and
+    /// it was the reason two spells in `spells.rs` carried a
+    /// concentration SRD 5.2 does not print — Divine Favor (*"Duration:
+    /// 1 minute"*) and Magic Weapon (*"Duration: 1 hour"*), each under a
+    /// docstring naming this ledger as the fix and calling the wrong
+    /// duration *"the safer of the two wrong answers"*. It was: dropping
+    /// the concentration without somewhere to put the clock would have
+    /// left a permanent `+1` on whoever was touched, for the rest of the
+    /// dungeon run.
+    ///
+    /// A `Vec` of rows rather than a timer per field, because the
+    /// question a tick has to answer is *which* delta ended, and a
+    /// creature can easily be carrying two: a paladin with Divine Favor
+    /// up and a Magic Weapon on their sword has two attack-lane rows
+    /// from two spells with two clocks. Summing them into one field
+    /// with one timer would end both when either ran out.
+    ///
+    /// Keyed by `(source, lane)` for the re-cast rule, which is RAW's
+    /// own — Magic Weapon prints *"the spell ends early if you cast it
+    /// again"* — and which falls out of `install_timed_buff` refunding
+    /// a matching row before it writes the new one. Without that, a
+    /// caster who re-cast on the same target would stack the delta and
+    /// only ever refund the newer copy.
+    timed_buffs: Vec<TimedBuff>,
     /// Shared once-per-turn rider ledger — a set of feature tags
     /// whose "already fired this turn" state is tracked in one place
     /// instead of a bool field per feature. Marked at the swing site
@@ -6689,6 +6753,7 @@ impl ActorInstance {
             attack_bonus_buff: 0,
             save_bonus_buff: 0,
             damage_bonus_buff: 0,
+            timed_buffs: Vec::new(),
             once_per_turn_marks: HashSet::new(),
             hit_targets_this_turn: HashSet::new(),
             hidden_check_total: None,
@@ -9461,6 +9526,11 @@ impl ActorInstance {
         self.attack_bonus_buff = 0;
         self.save_bonus_buff = 0;
         self.damage_bonus_buff = 0;
+        // The ledger goes with the integers it is a ledger *of*. Left
+        // behind, its rows would refund deltas that a night's sleep had
+        // already zeroed, and the next morning's `+1` would come off as
+        // a `-1`.
+        self.timed_buffs.clear();
         self.features_remaining = self.features_max.clone();
         self.indomitable_pending = false;
         // 5e Rogue Assassin **Assassinate** is a per-combat latch ("any
@@ -13318,6 +13388,104 @@ impl ActorInstance {
         self.damage_bonus_buff += delta;
     }
 
+    /// Add `delta` to one of the three flat roll lanes and remember to
+    /// take it back in `rounds` rounds — see [`ActorInstance::timed_buffs`].
+    ///
+    /// **Re-casting replaces.** A row from the same `source` on the
+    /// same `lane` is refunded before the new one is applied, which is
+    /// Magic Weapon's *"the spell ends early if you cast it again"* and
+    /// is the behaviour every other buff in the file already has for
+    /// free: a condition re-applied overwrites its timer rather than
+    /// stacking a second copy. Without it the only spells on this lane
+    /// would be the only spells in the game that a caster could stack
+    /// on one target by casting twice.
+    pub fn install_timed_buff(
+        &mut self,
+        source: &'static str,
+        lane: BuffLane,
+        delta: i32,
+        rounds: u32,
+    ) {
+        self.refund_timed_buffs(|b| b.source == source && b.lane == lane);
+        self.apply_buff_delta(lane, delta);
+        self.timed_buffs.push(TimedBuff {
+            source,
+            lane,
+            delta,
+            rounds_remaining: rounds,
+        });
+    }
+
+    /// Every timed buff currently riding this sheet, for the panel and
+    /// for the tests.
+    pub fn timed_buffs(&self) -> &[TimedBuff] {
+        &self.timed_buffs
+    }
+
+    /// Tick each timed buff down by one round, refund the ones that ran
+    /// out, and report their sources — the buff-lane twin of
+    /// [`Self::tick_condition_timers`], called from the same place in
+    /// `round_end` so the two sets of expiries log together.
+    ///
+    /// Returns one entry per expired row rather than per source, so a
+    /// Magic Weapon ending reports twice (attack and damage); the
+    /// caller dedups for the log, which is where "the spell ended"
+    /// means one line.
+    pub fn tick_timed_buffs(&mut self) -> Vec<&'static str> {
+        for buff in &mut self.timed_buffs {
+            buff.rounds_remaining = buff.rounds_remaining.saturating_sub(1);
+        }
+        let expired: Vec<&'static str> = self
+            .timed_buffs
+            .iter()
+            .filter(|b| b.rounds_remaining == 0)
+            .map(|b| b.source)
+            .collect();
+        self.refund_timed_buffs(|b| b.rounds_remaining == 0);
+        expired
+    }
+
+    /// End every timed buff whose row matches, handing its delta back
+    /// to the lane it came from.
+    ///
+    /// The one place a delta is un-applied, which is what keeps the
+    /// ledger and the three integers from drifting: a row is only ever
+    /// removed through here, so a row that exists is a delta that is
+    /// still on the sheet.
+    fn refund_timed_buffs(&mut self, mut matches: impl FnMut(&TimedBuff) -> bool) {
+        let ending: Vec<(BuffLane, i32)> = self
+            .timed_buffs
+            .iter()
+            .filter(|b| matches(b))
+            .map(|b| (b.lane, b.delta))
+            .collect();
+        if ending.is_empty() {
+            return;
+        }
+        self.timed_buffs.retain(|b| !matches(b));
+        for (lane, delta) in ending {
+            self.apply_buff_delta(lane, -delta);
+        }
+    }
+
+    /// Move one of the three flat roll lanes by `delta`. The shared
+    /// spine of `install_timed_buff` and `refund_timed_buffs`, so the
+    /// install and the refund can never disagree about which integer a
+    /// lane names.
+    /// Routed through the three public setters rather than touching
+    /// the fields, so `BuffLane` names a *setter* and the setters go on
+    /// naming the fields. The concentration rollback in
+    /// `EncounterInstance::drop_concentration` reaches the same three,
+    /// which is what keeps the two teardown paths writing the lanes the
+    /// same way.
+    fn apply_buff_delta(&mut self, lane: BuffLane, delta: i32) {
+        match lane {
+            BuffLane::Attack => self.add_attack_bonus_buff(delta),
+            BuffLane::Damage => self.add_damage_bonus_buff(delta),
+            BuffLane::Save => self.add_save_bonus_buff(delta),
+        }
+    }
+
     pub fn remaining_movement(&self) -> f32 {
         if self.conditions.keys().any(|c| c.zeros_movement()) {
             return 0.0;
@@ -15884,7 +16052,7 @@ mod tests {
             f.has_condition(Condition::SpiderClimbing),
             "slippers should install SpiderClimbing on pickup"
         );
-        // +30 ft (= 6 tiles * 5 ft) over the baseline.
+        // +30 ft over the baseline — speed is carried in feet, not tiles.
         assert!(
             f.speed() > baseline_speed,
             "slippers should boost speed via SpiderClimbing"

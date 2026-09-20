@@ -19783,13 +19783,18 @@ fn command_skips_charm_immune_target() {
     );
 }
 
+/// Magic Weapon puts `+1` on both roll lanes and the magic-weapon
+/// property on the blade, hands the caster back their concentration,
+/// and takes all three away together when its hour runs out.
+///
+/// The test used to end by dropping the wizard's concentration and
+/// watching the two deltas roll back, which was the only teardown the
+/// buff lane had. That is what made the spell take a grip SRD 5.2 does
+/// not charge for; see `ActorInstance::timed_buffs` for the ledger that
+/// replaced it, and note what the last third of this test is checking —
+/// that the deltas come off **without anybody dropping anything**.
 #[test]
-fn magic_weapon_buff_reverts_on_concentration_drop() {
-    // Magic Weapon installs +1 attack AND +1 damage buffs and ends
-    // concentration. Dropping concentration must roll back BOTH
-    // halves exactly — verifies the symmetric attack-buff +
-    // damage-buff lanes both flow through the same ConcentrationData
-    // rollback path.
+fn magic_weapon_ends_on_its_own_clock_and_not_on_a_grip() {
     use crate::actions::spells::MAGIC_WEAPON;
     use crate::actors::creatures::bandits::BANDIT_TEMPLATE;
     use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
@@ -19817,16 +19822,45 @@ fn magic_weapon_buff_reverts_on_concentration_drop() {
         base_damage + 1,
         "magic weapon should grant a +1 damage buff (RAW)"
     );
-    e.drop_concentration(wizard);
+    assert!(
+        e.actors[&ally].has_condition(Condition::WeaponEnchanted),
+        "…and the third clause, which is what gets a swing past a wraith"
+    );
+    assert!(
+        !e.actors[&wizard].is_concentrating(),
+        "SRD 5.2 prints a flat hour on this spell and no Concentration"
+    );
+
+    // Re-casting on the same target replaces rather than stacks — RAW's
+    // *"the spell ends early if you cast it again"*.
+    for eff in MAGIC_WEAPON.side_effects(&mut e, wizard, Some(&target_ids), None, None) {
+        eff.apply(&mut e);
+    }
+    assert_eq!(
+        e.actors[&ally].attack_bonus_buff(),
+        base_attack + 1,
+        "a second cast is the same spell again, not a second +1"
+    );
+
+    // And the hour runs out on its own clock. A hundred rounds is what
+    // the spell prints; the ticks are cheap and the point is that
+    // nobody dropped anything to end it.
+    for _ in 0..100 {
+        e.round_end();
+    }
     assert_eq!(
         e.actors[&ally].attack_bonus_buff(),
         base_attack,
-        "dropping concentration should roll back the attack buff"
+        "the attack half comes off when the spell ends"
     );
     assert_eq!(
         e.actors[&ally].damage_bonus_buff(),
         base_damage,
-        "dropping concentration should roll back the damage buff"
+        "…and so does the damage half"
+    );
+    assert!(
+        !e.actors[&ally].has_condition(Condition::WeaponEnchanted),
+        "…and the blade is a blade again. Three clauses, one ending."
     );
 }
 
@@ -19836,7 +19870,8 @@ fn caster_damage_buffs_folds_item_and_spell_lanes() {
     // item `damage_bonus` and spell-installed `damage_bonus_buff`.
     // Verifies a fighter carrying a +1 Weapon plus a +1 damage buff
     // shows the +2 damage total (+1 from each lane).
-    use crate::engine::side_effects::AdjustDamageBuff;
+    use crate::actors::actor_template::BuffLane;
+    use crate::engine::side_effects::InstallTimedBuff;
     use crate::items::item_template::WEAPON_PLUS_ONE;
 
     let mut e = ei_with_terrain(10, 10, &[]);
@@ -19851,7 +19886,14 @@ fn caster_damage_buffs_folds_item_and_spell_lanes() {
     let base = e.caster_damage_buffs(id, false);
     e.actors.get_mut(&id).unwrap().pickup_item(&WEAPON_PLUS_ONE);
     assert_eq!(e.caster_damage_buffs(id, false), base + 1, "item lane alone");
-    AdjustDamageBuff { actor_id: id, delta: 1 }.apply(&mut e);
+    InstallTimedBuff {
+        actor_id: id,
+        source: "a spell",
+        lane: BuffLane::Damage,
+        delta: 1,
+        rounds: 10,
+    }
+    .apply(&mut e);
     assert_eq!(
         e.caster_damage_buffs(id, false),
         base + 2,
@@ -20055,8 +20097,134 @@ fn hypnotic_pattern_skips_charm_immune_targets() {
     );
 }
 
+/// The timed-buff ledger's own three rules, on one sheet: two rows from
+/// two sources on the same lane are two clocks, a row is refunded to
+/// the lane it came from, and a long rest takes the ledger with the
+/// integers it is a ledger of.
+///
+/// The first is what makes it a `Vec` rather than a timer per field —
+/// a paladin with Divine Favor up and a Magic Weapon on their sword has
+/// two attack-lane rows with two clocks, and one timer would end both
+/// when either ran out. The third is the one with teeth: a ledger left
+/// behind a `long_rest` that zeroes the fields would refund deltas that
+/// are already gone, and the next morning's `+1` would come off as
+/// a `-1`.
 #[test]
-fn divine_favor_installs_concentration_and_attack_buff() {
+fn two_timed_buffs_on_one_lane_keep_two_clocks() {
+    use crate::actors::actor_template::BuffLane;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::InstallTimedBuff;
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    let base = e.actors[&id].attack_bonus_buff();
+    let install = |e: &mut EncounterInstance, source, delta, rounds| {
+        InstallTimedBuff {
+            actor_id: id,
+            source,
+            lane: BuffLane::Attack,
+            delta,
+            rounds,
+        }
+        .apply(e);
+    };
+
+    install(&mut e, "a short one", 2, 3);
+    install(&mut e, "a long one", 1, 8);
+    assert_eq!(
+        e.actors[&id].attack_bonus_buff() - base,
+        3,
+        "two sources on one lane sum while both are up"
+    );
+
+    for _ in 0..3 {
+        e.round_end();
+    }
+    assert_eq!(
+        e.actors[&id].attack_bonus_buff() - base,
+        1,
+        "the short one ends and takes its own two points, not the other's one"
+    );
+    assert_eq!(
+        e.actors[&id].timed_buffs().len(),
+        1,
+        "and leaves the ledger with only the row that is still running"
+    );
+
+    for _ in 0..5 {
+        e.round_end();
+    }
+    assert_eq!(
+        e.actors[&id].attack_bonus_buff(),
+        base,
+        "then the long one, on its own clock"
+    );
+    assert!(e.actors[&id].timed_buffs().is_empty());
+
+    // And a rest clears the ledger along with the integers, so a row
+    // cannot refund a delta a night's sleep has already zeroed.
+    install(&mut e, "a long one", 5, 50);
+    e.actors.get_mut(&id).unwrap().long_rest();
+    assert_eq!(e.actors[&id].attack_bonus_buff(), 0);
+    assert!(
+        e.actors[&id].timed_buffs().is_empty(),
+        "the ledger goes with the integers it is a ledger of"
+    );
+}
+
+/// The Oil of Sharpness's three clauses end together, which they did
+/// not before there was a clock for the two numeric ones.
+///
+/// The coat used to be two raw deltas beside a timed condition: the
+/// condition lapsed on schedule and the `+3`s never came off at all.
+/// Nothing in a normal fight could see it — RAW's hour is a hundred
+/// rounds — which is exactly why it wants a test rather than a reading.
+#[test]
+fn the_oil_of_sharpness_wears_off_all_at_once() {
+    use crate::actions::item_actions::APPLY_OIL_OF_SHARPNESS;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::items::item_template::OIL_OF_SHARPNESS;
+
+    let mut e = ei_with_terrain(10, 10, &[]);
+    let id = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(2, 2), 0, 0)
+        .unwrap();
+    e.actors.get_mut(&id).unwrap().pickup_item(&OIL_OF_SHARPNESS);
+    let base_attack = e.actors[&id].attack_bonus_buff();
+    let base_damage = e.actors[&id].damage_bonus_buff();
+    for ef in APPLY_OIL_OF_SHARPNESS.side_effects(&mut e, id, None, None, None) {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.actors[&id].attack_bonus_buff() - base_attack, 3);
+    assert_eq!(e.actors[&id].damage_bonus_buff() - base_damage, 3);
+    assert!(e.actors[&id].has_condition(Condition::WeaponEnchanted));
+
+    for _ in 0..100 {
+        e.round_end();
+    }
+    assert!(
+        !e.actors[&id].has_condition(Condition::WeaponEnchanted),
+        "the hour is up and the blade is ordinary again"
+    );
+    assert_eq!(
+        e.actors[&id].attack_bonus_buff(),
+        base_attack,
+        "…and so is the swing. One duration, one ending."
+    );
+    assert_eq!(e.actors[&id].damage_bonus_buff(), base_damage);
+}
+
+/// Divine Favor buys its `+2` for a bonus action and a first-level
+/// slot, and for nothing else — SRD 5.2's *"Duration: 1 minute"* with
+/// no Concentration on the line.
+///
+/// The minute is the assertion worth having. This spell spent years
+/// holding a grip it was not printed with, because a raw delta had no
+/// other ending; the round count below is what replaced it.
+#[test]
+fn divine_favor_buys_its_minute_without_the_casters_grip() {
     use crate::actions::spells::DIVINE_FAVOR;
     use crate::actors::creatures::clerics::CLERIC_TEMPLATE;
     let mut e = ei_with_terrain(10, 10, &[]);
@@ -20068,11 +20236,31 @@ fn divine_favor_installs_concentration_and_attack_buff() {
     for eff in effects {
         eff.apply(&mut e);
     }
-    let after = e.actors[&cleric].attack_bonus_buff();
-    assert_eq!(after - before, 2, "divine favor should add +2 attack buff");
+    assert_eq!(
+        e.actors[&cleric].attack_bonus_buff() - before,
+        2,
+        "divine favor should add +2 attack buff"
+    );
     assert!(
-        e.actors[&cleric].is_concentrating(),
-        "divine favor should install concentration"
+        !e.actors[&cleric].is_concentrating(),
+        "…and leave the grip free for the Bless, which is why RAW took \
+         the Concentration off it"
+    );
+
+    // Nine rounds in, the minute is not up.
+    for _ in 0..9 {
+        e.round_end();
+    }
+    assert_eq!(
+        e.actors[&cleric].attack_bonus_buff() - before,
+        2,
+        "a minute is ten rounds and nine of them have passed"
+    );
+    e.round_end();
+    assert_eq!(
+        e.actors[&cleric].attack_bonus_buff(),
+        before,
+        "the tenth is where it ends, and the delta comes back off"
     );
 }
 
@@ -22739,7 +22927,7 @@ fn the_damage_pools_the_revision_changed_are_the_ones_the_engine_rolls() {
 /// that is not written down is indistinguishable from an oversight —
 /// which is how eleven of these survived in the first place.
 ///
-/// **Seven now match the book.** Five gained the Concentration they
+/// **Nine now match the book.** Five gained the Concentration they
 /// were printed with (Silence, Sleep, Forcecage, Weird — and the fifth
 /// is not on this list because the change is a zone flag rather than a
 /// trait), and two lost one nobody printed (Barkskin, Foresight).
@@ -22748,26 +22936,37 @@ fn the_damage_pools_the_revision_changed_are_the_ones_the_engine_rolls() {
 /// about spell of its edition, and the revision's answer was not to
 /// weaken the cage but to give the party a caster to hit.
 ///
-/// **Five stay wrong on purpose**, in two kinds. Three collapse the
+/// **Magic Weapon and Divine Favor are the ninth and tenth, and they
+/// arrived late.** Both were listed here as deliberate deviations, on
+/// the grounds that they pay out through `AdjustAttackBuff` — a raw
+/// delta with no timer and no teardown but the concentration it is
+/// registered against — so dropping it would have left a permanent
+/// bonus on the sheet. That was true, and it was an argument about the
+/// engine rather than about the book: `ActorInstance::timed_buffs` is
+/// the ledger both entries named as the fix, and with it the two
+/// spells cost their casters the grip RAW does not charge them for.
+///
+/// **Four stay wrong on purpose**, in two kinds. Three collapse the
 /// half of the spell the Concentration was holding — Mind Spike's
 /// tracking rider, Dragon's Breath's permission to breathe again,
 /// Delayed Blast Fireball's bead in the air — so a concentration here
 /// would cost the caster whatever they were holding and buy nothing.
-/// Two more, Magic Weapon and Divine Favor, pay out through
-/// `AdjustAttackBuff`, which has no timer and no teardown except the
-/// concentration it is registered against; dropping it would leave a
-/// permanent bonus on the sheet, which is the worse of the two wrong
-/// answers. Each of the five argues itself at its own site.
+/// The fourth is **Guidance**, which is the one the original sweep
+/// missed: SRD 5.2 added Concentration to the cantrip and this entry
+/// claimed in so many words that the book had not. It stays free
+/// because the engine's `Inspired` reaches attacks and saves as well as
+/// checks, and charging RAW's price for a wider effect is the worse of
+/// the two errors. Each of the four argues itself at its own site.
 #[test]
 fn the_concentration_the_book_prints_is_the_concentration_the_engine_takes() {
     use crate::actions::spells::{
         BARKSKIN, DELAYED_BLAST_FIREBALL, DIVINE_FAVOR, DRAGONS_BREATH, FORCECAGE, FORESIGHT,
-        MAGIC_WEAPON, MIND_SPIKE, SILENCE, SLEEP, WEIRD,
+        GUIDANCE, MAGIC_WEAPON, MIND_SPIKE, SILENCE, SLEEP, WEIRD,
     };
 
     // (action, does it take the caster's concentration here, does SRD
     //  5.2 print Concentration on its Duration line)
-    let rows: [(&dyn crate::actions::action_template::Action, bool, bool); 11] = [
+    let rows: [(&dyn crate::actions::action_template::Action, bool, bool); 12] = [
         // Fixed: the five that gained what the book prints.
         (&*SILENCE, true, true),
         (&*SLEEP, true, true),
@@ -22776,22 +22975,24 @@ fn the_concentration_the_book_prints_is_the_concentration_the_engine_takes() {
         // Fixed: the two that lost what nobody printed.
         (&*BARKSKIN, false, false),
         (&*FORESIGHT, false, false),
+        // Fixed: the two the timed-buff ledger unblocked.
+        (&*MAGIC_WEAPON, false, false),
+        (&*DIVINE_FAVOR, false, false),
         // Deliberate: the collapsed half is the half that concentrated.
         (&*MIND_SPIKE, false, true),
         (&*DRAGONS_BREATH, false, true),
         (&*DELAYED_BLAST_FIREBALL, false, true),
-        // Deliberate: the buff lane has no teardown but this one.
-        (&*MAGIC_WEAPON, true, false),
-        (&*DIVINE_FAVOR, true, false),
+        // Deliberate: the engine's version is wider than the book's, so
+        // it is not charged the book's price.
+        (&*GUIDANCE, false, true),
     ];
-    // The five rows that are allowed to disagree with the book, and
-    // the only five: a sixth would be a spell nobody argued.
+    // The four rows that are allowed to disagree with the book, and
+    // the only four: a fifth would be a spell nobody argued.
     const ARGUED: &[&str] = &[
         "mind spike",
         "dragon's breath",
         "delayed blast fireball",
-        "magic weapon",
-        "divine favor",
+        "guidance",
     ];
     for (action, here, in_the_book) in rows {
         assert_eq!(
@@ -116004,63 +116205,7 @@ fn a_dropped_mantle_takes_the_free_commands_with_it() {
     );
 }
 
-/// Every `Type::member` a doc comment names is a `Type::member` that
-/// exists.
-///
-/// This engine documents itself by cross-reference. A field's docstring
-/// says which helper reads it, a cohort's says which chokepoint walks
-/// it, and an approximation's says which lane would have to exist for it
-/// to stop being one — which is what makes the comments worth reading
-/// and is exactly what rots when a function is renamed. Fourteen of
-/// these had already gone stale when this sweep was written: a
-/// `from_template` that had been `from_creature_template` for a long
-/// time, an `is_ranged_engagement_option` that had become `can_engage`,
-/// a `magic_suppressed_between` that had never existed under that name.
-/// Three more were minted the same afternoon, by a commit that moved the
-/// initiative roll off `ActorInstance` — which is the case that argues
-/// for a sweep rather than for care: the rot arrives with the fix, in
-/// the same patch, from the author who knows best.
-///
-/// A source-text sweep, the same blunt instrument
-/// `every_spell_that_prices_an_upcast_declares_it` uses and for the same
-/// reason: the alternative is trusting a list.
-///
-/// **Scoped to a qualified name** — `` `EncounterInstance::foo` `` and
-/// not a bare `` `foo` `` — and the scope is what makes it usable. A
-/// bare backtick is used for locals, for RAW's own vocabulary, for
-/// hypothetical helpers a docstring is arguing against ("rather than a
-/// `has_elegant_courtier` field"), and for types, so a sweep over all of
-/// them is mostly noise. `Type::member` is an unambiguous claim about
-/// what the code contains, and a name nobody can find is a claim that
-/// **Every area radius is the feet its own comment claims**, converted
-/// once and checked here.
-///
-/// The engine's grid is 2.5 feet to the tile — a Medium creature
-/// occupies a 2×2 block — so RAW's "20-foot-radius Sphere" is eight
-/// tiles and not four. About a dozen area spells had been converted as
-/// though the grid were five feet to the tile, and every one of them
-/// said so in its own comment: "20-ft radius = 4 tiles on the 2.5-ft
-/// grid" is a sentence that contains its own refutation, and it
-/// appeared six times. The spells beside them — Spirit Guardians at
-/// 15 ft, Holy Aura and Sunburst at 30 — had the conversion right, so
-/// half the area layer was at RAW scale and half at half scale, with
-/// nothing anywhere saying which was meant.
-///
-/// A source sweep rather than a type, because the numbers are `const`
-/// literals inside forty separate `impl` blocks and the only thing
-/// they have in common is the sentence above them. That is the same
-/// shape — and the same justification — as
-/// `every_qualified_name_a_doc_comment_cites_still_exists` below.
-///
-/// **A deliberately narrower area declares itself by writing down the
-/// number it is narrower than.** Four areas in the file are held below
-/// RAW on purpose and each has a reason worth reading; the rule that
-/// lets them through is that the comment must contain the RAW tile
-/// count in words ("RAW's 20-ft radius is 8 tiles … and this is held at
-/// 2"). That is a sentence a reader wants anyway, and it is the
-/// difference between a divergence and a mistake.
-///
-/// **Every public helper the crate writes is one something calls.**
+/// Every public helper the crate writes is one something calls.
 ///
 /// `pub` is what makes this class of rot invisible. A private `fn`
 /// nobody calls is a `dead_code` warning; a `pub fn` nobody calls is a
@@ -116625,6 +116770,34 @@ fn every_written_out_conversion_in_a_comment_survives_the_arithmetic() {
     );
 }
 
+/// Every area radius is the feet its own comment claims, converted
+/// once and checked here.
+///
+/// The engine's grid is 2.5 feet to the tile — a Medium creature
+/// occupies a 2×2 block — so RAW's "20-foot-radius Sphere" is eight
+/// tiles and not four. About a dozen area spells had been converted as
+/// though the grid were five feet to the tile, and every one of them
+/// said so in its own comment: "20-ft radius = 4 tiles on the 2.5-ft
+/// grid" is a sentence that contains its own refutation, and it
+/// appeared six times. The spells beside them — Spirit Guardians at
+/// 15 ft, Holy Aura and Sunburst at 30 — had the conversion right, so
+/// half the area layer was at RAW scale and half at half scale, with
+/// nothing anywhere saying which was meant.
+///
+/// A source sweep rather than a type, because the numbers are `const`
+/// literals inside forty separate `impl` blocks and the only thing
+/// they have in common is the sentence above them. That is the same
+/// shape — and the same justification — as
+/// `every_qualified_name_a_doc_comment_cites_still_exists` below.
+///
+/// **A deliberately narrower area declares itself by writing down the
+/// number it is narrower than.** Four areas in the file are held below
+/// RAW on purpose and each has a reason worth reading; the rule that
+/// lets them through is that the comment must contain the RAW tile
+/// count in words ("RAW's 20-ft radius is 8 tiles … and this is held at
+/// 2"). That is a sentence a reader wants anyway, and it is the
+/// difference between a divergence and a mistake.
+///
 /// Radii only. A comment naming a wall's *length* or a spell's *range*
 /// is not making a claim about a Chebyshev radius, and a sweep that
 /// compared the two would be inventing a rule rather than checking one.
@@ -116750,6 +116923,34 @@ fn first_feet(doc: &str) -> Option<u32> {
     None
 }
 
+/// Every `Type::member` a doc comment names is a `Type::member` that
+/// exists.
+///
+/// This engine documents itself by cross-reference. A field's docstring
+/// says which helper reads it, a cohort's says which chokepoint walks
+/// it, and an approximation's says which lane would have to exist for it
+/// to stop being one — which is what makes the comments worth reading
+/// and is exactly what rots when a function is renamed. Fourteen of
+/// these had already gone stale when this sweep was written: a
+/// `from_template` that had been `from_creature_template` for a long
+/// time, an `is_ranged_engagement_option` that had become `can_engage`,
+/// a `magic_suppressed_between` that had never existed under that name.
+/// Three more were minted the same afternoon, by a commit that moved the
+/// initiative roll off `ActorInstance` — which is the case that argues
+/// for a sweep rather than for care: the rot arrives with the fix, in
+/// the same patch, from the author who knows best.
+///
+/// A source-text sweep, the same blunt instrument
+/// `every_spell_that_prices_an_upcast_declares_it` uses and for the same
+/// reason: the alternative is trusting a list.
+///
+/// **Scoped to a qualified name** — `` `EncounterInstance::foo` `` and
+/// not a bare `` `foo` `` — and the scope is what makes it usable. A
+/// bare backtick is used for locals, for RAW's own vocabulary, for
+/// hypothetical helpers a docstring is arguing against ("rather than a
+/// `has_elegant_courtier` field"), and for types, so a sweep over all of
+/// them is mostly noise. `Type::member` is an unambiguous claim about
+/// what the code contains, and a name nobody can find is a claim that
 /// has stopped being true.
 #[test]
 fn every_qualified_name_a_doc_comment_cites_still_exists() {

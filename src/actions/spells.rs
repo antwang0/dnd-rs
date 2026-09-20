@@ -7566,28 +7566,36 @@ pub static FIREBALL: LazyLock<Fireball> = LazyLock::new(|| Fireball {});
 /// dropping the spell takes all three back together.
 pub struct MagicWeapon {}
 
+impl MagicWeapon {
+    /// RAW's *"Duration: 1 hour"*, which is six hundred rounds and no
+    /// fight is. A hundred: long enough that the spell outlasts any
+    /// fight it is cast in, which is the whole of what an hour means
+    /// here, and short enough that a creature who walks out of the room
+    /// with it does not carry a `+1` for the rest of the run.
+    ///
+    /// Ten times the Divine Favor next door, which is the ratio RAW
+    /// prints between a minute and an hour — so the two spells are as
+    /// far apart on the clock as the book has them, even though only
+    /// one of the numbers is literal.
+    const ROUNDS: u32 = 100;
+}
+
 impl Action for MagicWeapon {
-    /// **Yes, and SRD 5.2 says it should not be.** The book prints
-    /// *"Duration: 1 hour"* with no Concentration on the line; the 2014
-    /// printing had one and this is it, still here on purpose.
+    /// **No, and that is SRD 5.2's own line.** The book prints
+    /// *"Duration: 1 hour"* with no Concentration on it; the 2014
+    /// printing had one and this spell carried it for as long as there
+    /// was nowhere else to hang the ending. See
+    /// `DivineFavor::holds_concentration` for the reading, which is the
+    /// same one, and `ActorInstance::timed_buffs` for the ledger that
+    /// made it available.
     ///
-    /// The blocker is the buff lane rather than the reading. This spell
-    /// pays out through `AdjustAttackBuff` / `AdjustDamageBuff`, which
-    /// are raw deltas on the holder's sheet with **no timer and no
-    /// teardown of their own** — the only thing in the engine that ever
-    /// takes one back is the concentration they were registered
-    /// against. Dropping the concentration here would not make the
-    /// spell match the book; it would leave a permanent `+1 to hit and +1 to damage` on
-    /// whoever received it, for the rest of the dungeon run.
-    ///
-    /// Barkskin and Foresight are the same mistake and were dropped,
-    /// because the whole of each is a *condition*, and a condition has
-    /// a timer. The fix for this pair is a timed buff — an
-    /// `AdjustAttackBuff` that expires the way `ConditionTimer::Rounds`
-    /// does — and until there is one, the wrong duration is the safer
-    /// of the two wrong answers.
+    /// The third clause — *"that weapon becomes a magic weapon"* —
+    /// never needed the concentration at all: it is a `Condition`, and
+    /// a condition has a timer. It rides a `Rounds` timer matched to
+    /// the two deltas, so all three halves of one sentence still end
+    /// together.
     fn holds_concentration(&self) -> bool {
-        true
+        false
     }
     fn name(&self) -> &str {
         "magic weapon"
@@ -7631,35 +7639,34 @@ impl Action for MagicWeapon {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::{AdjustAttackBuff, AdjustDamageBuff};
+        use crate::actors::actor_template::BuffLane;
+        use crate::engine::side_effects::InstallTimedBuff;
         let Some(target_id) = first_target_id(target_ids) else {
             return Vec::new();
         };
-        // Install +1 attack, +1 damage and the magic-weapon property,
-        // registering all three on the concentration so dropping the
-        // spell rolls back each delta on the right actor.
+        let _ = caster_id;
+        // Three clauses, three lanes, one clock: `+1` to hit, `+1` to
+        // damage and the magic-weapon property, all on the same
+        // hundred rounds so the sentence ends in one piece.
         vec![
-            Box::new(AdjustAttackBuff {
+            Box::new(InstallTimedBuff {
                 actor_id: target_id,
+                source: "Magic Weapon",
+                lane: BuffLane::Attack,
                 delta: 1,
+                rounds: Self::ROUNDS,
             }),
-            Box::new(AdjustDamageBuff {
+            Box::new(InstallTimedBuff {
                 actor_id: target_id,
+                source: "Magic Weapon",
+                lane: BuffLane::Damage,
                 delta: 1,
+                rounds: Self::ROUNDS,
             }),
             Box::new(ApplyCondition {
                 actor_id: target_id,
                 condition: Condition::WeaponEnchanted,
-                timer: ConditionTimer::Permanent,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::with_conditions(
-                    "Magic Weapon",
-                    vec![(target_id, Condition::WeaponEnchanted)],
-                )
-                    .with_attack_buffs(vec![(target_id, 1)])
-                    .with_damage_buffs(vec![(target_id, 1)]),
+                timer: ConditionTimer::Rounds(Self::ROUNDS),
             }),
         ]
     }
@@ -8087,28 +8094,35 @@ pub static HYPNOTIC_PATTERN: LazyLock<HypnoticPattern> = LazyLock::new(|| Hypnot
 /// Divine Favor is self-only and stacks freely with Bless.
 pub struct DivineFavor {}
 
+impl DivineFavor {
+    /// RAW's *"Duration: 1 minute"* — ten rounds, which is what a
+    /// minute is here.
+    const ROUNDS: u32 = 10;
+}
+
 impl Action for DivineFavor {
-    /// **Yes, and SRD 5.2 says it should not be.** The book prints
-    /// *"Duration: 1 minute"* with no Concentration on the line; the 2014
-    /// printing had one and this is it, still here on purpose.
+    /// **No, and that is SRD 5.2's own line.** The book prints
+    /// *"Duration: 1 minute"* with no Concentration on it; the 2014
+    /// printing had one and this spell carried it for as long as there
+    /// was nowhere else to hang the ending.
     ///
-    /// The blocker is the buff lane rather than the reading. This spell
-    /// pays out through `AdjustAttackBuff` / `AdjustDamageBuff`, which
-    /// are raw deltas on the holder's sheet with **no timer and no
-    /// teardown of their own** — the only thing in the engine that ever
-    /// takes one back is the concentration they were registered
-    /// against. Dropping the concentration here would not make the
-    /// spell match the book; it would leave a permanent `+2 to hit` on
-    /// whoever received it, for the rest of the dungeon run.
+    /// The blocker was the buff lane rather than the reading, and this
+    /// entry used to say so at length: the spell pays out through a raw
+    /// delta on the holder's sheet with no timer of its own, so
+    /// dropping the concentration would have left a permanent `+2 to
+    /// hit` on a paladin for the rest of the dungeon run — *"the wrong
+    /// duration is the safer of the two wrong answers"*. It named the
+    /// fix as well, and the fix now exists: see
+    /// `ActorInstance::timed_buffs`, a ledger of deltas that end on a
+    /// clock the way `ConditionTimer::Rounds` does.
     ///
-    /// Barkskin and Foresight are the same mistake and were dropped,
-    /// because the whole of each is a *condition*, and a condition has
-    /// a timer. The fix for this pair is a timed buff — an
-    /// `AdjustAttackBuff` that expires the way `ConditionTimer::Rounds`
-    /// does — and until there is one, the wrong duration is the safer
-    /// of the two wrong answers.
+    /// What it buys is the reason RAW took the concentration off: a
+    /// paladin's grip is worth more than this spell, and every paladin
+    /// in the engine had to choose between a `+2` and a Bless. Now it
+    /// is a bonus action and a first-level slot, and the grip stays
+    /// free for the Bless.
     fn holds_concentration(&self) -> bool {
-        true
+        false
     }
     fn name(&self) -> &str {
         "divine favor"
@@ -8146,20 +8160,18 @@ impl Action for DivineFavor {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::AdjustAttackBuff;
+        use crate::actors::actor_template::BuffLane;
+        use crate::engine::side_effects::InstallTimedBuff;
         // +2 attack buff approximates "+1d4 radiant per hit". The buff
-        // lives on the concentration so it rolls back automatically.
-        vec![
-            Box::new(AdjustAttackBuff {
-                actor_id: caster_id,
-                delta: 2,
-            }),
-            Box::new(StartConcentration {
-                caster_id,
-                data: ConcentrationData::new("Divine Favor")
-                    .with_attack_buffs(vec![(caster_id, 2)]),
-            }),
-        ]
+        // rides its own clock rather than the caster's grip — see
+        // `holds_concentration` above.
+        vec![Box::new(InstallTimedBuff {
+            actor_id: caster_id,
+            source: "Divine Favor",
+            lane: BuffLane::Attack,
+            delta: 2,
+            rounds: Self::ROUNDS,
+        })]
     }
 }
 
@@ -23778,8 +23790,25 @@ pub static THUNDERCLAP: LazyLock<Thunderclap> = LazyLock::new(|| Thunderclap {})
 /// their next attack roll or save. RAW gives +1d4 to one ability check
 /// of the holder's choice — we approximate with the existing `Inspired`
 /// flat-buff lane since the engine collapses checks / attacks / saves
-/// into the same buff slot. Concentration-free per RAW (we model it as
-/// a short Rounds timer so it can't dangle across the entire dungeon).
+/// into the same buff slot.
+///
+/// **It holds no concentration, and SRD 5.2 says it should.** The book
+/// prints *"Duration: Concentration, up to 1 minute"* — the 2024
+/// printing added the clause, and this entry used to claim the
+/// opposite outright ("concentration-free per RAW"), which was a
+/// statement about the book that the book contradicts.
+///
+/// It stays concentration-free, and the reason is the approximation
+/// above rather than the duration. RAW's cantrip buys one ability
+/// check, and a caster who spends their whole grip on one is making a
+/// real trade; the engine's `Inspired` reaches *attacks and saves* as
+/// well, because there is one buff slot and it does not ask what the
+/// d20 was for. Charging concentration for the engine's version would
+/// be charging RAW's price for a wider effect — a cleric who could not
+/// hold Bless and a Guidance at once, when the Guidance is quietly
+/// doing more than the book's. The `Rounds` timer is what keeps it
+/// from dangling, and the narrowing is named here rather than at the
+/// duration, where it is not.
 pub struct Guidance {}
 
 impl Action for Guidance {

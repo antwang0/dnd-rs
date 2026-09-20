@@ -12961,19 +12961,25 @@ pub static THROW_AN_ILLUSION_CARD: DeckOfIllusionsItem = DeckOfIllusionsItem {
 /// half rides `damage_bonus_buff`, and *"is magical"* rides
 /// `Condition::WeaponEnchanted` — the row `engine::magic` reads to let a
 /// swing through a wraith's resistance. See `spells::MagicWeapon`, which
-/// is this at a third of the size and with a concentration behind it.
+/// is this at a third of the size.
 ///
-/// **No concentration to lose**, and that is the item. Magic Weapon is a
-/// level-2 slot *and* the caster's concentration for the fight, which is
-/// the same concentration they wanted for Haste or Web; a vial costs a
-/// turn and then nothing at all. It is why RAW prices the oil Very Rare
-/// and the spell at level 2.
+/// **A turn, and no slot.** Magic Weapon is a level-2 slot on a
+/// caster's list; a vial is a turn out of anybody's pack. It is why RAW
+/// prices the oil Very Rare and the spell at level 2, and it is the
+/// whole of the difference now that the spell has stopped charging a
+/// concentration the book never printed on it.
 ///
-/// **The whole fight, and no longer.** RAW's hour outlives any fight the
-/// engine runs, so the buff has no in-combat expiry to model — and it
-/// does not survive the night either: `ActorInstance::long_rest` zeroes
-/// both buff ledgers, which is exactly where an hour that started in the
-/// last room has run out.
+/// **All three clauses end together**, on the timer the item declares —
+/// see `ActorInstance::timed_buffs`. This used to be two raw deltas
+/// beside a timed condition, under a paragraph arguing that the
+/// mismatch cost nothing because *"RAW's hour outlives any fight the
+/// engine runs"* and a long rest zeroes the buff fields. Both halves of
+/// that were true and it was still the wrong shape: the condition
+/// lapsed on schedule and the two `+3`s did not, so an encounter that
+/// reached round a hundred had a blade that was no longer magical and
+/// still hit three points harder — and anything that ended the
+/// condition early had the same effect sooner. A sentence with one
+/// duration should not have two.
 ///
 /// A chassis rather than one bespoke action, because *"coat a weapon"*
 /// is a shape the book prints more than once and the only things that
@@ -12990,9 +12996,37 @@ pub struct WeaponOilItem {
     /// bonus because the book prints them separately and the next oil
     /// may not print them equal.
     pub damage_bonus: i32,
-    /// How long *"is magical"* lasts. The two numeric buffs have no
-    /// timer of their own — see the struct docstring.
+    /// How long the coat lasts — RAW's hour. Read twice: as the
+    /// `WeaponEnchanted` condition's timer and as the number of rounds
+    /// the two numeric buffs ride, so the one duration the book prints
+    /// is the one duration the item has.
+    ///
+    /// A `ConditionTimer` rather than a bare round count because the
+    /// condition half needs one either way, and the buff half is
+    /// derived from it — see [`Self::buff_rounds`], which is where a
+    /// `Permanent` coat would have to decide what it means.
     pub timer: ConditionTimer,
+}
+
+impl WeaponOilItem {
+    /// How many rounds the two numeric buffs ride, read off the same
+    /// [`Self::timer`] the *"is magical"* clause uses.
+    ///
+    /// `Permanent` is the interesting arm and it means *the fight*: an
+    /// oil the book gives no ending is one the timed-buff ledger still
+    /// has to be able to end, because a delta with no row is a delta
+    /// nothing takes back. `LONGEST_FIGHT` is the engine's stand-in for
+    /// a duration longer than any fight, which is what every "1 hour"
+    /// in the file already collapses to.
+    fn buff_rounds(&self) -> u32 {
+        /// Longer than any fight the engine runs — the same hundred
+        /// rounds the Oil of Sharpness prints on its own timer.
+        const LONGEST_FIGHT: u32 = 100;
+        match self.timer {
+            ConditionTimer::Rounds(n) => n,
+            ConditionTimer::Permanent | ConditionTimer::UntilStartOfNextTurn => LONGEST_FIGHT,
+        }
+    }
 }
 
 impl Action for WeaponOilItem {
@@ -13058,20 +13092,28 @@ impl Action for WeaponOilItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        use crate::engine::side_effects::{AdjustAttackBuff, AdjustDamageBuff};
+        use crate::actors::actor_template::BuffLane;
+        use crate::engine::side_effects::InstallTimedBuff;
         if !consume_caster_item(encounter, caster_id, self.item_name) {
             return Vec::new();
         }
         let name = encounter.actor_name(caster_id);
         encounter.log(self.log_text.replace("{actor}", &name));
+        let rounds = self.buff_rounds();
         vec![
-            Box::new(AdjustAttackBuff {
+            Box::new(InstallTimedBuff {
                 actor_id: caster_id,
+                source: self.item_name,
+                lane: BuffLane::Attack,
                 delta: self.attack_bonus,
+                rounds,
             }),
-            Box::new(AdjustDamageBuff {
+            Box::new(InstallTimedBuff {
                 actor_id: caster_id,
+                source: self.item_name,
+                lane: BuffLane::Damage,
                 delta: self.damage_bonus,
+                rounds,
             }),
             Box::new(ApplyCondition {
                 actor_id: caster_id,

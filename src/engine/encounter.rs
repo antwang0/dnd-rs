@@ -22386,14 +22386,17 @@ impl EncounterInstance {
         }
         // Negate any flat buffs the spell installed (Bless, etc.). The
         // delta stored is the original adjustment; we subtract it to
-        // restore the actor's pre-spell stats. Each lane (attack / save /
-        // damage) walks the same `(target_id, delta)` vec, so the
-        // negation routes through `rollback_buffs` with a per-lane
-        // setter — adding a new buff lane (e.g. an AC delta) is one
-        // call here plus the new vec field on `ConcentrationData`.
+        // restore the actor's pre-spell stats. Both lanes (attack and
+        // save) walk the same `(target_id, delta)` vec, so the negation
+        // routes through `rollback_buffs` with a per-lane setter —
+        // adding a new buff lane (e.g. an AC delta) is one call here
+        // plus the new vec field on `ConcentrationData`.
+        //
+        // There is no damage lane here: a flat damage buff ends on its
+        // own clock now rather than on a grip. See
+        // `ActorInstance::timed_buffs`.
         self.rollback_buffs(&data.attack_buffs, |a, d| a.add_attack_bonus_buff(d));
         self.rollback_buffs(&data.save_buffs, |a, d| a.add_save_bonus_buff(d));
-        self.rollback_buffs(&data.damage_buffs, |a, d| a.add_damage_bonus_buff(d));
     }
 
     /// Walk a `(target_id, delta)` buff vec and apply the *negated*
@@ -23174,6 +23177,14 @@ impl EncounterInstance {
             // including Blessed / ShieldOfFaith, and reports each
             // exact expiry so we don't double-log or false-positive.
             let expired = actor.tick_condition_timers();
+            // The buff-lane twin of the line above, ticked in the same
+            // pass so a spell that ends this round says so beside the
+            // conditions that ended with it. Deduped because a Magic
+            // Weapon ending is two rows — the to-hit and the damage —
+            // and one sentence. See `ActorInstance::timed_buffs`.
+            let mut faded = actor.tick_timed_buffs();
+            faded.sort_unstable();
+            faded.dedup();
             // Snapshot legendary-action state before dropping the mutable
             // borrow so the self.log calls below can proceed.
             let legendary_spent = actor.legendary_actions_per_round() > 0
@@ -23183,6 +23194,9 @@ impl EncounterInstance {
                 // A lapsed timer is one of the ways Haste ends, and RAW
                 // bills the holder for it whichever way that is.
                 self.apply_condition_aftermath(id, c);
+            }
+            for source in faded {
+                self.log(format!("{} fades from {}.", source, name));
             }
             // Cosmetic debug aid: flag when a legendary creature has burned
             // through all of its legendary action points for the round.
