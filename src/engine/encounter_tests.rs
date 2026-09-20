@@ -53450,6 +53450,71 @@ fn a_study_that_beats_the_dc_gives_a_believer_back_its_eyes_and_its_feet() {
     assert_eq!(e.illusions().len(), 1);
 }
 
+/// The Eyes of Minute Seeing reach the one Investigation check the
+/// engine rolls: the disbelief check against an image.
+///
+/// The claim is the plumbing, not the arithmetic — that the item's row
+/// lands on the skill the study is rolled under, so the lenses turn
+/// into a second die there and nowhere else. It is made against a DC
+/// the goblin can only clear on a good roll, over a run of seeds: an
+/// unhelped goblin sees through the screen some of the time and a
+/// goblin wearing the lenses sees through it strictly more often,
+/// because advantage cannot lower a d20.
+#[test]
+fn the_eyes_of_minute_seeing_help_a_creature_see_through_an_image() {
+    use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+    use crate::actors::creatures::wizards::WIZARD_TEMPLATE;
+    use crate::engine::illusions::Illusion;
+    use crate::items::item_template::EYES_OF_MINUTE_SEEING;
+
+    // A goblin's Intelligence is 8 (−1) and it has no Investigation, so
+    // a DC of 15 wants a 16 or better: five faces in twenty bare, and
+    // rather more with a second die.
+    let seen_through = |wearing: bool| -> usize {
+        (0..60)
+            .filter(|seed| {
+                let mut e = ei_with_terrain_seeded(30, 30, &[], *seed);
+                let wiz = e
+                    .instantiate_creature(&WIZARD_TEMPLATE, Coordinate::new(2, 5), 0, 0)
+                    .unwrap();
+                let gob = e
+                    .instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(20, 5), 1, 0)
+                    .unwrap();
+                if wearing {
+                    e.actors
+                        .get_mut(&gob)
+                        .unwrap()
+                        .pickup_item(&EYES_OF_MINUTE_SEEING);
+                }
+                let screen: Vec<Coordinate> = (3..8).map(|y| Coordinate::new(12, y)).collect();
+                e.install_illusion(Illusion::new(
+                    "silent image",
+                    "a slab of rock",
+                    wiz,
+                    screen,
+                    15,
+                    10,
+                    true,
+                ));
+                e.study_illusions(gob) == 1
+            })
+            .count()
+    };
+
+    let bare = seen_through(false);
+    let helped = seen_through(true);
+    assert!(
+        bare > 0 && bare < 60,
+        "the DC has to be one a bare goblin sometimes clears and sometimes does not \
+         ({bare}/60), or this test proves nothing either way"
+    );
+    assert!(
+        helped > bare,
+        "the lenses are a second die on the one Investigation check there is \
+         ({helped}/60 wearing them against {bare}/60 without)"
+    );
+}
+
 /// The Study action itself: gated on there being something to study,
 /// and bounded by how far away a creature can squint.
 #[test]

@@ -333,8 +333,8 @@ pub struct Item {
     /// one site that knows which skill is being rolled.
     ///
     /// A slice because RAW's sentence is a list and because the next
-    /// item on this lane will name a different skill; the shield is the
-    /// only entry today.
+    /// item on this lane will name a different skill; the shield and the
+    /// Eyes of the Eagle and of Minute Seeing are the entries today.
     pub skill_check_advantages: &'static [crate::engine::types::Skill],
     /// Conditions this item's holder rolls saving throws against with
     /// Advantage — SRD 5.2's Belt of Dwarvenkind, *"you have Advantage
@@ -1167,8 +1167,6 @@ pub static BOOTS_OF_ELVENKIND: Item = Item {
 ///
 /// The second sentence — making out a two-foot object at extreme range
 /// — is the overland-travel half, and there is no overland travel.
-/// **Eyes of the Eagle** (Wondrous Item, Uncommon) — *"you have
-/// Advantage on Wisdom (Perception) checks that rely on sight."*
 ///
 /// **No attunement.** SRD 5.2's header is *"Wondrous Item, Uncommon"*
 /// and nothing else; the lenses asked for a bond the book does not.
@@ -1181,6 +1179,45 @@ pub static EYES_OF_THE_EAGLE: Item = Item {
     skill_check_advantages: &[crate::engine::types::Skill::Perception],
     ..Item::DEFAULTS
 };
+
+/// **Eyes of Minute Seeing** (Wondrous Item, Uncommon) — *"your vision
+/// improves significantly out to a range of 1 foot, granting you
+/// Darkvision within that range and Advantage on Intelligence
+/// (Investigation) checks made to examine something within that
+/// range."*
+///
+/// The lenses' plainer sibling, and the loot table's first entry on the
+/// Investigation lane — which is the check the engine rolls to see
+/// through an illusion, to spot a trap, and to work out what a magic
+/// item is. Until this, every one of those rolls was made naked by
+/// whoever happened to be looking.
+///
+/// **One foot is not modeled, and cannot be undersold.** The grid's
+/// finest unit is two and a half feet, so there is no distance short
+/// enough to express RAW's *"within that range"*. What the gate is
+/// standing in for, though, is not a distance at all — it is the
+/// difference between examining a thing you are holding and looking
+/// across a room, and the engine's Investigation checks are all of the
+/// first kind: the Study action is taken against something in reach,
+/// and the illusion it reveals is one the studier is close enough to
+/// touch. So dropping the clause widens the item by nothing it would
+/// ever have refused.
+///
+/// The Darkvision half is dropped for the opposite reason. A
+/// twelve-inch bubble of dark-sight is a joke RAW is making at the
+/// item's expense — the Goggles of Night one shelf over grant sixty
+/// feet for the same rarity — and granting it at the engine's
+/// resolution would make it a full sense the book does not give.
+///
+/// **No attunement**, which is RAW's header, and the same reading the
+/// Eyes of the Eagle above carry.
+pub static EYES_OF_MINUTE_SEEING: Item = Item {
+    name: "Eyes of Minute Seeing",
+    glyph: 'y',
+    skill_check_advantages: &[crate::engine::types::Skill::Investigation],
+    ..Item::DEFAULTS
+};
+
 
 pub static CLOAK_OF_RESISTANCE: Item = Item {
     name: "Cloak of Resistance",
@@ -9461,6 +9498,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // number every round.
     &BOOTS_OF_ELVENKIND,
     &EYES_OF_THE_EAGLE,
+    // And the third check that decides something on its own, which the
+    // pool had no answer to at all: the Investigation roll a creature
+    // makes to see through an image. One entry, at the weight its two
+    // Uncommon neighbours sit on, and it is worth exactly as much as
+    // there are illusions on the board — which is the same bargain the
+    // slayers make and the reason those are single entries too.
+    &EYES_OF_MINUTE_SEEING,
     // The sixth belt, and the only one that is not a Strength score.
     &BELT_OF_DWARVENKIND,
     // The one thing on the table that answers Paralyzed without a
