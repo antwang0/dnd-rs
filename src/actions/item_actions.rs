@@ -13652,6 +13652,317 @@ impl Action for DimensionalShacklesItem {
     }
 }
 
+pub const SPHERE_OF_ANNIHILATION_NAME: &str = "Sphere of Annihilation";
+
+/// **Sphere of Annihilation** (Wondrous Item, Legendary) —
+///
+/// > This 2-foot-diameter black sphere is a hole in the multiverse …
+/// > The sphere obliterates all matter it passes through and all matter
+/// > that passes through it. … Anything else that touches the sphere
+/// > but isn't wholly engulfed and obliterated by it takes 8d10 Force
+/// > damage.
+/// >
+/// > **Controlling the Sphere.** A Sphere of Annihilation is stationary
+/// > until someone takes control of it. If you are within 60 feet of a
+/// > sphere, you can take a Magic action to make a DC 25 Intelligence
+/// > (Arcana) check. … On a failed check, the sphere moves 10 feet
+/// > toward you in a straight line.
+/// >
+/// > While in control of the sphere, you can take a Bonus Action to
+/// > cause it to move in one direction of your choice, up to a number
+/// > of feet equal to 5 times your Intelligence modifier (minimum 5
+/// > feet). Any creature whose space the sphere enters must succeed on
+/// > a DC 19 Dexterity saving throw or be touched by it, taking 8d10
+/// > Force damage.
+///
+/// The one thing on the loot table that can kill the party that found
+/// it, and the only object in the engine whose failure mode is *coming
+/// back at you*. Everything else here either works or is wasted; a
+/// failed Arcana check on this moves a hole in the multiverse four
+/// tiles closer to the hand that reached for it.
+///
+/// **It rides the zone layer**, which is the whole reason it is
+/// tractable: a sphere is a one-tile hazard that does nothing until
+/// something is in it, and `EncounterInstance::move_zone` already
+/// charges the contact clause to whoever an area has *newly* arrived
+/// over — which is RAW's *"any creature whose space the sphere
+/// enters"*, exactly and without a line of new machinery. See
+/// [`crate::engine::zones`].
+///
+/// **One action, not two.** RAW splits the Arcana check (a Magic
+/// action) from the steering (a Bonus Action on a later turn), with a
+/// *"you control the sphere until the start of your next turn"* window
+/// between them. The engine collapses the pair into one Magic action
+/// that checks and then moves, and what that costs is the window: a
+/// controller here cannot bank a success and spend three bonus actions
+/// on it. What it buys is that the item is playable without a
+/// per-creature control ledger that exactly one object in the file
+/// would ever write to — and the tension RAW is after survives intact,
+/// because the decision is still *whether to touch it* and the price of
+/// a failure is still the sphere moving on you.
+///
+/// **Five times your Intelligence modifier** is read live off the
+/// commander rather than snapshotted, which is the one number on this
+/// item that rewards the right hand holding it: a wizard walks the
+/// sphere four tiles a turn and a barbarian shoves it two, and a
+/// barbarian with Intelligence 8 shoves it two *and mostly fails the
+/// check*. RAW's minimum of five feet is why a negative modifier still
+/// moves it at all.
+///
+/// **The obliteration clause is not modelled** — *"a creature reduced
+/// to 0 Hit Points by this damage is obliterated, leaving its
+/// possessions behind but no other physical remains."* The engine
+/// already leaves a dead creature's possessions on the floor and has no
+/// resurrection for the clause to forbid, so the sentence has nothing
+/// left to say here that dying does not.
+///
+/// **The planar-portal table is not modelled** either, and could not
+/// be: it is a `d100` about what happens when the sphere meets a Gate,
+/// and there is no Gate.
+pub struct SphereOfAnnihilationItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    /// The name the zone is keyed under — see `Zone::name`.
+    pub zone_name: &'static str,
+    /// How far the commander may be from the point they aim at. RAW's
+    /// *"if you are within 60 feet of a sphere"*, in tiles.
+    pub reach: isize,
+    /// RAW's DC 25 Intelligence (Arcana) check to take control.
+    pub control_dc: i32,
+    /// RAW's DC 19 Dexterity save against being touched.
+    pub touch_dc: i32,
+    pub dice: Dice,
+    /// How far the sphere lurches at whoever failed to control it —
+    /// RAW's *"moves 10 feet toward you in a straight line"*, in tiles.
+    pub lurch: isize,
+}
+
+impl SphereOfAnnihilationItem {
+    /// How long the sphere stays on the board once released.
+    ///
+    /// RAW gives it no duration at all: a sphere is a hole in the
+    /// multiverse and holes do not lapse. A hundred rounds is the
+    /// engine's stand-in for that — longer than any fight — and it is
+    /// here because the zone layer counts every area down and one that
+    /// never expired would be one nothing could ever sweep.
+    const ROUNDS: u32 = 100;
+
+    /// RAW's *"5 times your Intelligence modifier (minimum 5 feet)"*,
+    /// in tiles, for `commander`.
+    ///
+    /// Five feet is two tiles here, so the answer is twice the modifier
+    /// with a floor of two — and the floor is the whole of RAW's
+    /// parenthesis: a commander with a negative Intelligence modifier
+    /// still moves the sphere, just barely.
+    fn steer_tiles(&self, commander: &crate::actors::actor_template::ActorInstance) -> isize {
+        let modifier = commander.ability_modifier(AbilityScoreType::Intelligence) as isize;
+        (modifier * 2).max(2)
+    }
+
+    /// One step from `from` toward `toward`, at most `tiles` of it.
+    ///
+    /// Chebyshev, like everything else on this grid: a diagonal step is
+    /// a step, so "ten feet toward you in a straight line" is four
+    /// tiles along the line whatever angle it runs at.
+    fn step_toward(from: Coordinate, toward: Coordinate, tiles: isize) -> Coordinate {
+        let delta = toward - from;
+        let gap = from.chebyshev_to(toward);
+        if gap <= tiles {
+            return toward;
+        }
+        // Scale the offset down to `tiles` on its longer axis, which is
+        // what keeps the move on the line rather than on an axis.
+        Coordinate::new(
+            from.x + (delta.x * tiles) / gap,
+            from.y + (delta.y * tiles) / gap,
+        )
+    }
+}
+
+impl Action for SphereOfAnnihilationItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    /// True, and it is the one `is_harmful` in the file that is true of
+    /// an action which may land on its own user. The declaration is
+    /// about intent — the commander is aiming a hole in the multiverse
+    /// at somebody — and the failure branch is the price of that
+    /// intent rather than a second, friendly reading of the same
+    /// action.
+    fn is_harmful(&self) -> bool {
+        true
+    }
+
+    fn damage_types(&self) -> Vec<DamageType> {
+        vec![DamageType::Force]
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        // A Magic action, and nothing else. RAW prints no charges on
+        // the sphere and nothing is spent by commanding it — the price
+        // is the check.
+        action_only()
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        first_target_location(target_locations).is_some()
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        use crate::engine::zones::{Zone, ZoneContact, ZoneEffect, ZoneMotion};
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        let commander = encounter.actor_name(caster_id);
+
+        // The first use is not a check at all: the sphere is still in
+        // its stabilising field, and letting it out is the one thing
+        // anybody holding the box can do without rolling. Everything
+        // after that is RAW's Arcana contest with the thing itself.
+        let Some(zone_id) = encounter
+            .zone_sustained_by(caster_id, self.zone_name)
+            .map(|z| z.id)
+        else {
+            encounter.log(format!(
+                "{} lets the sphere of annihilation out of its field at {}.",
+                commander, point
+            ));
+            return vec![Box::new(crate::engine::side_effects::InstallZone {
+                zone: Zone {
+                    id: 0,
+                    name: self.zone_name,
+                    owner_id: caster_id,
+                    // A two-foot sphere is one tile and then some; the
+                    // grid's floor is a tile, and RAW's own clause is
+                    // about *entering its space*.
+                    radius: 0,
+                    origin: point,
+                    effect: ZoneEffect::hazard(ZoneContact::save_or_take(
+                        AbilityScoreType::Dexterity,
+                        self.touch_dc,
+                        self.dice,
+                        DamageType::Force,
+                    )),
+                    rounds_remaining: Self::ROUNDS,
+                    // Nobody is holding this up. It is a hole.
+                    concentration: false,
+                    // Steered by the command action below rather than by
+                    // the layer, which is what `Directed` means — see
+                    // `ZoneMotion::Directed`. The leash is re-derived
+                    // per command off the commander's Intelligence, so
+                    // the number here is only the layer's own bound.
+                    motion: ZoneMotion::Directed {
+                        tiles: self.reach,
+                    },
+                    revealed: true,
+                },
+                // A sphere let out of its field does not lunge at
+                // whoever was standing there. RAW's damage clause is
+                // about touching it, and releasing it is not that.
+                catch_present: false,
+            })];
+        };
+
+        // RAW's DC 25 Intelligence (Arcana) check. Rolled through the
+        // shared check chokepoint, so Guidance, a Bardic die, Portent
+        // and the exhaustion tax all reach it — which they should: this
+        // is the hardest check anybody in the engine rolls, and every
+        // one of those is a reason somebody would try it anyway.
+        let roll = encounter.roll_ability_check(
+            caster_id,
+            AbilityScoreType::Intelligence,
+            Some(crate::engine::types::Skill::Arcana),
+        );
+        let Some(origin) = encounter
+            .zone_sustained_by(caster_id, self.zone_name)
+            .map(|z| z.origin)
+        else {
+            return Vec::new();
+        };
+        if roll >= self.control_dc {
+            let Some(actor) = encounter.actors.get(&caster_id) else {
+                return Vec::new();
+            };
+            let dest = Self::step_toward(origin, point, self.steer_tiles(actor));
+            encounter.log(format!(
+                "  {} takes hold of the sphere and walks it toward {}.",
+                commander, dest
+            ));
+            return vec![Box::new(crate::engine::side_effects::MoveZone { zone_id, dest })];
+        }
+        // *"On a failed check, the sphere moves 10 feet toward you in a
+        // straight line."* Toward the commander's own body, not the
+        // point they were aiming at — the sphere is not obeying them.
+        let Some(toward) = encounter.actors.get(&caster_id).map(|a| a.location()) else {
+            return Vec::new();
+        };
+        let dest = Self::step_toward(origin, toward, self.lurch);
+        encounter.log(format!(
+            "  the sphere slips {}'s grip and drifts toward them.",
+            commander
+        ));
+        vec![Box::new(crate::engine::side_effects::MoveZone { zone_id, dest })]
+    }
+}
+
+/// Reach for the sphere and find out. See
+/// [`SphereOfAnnihilationItem`].
+pub static COMMAND_THE_SPHERE: SphereOfAnnihilationItem = SphereOfAnnihilationItem {
+    action_name: "command the sphere",
+    action_aliases: &["sphere", "annihilation", "sphere of annihilation"],
+    item_name: SPHERE_OF_ANNIHILATION_NAME,
+    zone_name: "sphere of annihilation",
+    // 60 ft RAW = 24 tiles.
+    reach: 24,
+    control_dc: 25,
+    touch_dc: 19,
+    dice: Dice::new(8, 10),
+    // 10 ft RAW = 4 tiles.
+    lurch: 4,
+};
+
 pub const DIMENSIONAL_SHACKLES_NAME: &str = "Dimensional Shackles";
 
 /// Dimensional Shackles — Action, touch, on somebody who is already

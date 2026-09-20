@@ -22309,6 +22309,38 @@ mod tests {
                 "plate armor of etherealness: etherealness",
                 "a retreat, and no rung can price leaving the fight",
             ),
+            // The Wand of Wonder, which had been sitting outside every
+            // rung and outside this list too: the sweep's damage
+            // shortcut waved through any action that dealt damage, and
+            // the wand's `SinglePoint` schema is one neither
+            // `best_attack_against` nor the burst picker walks. It
+            // belongs here rather than on a rung, for the Mysterious
+            // Deck's reason and in the wand's own entry's words: about
+            // a fifth of the table goes off in the waver's hand. A rung
+            // that waved it would be gambling on a `d100` no gate can
+            // improve, because the odds are the item.
+            (
+                "wave wand of wonder",
+                "a d100 that goes off in the waver's hand a fifth of the time",
+            ),
+            // And the Sphere of Annihilation, which is the same
+            // decision with the losing branch made explicit. RAW's DC
+            // 25 Arcana check is the hardest in the game, most of the
+            // roster fails it, and a failure walks 8d10 of Force four
+            // tiles *toward the creature that reached for it*. Every
+            // rung in this file ranks a candidate by what it does to
+            // the target; none of them can price an action whose likely
+            // outcome is aimed at the user, and a gate on "am I clever
+            // enough to hold it" would be one archmage waving it and
+            // nobody else — which is a rung for a single stat block.
+            //
+            // It stays entirely real for a human player, who can look
+            // at a corridor and decide a hole in the multiverse is
+            // worth the risk. That judgement is the item.
+            (
+                "command the sphere",
+                "a DC 25 check whose failure aims 8d10 at the roller",
+            ),
         ];
         let exempt: BTreeMap<&str, &str> = NOT_FOR_THE_AI.iter().copied().collect();
 
@@ -22392,7 +22424,7 @@ mod tests {
                 // The walking lanes: these rungs iterate the action list
                 // and need no table row.
                 //
-                //   - damage → `best_attack_against` / the burst picker;
+                //   - damage at one creature → `best_attack_against`;
                 //   - heals and cures → `try_self_heal`,
                 //     `try_support_heal`, `try_self_cleanse`;
                 //   - ally pulses → `try_ally_support_pulse`;
@@ -22403,16 +22435,32 @@ mod tests {
                 //     harmful and hands it to the ally who needs it;
                 //   - a weapon that lights up → `try_kindle_weapon`, whose
                 //     own `KINDLED_WEAPONS` table is folded into `named`.
-                if action.deals_damage()
+                //
+                // **The damage lane is scoped to its schema**, and it
+                // was not. `deals_damage()` alone read as "some rung
+                // will find this", which is true of a single-target
+                // swing and of an area, and false of everything else:
+                // `best_attack_against` filters on `SingleActor` before
+                // it looks at anything, and the burst picker walks
+                // `area_shape()`. A damaging `SinglePoint` row is
+                // neither, so the shortcut was waving through exactly
+                // the actions nothing can select — which is the hole
+                // this sweep exists to have not got. SRD 5.2's Sphere
+                // of Annihilation is the row that found it.
+                let schema = action.targeting_schema();
+                let walked_by_a_damage_rung = action.deals_damage()
+                    && (matches!(schema, TargetingSchema::SingleActor)
+                        || schema.area_shape().is_some()
+                        || action.self_burst_radius().is_some());
+                if walked_by_a_damage_rung
                     || action.is_heal()
                     || !action.cures_conditions().is_empty()
                     || action.pulses_ally_buff()
                     || action.summons_allies()
-                    || action.targeting_schema().area_shape().is_some()
+                    || schema.area_shape().is_some()
                     || action.self_burst_radius().is_some()
                     || (!action.is_harmful()
-                        && matches!(action.targeting_schema(), TargetingSchema::SingleActor))
-
+                        && matches!(schema, TargetingSchema::SingleActor))
                 {
                     continue;
                 }

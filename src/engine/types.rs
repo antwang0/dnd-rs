@@ -518,7 +518,13 @@ pub struct Coordinate {
 }
 
 impl Coordinate {
-    pub fn new(x: isize, y: isize) -> Self {
+    /// `const` so a coordinate can be named at a `const` site — which
+    /// is where the ones worth naming are. A fixture's anchor, a
+    /// layer's home tile and an offset table are all things a reader
+    /// wants spelled `Coordinate::new(26, 4)` rather than
+    /// `Coordinate { x: 26, y: 4 }`, and the struct literal is what a
+    /// non-`const` constructor forces at every one of them.
+    pub const fn new(x: isize, y: isize) -> Self {
         Self { x, y }
     }
 

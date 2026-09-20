@@ -53839,6 +53839,90 @@ fn a_thrown_illusion_card_stands_on_the_drawn_creatures_footprint() {
     }
 }
 
+/// The Sphere of Annihilation's three states, in the order a party
+/// meets them: it comes out of its field, it obeys a good Arcana check,
+/// and it comes at whoever fails one.
+///
+/// The failure branch is the assertion worth having, and it is the
+/// whole item: every other object on the loot table either works or is
+/// wasted, and this one moves a hole in the multiverse *toward the hand
+/// that reached for it*.
+///
+/// An archmage holds it because an archmage is the only chassis on the
+/// roster that both clears and misses DC 25 often enough to show each
+/// branch over a seed sweep — Intelligence 20 and Arcana proficiency is
+/// `1d20+9`, so the check wants a 16. Both outcomes are pinned to an
+/// exact tile rather than a direction, because the two distances are
+/// different rules: RAW's *"5 times your Intelligence modifier"* going
+/// out, and its flat *"10 feet toward you"* coming back.
+#[test]
+fn the_sphere_obeys_a_good_arcana_check_and_comes_at_a_bad_one() {
+    use crate::actions::item_actions::COMMAND_THE_SPHERE;
+    use crate::actors::creatures::archmages::ARCHMAGE_TEMPLATE;
+    use crate::items::item_template::SPHERE_OF_ANNIHILATION;
+
+    /// Where the archmage stands, where the sphere is let out, and
+    /// where every command is aimed. Fourteen tiles from the sphere to
+    /// the aim point, which is further than the ten an Intelligence of
+    /// 20 can walk it — so a success is a *partial* move and lands on a
+    /// tile the aim point does not give away.
+    const CASTER: Coordinate = Coordinate::new(4, 4);
+    const RELEASED: Coordinate = Coordinate::new(16, 4);
+    const AIMED_AT: Coordinate = Coordinate::new(30, 4);
+    /// `5 × +5` is fifty feet, which is twenty tiles on this grid… and
+    /// `steer_tiles` reads it as ten, because five feet is two tiles.
+    const OBEYED: Coordinate = Coordinate::new(26, 4);
+    /// Ten feet back down the line toward the archmage.
+    const REFUSED: Coordinate = Coordinate::new(12, 4);
+
+    let mut obeyed = 0usize;
+    let mut refused = 0usize;
+    for seed in 0..60 {
+        let mut e = ei_with_terrain_seeded(40, 40, &[], seed);
+        let mage = e
+            .instantiate_creature(&ARCHMAGE_TEMPLATE, CASTER, 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&mage)
+            .unwrap()
+            .pickup_item(&SPHERE_OF_ANNIHILATION);
+        let sphere_at = |e: &EncounterInstance| {
+            e.zones()
+                .iter()
+                .find(|z| z.name == "sphere of annihilation")
+                .map(|z| z.origin)
+        };
+        let command = |e: &mut EncounterInstance, at: Coordinate| {
+            for ef in COMMAND_THE_SPHERE.side_effects(e, mage, None, Some(&vec![at]), None) {
+                ef.apply(e);
+            }
+        };
+
+        // The first command is not a check at all — it lets the sphere
+        // out of its stabilising field, where it was aimed.
+        assert!(sphere_at(&e).is_none(), "the sphere starts in its field");
+        command(&mut e, RELEASED);
+        assert_eq!(sphere_at(&e), Some(RELEASED), "and comes out where aimed");
+
+        // The second is the DC 25 Arcana check, and there are exactly
+        // two places it can leave the thing.
+        command(&mut e, AIMED_AT);
+        match sphere_at(&e) {
+            Some(OBEYED) => obeyed += 1,
+            Some(REFUSED) => refused += 1,
+            other => panic!("seed {seed} left the sphere at {other:?}"),
+        }
+    }
+    assert!(
+        obeyed > 0,
+        "an archmage clears DC 25 about a quarter of the time and never did"
+    );
+    assert!(
+        refused > 0,
+        "…and misses it about three quarters of the time, which is the item"
+    );
+}
+
 /// The Eyes of Minute Seeing reach the one Investigation check the
 /// engine rolls: the disbelief check against an image.
 ///

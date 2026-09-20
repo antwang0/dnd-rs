@@ -16713,14 +16713,15 @@ pub static GLYPH_OF_WARDING: LazyLock<GlyphOfWarding> = LazyLock::new(|| GlyphOf
 /// grown up: same ward lifecycle, a wider blast, and a save-or-lose
 /// clause instead of damage.
 ///
-/// RAW prints eight modes (Death, Discord, Fear, Hopelessness,
-/// Insanity, Pain, Sleep, Stunning). **Stunning** is the one modeled:
-/// "each creature in the area must succeed on a Wisdom saving throw or
-/// become stunned for 1 minute." It is the mode with the cleanest
-/// surface here — Death is Glyph of Warding with bigger dice, and four
-/// of the remaining six turn on rules the engine has no lane for
-/// (Discord's arguing, Hopelessness's refusal to attack, Insanity's
-/// babbling, Sleep's hour).
+/// SRD 5.2 prints six modes — Death, Discord, Fear, Pain, Sleep and
+/// Stunning. (This entry used to name eight, with Hopelessness and
+/// Insanity among them; those are the 2014 printing's and the revision
+/// dropped both.) **Stunning** is the one modeled: *"each target must
+/// succeed on a Wisdom saving throw or have the Stunned condition for
+/// 1 minute."* It is the mode with the cleanest surface here — Death
+/// is Glyph of Warding with bigger dice, Discord's arguing and Sleep's
+/// ten minutes have no lane, and Fear and Pain are conditions two
+/// cheaper spells already install.
 ///
 /// The stun is capped at three rounds rather than RAW's ten. A
 /// seventh-level slot that removes a creature from the fight for a full

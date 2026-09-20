@@ -7911,6 +7911,34 @@ pub static DECK_OF_ILLUSIONS: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Sphere of Annihilation** (Wondrous Item, Legendary) — *"This
+/// 2-foot-diameter black sphere is a hole in the multiverse … The
+/// sphere obliterates all matter it passes through."*
+///
+/// The only thing on the loot table that can kill the party that found
+/// it. Everything else here either works or is wasted; a failed DC 25
+/// Arcana check on this walks 8d10 of Force four tiles closer to the
+/// hand that reached for it, and the sphere does not care whose hand it
+/// was. See [`crate::actions::item_actions::SphereOfAnnihilationItem`]
+/// for the reading and for the two clauses that are not modelled.
+///
+/// **No attunement**, per RAW's header, and it is the same argument the
+/// Mysterious Deck makes one shelf over: every other Legendary on this
+/// table costs an attunement slot, which is a decision made in advance
+/// by somebody who has read the entry. The two that ask for nothing are
+/// the two that can end a character, and that is not a coincidence in
+/// the book either.
+///
+/// **No charges.** RAW prints no limit on commanding it, because the
+/// limit is the check — which is the hardest one anybody in the engine
+/// rolls, and is the only price this item has.
+pub static SPHERE_OF_ANNIHILATION: Item = Item {
+    name: crate::actions::item_actions::SPHERE_OF_ANNIHILATION_NAME,
+    glyph: '0',
+    on_use: &[&crate::actions::item_actions::COMMAND_THE_SPHERE],
+    ..Item::DEFAULTS
+};
+
 /// **Rod of Absorption** (Rod, Very Rare) — *"While holding this rod,
 /// you can take a Reaction to absorb a spell that is targeting only you
 /// and doesn't create an area of effect. The absorbed spell's effect is
@@ -9487,6 +9515,14 @@ pub static LOOT_POOL: &[&Item] = &[
     // at all — five spells reach it and every one of them is arcane.
     &DECK_OF_ILLUSIONS,
     &DECK_OF_ILLUSIONS,
+    // And the third gamble in this stanza, at the weight the deck's
+    // Legendary cousin sits on: one entry, because a Sphere of
+    // Annihilation should be something that happens to a party once.
+    // It is on this stretch of the table rather than beside the staves
+    // for the reason the two decks are: what these four have in common
+    // is that using them is a decision with a losing branch, which is a
+    // different kind of loot from a bigger number.
+    &SPHERE_OF_ANNIHILATION,
     // The shackles that answer a boss that leaves. No attunement, no
     // charges, and a prerequisite instead: somebody has to land the
     // lockdown first.
