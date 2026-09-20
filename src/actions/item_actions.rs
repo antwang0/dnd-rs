@@ -12565,6 +12565,392 @@ pub static DRAW_FROM_THE_DECK: MysteriousDeckItem = MysteriousDeckItem {
     table: MYSTERIOUS_DECK_TABLE,
 };
 
+// ---------------------------------------------------------------------
+// Deck of Illusions
+// ---------------------------------------------------------------------
+
+/// One row of SRD 5.2's **Deck of Illusions** table — a `1d100` band
+/// and the shape the card throws.
+///
+/// The same `(upto, effect)` shape [`DeckCard`] has, and deliberately
+/// not the same type. A Mysterious Deck card is twenty-two different
+/// rules and carries a `CardEffect` enum to say which; every card here
+/// does exactly one thing and differs only in *what the picture is of*,
+/// so the row is a creature and a number. Sharing the struct would mean
+/// a `card:` string restating a name the template already has and a
+/// `log:` line restating a sentence that is the same for all
+/// thirty-four.
+pub struct IllusionCard {
+    /// The top of this card's `1d100` band, inclusive — read the same
+    /// way [`DeckCard::upto`] is: the first row the roll does not
+    /// exceed.
+    pub upto: u32,
+    /// What the card shows. `None` for RAW's two mirrored cards, whose
+    /// picture is *"the card drawer"* and therefore cannot be a
+    /// template — see [`DeckOfIllusionsItem::draw`].
+    pub shows: Option<&'static CardTemplate>,
+}
+
+/// What a card points at. An alias because the full spelling is
+/// `&'static LazyLock<CreatureTemplate>` and it would otherwise appear
+/// thirty-three times in one table.
+type CardTemplate = std::sync::LazyLock<crate::actors::actor_template::CreatureTemplate>;
+
+/// One creature card, for [`DECK_OF_ILLUSIONS_TABLE`] to be a table
+/// rather than thirty-two struct literals wrapped over four lines each.
+///
+/// `const` so the rows stay a `static` with no initialiser running, and
+/// deliberately not a macro: the whole content of a row is two values,
+/// and a function says so with the type checker still watching.
+const fn shows(upto: u32, template: &'static CardTemplate) -> IllusionCard {
+    IllusionCard {
+        upto,
+        shows: Some(template),
+    }
+}
+
+/// SRD 5.2's Deck of Illusions table — thirty-two creatures in three-
+/// point bands and the drawer's own double on `97–00`.
+///
+/// **The rows name templates rather than strings**, which is what makes
+/// the table worth having in this shape. Two things about a card matter
+/// on the board: what the image is called, and *how much floor it
+/// covers* — an Adult Red Dragon is a Huge body across six tiles a side
+/// and a Kobold Warrior is two. Both come off the stat block, so a card
+/// cannot drift from the creature it names, and a sweep can check that
+/// every row is a creature the bestiary actually prints.
+///
+/// The bands are RAW's own and are not uniform-by-accident: thirty-two
+/// rows of three and one of four is how a `d100` divides, and it is the
+/// reason the drawer's double is the rarest card in the box.
+///
+/// One name is the book disagreeing with itself. The table prints
+/// *"Veteran Warrior"* and the stat block is headed *"Warrior
+/// Veteran"*; the row points at the stat block, so the engine says what
+/// the monster chapter says.
+///
+/// One row answers out of the *playable* roster rather than the
+/// bestiary. SRD 5.2 prints a CR-2 Druid stat block and this engine
+/// does not — `creatures::druids::DRUID_TEMPLATE` is a level-5
+/// character who shares the word. For a picture the two agree on both
+/// things a card needs, the name and the footprint, so the row points
+/// at the Druid there is.
+pub static DECK_OF_ILLUSIONS_TABLE: &[IllusionCard] = {
+    use crate::actors::creatures as bestiary;
+    &[
+        shows(3, &bestiary::dragons::ADULT_RED_DRAGON_TEMPLATE),
+        shows(6, &bestiary::archmages::ARCHMAGE_TEMPLATE),
+        shows(9, &bestiary::assassins::ASSASSIN_TEMPLATE),
+        shows(12, &bestiary::bandit_captains::BANDIT_CAPTAIN_TEMPLATE),
+        shows(15, &bestiary::basilisks::BASILISK_TEMPLATE),
+        shows(18, &bestiary::berserkers::BERSERKER_TEMPLATE),
+        shows(21, &bestiary::bugbears::BUGBEAR_TEMPLATE),
+        shows(24, &bestiary::cloud_giants::CLOUD_GIANT_TEMPLATE),
+        shows(27, &bestiary::druids::DRUID_TEMPLATE),
+        shows(30, &bestiary::erinyes::ERINYES_TEMPLATE),
+        shows(33, &bestiary::ettins::ETTIN_TEMPLATE),
+        shows(36, &bestiary::fire_giants::FIRE_GIANT_TEMPLATE),
+        shows(39, &bestiary::frost_giants::FROST_GIANT_TEMPLATE),
+        shows(42, &bestiary::gnolls::GNOLL_TEMPLATE),
+        shows(45, &bestiary::goblins::GOBLIN_TEMPLATE),
+        shows(48, &bestiary::guardian_nagas::GUARDIAN_NAGA_TEMPLATE),
+        shows(51, &bestiary::hill_giants::HILL_GIANT_TEMPLATE),
+        shows(54, &bestiary::hobgoblins::HOBGOBLIN_TEMPLATE),
+        shows(57, &bestiary::incubi::INCUBUS_TEMPLATE),
+        shows(60, &bestiary::iron_golems::IRON_GOLEM_TEMPLATE),
+        shows(63, &bestiary::knights::KNIGHT_TEMPLATE),
+        shows(66, &bestiary::kobolds::KOBOLD_TEMPLATE),
+        shows(69, &bestiary::liches::LICH_TEMPLATE),
+        shows(72, &bestiary::medusas::MEDUSA_TEMPLATE),
+        shows(75, &bestiary::night_hags::NIGHT_HAG_TEMPLATE),
+        shows(78, &bestiary::ogres::OGRE_TEMPLATE),
+        shows(81, &bestiary::oni::ONI_TEMPLATE),
+        shows(84, &bestiary::priests::PRIEST_TEMPLATE),
+        shows(87, &bestiary::succubi::SUCCUBUS_TEMPLATE),
+        shows(90, &bestiary::trolls::TROLL_TEMPLATE),
+        shows(93, &bestiary::veterans::VETERAN_TEMPLATE),
+        shows(96, &bestiary::wyverns::WYVERN_TEMPLATE),
+        // *"Two with a mirrored surface"*, and the `97–00` row they answer
+        // to. The picture is whoever is holding the box.
+        IllusionCard { upto: 100, shows: None },
+    ]
+};
+
+pub const DECK_OF_ILLUSIONS_NAME: &str = "Deck of Illusions";
+
+/// **Deck of Illusions** (Wondrous Item, Uncommon) —
+///
+/// > You can take a Magic action to draw a card at random from the deck
+/// > and throw it to the ground at a point within 30 feet of yourself.
+/// > An illusion of a creature, determined by rolling on the Deck of
+/// > Illusions table, forms over the thrown card and remains until
+/// > dispelled. The illusory creature created by the card looks and
+/// > behaves like a real creature of its kind, except that it can do no
+/// > harm.
+/// >
+/// > Any physical interaction with the illusory creature reveals it to
+/// > be false, because objects pass through it. A creature that takes a
+/// > Study action to visually inspect the illusory creature identifies
+/// > it as an illusion with a successful DC 15 Intelligence
+/// > (Investigation) check.
+///
+/// The loot table's first entry on the **illusion layer**, which until
+/// now was reachable only out of a spellbook: five spells, all of them
+/// on the arcane lists, so a party with no caster in it had no way to
+/// put a picture on the board at all. Every clause RAW prints for the
+/// deck is a clause [`crate::engine::illusions`] was already built to
+/// answer — the image stops a believer walking through it, blocks what
+/// it stands in front of, is revealed by being touched, and comes off a
+/// creature's board for one successful Study.
+///
+/// **What a card is worth is how big the creature on it is.** The
+/// illusion stands on the drawn creature's own footprint, off its own
+/// stat block: an Adult Red Dragon is six tiles a side and shuts a
+/// room, a Kobold Warrior is two and shuts a doorway. That is the whole
+/// tension of drawing at random, and it is also why the rows point at
+/// templates rather than at names — see [`DECK_OF_ILLUSIONS_TABLE`].
+///
+/// **DC 15, flat.** Every other image in the engine is seen through
+/// against the caster's own spell save DC, which is the one number a
+/// deck has not got: nobody cast this. RAW prints the number instead,
+/// and the item is worth what it is worth to everybody who picks it up
+/// — which is the same argument the Feather Token's flat `+9` makes one
+/// shelf over.
+///
+/// **It does not hold anybody's concentration**, which is RAW and is
+/// most of what separates the deck from the Silent Image it resembles:
+/// a wizard may throw a card and then cast a Wall of Force, and a
+/// fighter may throw one at all.
+///
+/// **Not modelled**, and named rather than lost:
+///
+///   - *"While you are within 120 feet of the illusory creature and can
+///     see it, you can take a Magic action to move it anywhere within
+///     30 feet of its card."* Steering an image is a lane the layer
+///     does not have — every illusion in the engine stands where it was
+///     put — and it would be a second Action to buy a reposition this
+///     engine's fights are rarely long enough to want.
+///   - *"Remains until dispelled"*, and *"lasts until its card is
+///     moved"*. There is no forever on a layer whose whole lifecycle is
+///     a round-end tick, so the image carries
+///     [`Self::UNTIL_DISPELLED`] instead — long enough that no fight
+///     reaches the end of it.
+///   - *"The illusory creature looks and behaves like a real creature
+///     of its kind."* The behaviour half has no surface: the layer's
+///     images are pictures, and a picture that took turns would be an
+///     actor, which is the one thing the module header says an illusion
+///     must not be.
+pub struct DeckOfIllusionsItem {
+    pub action_name: &'static str,
+    pub action_aliases: &'static [&'static str],
+    pub item_name: &'static str,
+    pub billing: ItemUseBilling,
+    /// The table this box deals from — a field rather than a constant
+    /// for [`MysteriousDeckItem::table`]'s reason, and read by the
+    /// sweep that walks every card.
+    pub table: &'static [IllusionCard],
+    /// How far the card may be thrown, in tiles. RAW's *"a point within
+    /// 30 feet of yourself"*.
+    pub reach: isize,
+    /// RAW's printed disbelief DC, which is the one number a deck has
+    /// that a caster would have supplied.
+    pub disbelief_dc: i32,
+}
+
+impl DeckOfIllusionsItem {
+    /// RAW's *"remains until dispelled"* as a number of rounds. A
+    /// hundred, which is the same stand-in
+    /// [`MysteriousDeckItem::DONJON_ROUNDS`] uses and for the same
+    /// reason: the engine's longest fight is a fifth of it, so the
+    /// timer exists to keep the image on the same round-end tick every
+    /// other one runs on rather than to ever expire.
+    const UNTIL_DISPELLED: u32 = 100;
+
+    /// The card a `1d100` turns over — the first row whose `upto` the
+    /// roll does not exceed.
+    ///
+    /// Split out for [`MysteriousDeckItem::card`]'s reason: a sweep
+    /// that wants to walk all thirty-three rows should be able to ask
+    /// for one rather than draw until the dice have been kind.
+    pub(crate) fn card(&self, roll: u32) -> &'static IllusionCard {
+        self.table
+            .iter()
+            .find(|c| roll <= c.upto)
+            .unwrap_or_else(|| self.table.last().expect("the deck is never empty"))
+    }
+
+    /// `(what the picture is of, how many tiles a side it covers)` for
+    /// one card, thrown by `drawer_id`.
+    ///
+    /// The mirrored card is the reason this is a method rather than two
+    /// fields on the row: *"the card drawer"* is not a creature the
+    /// table can name, it is whoever happens to be holding the box, and
+    /// only the board knows that. It takes the drawer's own footprint,
+    /// which is the whole of what the double is worth — a cloud giant
+    /// who draws it blocks a corridor with it and a halfling does not.
+    ///
+    /// The guise stays `&'static str` on both arms, which is what the
+    /// layer wants: the creature arm reads the stat block's own name,
+    /// and the mirror arm cannot read the drawer's (it is a `String`
+    /// built per call) so it says what the card says.
+    fn draw(
+        &self,
+        encounter: &EncounterInstance,
+        drawer_id: usize,
+        card: &'static IllusionCard,
+    ) -> Option<(&'static str, isize)> {
+        match card.shows {
+            Some(template) => Some((
+                template.name,
+                crate::engine::util::get_tiles_from_size(template.size) as isize,
+            )),
+            None => {
+                let drawer = encounter.actors.get(&drawer_id)?;
+                Some((
+                    "a double of whoever drew the card",
+                    crate::engine::util::get_tiles_from_size(drawer.size()) as isize,
+                ))
+            }
+        }
+    }
+
+    /// One card, thrown at `point`, resolved.
+    ///
+    /// Split from `side_effects` — which rolls the `d100` and writes
+    /// the log line — for [`MysteriousDeckItem::resolve`]'s reason: the
+    /// sweep that walks all thirty-three rows should be able to turn
+    /// over the one it means rather than draw until the dice have been
+    /// kind.
+    pub(crate) fn resolve(
+        &self,
+        encounter: &mut EncounterInstance,
+        drawer_id: usize,
+        card: &'static IllusionCard,
+        point: Coordinate,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some((guise, span)) = self.draw(encounter, drawer_id, card) else {
+            return Vec::new();
+        };
+        let drawer = encounter.actor_name(drawer_id);
+        encounter.log(format!(
+            "{} throws a card to the ground at {}; {} rises over it.",
+            drawer, point, guise
+        ));
+        let image = crate::engine::illusions::Illusion::new(
+            "deck of illusions",
+            guise,
+            drawer_id,
+            crate::engine::util::footprint_tiles_of_span(point, span).collect(),
+            self.disbelief_dc,
+            Self::UNTIL_DISPELLED,
+            false,
+        );
+        vec![Box::new(crate::engine::side_effects::InstallIllusion {
+            image,
+        })]
+    }
+}
+
+impl Action for DeckOfIllusionsItem {
+    fn name(&self) -> &str {
+        self.action_name
+    }
+
+    fn aliases(&self) -> Vec<&str> {
+        self.action_aliases.to_vec()
+    }
+
+    fn targeting_schema(&self) -> TargetingSchema {
+        TargetingSchema::SinglePoint
+    }
+
+    fn reach_tiles(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
+    /// *"Throw it to the ground at a point … of yourself"* — a card is
+    /// thrown at somewhere the thrower can see, exactly as every image
+    /// spell is cast at one.
+    fn requires_los(&self) -> bool {
+        true
+    }
+
+    /// False, and for [`MysteriousDeckItem::is_harmful`]'s reason
+    /// restated: an image *"can do no harm"* is RAW's own sentence about
+    /// this item. What it does is make a believer walk the long way
+    /// round, which is not an attack on anybody and must not break the
+    /// thrower's own Sanctuary.
+    fn is_harmful(&self) -> bool {
+        false
+    }
+
+    fn deals_damage(&self) -> bool {
+        false
+    }
+
+    fn cost(
+        &self,
+        _e: &EncounterInstance,
+        _c: usize,
+        _ti: Option<&Vec<usize>>,
+        _tl: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Resource> {
+        let mut costs = action_only();
+        costs.extend(self.billing.costs(self.item_name));
+        costs
+    }
+
+    fn custom_validate_input(
+        &self,
+        encounter: &EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> bool {
+        if !caster_holds(encounter, caster_id, self.item_name) {
+            return false;
+        }
+        // The card has to land somewhere. Anything else is the generic
+        // reach and line-of-sight gate's business.
+        first_target_location(target_locations).is_some()
+    }
+
+    fn side_effects(
+        &self,
+        encounter: &mut EncounterInstance,
+        caster_id: usize,
+        _ti: Option<&Vec<usize>>,
+        target_locations: Option<&Vec<Coordinate>>,
+        _o: Option<&HashSet<ActionOverride>>,
+    ) -> Vec<Box<dyn ApplicableSideEffect>> {
+        let Some(point) = first_target_location(target_locations) else {
+            return Vec::new();
+        };
+        // *"The magic of the deck functions only if its cards are drawn
+        // at random"* — so the roll is here rather than anywhere a
+        // caller could reach it, and `resolve` below is what a test
+        // uses to turn over a card on purpose.
+        let roll = encounter.roll(&Dice::new(1, 100));
+        let card = self.card(roll);
+        self.resolve(encounter, caster_id, card, point)
+    }
+}
+
+/// Throw a card and see what stands up over it. See
+/// [`DeckOfIllusionsItem`].
+pub static THROW_AN_ILLUSION_CARD: DeckOfIllusionsItem = DeckOfIllusionsItem {
+    action_name: "throw an illusion card",
+    action_aliases: &["illusion card", "deck of illusions", "card"],
+    item_name: DECK_OF_ILLUSIONS_NAME,
+    billing: ItemUseBilling::Charges(1),
+    table: DECK_OF_ILLUSIONS_TABLE,
+    // 30 ft RAW = 12 tiles.
+    reach: 12,
+    disbelief_dc: 15,
+};
+
 
 /// **An oil poured over a blade** — SRD 5.2's Oil of Sharpness, *"for 1
 /// hour, the coated item is magical and has a +3 bonus to attack and

@@ -7829,6 +7829,16 @@ pub static RING_OF_REGENERATION: Item = Item {
 ///
 /// See [`crate::actions::item_actions::WAND_OF_WONDER_TABLE`] for the
 /// eighteen rows, which four are not modelled, and why.
+pub static WAND_OF_WONDER: Item = Item {
+    name: crate::actions::item_actions::WAND_OF_WONDER_NAME,
+    glyph: 'w',
+    charges: 7,
+    recharge: Some(DAILY_1D6_PLUS_1),
+    on_use: &[&crate::actions::item_actions::WAVE_WAND_OF_WONDER],
+    requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
 /// **Mysterious Deck** (Wondrous Item, Legendary) — SRD 5.2's name for
 /// the Deck of Many Things, and the only item in the book whose entry is
 /// mostly a list of ways a character's campaign ends.
@@ -7858,13 +7868,46 @@ pub static MYSTERIOUS_DECK: Item = Item {
     ..Item::DEFAULTS
 };
 
-pub static WAND_OF_WONDER: Item = Item {
-    name: crate::actions::item_actions::WAND_OF_WONDER_NAME,
-    glyph: 'w',
-    charges: 7,
-    recharge: Some(DAILY_1D6_PLUS_1),
-    on_use: &[&crate::actions::item_actions::WAVE_WAND_OF_WONDER],
-    requires_attunement: true,
+/// **Deck of Illusions** (Wondrous Item, Uncommon) — *"You can take a
+/// Magic action to draw a card at random from the deck and throw it to
+/// the ground at a point within 30 feet of yourself. An illusion of a
+/// creature … forms over the thrown card."*
+///
+/// The Mysterious Deck's cheap cousin, and the only other box of cards
+/// in the book. The two are worth reading beside each other, because
+/// what they gamble is opposite: a Mysterious Deck card can end a
+/// character, and this one can only ever put a picture on the floor.
+/// The uncertainty is the same and the stake is a card.
+///
+/// **The first thing on the loot table that touches the illusion
+/// layer.** Five spells reach it and every one of them is arcane, so a
+/// party with no caster had no way to put an image on the board at all.
+/// See [`crate::actions::item_actions::DeckOfIllusionsItem`] for what
+/// the image does and which of RAW's clauses are not modelled, and
+/// [`crate::engine::illusions`] for the layer.
+///
+/// `charges: 34` and no recharge, for the Mysterious Deck's reason and
+/// RAW's own number: *"a full deck has 34 cards"*, and *"when the
+/// illusion ends … that card can't be used again"*. Nothing prints a
+/// new one overnight.
+///
+/// **A deck found as treasure is not missing any.** RAW deals *"usually
+/// missing 1d20 − 1 cards"*, which this engine has nowhere to roll: the
+/// pool is seeded from the item's own `charges` at pickup, and the same
+/// `&'static Item` is handed to everybody who finds one. A per-drop
+/// count would have to live on the actor's ledger rather than on the
+/// object, and what it would buy is a number the party cannot see being
+/// smaller than another number they also cannot see.
+///
+/// No attunement, per RAW's header — the same as its Legendary cousin,
+/// and for once the cheaper item having no bond is the unremarkable
+/// half.
+pub static DECK_OF_ILLUSIONS: Item = Item {
+    name: crate::actions::item_actions::DECK_OF_ILLUSIONS_NAME,
+    glyph: 'i',
+    charges: 34,
+    recharge: None,
+    on_use: &[&crate::actions::item_actions::THROW_AN_ILLUSION_CARD],
     ..Item::DEFAULTS
 };
 
@@ -9437,6 +9480,13 @@ pub static LOOT_POOL: &[&Item] = &[
     // up as far as it goes: a Mysterious Deck should be something that
     // happens to a campaign, not something a party farms.
     &MYSTERIOUS_DECK,
+    // And the other box of cards, at two entries rather than one: it is
+    // the Uncommon end of the same gamble and the stake is a card
+    // rather than a character. Doubled because what it buys is the
+    // illusion layer, which nothing else a martial party can find opens
+    // at all — five spells reach it and every one of them is arcane.
+    &DECK_OF_ILLUSIONS,
+    &DECK_OF_ILLUSIONS,
     // The shackles that answer a boss that leaves. No attunement, no
     // charges, and a prerequisite instead: somebody has to land the
     // lockdown first.

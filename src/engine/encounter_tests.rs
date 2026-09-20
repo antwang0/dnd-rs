@@ -53450,6 +53450,194 @@ fn a_study_that_beats_the_dc_gives_a_believer_back_its_eyes_and_its_feet() {
     assert_eq!(e.illusions().len(), 1);
 }
 
+/// Every card in the Deck of Illusions shows the creature SRD 5.2's own
+/// table says it shows, in the band the book prints it in.
+///
+/// The table is the item — thirty-three rows whose only content is a
+/// name and a `1d100` band — so this is the one sweep that can catch it
+/// being wrong. Three ways it could be, all of them silent at runtime:
+/// a row pointing at the wrong template (a picture of the wrong
+/// monster, and a footprint of the wrong size with it), a band that
+/// overlaps or skips (a card that can never come up, or two that share
+/// a roll), and a row whose creature the bestiary does not actually
+/// print.
+///
+/// The expected names are transcribed from the book's table rather than
+/// read back off the rows, which is the whole value: a test that asked
+/// the table what it contained would agree with any table.
+#[test]
+fn the_deck_of_illusions_shows_what_the_book_says_it_shows() {
+    use crate::actions::item_actions::THROW_AN_ILLUSION_CARD;
+
+    // SRD 5.2's Deck of Illusions table, in its printed order. The
+    // names are the *stat blocks'*, which is the one place the book
+    // contradicts itself: its table row reads "Veteran Warrior" and the
+    // monster chapter heads the page "Warrior Veteran".
+    const PRINTED: &[&str] = &[
+        "Adult Red Dragon",
+        "Archmage",
+        "Assassin",
+        "Bandit Captain",
+        "Basilisk",
+        "Berserker",
+        "Bugbear Warrior",
+        "Cloud Giant",
+        "Druid",
+        "Erinyes",
+        "Ettin",
+        "Fire Giant",
+        "Frost Giant",
+        "Gnoll Warrior",
+        "Goblin Warrior",
+        "Guardian Naga",
+        "Hill Giant",
+        "Hobgoblin Warrior",
+        "Incubus",
+        "Iron Golem",
+        "Knight",
+        "Kobold Warrior",
+        "Lich",
+        "Medusa",
+        "Night Hag",
+        "Ogre",
+        "Oni",
+        "Priest",
+        "Succubus",
+        "Troll",
+        "Warrior Veteran",
+        "Wyvern",
+    ];
+
+    let table = THROW_AN_ILLUSION_CARD.table;
+    assert_eq!(
+        table.len(),
+        PRINTED.len() + 1,
+        "thirty-two creature cards and the mirrored row that answers 97–00"
+    );
+
+    for (row, expected) in table.iter().zip(PRINTED) {
+        let template = row.shows.expect("only the last row is the mirror");
+        assert_eq!(
+            template.name, *expected,
+            "the deck's rows are the book's rows, in the book's order"
+        );
+    }
+    assert!(
+        table.last().expect("non-empty").shows.is_none(),
+        "the two mirrored cards show the drawer, which is not a template"
+    );
+
+    // The bands: three apiece, rising, ending at 100, with no gap and
+    // no overlap. Written as "each row is three past the one before"
+    // rather than as a list of thirty-three numbers, because the
+    // regularity *is* RAW's table and a transcribed list would only
+    // restate the rows.
+    let mut previous = 0;
+    for (i, row) in table.iter().enumerate() {
+        let width = row.upto - previous;
+        let expected_width = if i + 1 == table.len() { 4 } else { 3 };
+        assert_eq!(
+            width, expected_width,
+            "row {} ({}) covers {} rolls and the book gives it {}",
+            i,
+            row.shows.map_or("the card drawer", |t| t.name),
+            width,
+            expected_width
+        );
+        previous = row.upto;
+    }
+    assert_eq!(previous, 100, "the table ends at 00");
+
+    // And every creature on it is one the engine actually prints. The
+    // Druid is the one row that answers out of the playable roster
+    // rather than the bestiary — the engine has no CR-2 Druid stat
+    // block, and for a *picture* the two agree on both things a card
+    // needs: the name and the footprint.
+    let bestiary = bestiary_by_name();
+    let playable: std::collections::HashSet<&'static str> =
+        crate::actors::creatures::pc_template_families()
+            .into_iter()
+            .flat_map(|(_, templates)| templates)
+            .map(|t| t.name)
+            .collect();
+    for row in table {
+        let Some(template) = row.shows else { continue };
+        assert!(
+            bestiary.contains_key(template.name) || playable.contains(template.name),
+            "{} is on a card and nowhere on the roster",
+            template.name
+        );
+    }
+}
+
+/// A thrown card puts an image of the drawn creature on the board, on
+/// that creature's own footprint, at the deck's printed DC.
+///
+/// The footprint is the claim worth pinning. What a card is worth is
+/// how much floor it covers, and the only thing standing between a
+/// dragon-sized screen and a kobold-sized one is the row reading
+/// `template.size` — a regression to a fixed span would leave every
+/// assertion about the image standing and quietly make the whole deck
+/// one card.
+#[test]
+fn a_thrown_illusion_card_stands_on_the_drawn_creatures_footprint() {
+    use crate::actions::item_actions::THROW_AN_ILLUSION_CARD;
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::util::get_tiles_from_size;
+    use crate::items::item_template::DECK_OF_ILLUSIONS;
+
+    // Every card, drawn on purpose rather than waited for: the roll at
+    // the top of each band turns over that row.
+    let mut previous = 0;
+    for row in THROW_AN_ILLUSION_CARD.table {
+        let mut e = ei_with_terrain(60, 60, &[]);
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 4), 0, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&DECK_OF_ILLUSIONS);
+        let card = THROW_AN_ILLUSION_CARD.card(previous + 1);
+        assert_eq!(
+            card.upto, row.upto,
+            "the bottom of a band turns over that band's card"
+        );
+        previous = row.upto;
+
+        // The mirror shows the drawer, so its footprint is the
+        // fighter's own.
+        let span = card
+            .shows
+            .map_or_else(|| get_tiles_from_size(FIGHTER_TEMPLATE.size), |t| {
+                get_tiles_from_size(t.size)
+            });
+        let point = Coordinate::new(20, 20);
+        // `resolve` rather than `side_effects`, which rolls its own
+        // `d100`: the sweep is about every row and not about the seed.
+        for ef in THROW_AN_ILLUSION_CARD.resolve(&mut e, fighter, card, point) {
+            ef.apply(&mut e);
+        }
+        let images = e.illusions();
+        assert_eq!(images.len(), 1, "one card, one picture");
+        assert_eq!(
+            images[0].tiles.len(),
+            span * span,
+            "{} stands on its own footprint",
+            images[0].guise
+        );
+        assert!(images[0].covers(point), "…anchored where the card landed");
+        assert_eq!(
+            images[0].save_dc, 15,
+            "the deck prints its own DC; nobody cast this"
+        );
+        assert!(
+            !images[0].concentration,
+            "a card is thrown, not concentrated on"
+        );
+    }
+}
+
 /// The Eyes of Minute Seeing reach the one Investigation check the
 /// engine rolls: the disbelief check against an image.
 ///
@@ -107808,6 +107996,13 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
         //     this, and a deck that refilled would be a deck a party
         //     farms until it turns up the Knight.
         crate::items::item_template::MYSTERIOUS_DECK.name,
+        //   - The **Deck of Illusions** is thirty-four cards and no
+        //     more: *"when the illusion ends, the image on its card
+        //     disappears, and that card can't be used again."* The
+        //     sharpest entry on this list, because it is the one where
+        //     RAW says outright that the pool is a stack of paper
+        //     rather than a daily allowance.
+        crate::items::item_template::DECK_OF_ILLUSIONS.name,
         //   - The **Feather Token (Whip)** is thrown once — *"the token
         //     disappears"* — and the lone charge is that throw rather
         //     than a daily allowance. It is the only entry here whose

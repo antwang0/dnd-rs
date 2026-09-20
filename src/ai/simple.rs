@@ -10584,7 +10584,23 @@ const WALL_SPELLS: &[&str] = &[
 /// Minor Illusion's two plugs a doorway, which is worth an Action only
 /// when there is nothing wider on the sheet — and is exactly where a
 /// cantrip belongs.
-const SCREEN_SPELLS: &[&str] = &["major image", "silent image", "minor illusion"];
+///
+/// **The card is last, and it is not a spell.** SRD 5.2's Deck of
+/// Illusions is the only thing on this list a chassis with no spell
+/// list can hold, which is the whole reason it is worth a row: every
+/// other screen in the engine is arcane, so a martial line facing two
+/// closing enemies had nothing to paint across the gap. What puts it
+/// at the bottom of a list ordered by width is that its width is a
+/// `d100` — the card that comes up is an Adult Red Dragon six tiles a
+/// side or a Kobold Warrior two, and a cohort that prefers the widest
+/// thing available cannot prefer one it has not drawn yet. A caster
+/// holding a Major Image should paint the image.
+const SCREEN_SPELLS: &[&str] = &[
+    "major image",
+    "silent image",
+    "minor illusion",
+    "throw an illusion card",
+];
 
 /// How far along the line to the threat the wall goes up. Two tiles is
 /// close enough that a wall aimed at an enemy eight tiles out still
@@ -22309,6 +22325,15 @@ mod tests {
             .chain(CONCENTRATION_MARKS.iter().map(|r| r.name))
             .chain(AREA_CONTROL_SPELLS.iter().copied())
             .chain(WALL_SPELLS.iter().copied())
+            // The screen rung, which had been missing from this chain
+            // since it was written. Nothing was wrong while every row
+            // on it was a spell — an orphan can only be an *item*
+            // action, and there were none — but the omission was a
+            // trap rather than a saving: the first item to land on
+            // that cohort would have been reported as unreachable by
+            // the very sweep that had just made it reachable. SRD
+            // 5.2's Deck of Illusions is that item.
+            .chain(SCREEN_SPELLS.iter().copied())
             .chain(MELEE_ADJACENT_PRIMES.iter().copied())
             .chain(KINDLED_WEAPONS.iter().map(|(name, _)| *name))
             .chain(POISON_DOSES_CHEAPEST_FIRST.iter().copied())
@@ -23447,6 +23472,55 @@ mod tests {
             super::try_raise_a_screen(&e, bard).map(|a| a.action().name().to_string()),
             Some("minor illusion".to_string()),
             "the two leveled images would have cost the spell it is holding"
+        );
+    }
+
+    /// The same rung, reached by a fighter — which is the whole reason
+    /// SRD 5.2's Deck of Illusions is on [`SCREEN_SPELLS`].
+    ///
+    /// Every other row on that cohort is an arcane spell, so a martial
+    /// line watching two enemies close had nothing to paint across the
+    /// gap and the rung was a no-op on most of the roster. A box of
+    /// cards is the one screen a chassis with no spell list can hold,
+    /// and the assertion is in two halves for that reason: without the
+    /// deck the fighter is offered nothing, and with it the same board
+    /// answers.
+    #[test]
+    fn a_fighter_with_a_deck_of_cards_can_close_a_line_it_could_not_before() {
+        use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+        use crate::items::item_template::DECK_OF_ILLUSIONS;
+
+        let mut e = empty_arena();
+        let fighter = e
+            .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(4, 10), 0, 0)
+            .unwrap();
+        // Two closing, which is `MIN_THREATS`: one is a fight the
+        // rung expects to be answered by hitting it.
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 9), 1, 0)
+            .unwrap();
+        e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(10, 12), 1, 1)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .give_resource(crate::engine::side_effects::Resource::Action);
+
+        assert!(
+            super::try_raise_a_screen(&e, fighter).is_none(),
+            "a fighter has no spell to paint a screen with"
+        );
+
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&DECK_OF_ILLUSIONS);
+        assert_eq!(
+            super::try_raise_a_screen(&e, fighter)
+                .expect("…and a box of cards is one it can throw")
+                .action()
+                .name(),
+            "throw an illusion card",
         );
     }
 
@@ -25186,28 +25260,54 @@ mod tests {
             ("major image", true),
             ("silent image", true),
             ("minor illusion", false),
+            // And the fourth screen, which is not a spell at all: a card
+            // is thrown and then left on the floor, so nothing is being
+            // held. That `false` is what lets a wizard already gripping
+            // a Hypnotic Pattern still put a picture across the
+            // approach, and it is the whole of what the item is worth on
+            // this rung.
+            ("throw an illusion card", false),
             ("crown of thorns", true),
             ("slow", true),
         ];
 
         let mut checked: HashSet<&str> = HashSet::new();
         let mut summons: HashSet<&str> = HashSet::new();
-        for (_family, templates) in pc_template_families() {
-            for action in templates.iter().flat_map(|t| t.actions.iter()) {
-                if action.summons_allies() {
-                    summons.insert(action.name());
-                }
-                if let Some((_, wants)) =
-                    expected.iter().find(|(n, _)| *n == action.name())
-                {
-                    assert_eq!(
-                        action.holds_concentration(),
-                        *wants,
-                        "{} disagrees with the pinned answer",
-                        action.name()
-                    );
-                    checked.insert(action.name());
-                }
+        // Both places a gated cohort's row can live. The walk used to
+        // be the templates alone, which was complete while every row on
+        // every gated cohort was a spell somebody's sheet printed — and
+        // stopped being complete the moment one of them was an *item*:
+        // SRD 5.2's Deck of Illusions sits on `SCREEN_SPELLS` and is on
+        // nobody's stat block, so its pinned answer was carried and
+        // never compared against. A pin nothing checks is worse than no
+        // pin, because the registry sweeps below it report the entry as
+        // covered.
+        let template_actions: Vec<&'static (dyn Action + Send + Sync)> = pc_template_families()
+            .into_iter()
+            .flat_map(|(_, templates)| templates)
+            .flat_map(|t| t.actions.iter().copied())
+            .collect();
+        let item_actions = crate::items::item_template::LOOT_POOL
+            .iter()
+            .flat_map(|item| item.on_use.iter().copied());
+        // The summon census is the *sheets'* and stays that way: the
+        // loot table's two dozen summoning objects are a family with
+        // their own rung and their own sweep, and folding them in here
+        // would make this assertion a second copy of that one.
+        for action in &template_actions {
+            if action.summons_allies() {
+                summons.insert(action.name());
+            }
+        }
+        for action in template_actions.iter().copied().chain(item_actions) {
+            if let Some((_, wants)) = expected.iter().find(|(n, _)| *n == action.name()) {
+                assert_eq!(
+                    action.holds_concentration(),
+                    *wants,
+                    "{} disagrees with the pinned answer",
+                    action.name()
+                );
+                checked.insert(action.name());
             }
         }
 
