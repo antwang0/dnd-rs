@@ -5916,17 +5916,6 @@ pub static ENERGY_BOW: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Giant Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus to
-/// attack rolls and damage rolls… When you hit a Giant with this weapon,
-/// the Giant takes an extra 2d6 damage of the weapon's type and must
-/// succeed on a DC 15 Strength saving throw or have the Prone
-/// condition."
-///
-/// A smaller die than the Dragon Slayer against a much wider gate — the
-/// bestiary carries hill, stone, frost, fire, cloud and storm giants,
-/// plus ettins, cyclopes, ogres and trolls — and the knockdown is worth
-/// more than the two dice against any of them: a prone giant is a giant
-/// every melee ally swings at with advantage.
 /// **Hammer of Thunderbolts** (Weapon, maul; Legendary, requires
 /// attunement) — the heaviest thing on the armoury's shelf, and the
 /// only item in the file whose headline clause asks what **else** is in
@@ -5999,6 +5988,17 @@ pub static AMMUNITION_OF_SLAYING: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Giant Slayer** (Weapon, any simple or martial; Rare) — "+1 bonus to
+/// attack rolls and damage rolls… When you hit a Giant with this weapon,
+/// the Giant takes an extra 2d6 damage of the weapon's type and must
+/// succeed on a DC 15 Strength saving throw or have the Prone
+/// condition."
+///
+/// A smaller die than the Dragon Slayer against a much wider gate — the
+/// bestiary carries hill, stone, frost, fire, cloud and storm giants,
+/// plus ettins, cyclopes, ogres and trolls — and the knockdown is worth
+/// more than the two dice against any of them: a prone giant is a giant
+/// every melee ally swings at with advantage.
 pub static GIANT_SLAYER: Item = Item {
     name: "Giant Slayer",
     glyph: '}',
@@ -6650,31 +6650,6 @@ pub static THUNDEROUS_GREATCLUB: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Berserker Axe** (Weapon, battleaxe/greataxe/halberd; Rare,
-/// **cursed**) — *"You gain a +1 bonus to attack rolls and damage rolls
-/// made with this magic weapon. In addition, while you are attuned to
-/// this weapon, your Hit Point maximum increases by 1 for each level you
-/// have attained. Curse. … Whenever another creature damages you while
-/// the weapon is in your possession, you must succeed on a DC 15 Wisdom
-/// saving throw or go berserk."*
-///
-/// The armoury's second cursed item after the Shield of Missile
-/// Attraction, and the pair make the same bargain from opposite
-/// directions: the shield gives you a defence and then arranges for you
-/// to need it, and the axe gives you hit points and then arranges for
-/// you to spend them badly.
-///
-/// **The hit points scale**, which is what `ItemBonuses::max_hp_per_level`
-/// exists for and what separates this from the Amulet of Health beside
-/// it on the loot table: a flat bonus is worth the same to everybody,
-/// and this is worth more to whoever has survived longer. On this
-/// engine's chassis it is a modest number and a real one — it arrives
-/// before the fight starts and nothing in a fight can take it away.
-///
-/// **Going berserk is a tax rather than a compulsion.** See
-/// `Condition::Berserk` for why the engine's translation of every "you
-/// must attack X" clause is Disadvantage against everyone else, and what
-/// the two unmodeled clauses are.
 /// **Scimitar of Speed** (Weapon, Scimitar; Very Rare) — *"You gain a
 /// +2 bonus to attack rolls and damage rolls made with this magic
 /// weapon. In addition, you can make one attack with it as a Bonus
@@ -6723,6 +6698,31 @@ pub static SCIMITAR_OF_SPEED: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Berserker Axe** (Weapon, battleaxe/greataxe/halberd; Rare,
+/// **cursed**) — *"You gain a +1 bonus to attack rolls and damage rolls
+/// made with this magic weapon. In addition, while you are attuned to
+/// this weapon, your Hit Point maximum increases by 1 for each level you
+/// have attained. Curse. … Whenever another creature damages you while
+/// the weapon is in your possession, you must succeed on a DC 15 Wisdom
+/// saving throw or go berserk."*
+///
+/// The armoury's second cursed item after the Shield of Missile
+/// Attraction, and the pair make the same bargain from opposite
+/// directions: the shield gives you a defence and then arranges for you
+/// to need it, and the axe gives you hit points and then arranges for
+/// you to spend them badly.
+///
+/// **The hit points scale**, which is what `ItemBonuses::max_hp_per_level`
+/// exists for and what separates this from the Amulet of Health beside
+/// it on the loot table: a flat bonus is worth the same to everybody,
+/// and this is worth more to whoever has survived longer. On this
+/// engine's chassis it is a modest number and a real one — it arrives
+/// before the fight starts and nothing in a fight can take it away.
+///
+/// **Going berserk is a tax rather than a compulsion.** See
+/// `Condition::Berserk` for why the engine's translation of every "you
+/// must attack X" clause is Disadvantage against everyone else, and what
+/// the two unmodeled clauses are.
 pub static BERSERKER_AXE: Item = Item {
     name: "Berserker Axe",
     glyph: 'b',
@@ -8860,28 +8860,6 @@ pub static STAFF_OF_THE_WOODLANDS: Item = Item {
     ..Item::DEFAULTS
 };
 
-/// **Staff of Power** (Staff, Very Rare) — *"a magic quarterstaff that
-/// grants a +2 bonus to attack and damage rolls made with it. While
-/// holding it, you gain a +2 bonus to Armor Class, saving throws, and
-/// spell attack rolls."* 20 charges, and nine spells on it.
-///
-/// Magic Missile (1), Ray of Enfeeblement (1), Levitate (2), then a
-/// 5-charge shelf of Fireball, Lightning Bolt, Cone of Cold, Hold
-/// Monster and Wall of Force, and Globe of Invulnerability at 6.
-/// Twenty charges is four of the top shelf, which is roughly a
-/// mid-level wizard's whole day in one object — and the item is the
-/// most expensive thing on the loot table for exactly that reason.
-///
-/// The Fireball row is the 5th-level version RAW prints, not the
-/// 3rd-level one on the Staff of Fire; the five charges buy the upcast.
-///
-/// The `+2` is wider than RAW in the same direction the Staff of the
-/// Woodlands' is, and for the same reason.
-///
-/// **Retributive Strike is not modeled** — RAW's break-the-staff
-/// clause, which destroys the item and the holder along with it. It is
-/// an ending for an object with a tomorrow, and the engine's clock stops
-/// with the fight.
 /// **Staff of the Magi** (Staff, Legendary, requires attunement by a
 /// spellcaster) — *"This staff has 50 charges and can be wielded as a
 /// magic Quarterstaff that grants a +2 bonus to attack rolls and damage
@@ -8971,6 +8949,28 @@ pub static STAFF_OF_THE_MAGI: Item = Item {
     ..Item::DEFAULTS
 };
 
+/// **Staff of Power** (Staff, Very Rare) — *"a magic quarterstaff that
+/// grants a +2 bonus to attack and damage rolls made with it. While
+/// holding it, you gain a +2 bonus to Armor Class, saving throws, and
+/// spell attack rolls."* 20 charges, and nine spells on it.
+///
+/// Magic Missile (1), Ray of Enfeeblement (1), Levitate (2), then a
+/// 5-charge shelf of Fireball, Lightning Bolt, Cone of Cold, Hold
+/// Monster and Wall of Force, and Globe of Invulnerability at 6.
+/// Twenty charges is four of the top shelf, which is roughly a
+/// mid-level wizard's whole day in one object — and the item is the
+/// most expensive thing on the loot table for exactly that reason.
+///
+/// The Fireball row is the 5th-level version RAW prints, not the
+/// 3rd-level one on the Staff of Fire; the five charges buy the upcast.
+///
+/// The `+2` is wider than RAW in the same direction the Staff of the
+/// Woodlands' is, and for the same reason.
+///
+/// **Retributive Strike is not modeled** — RAW's break-the-staff
+/// clause, which destroys the item and the holder along with it. It is
+/// an ending for an object with a tomorrow, and the engine's clock stops
+/// with the fight.
 pub static STAFF_OF_POWER: Item = Item {
     name: crate::actions::staves::STAFF_OF_POWER_NAME,
     glyph: '/',

@@ -625,6 +625,7 @@ pub static SOULKNIFE_ROGUE_TEMPLATE: LazyLock<CreatureTemplate> = LazyLock::new(
 /// moving at half speed) keys off contested Stealth checks, which the
 /// engine does not have; Hide here installs a condition rather than
 /// rolling.
+///
 /// **Use Magic Device** (lv13) — *"you ignore all class, species, and
 /// level requirements on the use of magic items"* — is live, and is the
 /// second reason to pick this subclass over the other five. This

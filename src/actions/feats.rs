@@ -463,39 +463,6 @@ pub const MAGE_SLAYER_TAG: &str = "feat.mage_slayer";
 /// written around a horse.
 pub const MOUNTED_COMBATANT_TAG: &str = "feat.mounted_combatant";
 
-/// **Boon of Combat Prowess** (Epic Boon) — *"Peerless Aim. When you
-/// miss with an attack roll, you can hit instead. Once you use this
-/// benefit, you can't use it again until the start of your next turn."*
-///
-/// Read at both attack chokepoints — `engine::attack::resolve_attack`
-/// for weapons and `spells::spell_attack_roll` for spell attacks —
-/// through the shared `EncounterInstance::peerless_aim_rescues` helper,
-/// because RAW's trigger is "an attack roll" and a Fire Bolt is one.
-///
-/// **Placed after Bend Luck and after the underwater clause**, which is
-/// the whole of the implementation's subtlety. RAW's benefit answers the
-/// *final* verdict on the swing, so it has to be the last thing that
-/// speaks: fired any earlier, a Wild Magic sorcerer's 1d4 would un-hit a
-/// swing the boon had already paid for, and the holder would have spent
-/// their one rescue on nothing.
-///
-/// Not on `ONCE_PER_TURN_RIDER_TAGS`'s per-*rest* cousin: the recharge
-/// is "the start of your next turn", which is exactly the window the
-/// shared once-per-turn ledger measures, so the boon is a ledger entry
-/// rather than a charge.
-///
-/// **A natural 1 is rescued too.** RAW's trigger is an unqualified "when
-/// you miss with an attack roll" and a fumble is a miss — the boon is
-/// the one thing in the engine that reaches past the nat-1 auto-miss,
-/// and it is written to. The underwater auto-miss is *not* rescued, and
-/// that is a deliberate reading of a different rule: a ranged weapon
-/// past its normal range underwater does not miss because the shot was
-/// bad, it misses because the water stopped it, and no amount of aim
-/// answers that.
-///
-/// Ships on `fighters::CHAMPION_TEMPLATE` — the subclass whose entire
-/// identity is that its attack rolls land more often than anybody
-/// else's.
 /// **Crusher** (General feat) — the first of the three feats keyed on
 /// the *damage type* of the swing rather than on the swinger.
 ///
@@ -1308,6 +1275,39 @@ pub const ELEMENTAL_ADEPT_TAGS: &[(&str, crate::engine::types::DamageType)] = &[
     ),
 ];
 
+/// **Boon of Combat Prowess** (Epic Boon) — *"Peerless Aim. When you
+/// miss with an attack roll, you can hit instead. Once you use this
+/// benefit, you can't use it again until the start of your next turn."*
+///
+/// Read at both attack chokepoints — `engine::attack::resolve_attack`
+/// for weapons and `spells::spell_attack_roll` for spell attacks —
+/// through the shared `EncounterInstance::peerless_aim_rescues` helper,
+/// because RAW's trigger is "an attack roll" and a Fire Bolt is one.
+///
+/// **Placed after Bend Luck and after the underwater clause**, which is
+/// the whole of the implementation's subtlety. RAW's benefit answers the
+/// *final* verdict on the swing, so it has to be the last thing that
+/// speaks: fired any earlier, a Wild Magic sorcerer's 1d4 would un-hit a
+/// swing the boon had already paid for, and the holder would have spent
+/// their one rescue on nothing.
+///
+/// Not on `ONCE_PER_TURN_RIDER_TAGS`'s per-*rest* cousin: the recharge
+/// is "the start of your next turn", which is exactly the window the
+/// shared once-per-turn ledger measures, so the boon is a ledger entry
+/// rather than a charge.
+///
+/// **A natural 1 is rescued too.** RAW's trigger is an unqualified "when
+/// you miss with an attack roll" and a fumble is a miss — the boon is
+/// the one thing in the engine that reaches past the nat-1 auto-miss,
+/// and it is written to. The underwater auto-miss is *not* rescued, and
+/// that is a deliberate reading of a different rule: a ranged weapon
+/// past its normal range underwater does not miss because the shot was
+/// bad, it misses because the water stopped it, and no amount of aim
+/// answers that.
+///
+/// Ships on `fighters::CHAMPION_TEMPLATE` — the subclass whose entire
+/// identity is that its attack rolls land more often than anybody
+/// else's.
 pub const BOON_OF_COMBAT_PROWESS_TAG: &str = "boon.combat_prowess";
 
 /// **Boon of Dimensional Travel** (Epic Boon) — *"Blink Steps.

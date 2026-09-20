@@ -8266,19 +8266,6 @@ pub static DRAW_SUN_BLADE: KindleWeapon = KindleWeapon {
     log_text: "{actor} grips the hilt and a blade of pure radiance springs into being.",
 };
 
-/// The Dagger of Venom's coating — the same three-part clause as the two
-/// blades above with the light struck out. *"As a Bonus Action, you can
-/// cause thick, black poison to coat it."*
-///
-/// The one `KindleWeapon` whose marker is spent rather than held: the
-/// rider row is `consume_on_trigger`, so the coating comes off on the
-/// swing that lands it and the wielder pays another Bonus Action for
-/// the next one. That is what makes the dagger a decision every turn
-/// rather than a switch thrown once in round one — and it is why the
-/// re-prime guard inherited from this type matters here in a way it
-/// does not for a blade that stays lit: the validator refuses only
-/// while the coating is still on, so a wielder who has spent it can
-/// immediately re-coat.
 /// **Apply an injury poison** — SRD 5.2's *"Injury poison can be
 /// applied as a Bonus Action to a weapon, a piece of ammunition, or
 /// similar object."*
@@ -8626,6 +8613,19 @@ pub static RELEASE_BURNT_OTHUR_FUMES: ReleaseInhaledPoison = ReleaseInhaledPoiso
     action_aliases: &["burnt othur fumes", "othur", "fumes"],
 };
 
+/// The Dagger of Venom's coating — the same three-part clause as the two
+/// blades above with the light struck out. *"As a Bonus Action, you can
+/// cause thick, black poison to coat it."*
+///
+/// The one `KindleWeapon` whose marker is spent rather than held: the
+/// rider row is `consume_on_trigger`, so the coating comes off on the
+/// swing that lands it and the wielder pays another Bonus Action for
+/// the next one. That is what makes the dagger a decision every turn
+/// rather than a switch thrown once in round one — and it is why the
+/// re-prime guard inherited from this type matters here in a way it
+/// does not for a blade that stays lit: the validator refuses only
+/// while the coating is still on, so a wielder who has spent it can
+/// immediately re-coat.
 pub static COAT_DAGGER_OF_VENOM: KindleWeapon = KindleWeapon {
     action_name: "coat dagger of venom",
     action_aliases: &["coat dagger", "venom", "poison blade", "envenom"],
