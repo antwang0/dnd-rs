@@ -4777,6 +4777,10 @@ impl SpiritualWeapon {
         glyph: '†',
         cast_reach: 24,
         step: 8,
+        // RAW's *"a creature within 5 feet of the force"* — the melee
+        // band, which is what three of the four blades on this lane
+        // print. See `BladeProfile::reach` for the one that does not.
+        reach: crate::actions::action_template::MELEE_REACH,
         rounds: 10,
         concentration: true,
         swings: None,
@@ -20677,6 +20681,9 @@ impl MordenkainensSword {
         glyph: '†',
         cast_reach: 36,
         step: 12,
+        // RAW's *"a creature within 5 feet of the sword"*. See
+        // `BladeProfile::reach`.
+        reach: crate::actions::action_template::MELEE_REACH,
         rounds: 10,
         concentration: true,
         swings: None,

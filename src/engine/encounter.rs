@@ -11143,7 +11143,10 @@ impl EncounterInstance {
         // so the furthest legal tile is `r + 1` beyond the block's edge.
         // The exact test still runs per candidate — the box is a bound,
         // not the answer.
-        let reach = crate::actions::action_template::MELEE_REACH;
+        // The blade's own reach, not its owner's — five feet for the two
+        // spells and the Dancing Sword, ten for the Feather Token's
+        // whip. See `BladeProfile::reach`.
+        let reach = profile.reach;
         let span = target_span as isize;
         let mut best: Option<(isize, Coordinate)> = None;
         for dy in -(reach + 1)..=(span + reach) {

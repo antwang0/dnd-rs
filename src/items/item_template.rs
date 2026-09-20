@@ -6104,7 +6104,7 @@ pub static FROST_BRAND: Item = Item {
 /// whoever is willing to stay in the fight it was thrown into. It rides
 /// the hovering-blade layer with SRD 5.2's two spectral-weapon spells —
 /// see [`crate::engine::hovering_blade`] and
-/// [`crate::actions::item_actions::DancingSwordItem`], which carries the
+/// [`crate::actions::item_actions::TossedBladeItem`], which carries the
 /// rest of the reading.
 ///
 /// No `+1`: RAW prints none, and the sword's value is the four free
@@ -6117,6 +6117,46 @@ pub static DANCING_SWORD: Item = Item {
     on_use: &[&crate::actions::item_actions::DANCE_THE_SWORD],
     grants_magical_attacks: true,
     requires_attunement: true,
+    ..Item::DEFAULTS
+};
+
+/// **Feather Token (Whip)** (Wondrous Item, Rare) — *"You can take a
+/// Magic action to throw the token to a point within 10 feet of
+/// yourself. The token disappears, and a floating whip takes its
+/// place … with an attack bonus of +9. On a hit, the target takes
+/// 1d6 + 5 Force damage."*
+///
+/// The second entry on the hovering-blade lane, and the first that is
+/// not a weapon and not a spell. Everything else that puts a blade in
+/// the air asks something of whoever conjured it — a level-2 slot and
+/// concentration, a level-7 slot, or a Very Rare sword and an
+/// attunement — and the feather asks nothing at all. It is an
+/// Uncommon-weight object that any chassis on the roster can pick up
+/// and get a `+9` and a `1d6 + 5` out of, for one throw.
+///
+/// **No attunement**, which is RAW's header and is the whole shape of
+/// the item: a party whose three bonds are spent can still find one of
+/// these and still get a second attacker for a fight out of it.
+///
+/// **One throw.** The pool is a single charge that never comes back
+/// (`recharge: None`), so a long rest between rooms does not refill it
+/// — see `Item::absorbs_spells` for the other lifetime ledger in this
+/// file and `regain_item_charges` for why `None` is what makes one.
+/// The spent feather stays in the pack, because the action that directs
+/// a whip already in the air hangs off the object; see
+/// [`crate::actions::item_actions::TossedBladeItem`] for that reading.
+///
+/// **The other five tokens are not here.** RAW's Anchor, Bird, Fan,
+/// Swan Boat and Tree are a vessel that cannot be moved, a mount that
+/// *"can't attack"*, a sailing wind, a boat and an oak — five clauses
+/// about overland travel and ships, in an engine whose whole clock runs
+/// from initiative to the last body on the floor. The Whip is the one
+/// with a rule that fires inside a fight, so it is the one with a name.
+pub static FEATHER_TOKEN_WHIP: Item = Item {
+    name: crate::actions::item_actions::FEATHER_TOKEN_WHIP_NAME,
+    glyph: '\\',
+    on_use: &[&crate::actions::item_actions::THROW_FEATHER_TOKEN_WHIP],
+    charges: 1,
     ..Item::DEFAULTS
 };
 
@@ -9991,6 +10031,15 @@ pub static LOOT_POOL: &[&Item] = &[
     // The armoury's one entry that fights somewhere else. Single
     // weight, like the rest of the Very Rare shelf.
     &DANCING_SWORD,
+    // Its Rare neighbour on the same lane, at twice the weight, and the
+    // reason is what the two cost to use. The sword wants a Very Rare
+    // attunement and a wielder good enough for its swings to land; the
+    // feather wants nothing, works the same in anybody's pack, and is
+    // gone after one throw. That is a consumable's bargain, and it
+    // takes a consumable's weight — the same doubling the Potion of
+    // Fire Breath and the Oil of Slipperiness sit on.
+    &FEATHER_TOKEN_WHIP,
+    &FEATHER_TOKEN_WHIP,
     &ADAMANTINE_ARMOR,
     // The two bane weapons the shelf was missing, at the same
     // single-entry weight as the rest of the family. Both are gated on

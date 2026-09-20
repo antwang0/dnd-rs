@@ -107743,6 +107743,16 @@ fn every_pool_on_the_loot_table_says_whether_a_night_refills_it() {
         //     this, and a deck that refilled would be a deck a party
         //     farms until it turns up the Knight.
         crate::items::item_template::MYSTERIOUS_DECK.name,
+        //   - The **Feather Token (Whip)** is thrown once — *"the token
+        //     disappears"* — and the lone charge is that throw rather
+        //     than a daily allowance. It is the only entry here whose
+        //     pool is `1`, and it is on the list for a reason none of
+        //     the others share: the charge is standing in for an object
+        //     that RAW destroys, and it is spent that way only because
+        //     an item that left the pack would take with it the action
+        //     that directs the whip still hovering. A dawn that refilled
+        //     it would hand a party an at-will `+9` attack.
+        crate::items::item_template::FEATHER_TOKEN_WHIP.name,
     ];
 
     let mut wrong: Vec<String> = Vec::new();
@@ -115249,6 +115259,161 @@ fn a_spiritual_weapon_is_not_tethered_to_the_cleric_who_cast_it() {
         e.hovering_blades().len(),
         1,
         "the mace stays where the spell left it"
+    );
+}
+
+/// The Feather Token's whip prices its opening the way RAW writes it —
+/// *"a Magic action to throw the token … you can then take a Bonus
+/// Action"* — and every later flight at a Bonus Action alone.
+///
+/// The charge is on the same assertion because the two are one
+/// sentence: the feather is spent by the throw and by nothing else, so a
+/// second flight that also billed the token would strand the whip after
+/// one swing. `blade_cost` is what keeps them together, and this is the
+/// only item on the lane where the two branches differ at all.
+#[test]
+fn the_feather_token_pays_for_the_throw_and_not_for_the_flights() {
+    use crate::actions::item_actions::{FEATHER_TOKEN_WHIP_NAME, THROW_FEATHER_TOKEN_WHIP};
+    use crate::actors::creatures::fighters::FIGHTER_TEMPLATE;
+    use crate::engine::side_effects::Resource;
+    use crate::items::item_template::FEATHER_TOKEN_WHIP;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let fighter = e
+        .instantiate_creature(&FIGHTER_TEMPLATE, Coordinate::new(8, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+        .unwrap();
+    assert!(
+        !THROW_FEATHER_TOKEN_WHIP.custom_validate_input(
+            &e,
+            fighter,
+            Some(&vec![zombie]),
+            None,
+            None
+        ),
+        "nobody who is not holding the feather may throw it"
+    );
+    e.actors
+        .get_mut(&fighter)
+        .unwrap()
+        .pickup_item(&FEATHER_TOKEN_WHIP);
+
+    let opening = THROW_FEATHER_TOKEN_WHIP.cost(&e, fighter, Some(&vec![zombie]), None, None);
+    assert!(
+        opening.contains(&Resource::Action) && opening.contains(&Resource::BonusAction),
+        "the throw is a Magic action and the strike is a Bonus Action: {:?}",
+        opening
+    );
+    assert!(
+        opening.contains(&Resource::ItemCharges {
+            item: FEATHER_TOKEN_WHIP_NAME,
+            count: 1,
+        }),
+        "…and the throw is what spends the feather: {:?}",
+        opening
+    );
+
+    for ef in THROW_FEATHER_TOKEN_WHIP.side_effects(&mut e, fighter, Some(&vec![zombie]), None, None)
+    {
+        ef.apply(&mut e);
+    }
+    assert_eq!(e.hovering_blades().len(), 1, "the whip is in the air");
+
+    let flight = THROW_FEATHER_TOKEN_WHIP.cost(&e, fighter, Some(&vec![zombie]), None, None);
+    assert_eq!(
+        flight,
+        vec![Resource::BonusAction],
+        "directing a whip already up is a Bonus Action and nothing else"
+    );
+}
+
+/// *"A melee spell attack … with an attack bonus of +9. On a hit, the
+/// target takes 1d6 + 5 Force damage."*
+///
+/// The numbers are printed on the feather, and that is the whole of what
+/// separates this item from the Dancing Sword beside it: the same throw
+/// out of a commoner's pack and out of a fighter's rolls the same `+9`.
+/// The assertion is made against a chassis whose own attack modifier is
+/// nothing like nine, so a regression that quietly re-derived the swing
+/// from its thrower would move the number.
+#[test]
+fn the_feather_tokens_whip_swings_on_its_own_printed_numbers() {
+    use crate::actions::item_actions::THROW_FEATHER_TOKEN_WHIP;
+    use crate::actors::creatures::commoners::COMMONER_TEMPLATE;
+    use crate::items::item_template::FEATHER_TOKEN_WHIP;
+
+    let mut e = ei_with_terrain(40, 20, &[]);
+    let commoner = e
+        .instantiate_creature(&COMMONER_TEMPLATE, Coordinate::new(8, 10), 0, 0)
+        .unwrap();
+    let zombie = e
+        .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(11, 10), 1, 0)
+        .unwrap();
+    e.actors
+        .get_mut(&commoner)
+        .unwrap()
+        .pickup_item(&FEATHER_TOKEN_WHIP);
+    for ef in
+        THROW_FEATHER_TOKEN_WHIP.side_effects(&mut e, commoner, Some(&vec![zombie]), None, None)
+    {
+        ef.apply(&mut e);
+    }
+    let log = e.messages().join("\n");
+    assert!(
+        log.contains("+9"),
+        "the whip swings at the flat +9 the feather prints:\n{}",
+        log
+    );
+}
+
+/// *"A creature within 10 feet of the whip."* Ten feet is two tiles on
+/// this grid, and the whip is the only thing on the hovering-blade lane
+/// that reaches past one.
+///
+/// Measured where it shows: the furthest body the opening throw can
+/// land on. The whip flies four tiles and strikes two beyond that, so
+/// the outermost target is seven tiles away — and a blade with a
+/// rapier's reach on the same four-tile flight would stop at six. So
+/// the first assertion fails the moment `BladeProfile::reach` stops
+/// being read and the layer's old hard-coded `MELEE_REACH` comes back,
+/// and the second fails if the reach is ever widened past RAW's.
+#[test]
+fn the_whip_strikes_two_tiles_past_the_end_of_its_flight() {
+    use crate::actions::item_actions::THROW_FEATHER_TOKEN_WHIP;
+    use crate::items::item_template::FEATHER_TOKEN_WHIP;
+
+    // A fresh board per distance, because a whip left in the air from
+    // the near test would fly from *itself* on the far one and the
+    // second answer would be about `step` rather than about reach.
+    let reaches = |gap: isize| {
+        let mut e = ei_with_terrain(60, 30, &[]);
+        let fighter = e
+            .instantiate_creature(
+                &crate::actors::creatures::fighters::FIGHTER_TEMPLATE,
+                Coordinate::new(10, 12),
+                0,
+                0,
+            )
+            .unwrap();
+        let zombie = e
+            .instantiate_creature(&ZOMBIE_TEMPLATE, Coordinate::new(10 + gap, 12), 1, 0)
+            .unwrap();
+        e.actors
+            .get_mut(&fighter)
+            .unwrap()
+            .pickup_item(&FEATHER_TOKEN_WHIP);
+        THROW_FEATHER_TOKEN_WHIP.validate_input(&e, fighter, Some(&vec![zombie]), None, None)
+    };
+
+    assert!(
+        reaches(7),
+        "four tiles of flight and two of reach put the seventh tile in range"
+    );
+    assert!(
+        !reaches(8),
+        "and the eighth is past the end of both — the whip is not a ranged weapon"
     );
 }
 

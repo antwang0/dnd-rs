@@ -1001,6 +1001,27 @@ pub fn action_only() -> Vec<Resource> {
     vec![Resource::Action]
 }
 
+/// **Both halves of a turn** — one Action *and* one Bonus Action, for
+/// the one thing in the book whose opening costs the pair.
+///
+/// SRD 5.2's Feather Token (Whip): *"You can take a Magic action to
+/// throw the token … You can then take a Bonus Action to make a melee
+/// spell attack."* Two sentences, two prices, and the chassis that runs
+/// it resolves the throw and the strike in a single use — so the use
+/// has to charge for both or the whip would be a Magic action that also
+/// hits.
+///
+/// Nothing else in the file spends two economy slots at once, and the
+/// action ledger has always been able to: `can_consume_resource` is
+/// asked once per entry and `ConsumeResource` spends them in order.
+/// What the pairing means for a **Slowed** holder is RAW's own answer
+/// and falls out for free — *"it can take either an action or a Bonus
+/// Action, not both"* — so a slowed thrower cannot open with the whip
+/// at all, and can still direct one already in the air.
+pub fn action_and_bonus_action() -> Vec<Resource> {
+    vec![Resource::Action, Resource::BonusAction]
+}
+
 /// Free action — no resource cost at all. Used by Action Surge,
 /// Indomitable, etc. — features that don't consume action economy
 /// directly. The empty vec lives behind a name so call sites read

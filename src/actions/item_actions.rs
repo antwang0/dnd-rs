@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use crate::{
     actions::action_template::{
-        Action, TargetingSchema, action_only, bonus_action_only, first_ally_target_id,
-        first_target_id, first_target_location,
+        Action, TargetingSchema, action_and_bonus_action, action_only, bonus_action_only,
+        first_ally_target_id, first_target_id, first_target_location,
     },
     conditions::{Condition, ConditionTimer},
     engine::{
@@ -13235,6 +13235,96 @@ pub static BIND_DIMENSIONAL_SHACKLES: DimensionalShacklesItem = DimensionalShack
     reach: crate::actions::action_template::MELEE_REACH,
 };
 
+/// Where a tossed blade's swing gets its numbers from.
+///
+/// The one axis the two items on this chassis disagree on, and they
+/// disagree about it completely. RAW's Dancing Sword *"uses your attack
+/// roll and adds your ability modifier to damage rolls"* — it is your
+/// sword, swung from further away. RAW's Feather Token whip prints
+/// *"with an attack bonus of +9. On a hit, the target takes 1d6 + 5
+/// Force damage"* — flat numbers that owe nothing to whoever threw the
+/// feather.
+///
+/// That difference is the item rather than a rounding of it. A Dancing
+/// Sword in a commoner's pack is a commoner's attack roll and hits
+/// nothing; a whip in the same pack hits on a +9, which is better than
+/// most of the bestiary manages. The engine would lose the whole of
+/// that by folding either arm onto the other, so the chassis asks.
+pub enum TossedBladeSwing {
+    /// **The thrower's own swing**, off a real weapon — RAW's *"uses
+    /// your attack roll and adds your ability modifier to damage
+    /// rolls"*.
+    ///
+    /// The `SimpleWeapon` is shared with the ordinary weapon lane, so
+    /// the sword in the air and a sword in the hand read the same
+    /// Finesse choice, the same dice and the same damage type.
+    Wielder(&'static crate::actions::monster_attacks::SimpleWeapon),
+    /// **Numbers printed on the object**, owing nothing to its holder —
+    /// RAW's *"an attack bonus of +9 … 1d6 + 5 Force damage"*.
+    ///
+    /// Still resolved through `resolve_attack`, so the flat `+9` meets
+    /// Bless, Bane, cover, Sanctuary and the reactive taxes exactly as
+    /// a swung sword does. What is fixed is the modifier the item
+    /// contributes, not the roll.
+    Fixed {
+        attack_bonus: i32,
+        dice: Dice,
+        damage_bonus: i32,
+        damage_type: DamageType,
+    },
+}
+
+impl TossedBladeSwing {
+    /// `(attack bonus, dice, damage bonus, damage type)` for one swing
+    /// by `wielder`.
+    ///
+    /// One accessor rather than four, because the four are resolved
+    /// together or not at all: the `Wielder` arm picks its damage
+    /// ability off the same `swing_ability` choice the to-hit bonus came
+    /// from, and splitting them would mean reading the weapon's Finesse
+    /// clause twice and risking two answers.
+    fn resolve(
+        &self,
+        wielder: &crate::actors::actor_template::ActorInstance,
+    ) -> (i32, Dice, i32, DamageType) {
+        match self {
+            TossedBladeSwing::Wielder(weapon) => {
+                let swing_ability = weapon.swing_ability(wielder);
+                let attack_bonus = wielder.spell_attack_modifier(swing_ability);
+                let damage_bonus = weapon
+                    .swing_damage_ability(wielder)
+                    .map(|a| wielder.ability_modifier(a))
+                    .unwrap_or(0);
+                (
+                    attack_bonus,
+                    weapon.damage_dice,
+                    damage_bonus,
+                    weapon.damage_type,
+                )
+            }
+            TossedBladeSwing::Fixed {
+                attack_bonus,
+                dice,
+                damage_bonus,
+                damage_type,
+            } => (*attack_bonus, *dice, *damage_bonus, *damage_type),
+        }
+    }
+
+    /// What this swing deals, for the `Action::damage_types`
+    /// declaration — the one question that has an answer before anybody
+    /// has picked the thing up.
+    fn damage_type(&self) -> DamageType {
+        match self {
+            TossedBladeSwing::Wielder(weapon) => weapon.damage_type,
+            TossedBladeSwing::Fixed { damage_type, .. } => *damage_type,
+        }
+    }
+}
+
+/// The loot table's two entries on the hovering-blade lane: an object
+/// you throw into the air that then fights from where it is.
+///
 /// **Dancing Sword** (Weapon — Greatsword, Longsword, Rapier, Scimitar
 /// or Shortsword; Very Rare, requires attunement) —
 ///
@@ -13290,18 +13380,90 @@ pub static BIND_DIMENSIONAL_SHACKLES: DimensionalShacklesItem = DimensionalShack
 /// to the pack it was tossed from. It is never lost, which is the
 /// generous reading of a clause about an inventory slot this engine
 /// does not have.
-pub struct DancingSwordItem {
+///
+/// ---
+///
+/// **Feather Token (Whip)** (Wondrous Item, Rare) —
+///
+/// > You can take a Magic action to throw the token to a point within
+/// > 10 feet of yourself. The token disappears, and a floating whip
+/// > takes its place. You can then take a Bonus Action to make a melee
+/// > spell attack against a creature within 10 feet of the whip, with
+/// > an attack bonus of +9. On a hit, the target takes 1d6 + 5 Force
+/// > damage.
+/// >
+/// > As a Bonus Action, you can direct the whip to fly up to 20 feet
+/// > and repeat the attack against a creature within 10 feet of the
+/// > whip. The whip disappears after 1 hour, when you take a Magic
+/// > action to dismiss it, or when you die or have the Incapacitated
+/// > condition.
+///
+/// The second item on the lane, and the one that made the chassis grow
+/// two joints. Three of its numbers are unlike anything already here:
+///
+///   - **A flat `+9` and a flat `1d6 + 5`**, which is why
+///     [`TossedBladeSwing`] exists. Everything else that has ever put a
+///     blade in the air derived its swing from whoever conjured it; the
+///     whip's is printed on the feather, so an Uncommon-tier chassis
+///     with no spell list and a `+2` to hit throws the same `+9` a
+///     Legendary caster does. That is the whole of what the item is
+///     for, and it is what makes it the loot table's answer to *"this
+///     party has no casters"* on a lane that was otherwise two spells
+///     and a Very Rare sword.
+///   - **Ten feet of reach**, which is why `BladeProfile::reach` is a
+///     field. The whip can hang two tiles off a Gargantuan's flank and
+///     still land; every other blade on the lane has to hover inside
+///     the footprint.
+///   - **The throw and the strike are two actions**, which is why
+///     [`Self::first_cast_cost`] is a field. RAW is explicit — a Magic
+///     action puts the whip in the air and *"you can then take a Bonus
+///     Action"* to make it hit — where a Spiritual Weapon strikes on
+///     the cast and a Dancing Sword strikes on the toss. The chassis
+///     resolves one swing per use either way, so the whip pays for both
+///     halves of RAW's opening turn at once and gets its first hit in
+///     the same round, which is where RAW leaves it too.
+///
+/// **The feather stays in the pack.** RAW's token *"disappears"* the
+/// moment it is thrown, and an object that leaves the inventory takes
+/// its `on_use` row with it — which would strand the whip in the air
+/// with nothing left to direct it. So the single use rides
+/// `ItemUseBilling::Charges(1)` against a pool that never recharges:
+/// the throw spends it, the picker greys the row out afterwards and
+/// says why, and the spent quill sits in the pack exactly as a spent
+/// wand does.
+///
+/// **Not modeled**: *"or when you die or have the Incapacitated
+/// condition"*. The first half is already covered — a blade whose owner
+/// has left the board falls out of the air at the round-end tick — and
+/// the second is a clause the layer has no hook for, which errs in the
+/// holder's favour for the rounds an unconscious thrower's whip keeps
+/// hovering. It cannot be *directed* in that state either way, because
+/// directing it costs a Bonus Action.
+pub struct TossedBladeItem {
     pub action_name: &'static str,
     pub action_aliases: &'static [&'static str],
     pub item_name: &'static str,
     pub blade: crate::engine::hovering_blade::BladeProfile,
-    /// The steel, which the swing reads for its Finesse choice and its
-    /// damage type. Shared with the ordinary weapon lane so the sword in
-    /// the air and a sword in the hand roll the same way.
-    pub weapon: &'static crate::actions::monster_attacks::SimpleWeapon,
+    /// Where one swing's numbers come from — the holder's arm or the
+    /// object's own text. See [`TossedBladeSwing`].
+    pub swing: TossedBladeSwing,
+    /// What putting the thing in the air costs, on top of whatever
+    /// [`Self::billing`] charges the object.
+    ///
+    /// A field rather than the `bonus_action_only()` both arms of
+    /// `blade_cost` used to be handed, because the two items price the
+    /// opening differently and RAW is the reason: a Dancing Sword is
+    /// *"a Bonus Action to toss"*, and a Feather Token is a Magic action
+    /// to throw plus *"you can then take a Bonus Action"* to strike. The
+    /// later flights are a Bonus Action for both, so only this half
+    /// varies.
+    pub first_cast_cost: fn() -> Vec<Resource>,
+    /// How the object pays for the throw. `Free` for the sword, which
+    /// comes back; `Charges(1)` for the feather, which does not.
+    pub billing: ItemUseBilling,
 }
 
-impl Action for DancingSwordItem {
+impl Action for TossedBladeItem {
     fn name(&self) -> &str {
         self.action_name
     }
@@ -13314,13 +13476,25 @@ impl Action for DancingSwordItem {
         TargetingSchema::SingleActor
     }
 
-    /// The thirty feet the sword may fly on the toss. Measured
-    /// wielder-to-target, as everything on this lane is — see
-    /// `SpiritualWeapon::reach_tiles` — and here the bound is RAW's own,
-    /// because the tether never lets the sword be further from its
-    /// owner than this anyway.
+    /// How far the thing may fly on the toss, plus the reach it lands
+    /// with. Measured wielder-to-target, as everything on this lane is
+    /// — see `SpiritualWeapon::reach_tiles`.
+    ///
+    /// The sum rather than `cast_reach` alone, because the two halves
+    /// of the throw are two distances: the blade flies `cast_reach` and
+    /// *then* strikes `reach` further. This used to be `cast_reach`
+    /// under a comment claiming *"the bound is RAW's own, because the
+    /// tether never lets the sword be further from its owner than this
+    /// anyway"* — which is a statement about where the **sword** may be
+    /// and not about what it may hit. A Dancing Sword parked at the far
+    /// end of its twelve-tile tether reaches a thirteenth tile with the
+    /// rapier, and that target was being hidden.
+    ///
+    /// The exact answer is still `blade_strike_anchor`'s; this is the
+    /// bound the picker and the AI's range sweep read, and a bound that
+    /// is too tight costs legal targets silently.
     fn reach_tiles(&self) -> Option<isize> {
-        Some(self.blade.cast_reach)
+        Some(self.blade.cast_reach + self.blade.reach)
     }
 
     fn requires_los(&self) -> bool {
@@ -13346,7 +13520,7 @@ impl Action for DancingSwordItem {
     /// having no ranged option and back away from fights it could have
     /// reached into.
     fn damage_types(&self) -> Vec<DamageType> {
-        vec![self.weapon.damage_type]
+        vec![self.swing.damage_type()]
     }
 
     fn cost(
@@ -13357,18 +13531,19 @@ impl Action for DancingSwordItem {
         _tl: Option<&Vec<Coordinate>>,
         _o: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Resource> {
-        // A Bonus Action either way — the toss and the later flights are
-        // priced identically by RAW, which is the one thing about this
-        // item's economy that is simpler than the spells'. The branch is
-        // still worth taking rather than returning a constant: it is
-        // what `blade_cost` is for, and an item that later grows a
-        // different price for the toss changes one argument.
+        // The later flights are a Bonus Action for both items, which is
+        // RAW for both. The toss is where they part — see
+        // `first_cast_cost` — and the object's own price rides along
+        // with it, so the feather's single charge is spent by the throw
+        // and never by a flight.
+        let mut first_cast = (self.first_cast_cost)();
+        first_cast.extend(self.billing.costs(self.item_name));
         crate::engine::hovering_blade::blade_cost(
             e,
             c,
             &self.blade,
             bonus_action_only(),
-            bonus_action_only(),
+            first_cast,
         )
     }
 
@@ -13408,17 +13583,10 @@ impl Action for DancingSwordItem {
         let Some(wielder) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
-        // RAW's *"uses your attack roll and adds your ability modifier
-        // to damage rolls"*, resolved off the steel so a Finesse blade
-        // swings off the better arm — the same two accessors an ordinary
-        // swing of the same weapon reads.
-        let swing_ability = self.weapon.swing_ability(wielder);
-        let attack_bonus = wielder.spell_attack_modifier(swing_ability);
-        let damage_bonus = self
-            .weapon
-            .swing_damage_ability(wielder)
-            .map(|a| wielder.ability_modifier(a))
-            .unwrap_or(0);
+        // The wielder's arm or the object's own text — see
+        // [`TossedBladeSwing`]. Resolved before the blade is placed
+        // because the borrow of `wielder` has to end first.
+        let (attack_bonus, damage_dice, damage_bonus, damage_type) = self.swing.resolve(wielder);
         // Placed before the swing, because the swing is made from there
         // — see `spells::blade_strike`, which does the same for the two
         // spells on this lane and for the same reason.
@@ -13433,11 +13601,7 @@ impl Action for DancingSwordItem {
             None => {
                 let holder = encounter.actor_name(caster_id);
                 encounter.log(format!("{} tosses the {} into the air.", holder, self.item_name));
-                encounter.conjure_blade(self.blade.conjure(
-                    caster_id,
-                    anchor,
-                    self.weapon.damage_dice,
-                ))
+                encounter.conjure_blade(self.blade.conjure(caster_id, anchor, damage_dice))
             }
         };
         let mut effects = crate::engine::attack::resolve_attack(
@@ -13447,9 +13611,9 @@ impl Action for DancingSwordItem {
                 target_id,
                 action_name: self.blade.name,
                 attack_bonus,
-                damage_dice: self.weapon.damage_dice,
+                damage_dice,
                 damage_bonus,
-                damage_type: self.weapon.damage_type,
+                damage_type,
                 ..crate::engine::attack::AttackParams::DEFAULTS
             },
         );
@@ -13461,7 +13625,7 @@ impl Action for DancingSwordItem {
 pub const DANCING_SWORD_NAME: &str = "Dancing Sword";
 
 /// The steel the Dancing Sword is: SRD 5.2's rapier, 1d8 piercing and
-/// Finesse. See [`DancingSwordItem`] for why that shape among the five
+/// Finesse. See [`TossedBladeItem`] for why that shape among the five
 /// RAW permits.
 pub static DANCING_SWORD_BLADE: crate::actions::monster_attacks::SimpleWeapon =
     crate::actions::monster_attacks::SimpleWeapon::melee(
@@ -13474,8 +13638,8 @@ pub static DANCING_SWORD_BLADE: crate::actions::monster_attacks::SimpleWeapon =
     .finesse();
 
 /// Dancing Sword — Bonus Action to toss, Bonus Action to fly it again,
-/// four swings and it comes home. See [`DancingSwordItem`].
-pub static DANCE_THE_SWORD: DancingSwordItem = DancingSwordItem {
+/// four swings and it comes home. See [`TossedBladeItem`].
+pub static DANCE_THE_SWORD: TossedBladeItem = TossedBladeItem {
     action_name: "dancing sword",
     action_aliases: &["dance", "dancing", "toss sword"],
     item_name: DANCING_SWORD_NAME,
@@ -13487,6 +13651,10 @@ pub static DANCE_THE_SWORD: DancingSwordItem = DancingSwordItem {
         // same number here and are not on either spell.
         cast_reach: 12,
         step: 12,
+        // RAW's *"attacks one creature of your choice within 5 feet of
+        // itself"* — a rapier's reach, which is the melee band. See
+        // `BladeProfile::reach`.
+        reach: crate::actions::action_template::MELEE_REACH,
         // Nothing in RAW ends the dance on a clock; what ends it is the
         // fourth swing or the tether. Ten rounds is the engine's
         // longest ordinary timer and is here so the layer's own tick has
@@ -13499,7 +13667,76 @@ pub static DANCE_THE_SWORD: DancingSwordItem = DancingSwordItem {
         dice: Dice::new(1, 8),
         damage_type: DamageType::Piercing,
     },
-    weapon: &DANCING_SWORD_BLADE,
+    swing: TossedBladeSwing::Wielder(&DANCING_SWORD_BLADE),
+    // RAW's *"a Bonus Action to toss this magic weapon into the air"* —
+    // the same price as every later flight, which is the one thing
+    // about this item's economy that is simpler than the whip's.
+    first_cast_cost: bonus_action_only,
+    // The sword comes back. Nothing is spent by tossing it, and an
+    // attuned wielder may do so every fight for as long as they hold it.
+    billing: ItemUseBilling::Free,
+};
+
+pub const FEATHER_TOKEN_WHIP_NAME: &str = "Feather Token (Whip)";
+
+/// Feather Token (Whip) — Magic action plus a Bonus Action to throw and
+/// strike, a Bonus Action to fly it again, and a flat `+9` for whoever
+/// threw it. See [`TossedBladeItem`].
+pub static THROW_FEATHER_TOKEN_WHIP: TossedBladeItem = TossedBladeItem {
+    action_name: "throw feather token",
+    action_aliases: &["whip", "feather token", "token"],
+    item_name: FEATHER_TOKEN_WHIP_NAME,
+    blade: crate::engine::hovering_blade::BladeProfile {
+        name: "floating whip",
+        glyph: '≈',
+        // RAW's *"throw the token to a point within 10 feet of
+        // yourself"* — four tiles, and much the shortest opening throw
+        // on the lane. The whip is not a way to reach the back rank; it
+        // is a second attacker standing beside you, and the twenty feet
+        // it flies afterwards is how it gets anywhere.
+        cast_reach: 4,
+        // *"direct the whip to fly up to 20 feet"* — eight tiles, the
+        // same step a Spiritual Weapon takes.
+        step: 8,
+        // *"a creature within 10 feet of the whip"* — the polearm band,
+        // and the only entry on this lane that reaches past five feet.
+        // See `BladeProfile::reach`.
+        reach: 2,
+        // *"disappears after 1 hour"*. An hour is six hundred rounds and
+        // no fight is; ten is the engine's ordinary long timer, and it
+        // is what every other blade on the lane counts down.
+        rounds: 10,
+        // Nothing holds it up but the feather. A wizard who threw one
+        // may still cast a Wall of Force.
+        concentration: false,
+        // RAW counts no swings and prints no leash: *"as a Bonus Action,
+        // you can direct the whip"* from wherever you are. Unlike the
+        // Dancing Sword, a thrower who runs does not lose it — which is
+        // the compensation for a token that is gone after one throw.
+        swings: None,
+        tether: None,
+        dice: Dice::new(1, 6),
+        damage_type: DamageType::Force,
+    },
+    // *"with an attack bonus of +9. On a hit, the target takes 1d6 + 5
+    // Force damage"* — printed on the feather, not derived from whoever
+    // is holding it. See [`TossedBladeSwing::Fixed`].
+    swing: TossedBladeSwing::Fixed {
+        attack_bonus: 9,
+        dice: Dice::new(1, 6),
+        damage_bonus: 5,
+        damage_type: DamageType::Force,
+    },
+    // *"a Magic action to throw the token … you can then take a Bonus
+    // Action to make a melee spell attack"*. The chassis resolves the
+    // throw and the strike in one use, so the opening pays for both
+    // halves of RAW's opening turn and lands the same first hit.
+    first_cast_cost: action_and_bonus_action,
+    // *"The token disappears"* — one throw and the feather is spent.
+    // A charge rather than `Consumed` because an object that leaves the
+    // pack takes its `on_use` row with it, and the whip in the air still
+    // needs something to direct it. See [`TossedBladeItem`].
+    billing: ItemUseBilling::Charges(1),
 };
 
 // ---------------------------------------------------------------------

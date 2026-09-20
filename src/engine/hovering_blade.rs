@@ -111,6 +111,30 @@ pub struct BladeProfile {
     /// from where it is rather than from its owner. RAW's *"move the
     /// force up to 20 feet"*.
     pub step: isize,
+    /// How far from the blade a creature may stand and still be hit, as
+    /// a footprint-Chebyshev gap cap — RAW's *"against a creature within
+    /// 5 feet of the force"*.
+    ///
+    /// Three of the four things on this lane print five feet, which is
+    /// `MELEE_REACH`, and the fourth is the whole reason the number is a
+    /// field. The Feather Token's whip reaches *ten*: *"a melee spell
+    /// attack against a creature within 10 feet of the whip"* — which on
+    /// a 2.5-foot grid is a gap of two, the polearm band, and is the
+    /// difference between a whip that can hang back out of a
+    /// Gargantuan's footprint and one that has to hover inside it.
+    ///
+    /// It is the *blade's* reach and not its owner's, so it is read only
+    /// by `blade_strike_anchor` when it enumerates the tiles the blade
+    /// could strike this target from. Nothing about the owner's own
+    /// swings changes: a cleric with a spiritual weapon in the air still
+    /// reaches five feet with the mace in their hand.
+    ///
+    /// Was a bare `MELEE_REACH` inside that enumeration. Moving it onto
+    /// the profile is the same argument every other number here makes —
+    /// it is read once when the blade is placed and again rounds later
+    /// when its owner asks whether a target is inside the leash, and the
+    /// two reads have to agree.
+    pub reach: isize,
     /// Rounds it lasts if nothing ends it early. One minute is ten.
     pub rounds: u32,
     /// True when the owner's concentration holds it up, in which case
