@@ -14441,7 +14441,14 @@ pub static THROW_FEATHER_TOKEN_WHIP: TossedBladeItem = TossedBladeItem {
     item_name: FEATHER_TOKEN_WHIP_NAME,
     blade: crate::engine::hovering_blade::BladeProfile {
         name: "floating whip",
-        glyph: '≈',
+        // Not the `†` its three siblings share, because a party can
+        // have a whip and a Spiritual Weapon in the air at once and the
+        // map is where their two leashes are read. Deliberately not
+        // `≈` either, which is what this first shipped as: that glyph
+        // is water on the terrain layer *and* bad ground on the zone
+        // layer, so a whip drawn with it was legible only by its
+        // colour.
+        glyph: '∫',
         // RAW's *"throw the token to a point within 10 feet of
         // yourself"* — four tiles, and much the shortest opening throw
         // on the lane. The whip is not a way to reach the back rank; it

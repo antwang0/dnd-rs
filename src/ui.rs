@@ -3095,6 +3095,52 @@ mod tests {
         }
     }
 
+    /// **No blade in the air borrows a glyph the ground already uses.**
+    ///
+    /// The map draws four layers into one character cell and separates
+    /// them by colour: terrain is unstyled, a zone is cyan, a blade is
+    /// magenta. Colour is a real channel and it is not a sufficient one
+    /// — it is the first thing a colourblind reader loses and the first
+    /// thing a screenshot in a bug report loses — so a layer that has a
+    /// glyph of its own should not spend it on one the layer below is
+    /// already using.
+    ///
+    /// The Feather Token's whip shipped as `≈`, which is water on the
+    /// terrain layer *and* bad ground on the zone layer. On a flooded
+    /// board it was a pool; over a Web it was the Web. This is the
+    /// assertion that would have said so.
+    ///
+    /// The ground's vocabulary is transcribed rather than read back off
+    /// `zone_glyph` and the terrain match, which is the same bargain
+    /// every other conformance sweep in this codebase makes: a test that
+    /// asked the code what it drew would agree with whatever it drew.
+    #[test]
+    fn no_blade_in_the_air_borrows_a_glyph_from_the_ground() {
+        use crate::actions::item_actions::{DANCE_THE_SWORD, THROW_FEATHER_TOKEN_WHIP};
+
+        /// Every glyph the terrain and zone layers put on the map — the
+        /// movement-cost ramp, water, and the five `zone_glyph` rungs.
+        const GROUND: &[char] = &['░', '▒', '▓', '█', '≈', '☠', '⊘', '▚', '◈'];
+
+        // The two blades an item puts in the air. The two spells on the
+        // same lane share `†`, which is on neither list and is the
+        // glyph this one is deliberately *not*: a party can hold a whip
+        // and a Spiritual Weapon at once, and the map is where the two
+        // leashes are read.
+        for profile in [&DANCE_THE_SWORD.blade, &THROW_FEATHER_TOKEN_WHIP.blade] {
+            assert!(
+                !GROUND.contains(&profile.glyph),
+                "the {} is drawn as {:?}, which is a tile",
+                profile.name,
+                profile.glyph
+            );
+        }
+        assert_ne!(
+            DANCE_THE_SWORD.blade.glyph, THROW_FEATHER_TOKEN_WHIP.blade.glyph,
+            "…and the two items on the lane are told apart without reading the panel"
+        );
+    }
+
     /// Ice is drawn on the ramp *and* in colour, which is the only tile
     /// on the map that needs both channels.
     ///
