@@ -23523,6 +23523,53 @@ mod tests {
         );
     }
 
+    /// A dretch holds its Fetid Cloud until the party is actually in
+    /// it.
+    ///
+    /// The behavioural half of
+    /// `every_self_centred_burst_declares_how_wide_it_is`, on the
+    /// sharper of the two rows that sweep found: the cloud reaches four
+    /// tiles and this rung was pricing it at its own default of twelve,
+    /// so a dretch spent its Recharge-6 signature ability on a party
+    /// three times further away than the fumes go — and then had
+    /// nothing when they closed.
+    ///
+    /// Both halves are asserted, because only the pair is the bug: an
+    /// ability that never fires and one that fires at the wrong time
+    /// look identical from one assertion.
+    #[test]
+    fn a_dretch_waits_until_the_cloud_would_reach_somebody() {
+        use crate::actors::creatures::dretches::DRETCH_TEMPLATE;
+        use crate::actors::creatures::goblins::GOBLIN_TEMPLATE;
+
+        // Two enemies, because the rung wants two before it prefers a
+        // blast to a swing.
+        let clouds_at = |gap: isize| {
+            let mut e = empty_arena();
+            let dretch = e
+                .instantiate_creature(&DRETCH_TEMPLATE, Coordinate::new(4, 8), 0, 0)
+                .unwrap();
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4 + gap, 8), 1, 0)
+                .unwrap();
+            e.instantiate_creature(&GOBLIN_TEMPLATE, Coordinate::new(4 + gap, 10), 1, 1)
+                .unwrap();
+            e.actors.get_mut(&dretch).unwrap().reset_for_new_round();
+            super::try_self_centered_burst(&e, dretch).map(|aei| aei.action().name().to_string())
+        };
+
+        assert_eq!(
+            clouds_at(3),
+            Some("fetid cloud".to_string()),
+            "three tiles is inside the ten feet the cloud reaches"
+        );
+        assert_eq!(
+            clouds_at(9),
+            None,
+            "…and nine is not. The rung used to price this at twelve, \
+             which is three times the cloud's own radius"
+        );
+    }
+
     /// The same rung, reached by a fighter — which is the whole reason
     /// SRD 5.2's Deck of Illusions is on [`SCREEN_SPELLS`].
     ///

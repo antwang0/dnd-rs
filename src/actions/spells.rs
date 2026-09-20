@@ -33273,6 +33273,24 @@ pub static FLESH_TO_STONE: LazyLock<FleshToStone> = LazyLock::new(|| FleshToSton
 /// hostile back rank in one tap. Concentration-free RAW — burst-and-done.
 pub struct PsychicScream {}
 
+impl PsychicScream {
+    /// How wide the scream actually sweeps.
+    ///
+    /// RAW's is not a radius at all — *"up to 10 creatures you can see
+    /// within range"*, at 90 feet of range — so there is no conversion
+    /// to get right, only an approximation to choose. A 90-ft radius
+    /// would be 36 tiles on the 2.5-ft grid, which is wider than the
+    /// board; 8 sweeps most of a clustered enemy back rank, which is
+    /// what the spell is for.
+    ///
+    /// An associated const rather than a literal inside `side_effects`,
+    /// for `FrightfulHowl::RADIUS`'s reason: two things read it, the
+    /// resolver and `self_burst_radius`, and a drift between them is
+    /// invisible — the spell would simply start being chosen in the
+    /// wrong situations.
+    const RADIUS: isize = 8;
+}
+
 impl Action for PsychicScream {
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
@@ -33297,6 +33315,17 @@ impl Action for PsychicScream {
         // up to lv9 radius / damage.
         TargetingSchema::NoArgs
     }
+    /// The radius the scream resolves at, declared so the AI's
+    /// self-centred-burst rung stops guessing at it.
+    ///
+    /// It guessed twelve, which is half again the eight this sweeps: a
+    /// caster with two enemies eleven tiles away spent a **ninth-level
+    /// slot** on a scream that reached neither of them. See
+    /// `Action::self_burst_radius`, which is the lane this was missing
+    /// from.
+    fn self_burst_radius(&self) -> Option<isize> {
+        Some(Self::RADIUS)
+    }
     fn damage_types(&self) -> Vec<DamageType> {
         vec![DamageType::Psychic]
     }
@@ -33319,13 +33348,7 @@ impl Action for PsychicScream {
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
         use crate::actors::actor_template::ConcentrationData;
-        // RAW's is not a radius at all — *"up to 10 creatures you can
-        // see within range"*, at 90 feet of range — so there is no
-        // conversion to get right, only an approximation to choose. A
-        // 90-ft radius would be 36 tiles on the 2.5-ft grid, which is
-        // wider than the board; 8 sweeps most of a clustered enemy back
-        // rank, which is what the spell is for.
-        const RADIUS: isize = 8;
+        let radius = Self::RADIUS;
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
@@ -33341,7 +33364,7 @@ impl Action for PsychicScream {
             encounter,
             caster_id,
             center,
-            RADIUS,
+            radius,
             AbilityScoreType::Intelligence,
             dc,
             // 14d6 psychic shared roll; halved on save via the standard
@@ -34128,6 +34151,17 @@ pub static WALL_OF_WATER: LazyLock<WallOfWater> = LazyLock::new(|| WallOfWater {
 /// throughout the encounter, while Hypnotic Pattern breaks on any damage).
 pub struct Compulsion {}
 
+impl Compulsion {
+    /// RAW's thirty feet, which is twelve tiles on the 2.5-ft grid.
+    /// The self-centered burst catches every enemy within range — the
+    /// bard's whole front rank in a typical clustered encounter.
+    ///
+    /// An associated const rather than a literal in `side_effects`, for
+    /// `FrightfulHowl::RADIUS`'s reason: the resolver reads it and so
+    /// does `self_burst_radius`.
+    const RADIUS: isize = 12;
+}
+
 impl Action for Compulsion {
     /// Queues a `StartConcentration`. Declared so the AI's
     /// summon and area-control rungs can price this cast before
@@ -34150,6 +34184,15 @@ impl Action for Compulsion {
         // from their own tile. Same shape as Psychic Scream's
         // self-centered NoArgs lane at a smaller tier.
         TargetingSchema::NoArgs
+    }
+    /// RAW's thirty feet, which is the twelve tiles the resolver
+    /// sweeps. Declared rather than left to the AI's default — which
+    /// happens to be the same twelve, and is a coincidence rather than
+    /// a reading: a spell that agrees with a guess still has to say so,
+    /// or the next change to either number is a silent divergence. See
+    /// `Action::self_burst_radius`.
+    fn self_burst_radius(&self) -> Option<isize> {
+        Some(Self::RADIUS)
     }
     fn deals_damage(&self) -> bool {
         false
@@ -34182,10 +34225,7 @@ impl Action for Compulsion {
         _target_locations: Option<&Vec<Coordinate>>,
         _overrides: Option<&HashSet<ActionOverride>>,
     ) -> Vec<Box<dyn ApplicableSideEffect>> {
-        // 30 ft RAW = 12 tiles. The self-centered burst targets every
-        // enemy within range — the bard's whole front rank in a typical
-        // clustered encounter.
-        const RADIUS: isize = 12;
+        let radius = Self::RADIUS;
         let Some(caster) = encounter.actors.get(&caster_id) else {
             return Vec::new();
         };
@@ -34195,7 +34235,7 @@ impl Action for Compulsion {
         let dc = caster.spell_save_dc(AbilityScoreType::Charisma);
         let mut effects: Vec<Box<dyn ApplicableSideEffect>> = Vec::new();
         let mut conditions: Vec<(usize, Condition)> = Vec::new();
-        for tid in encounter.enemy_burst_targets(caster_id, center, RADIUS) {
+        for tid in encounter.enemy_burst_targets(caster_id, center, radius) {
             let save = encounter.roll_save_against_caster(
                 tid,
                 AbilityScoreType::Wisdom,

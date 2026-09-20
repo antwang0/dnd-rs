@@ -18435,6 +18435,15 @@ pub static DRETCH_MULTI: LazyLock<CompoundAttack> = LazyLock::new(|| CompoundAtt
 /// install chokepoint handles immunity uniformly" invariant in place.
 pub struct DretchFetidCloud {}
 
+impl DretchFetidCloud {
+    /// RAW's 10-foot radius, which is a 4-tile gap on the 2.5-ft grid.
+    ///
+    /// An associated const rather than a literal in `side_effects`, for
+    /// `FrightfulHowl::RADIUS`'s reason: the resolver reads it and so
+    /// does `self_burst_radius`, and a drift between them is invisible.
+    const RADIUS: isize = 4;
+}
+
 impl Action for DretchFetidCloud {
     fn name(&self) -> &str {
         "fetid cloud"
@@ -18445,6 +18454,16 @@ impl Action for DretchFetidCloud {
     fn targeting_schema(&self) -> TargetingSchema {
         // Burst centered on self — no point/target args.
         TargetingSchema::NoArgs
+    }
+    /// The radius the cloud resolves at, declared so the AI's
+    /// self-centred-burst rung stops guessing at it.
+    ///
+    /// It guessed twelve, which is three times the four this reaches:
+    /// a dretch spent its Recharge-6 signature ability on a party
+    /// standing eleven tiles away and poisoned nobody. See
+    /// `Action::self_burst_radius`.
+    fn self_burst_radius(&self) -> Option<isize> {
+        Some(Self::RADIUS)
     }
     fn deals_damage(&self) -> bool {
         false
@@ -18490,12 +18509,11 @@ impl Action for DretchFetidCloud {
             return Vec::new();
         };
         encounter.log("  fetid cloud: poisonous fumes billow around the dretch");
-        // 10 ft radius = 4 tile gap on the 2.5 ft grid.
         crate::actions::action_template::resolve_burst_save_condition(
             encounter,
             caster_id,
             caster_loc,
-            4,
+            Self::RADIUS,
             AbilityScoreType::Constitution,
             11,
             Condition::Poisoned,

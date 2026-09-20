@@ -13402,6 +13402,20 @@ impl Action for WandOfEnemyDetectionItem {
         !self.hidden_enemies(encounter, caster_id).is_empty()
     }
 
+    /// RAW's sixty feet, declared rather than left to be guessed at.
+    ///
+    /// The wand is a self-centred sweep with a real radius, which is
+    /// what this lane is for — and it is on the lane whether or not it
+    /// wants to be: `try_self_centered_burst` walks every harmful
+    /// `NoArgs` action and was pricing this one at its own default of
+    /// twelve tiles, half the wand's reach. Its own validator is what
+    /// keeps a charge from being spent on an empty corridor; this is
+    /// only about the rung knowing how far the command word carries.
+    /// See `Action::self_burst_radius`.
+    fn self_burst_radius(&self) -> Option<isize> {
+        Some(self.reach)
+    }
+
     fn side_effects(
         &self,
         encounter: &mut EncounterInstance,

@@ -53839,6 +53839,112 @@ fn a_thrown_illusion_card_stands_on_the_drawn_creatures_footprint() {
     }
 }
 
+/// **Every self-centred area says how wide it is.**
+///
+/// A `NoArgs` action centres on its caster, so there is no point for
+/// the AI to choose and the only decision is whether the area — wherever
+/// it falls — is worth the turn. `Action::self_burst_radius` is where
+/// that width is declared, and `try_self_centered_burst` guesses twelve
+/// tiles for anything that declines to declare one. The guess is right
+/// for the `NoArgs` actions that are not areas at all (a Reckless
+/// Attack, a clay golem's Hasten, a Counterspell): those have no radius
+/// to be wrong about.
+///
+/// For something that *does* resolve a burst, the guess is a live bug
+/// and a silent one — the ability simply starts being chosen in the
+/// wrong situations. Two were:
+///
+///   - **Psychic Scream** sweeps eight tiles and was being cast at
+///     twelve. A caster with two enemies eleven tiles away spent a
+///     *ninth-level slot* on a scream that reached neither.
+///   - The **Dretch's Fetid Cloud** reaches four, and is Recharge 6 —
+///     so a dretch burned its signature ability on a party three times
+///     further away than the cloud goes, and poisoned nobody.
+///
+/// Both are exactly the failure `self_burst_radius`'s own docstring was
+/// written about (*"a cloaker moaning at a party fifteen tiles away did
+/// not moan at all"*), which is the argument for a sweep rather than
+/// for care: the lane was added with eleven callers and the two that
+/// arrived later did not join it.
+///
+/// **What counts as an area is asked of the resolver, not guessed.**
+/// A harmful `NoArgs` action either declares a radius or is named in
+/// `NOT_AN_AREA` with the reason it has none — which is a sentence a
+/// reader wants anyway, and is the difference between an action with no
+/// width and one that forgot to say.
+#[test]
+fn every_self_centred_burst_declares_how_wide_it_is() {
+    use crate::actions::action_template::TargetingSchema;
+
+    /// The harmful `NoArgs` actions that are not areas. Each is a
+    /// self-buff or a reaction wearing the schema, so there is no width
+    /// for it to declare.
+    const NOT_AN_AREA: &[(&str, &str)] = &[
+        // A reaction aimed at one spell, not a radius: RAW's trigger is
+        // "a creature you can see within 60 feet casts a spell", and
+        // the reach lives on `reach_tiles`.
+        ("counterspell", "a reaction at one caster, not an area"),
+    ];
+
+    let mut actions: std::collections::BTreeMap<&str, &'static (dyn Action + Send + Sync)> =
+        std::collections::BTreeMap::new();
+    for t in every_reachable_creature_template() {
+        for a in &t.actions {
+            actions.insert(a.name(), *a);
+        }
+    }
+    for item in crate::items::item_template::LOOT_POOL {
+        for a in item.on_use {
+            actions.insert(a.name(), *a);
+        }
+    }
+
+    let mut checked = 0usize;
+    let mut silent: Vec<String> = Vec::new();
+    for (name, action) in &actions {
+        if !matches!(action.targeting_schema(), TargetingSchema::NoArgs) || !action.is_harmful() {
+            continue;
+        }
+        // The same two-branch gate `try_self_centered_burst` uses to
+        // decide what is a burst at all: damage, or an explicit
+        // non-damage flag. Anything else on the schema is a utility
+        // action that inherits `is_harmful`'s permissive default.
+        if action.damage_types().is_empty() && action.deals_damage() {
+            continue;
+        }
+        checked += 1;
+        if action.self_burst_radius().is_some() {
+            continue;
+        }
+        if NOT_AN_AREA.iter().any(|(n, _)| n == name) {
+            continue;
+        }
+        silent.push((*name).to_string());
+    }
+    assert!(
+        checked > 15,
+        "only {checked} self-centred candidates swept — the walk has stopped finding them"
+    );
+    assert!(
+        silent.is_empty(),
+        "these harmful NoArgs actions resolve somewhere and will not say where. The \
+         AI guesses twelve tiles for each of them, which is a live bug whenever the \
+         real number is not twelve — declare `self_burst_radius`, or put the action \
+         on `NOT_AN_AREA` with the reason it has no width:\n  {}",
+        silent.join("\n  ")
+    );
+    // And the exemption list is not a place to hide a typo.
+    for (name, _) in NOT_AN_AREA {
+        let action = actions
+            .get(name)
+            .unwrap_or_else(|| panic!("{name} is not an action anything can reach"));
+        assert!(
+            action.self_burst_radius().is_none(),
+            "{name} is listed as having no width and declares one"
+        );
+    }
+}
+
 /// The Sphere of Annihilation's three states, in the order a party
 /// meets them: it comes out of its field, it obeys a good Arcana check,
 /// and it comes at whoever fails one.
@@ -131102,3 +131208,4 @@ fn five_spells_roll_the_dice_the_book_prints() {
         assert!(log.contains("5d8("), "mass cure wounds rolls 5d8: {log}");
     }
 }
+
